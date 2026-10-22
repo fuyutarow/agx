@@ -1,0 +1,3 @@
+#!/bin/sh
+# shim: hook-entry
+exec mise run --jobs 1 hook:pre-commit

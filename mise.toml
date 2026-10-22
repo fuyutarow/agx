@@ -1,0 +1,69 @@
+min_version = "2026.10.0"
+
+[tools]
+bun = "1.4.3"
+rumdl = "0.2.78"
+jj = "0.46.0"
+
+[tasks.setup]
+alias = "i"
+run = "bun install --frozen-lockfile"
+
+[tasks.up]
+alias = "u"
+run = "bun update"
+
+[tasks.fmt]
+alias = "f"
+depends = ["fmt:ts", "fmt:md"]
+
+[tasks."fmt:ts"]
+run = "bun x --bun --no-install oxfmt ."
+
+[tasks."fmt:md"]
+run = "rumdl fmt"
+
+[tasks."fmt:check"]
+run = "bun x --bun --no-install oxfmt --check ."
+
+[tasks."fmt:staged"]
+run = "bun tools/fmt-staged.ts --tool 'ts,js,json=bun x --bun --no-install oxfmt' --tool 'md=rumdl fmt'"
+
+[tasks.lint]
+alias = "l"
+depends = ["lint:ts", "lint:all", "lint:md", "mise:contract"]
+
+[tasks."lint:ts"]
+run = "bun tools/lint-ts-candidate.ts"
+
+[tasks."lint:all"]
+run = "bun lint-oxlint.ts --type-aware"
+
+[tasks."lint:md"]
+run = "rumdl check"
+
+[tasks."mise:contract"]
+run = "bun tools/mise-contract.ts --tools --require-pinned --require-npm-lock"
+
+[tasks.test]
+alias = "t"
+run = "bun test"
+
+[tasks.check]
+alias = "c"
+depends = ["fmt:check", "lint", "test"]
+
+[tasks."gate:land"]
+depends = ["check"]
+
+[tasks."hook:pre-commit"]
+depends = ["fmt:staged", "lint:ts"]
+
+[tasks.commit]
+run = "bun tools/jj-commit.ts"
+
+[tasks.push]
+run = "bun tools/jj-push.ts"
+
+[tasks.pull]
+run = "jj git fetch --remote origin && jj rebase -b @ -d 'trunk()'"

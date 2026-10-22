@@ -1,0 +1,86 @@
+{
+  "schema": 1,
+  "upstream": "dotfiles",
+  "revision": "8cc37d86d51df66dd1c514f76969c84667cb47e3",
+  "policy": "Repository-owned regular copies; update only through explicit pulls. Source identifiers are relative to the upstream revision, never checkout dependencies.",
+  "files": [
+    {
+      "path": ".oxfmtrc.json",
+      "source": ".oxfmtrc.json",
+      "adaptation": "verbatim",
+      "sha256": "d644dd49a821ad2df62a02bda5d97148778a8c30fdd2cc3d23b0e1aa8a4852f7"
+    },
+    {
+      "path": ".rumdl.toml",
+      "source": ".rumdl.toml",
+      "adaptation": "verbatim",
+      "sha256": "a2e548ab36c957be52c363da9f1c88a63500fc0772f56c33cdb81273975d1650"
+    },
+    {
+      "path": ".oxlintrc.json",
+      "source": "presets/typescript/.oxlintrc.json",
+      "adaptation": "Local codec and attempt-adapter diagnostic paths.",
+      "sha256": "b8dad8bb14a570a61d7ade0f8ee1e9677a099124e912f654338ddcd9db1c524c"
+    },
+    {
+      "path": "house-plugin.js",
+      "source": "presets/typescript/house-plugin.js",
+      "adaptation": "verbatim",
+      "sha256": "8cd92fc6659aff9228b862464cf501c4a999e74cb2f02ccf06227069b1742c2e"
+    },
+    {
+      "path": "tsconfig.json",
+      "source": "presets/typescript/tsconfig.json",
+      "adaptation": "verbatim",
+      "sha256": "576b55377af460f5680af8184f770116191062b3ac6ab1182d6613fc75987a6b"
+    },
+    {
+      "path": "lint-oxlint.ts",
+      "source": "presets/typescript/lint-oxlint.ts",
+      "adaptation": "Import local tools/zod.ts.",
+      "sha256": "9eeea563af78b3390dbcbdfe4689627480ee1fb3400654fc3a524e3ac8c4ece5"
+    },
+    {
+      "path": "tools/zod.ts",
+      "source": "presets/typescript/zod.ts",
+      "adaptation": "Consumer-local header.",
+      "sha256": "a9bb64c11ff27b64ae64c3396069efe682c930f50e4487d9f511f77103ec099e"
+    },
+    {
+      "path": "tools/jj-commit.ts",
+      "source": "agents/skills/wiring-mise-tasks/scripts/jj-commit.ts",
+      "adaptation": "Remove optional search-index post-commit invocation; no such layer is admitted.",
+      "sha256": "99eb930ecf73b1ddaafb2bb8c7d0b3e212a43526bee674626538bd4a50b26da5"
+    },
+    {
+      "path": "tools/jj-push.ts",
+      "source": "agents/skills/wiring-mise-tasks/scripts/jj-push.ts",
+      "adaptation": "verbatim",
+      "sha256": "401acf5f9fe19c479fadf8aea50c001c0f2f4473156105ec89d84b4d178e0e47"
+    },
+    {
+      "path": "tools/jj-precommit.ts",
+      "source": "agents/skills/wiring-mise-tasks/scripts/jj-precommit.ts",
+      "adaptation": "verbatim",
+      "sha256": "f08b7faad1bcd748bcf3b13da2546d49c07c1cd04a701046e51c3bdc5825d4fb"
+    },
+    {
+      "path": "tools/fmt-staged.ts",
+      "source": "agents/skills/wiring-mise-tasks/scripts/fmt-staged.ts",
+      "adaptation": "verbatim",
+      "sha256": "67c8726e2fc5a7fe136c6696e1c768466b33db94d005deb85ce7035df3dc7a49"
+    },
+    {
+      "path": "tools/lint-ts-candidate.ts",
+      "source": "agents/skills/wiring-mise-tasks/scripts/lint-ts-candidate.ts",
+      "adaptation": "verbatim",
+      "sha256": "54cd96602c3171b0cb20387fb34aa14e831450024693d9c8acb5889a6b8cf2f9"
+    },
+    {
+      "path": "tools/mise-contract.ts",
+      "source": "agents/skills/wiring-mise-tasks/scripts/mise-contract.ts",
+      "adaptation": "Import local codec; read consumer Bun pin from root mise.toml; local pin comment.",
+      "sha256": "d0b882dd2b5cd693ae04abc461de057bcb60f166980c3c4bbebb06431a4b29d7"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+# Local runtime state and installed dependencies are never source.
+/.agent-state/
+/.agents/
+/.aws/
+/.codex/
+/.jj/
+**/node_modules/
+**/.rumdl_cache/
+**/dist/
+**/coverage/
+.DS_Store
+.env
+.env.local
