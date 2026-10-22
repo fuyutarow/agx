@@ -1,4 +1,20 @@
 {
+  "suiteCopies": [
+    {
+      "source_repository": "/home/fuyu/dotfiles.ws/ws_sep-s5-source-1023",
+      "commit": "747519c34656",
+      "copied_path_count": 243,
+      "paths": ".agent-state/sep-s5b1-copy-1023/copied-paths.json",
+      "excluded": ".agent-state/sep-s5b1-copy-1023/excluded-paths.json"
+    },
+    {
+      "source_repository": "/home/fuyu/dotfiles.ws/ws_sep-s5-source-1023",
+      "commit": "747519c34656",
+      "copied_path_count": 224,
+      "paths": ".agent-state/sep-s5b1-copy-1023/copied-paths.json",
+      "excluded": ".agent-state/sep-s5b1-copy-1023/excluded-paths.json"
+    }
+  ],
   "schema": 1,
   "upstream": "dotfiles",
   "revision": "8cc37d86d51df66dd1c514f76969c84667cb47e3",

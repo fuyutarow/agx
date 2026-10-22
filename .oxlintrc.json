@@ -21,7 +21,7 @@
     // Unstable rules are deferred.
     "nursery": "off"
   },
-  "ignorePatterns": ["node_modules"],
+  "ignorePatterns": ["node_modules", "agents/hooks/vendor"],
   "rules": {
     "house/no-restricted-globals": [
       "error",

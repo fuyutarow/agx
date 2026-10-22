@@ -37,6 +37,6 @@
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true
   },
-  "include": ["**/*.ts"],
+  "include": ["tools/**/*.ts", "**/*.ts"],
   "exclude": ["node_modules"]
 }

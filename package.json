@@ -1,4 +1,28 @@
 {
+  "dependencies": {
+    "cleye": "2.6.0",
+    "neverthrow": "8.2.0",
+    "zod": "4.6.5",
+    "type-flag": "4.5.0"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.2",
+    "oxfmt": "0.67.0",
+    "oxlint": "1.82.0",
+    "oxlint-plugin-eslint": "1.82.0",
+    "oxlint-tsgolint": "7.0.2003"
+  },
+  "bin": {
+    "agx": "tools/agx/src/agx.ts",
+    "agx-worker": "tools/agx-worker/src/next/cli.ts",
+    "agx-ws": "tools/agx-ws/src/ws.ts",
+    "agx-ticket": "tools/agx-ticket/src/tkt.ts",
+    "agx-status": "tools/agx-status/src/status.ts",
+    "xmsg": "tools/xmsg/src/xmsg.ts",
+    "jex": "tools/jex/src/jex.ts",
+    "agx-msg": "tools/xmsg/src/xmsg.ts"
+  },
+  "scripts": {},
   "name": "agx",
   "version": "0.0.0",
   "private": true,
@@ -8,17 +32,5 @@
   },
   "workspaces": [
     "packages/*"
-  ],
-  "dependencies": {
-    "cleye": "2.6.0",
-    "neverthrow": "8.2.0",
-    "zod": "4.6.5"
-  },
-  "devDependencies": {
-    "@types/bun": "1.4.2",
-    "oxfmt": "0.67.0",
-    "oxlint": "1.82.0",
-    "oxlint-plugin-eslint": "1.82.0",
-    "oxlint-tsgolint": "7.0.2003"
-  }
+  ]
 }
