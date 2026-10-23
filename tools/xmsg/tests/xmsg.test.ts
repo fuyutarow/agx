@@ -709,13 +709,17 @@ test.each(
   const r = await run({ args });
   expect(r.exit).toBe(2);
   expect(r.called).toBe(false);
+  expect(r.stderr).toStartWith("agx msg:");
 });
 test("help and both version aliases need no transport", async () => {
-  expect((await run({ args: ["--help"], missing: true })).exit).toBe(0);
+  const help = await run({ args: ["--help"], missing: true });
+  expect(help.exit).toBe(0);
+  expect(help.stdout).toContain("agx msg");
+  expect(help.stdout).not.toContain("xmsg");
   for (const flag of ["-V", "--version"]) {
     const r = await run({ args: [flag], missing: true });
     expect(r.exit).toBe(0);
-    expect(r.stdout).toMatch(/^xmsg \d+\.\d+\.\d+\n$/u);
+    expect(r.stdout).toMatch(/^agx msg \d+\.\d+\.\d+\n$/u);
   }
 });
 
@@ -1548,7 +1552,7 @@ test("truncated stream retains message and relay evidence with an exact check co
   expect(r.exit).toBe(4);
   expect(r.stderr).toContain(msgId);
   expect(r.stderr).toMatch(/relay_session_id="[a-f0-9-]{36}"/u);
-  expect(r.stderr).toMatch(/xmsg status --relay '[a-f0-9-]{36}'/u);
+  expect(r.stderr).toMatch(/agx msg status --relay '[a-f0-9-]{36}'/u);
 });
 
 test("unknown final result retains its session ID and observed message ID", async () => {
@@ -1558,7 +1562,7 @@ test("unknown final result retains its session ID and observed message ID", asyn
   expect(r.exit).toBe(4);
   expect(r.stderr).toContain(`relay_session_id="${relayId}"`);
   expect(r.stderr).toContain(msgId);
-  expect(r.stderr).toContain(`xmsg status --relay '${relayId}'`);
+  expect(r.stderr).toContain(`agx msg status --relay '${relayId}'`);
 });
 
 test.each([

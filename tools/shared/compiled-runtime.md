@@ -1,7 +1,8 @@
 # Compiled command runtime paths
 
 Build each package's entry with `bun build --compile <entry> --outfile <command>`.
-Keep the suite command names on `PATH`, including `agx-msg` as an alias for `xmsg`.
+Keep the suite command names on `PATH`, including `agx-msg`, the executable for `agx msg`, and its `xmsg` alias.
+Compile messaging once as `agx-msg`; `xmsg` is a hard link to it in `bin/`.
 The router and worker launcher resolve those names through `PATH`; installing a
 different suite on that path selects that suite explicitly.
 

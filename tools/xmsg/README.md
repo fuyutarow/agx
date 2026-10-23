@@ -1,14 +1,17 @@
-# xmsg
+# agx msg
+
+`agx msg` is the messaging command. `xmsg` is a compatibility alias for the same
+executable, with identical behavior and exit codes.
 
 One shell address syntax for sending an attributed envelope and exact body once to an existing local Codex or Claude
 session, with an enqueue outcome. Prefer the native route when already inside its harness:
 Claude's `SendMessage`, `codex queue` for Codex, or `herdr agent prompt` under Herdr.
 
 ```sh
-xmsg send --to codex:<thread-id-or-exact-name> --message 'Can you check this?'
-xmsg send --to claude:<session-id-or-exact-name> --message 'Can you check this?'
-xmsg send --to 01a15424 --message 'Can you check this?'
-xmsg send --to 'review (v2)' --message 'Can you check this?'
+agx msg send --to codex:<thread-id-or-exact-name> --message 'Can you check this?'
+agx msg send --to claude:<session-id-or-exact-name> --message 'Can you check this?'
+agx msg send --to 01a15424 --message 'Can you check this?'
+agx msg send --to 'review (v2)' --message 'Can you check this?'
 ```
 
 Qualification is optional for a globally unique full UUID, UUID front prefix (at least
@@ -87,7 +90,7 @@ Exit 4 prints observed message IDs (an empty list means none was observed), the 
 session ID, and a copyable command:
 
 ```sh
-xmsg status --relay '<relay-session-UUID>'
+agx msg status --relay '<relay-session-UUID>'
 ```
 
 This read-only command reads the native relay transcript under
@@ -107,9 +110,9 @@ ID, the diagnostic uses that ID. Optional `XMSG_RELAY_CAPTURE=/path/stream.jsonl
 writes raw Claude stdout after the child ends, including a timeout; it contains
 the full message body and is intended for explicit diagnostic capture.
 
-Accepted means enqueued, not read or replied. xmsg owns no broker, inbox, launch/delegation, or
+Accepted means enqueued, not read or replied. agx msg owns no broker, inbox, launch/delegation, or
 reply tracking. To arrange a reply, declare the sender's full address with --from; the
-recipient can send another message using its native route or xmsg.
+recipient can send another message using its native route or agx msg.
 
 ## Sender envelope
 
@@ -125,7 +128,7 @@ Exact caller body
 
 The first line is sender metadata; Claude UUID destinations add a second header,
 `to: claude:<full-UUID>`. The blank line starts the exact caller body. Literal
-`from:` or `to:` lines in that body remain body text. xmsg never strips or
+`from:` or `to:` lines in that body remain body text. agx msg never strips or
 deduplicates caller text as existing headers. Claude receipt correlation checks
 the exact composed envelope plus body.
 
@@ -134,9 +137,9 @@ Without `--from`, the first line is `from: unknown (caller identity unavailable 
 ## Discover recipients
 
 ```sh
-xmsg list
-xmsg list --json --timeout-ms 5000
-xmsg send --to codex:<shown-short-UUID> --message 'Can you check this?'
+agx msg list
+agx msg list --json --timeout-ms 5000
+agx msg send --to codex:<shown-short-UUID> --message 'Can you check this?'
 ```
 
 Copy the shown address unchanged into `send --to`. Human output shortens UUIDs to the

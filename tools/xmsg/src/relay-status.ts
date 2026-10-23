@@ -65,7 +65,7 @@ export function relayEvidence(output: string) {
 }
 
 export function relayCheckCommand(sessionId: string): string {
-  return `xmsg status --relay '${sessionId.replaceAll("'", "'\\''")}'`;
+  return `agx msg status --relay '${sessionId.replaceAll("'", "'\\''")}'`;
 }
 
 /** Read persisted native messages only; never resume a model turn or send a message. */
@@ -90,7 +90,7 @@ export async function relayStatus(sessionId: string): Promise<number> {
   });
   if (!found.ok || found.value === null) {
     process.stderr.write(
-      `xmsg: acceptance unknown relay_session_id=${sessionId}; transcript missing, ambiguous, unreadable or exceeds 16 MiB; do not resend without checking\n`,
+      `agx msg: acceptance unknown relay_session_id=${sessionId}; transcript missing, ambiguous, unreadable or exceeds 16 MiB; do not resend without checking\n`,
     );
     return 4;
   }
@@ -101,7 +101,7 @@ export async function relayStatus(sessionId: string): Promise<number> {
     const frame = jsonOf(Frame).safeParse(line);
     if (!frame.success) {
       process.stderr.write(
-        `xmsg: acceptance unknown relay_session_id=${sessionId}; malformed transcript; do not resend without checking\n`,
+        `agx msg: acceptance unknown relay_session_id=${sessionId}; malformed transcript; do not resend without checking\n`,
       );
       return 4;
     }
@@ -109,7 +109,7 @@ export async function relayStatus(sessionId: string): Promise<number> {
       (frame.data.sessionId ?? frame.data.session_id ?? sessionId) !== sessionId
     ) {
       process.stderr.write(
-        `xmsg: acceptance unknown relay_session_id=${sessionId}; transcript session mismatch; do not resend without checking\n`,
+        `agx msg: acceptance unknown relay_session_id=${sessionId}; transcript session mismatch; do not resend without checking\n`,
       );
       return 4;
     }
@@ -130,16 +130,16 @@ export async function relayStatus(sessionId: string): Promise<number> {
     message === undefined ? undefined : claudeReceipt(output, message);
   if (receipt?.accepted === true) {
     process.stdout.write(
-      `xmsg: accepted relay_session_id=${sessionId} msg_id=${receipt.msgId}\n`,
+      `agx msg: accepted relay_session_id=${sessionId} msg_id=${receipt.msgId}\n`,
     );
     return 0;
   }
   if (receipt?.accepted === false) {
-    process.stderr.write(`xmsg: rejected relay_session_id=${sessionId}\n`);
+    process.stderr.write(`agx msg: rejected relay_session_id=${sessionId}\n`);
     return 1;
   }
   process.stderr.write(
-    `xmsg: acceptance unknown relay_session_id=${sessionId} msg_id=${JSON.stringify(evidence.msgIds)}; no confirmed SendMessage tool_result; do not resend without checking\n`,
+    `agx msg: acceptance unknown relay_session_id=${sessionId} msg_id=${JSON.stringify(evidence.msgIds)}; no confirmed SendMessage tool_result; do not resend without checking\n`,
   );
   return 4;
 }

@@ -18,9 +18,9 @@
     "agx-ws": "tools/agx-ws/src/ws.ts",
     "agx-ticket": "tools/agx-ticket/src/tkt.ts",
     "agx-status": "tools/agx-status/src/status.ts",
+    "agx-msg": "tools/xmsg/src/xmsg.ts",
     "xmsg": "tools/xmsg/src/xmsg.ts",
-    "jex": "tools/jex/src/jex.ts",
-    "agx-msg": "tools/xmsg/src/xmsg.ts"
+    "jex": "tools/jex/src/jex.ts"
   },
   "scripts": {},
   "name": "agx",

@@ -28,14 +28,14 @@ function explicitSender(value: string): string | undefined {
 
 function unknown(reason: string, output = "", relaySessionId?: string): number {
   process.stderr.write(
-    `xmsg: acceptance unknown (${reason}); do not resend without checking\n`,
+    `agx msg: acceptance unknown (${reason}); do not resend without checking\n`,
   );
   if (relaySessionId !== undefined) {
     const evidence = relayEvidence(output);
     const session = evidence.sessionId ?? relaySessionId;
     process.stderr.write(
-      `xmsg: evidence: msg_id=${JSON.stringify(evidence.msgIds)} relay_session_id=${JSON.stringify(session)}\n` +
-        `xmsg: check before any resend: ${relayCheckCommand(session)}\n`,
+      `agx msg: evidence: msg_id=${JSON.stringify(evidence.msgIds)} relay_session_id=${JSON.stringify(session)}\n` +
+        `agx msg: check before any resend: ${relayCheckCommand(session)}\n`,
     );
   }
   return 4;
@@ -96,7 +96,7 @@ async function send(
   );
   if (!spawned.ok) {
     process.stderr.write(
-      `xmsg: transport unreachable: cannot start ${kind}: ${errorMessage(spawned.error)}\n`,
+      `agx msg: transport unreachable: cannot start ${kind}: ${errorMessage(spawned.error)}\n`,
     );
     return 3;
   }
@@ -112,7 +112,7 @@ async function send(
     const captured = await attempt(() => Bun.write(capturePath, output));
     if (!captured.ok)
       process.stderr.write(
-        `xmsg: relay capture failed: ${errorMessage(captured.error)}\n`,
+        `agx msg: relay capture failed: ${errorMessage(captured.error)}\n`,
       );
   }
   if (timeout.aborted)
@@ -120,12 +120,12 @@ async function send(
   if (kind === "codex") {
     if (code !== 0) {
       process.stderr.write(
-        `xmsg: codex transport rejected the request (exit ${code})\n`,
+        `agx msg: codex transport rejected the request (exit ${code})\n`,
       );
       return 1;
     }
     process.stdout.write(
-      output === "" ? `xmsg: accepted for codex:${id}\n` : output,
+      output === "" ? `agx msg: accepted for codex:${id}\n` : output,
     );
     return 0;
   }
@@ -138,16 +138,16 @@ async function send(
     );
   if (receipt?.accepted === "no-send") {
     process.stderr.write(
-      `xmsg: no SendMessage attempted; Claude relay step failed: ${receipt.step} for claude:${JSON.stringify(id)} (process exit 0)\n` +
-        `xmsg: evidence: ${receipt.evidence}\n` +
+      `agx msg: no SendMessage attempted; Claude relay step failed: ${receipt.step} for claude:${JSON.stringify(id)} (process exit 0)\n` +
+        `agx msg: evidence: ${receipt.evidence}\n` +
         (receipt.step === "target resolution / SendMessage invocation"
-          ? "xmsg: ListAgents completed but the relay did not select and send to a unique peer. Session UUIDs from claude agents --json may not appear in ListAgents. Verify the intended peer's exact native name with ListAgents in Claude; if uniquely identified, use xmsg send --to 'claude:<exact-native-name>'. Do not guess from a similar name.\n"
-          : "xmsg: inspect Claude's tool availability and permissions for ListAgents and SendMessage; run ListAgents in Claude to check the intended peer before trying again.\n"),
+          ? "agx msg: ListAgents completed but the relay did not select and send to a unique peer. Session UUIDs from claude agents --json may not appear in ListAgents. Verify the intended peer's exact native name with ListAgents in Claude; if uniquely identified, use agx msg send --to 'claude:<exact-native-name>'. Do not guess from a similar name.\n"
+          : "agx msg: inspect Claude's tool availability and permissions for ListAgents and SendMessage; run ListAgents in Claude to check the intended peer before trying again.\n"),
     );
     return 3;
   }
   if (receipt?.accepted === false) {
-    process.stderr.write("xmsg: SendMessage rejected the request\n");
+    process.stderr.write("agx msg: SendMessage rejected the request\n");
     return 1;
   }
   if (receipt === undefined)
@@ -157,22 +157,24 @@ async function send(
       relaySessionId,
     );
   process.stdout.write(
-    `xmsg: accepted for claude:${id} msg_id=${receipt.msgId}\n`,
+    `agx msg: accepted for claude:${id} msg_id=${receipt.msgId}\n`,
   );
   return 0;
 }
 
 async function main(): Promise<number> {
   const argv = Bun.argv.slice(2);
-  const parse = standardCli(cli, packageJson, () => [...argv]);
+  const parse = standardCli(cli, { version: packageJson.version }, () => [
+    ...argv,
+  ]);
   const parsed = await attempt(() =>
     parse({
-      name: "xmsg",
+      name: "agx msg",
       parameters: ["[action]"],
       strictFlags: true,
       ignoreArgv(type, flag) {
         if (type !== "unknown-flag") return;
-        process.stderr.write(`xmsg: unknown flag ${flag}\n`);
+        process.stderr.write(`agx msg: unknown flag ${flag}\n`);
         process.exit(2);
       },
       flags: {
@@ -207,12 +209,12 @@ async function main(): Promise<number> {
       },
       help: {
         description:
-          "List recipients with xmsg list [--json], send once with xmsg send, or inspect a Claude relay with xmsg status --relay <session-UUID>. List exits 0 complete, 3 incomplete. Send/status exit: 0 accepted, 1 rejected, 2 usage, 3 unreachable, 4 acceptance unknown.",
+          "List recipients with agx msg list [--json], send once with agx msg send, or inspect a Claude relay with agx msg status --relay <session-UUID>. List exits 0 complete, 3 incomplete. Send/status exit: 0 accepted, 1 rejected, 2 usage, 3 unreachable, 4 acceptance unknown.",
       },
     }),
   );
   if (!parsed.ok) {
-    process.stderr.write(`xmsg: ${errorMessage(parsed.error)}\n`);
+    process.stderr.write(`agx msg: ${errorMessage(parsed.error)}\n`);
     return 2;
   }
   const args = parsed.value;
@@ -226,7 +228,9 @@ async function main(): Promise<number> {
       args.flags.message !== undefined ||
       args.flags.json !== undefined
     ) {
-      process.stderr.write("xmsg: usage: xmsg status --relay <session-UUID>\n");
+      process.stderr.write(
+        "agx msg: usage: agx msg status --relay <session-UUID>\n",
+      );
       return 2;
     }
     return relayStatus(session);
@@ -243,7 +247,7 @@ async function main(): Promise<number> {
       args.flags.timeoutMs > 2_147_483_647
     ) {
       process.stderr.write(
-        "xmsg: usage: xmsg list [--json] [--timeout-ms N]\n",
+        "agx msg: usage: agx msg list [--json] [--timeout-ms N]\n",
       );
       return 2;
     }
@@ -271,7 +275,7 @@ async function main(): Promise<number> {
     timeoutMs > 2_147_483_647
   ) {
     process.stderr.write(
-      "xmsg: usage: xmsg send --to [codex:|claude:]<UUID|UUID-prefix|exact-name> --message TEXT [--from backend:<full-session-UUID>] [--timeout-ms N]\n",
+      "agx msg: usage: agx msg send --to [codex:|claude:]<UUID|UUID-prefix|exact-name> --message TEXT [--from backend:<full-session-UUID>] [--timeout-ms N]\n",
     );
     return 2;
   }
@@ -281,7 +285,7 @@ async function main(): Promise<number> {
       : explicitSender(args.flags.from);
   if (sender === undefined) {
     process.stderr.write(
-      "xmsg: invalid --from; use codex:<full-session-UUID> or claude:<full-session-UUID> (no prefixes or names)\n",
+      "agx msg: invalid --from; use codex:<full-session-UUID> or claude:<full-session-UUID> (no prefixes or names)\n",
     );
     return 2;
   }
@@ -305,7 +309,7 @@ async function main(): Promise<number> {
       inventories.map((inventory) => inventory.evidence),
     );
     if (!resolution.ok) {
-      process.stderr.write(`xmsg: ${resolution.reason}\n`);
+      process.stderr.write(`agx msg: ${resolution.reason}\n`);
       process.stderr.write(
         resolution.candidates
           .toSorted((a, b) => a.address.localeCompare(b.address))
@@ -331,7 +335,7 @@ async function main(): Promise<number> {
       evidence,
     );
     if (!resolution.ok) {
-      process.stderr.write(`xmsg: ${resolution.reason}\n`);
+      process.stderr.write(`agx msg: ${resolution.reason}\n`);
       process.stderr.write(
         resolution.candidates
           .toSorted((a, b) => a.address.localeCompare(b.address))
@@ -354,7 +358,7 @@ async function main(): Promise<number> {
       claudeSnapshot,
     );
     if (!resolved.ok) {
-      process.stderr.write(`xmsg: ${resolved.reason}\n`);
+      process.stderr.write(`agx msg: ${resolved.reason}\n`);
       return 3;
     }
     relayTarget = resolved.name;
@@ -362,7 +366,7 @@ async function main(): Promise<number> {
   const remaining = Math.floor(deadline - performance.now());
   if (remaining < 1) {
     process.stderr.write(
-      "xmsg: discovery exhausted the send deadline; no send attempted\n",
+      "agx msg: discovery exhausted the send deadline; no send attempted\n",
     );
     return 3;
   }

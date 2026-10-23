@@ -8,6 +8,9 @@ A PATH dispatcher for five tools:
 - `agx status ARGS` → `agx-status ARGS`
 - `agx msg ARGS` → `agx-msg ARGS`
 
+`agx msg` is the canonical messaging command; `xmsg` aliases the same executable.
+Help, version output, and diagnostics use `agx msg`.
+
 Arguments and child exit status pass through. `agx -V` prints the suite version only.
 `agx -h` takes each tool’s one-line description from its own PATH help.
 

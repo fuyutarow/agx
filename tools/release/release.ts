@@ -1,4 +1,4 @@
-import { mkdir, rm, copyFile } from "node:fs/promises";
+import { mkdir, rm, copyFile, link } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { err, ok } from "neverthrow";
 import { jsonOf, z } from "../zod.ts";
@@ -45,8 +45,19 @@ export async function packageInfo(pkg: string, root = repository) {
   );
   if (!parsed.success)
     return err(`Invalid package.json for ${pkg}: ${parsed.error.message}`);
-  const commands = { ...parsed.data.bin };
-  if (pkg === "xmsg") commands["agx-msg"] = commands.xmsg ?? "src/xmsg.ts";
+  const commands =
+    pkg === "xmsg"
+      ? {
+          "agx-msg":
+            parsed.data.bin?.["agx-msg"] ??
+            parsed.data.bin?.xmsg ??
+            "src/xmsg.ts",
+          xmsg:
+            parsed.data.bin?.["agx-msg"] ??
+            parsed.data.bin?.xmsg ??
+            "src/xmsg.ts",
+        }
+      : { ...parsed.data.bin };
   return ok({
     pkg,
     dir,
@@ -109,7 +120,7 @@ async function buildMember(
     );
     const existing = compiled.get(entry);
     if (existing !== undefined) {
-      await copyFile(existing, outfile);
+      await link(existing, outfile);
       continue;
     }
     const args = [

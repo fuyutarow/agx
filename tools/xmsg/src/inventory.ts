@@ -378,7 +378,7 @@ export async function listRecipients(
     backends.push({ vendor, source, availability, detail });
     if (availability === "unavailable")
       process.stderr.write(
-        `xmsg: ${vendor} discovery unavailable: ${detail}\n`,
+        `agx msg: ${vendor} discovery unavailable: ${detail}\n`,
       );
   }
   const snapshot = [...unique.values()].toSorted((a, b) =>
