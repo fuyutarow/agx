@@ -6,23 +6,32 @@ import { stat, mkdtemp, mkdir, rm, symlink } from "node:fs/promises";
 import { stripVTControlCharacters } from "node:util";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { attempt, errorMessage } from "../../shared/src/attempt.ts";
+import {
+  attempt,
+  errorMessage,
+  type Attempt,
+} from "../../shared/src/attempt.ts";
+import { listAgxRepos } from "../../shared/src/agx-config.ts";
 import { jsonOf, z } from "../../shared/src/zod.ts";
-import shippedConsumers from "../consumers.toml" with { type: "toml" };
+type RegisteredRepo = Extract<
+  Awaited<ReturnType<typeof listAgxRepos>>,
+  { ok: true }
+>["value"][number];
+export type Consumer = { name: string; root: string } & NonNullable<
+  RegisteredRepo["config"]["usehooks"]
+>;
 
-const RegistrySchema = z.object({
-  consumers: z.array(
-    z.object({
-      name: z.string().min(1),
-      root: z.string().min(1),
-      hooks: z.string().min(1),
-      link_task: z.string().min(1),
-      link_path: z.string().min(1),
-      command: z.array(z.string()).min(1),
-    }),
-  ),
-});
-export type Consumer = z.output<typeof RegistrySchema>["consumers"][number];
+/** Only repositories declaring a usehooks table participate in the consumer check. */
+export async function resolveUsehooksConsumers(): Promise<Attempt<Consumer[]>> {
+  const repos = await listAgxRepos();
+  if (!repos.ok) return repos;
+  return {
+    ok: true,
+    value: repos.value.flatMap(({ name, root, config }) =>
+      config.usehooks === undefined ? [] : [{ name, root, ...config.usehooks }],
+    ),
+  };
+}
 type Write = (text: string) => void;
 const stdout: Write = (text) => void process.stdout.write(text);
 
@@ -153,7 +162,7 @@ export async function checkConsumer(
   );
   if (!(await exists(root))) {
     write(
-      `SKIP ${consumer.name}: consumer not present on this host (${root}); run on r99-u26\n`,
+      `SKIP ${consumer.name}: consumer not present on this host (${root}); run on a host with this checkout\n`,
     );
     return 0;
   }
@@ -389,9 +398,11 @@ export async function materializeBase(
 }
 
 export async function main(): Promise<number> {
-  const parsed = RegistrySchema.safeParse(shippedConsumers);
-  if (!parsed.success) {
-    process.stderr.write(`FAIL consumer registry: ${parsed.error.message}\n`);
+  const consumers = await resolveUsehooksConsumers();
+  if (!consumers.ok) {
+    process.stderr.write(
+      `FAIL consumer registry: ${errorMessage(consumers.error)}\n`,
+    );
     return 1;
   }
   const repo = resolve(process.env.USEHOOKS_REPO_ROOT ?? process.cwd());
@@ -411,7 +422,7 @@ export async function main(): Promise<number> {
     return 1;
   }
   stdout(`usehooks:consumers: base ${revision}\n`);
-  return await checkConsumers(parsed.data.consumers, workspace, base);
+  return await checkConsumers(consumers.value, workspace, base);
 }
 
 if (import.meta.main)

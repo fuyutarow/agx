@@ -41,6 +41,10 @@ export function verificationEnvironment(
   onFailure?: (reason: string) => void,
   timeoutMs = MISE_ENV_TIMEOUT_MS,
 ): NodeJS.ProcessEnv | InspectionUnavailable {
+  // A dispatched unit already received its complete command environment.
+  // Repository mise configuration must not replace the dispatchers command lookup.
+  if (source.AGX_WORKER_PATH_SOURCE === "dispatcher")
+    return { ...source, ...temp, PATH: source.PATH };
   const home = source.HOME;
   const paths = (source.PATH ?? "/usr/bin:/bin").split(":");
   if (home !== undefined) {

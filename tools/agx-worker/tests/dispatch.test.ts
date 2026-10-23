@@ -77,6 +77,16 @@ function fixture() {
       "console.log(JSON.stringify({ path: process.env.DISPATCH_ROSTER_PATH ?? null, selected: loaded.value.default, claude: process.env.CLAUDE_CODE_SESSION_ID, codex: process.env.CODEX_SESSION_ID }));",
     ].join("\n"),
   );
+  const entry = join(root, "dispatcher.ts");
+  writeFileSync(
+    entry,
+    [
+      `import { dispatchMain } from ${JSON.stringify(fileURLToPath(new URL("../src/dispatch.ts", import.meta.url)))};`,
+      "const args = process.argv.slice(2);",
+      'if (args[0] === "dispatch") await dispatchMain(args.slice(1));',
+      'else { const child = Bun.spawn([process.env.FAKE_WORKER_COMMAND!, ...args], { stdout: "inherit", stderr: "inherit", timeout: 65_000 }); process.exitCode = await child.exited; }',
+    ].join("\n"),
+  );
   const systemdRunner = join(root, "fake-systemd-run.ts");
   writeFileSync(records, "[]\n");
   writeFileSync(
@@ -180,6 +190,7 @@ function fixture() {
     DISPATCH_ROSTER_PATH: undefined,
     CLAUDE_CODE_SESSION_ID: "fixture-claude",
     CODEX_SESSION_ID: "fixture-codex",
+    FAKE_WORKER_COMMAND: join(bin, "agx-worker"),
     FAKE_ROSTER_SCRIPT: rosterCheck,
     FAKE_CHILD_ROSTER: join(root, "child-roster.json"),
     FAKE_PREFLIGHT_ROSTER: join(root, "preflight-roster.json"),
@@ -200,6 +211,7 @@ function fixture() {
     records,
     unitArgs,
     bindingFile,
+    entry,
     wsArgs,
     env,
   };
@@ -207,7 +219,7 @@ function fixture() {
 
 async function invoke(f: ReturnType<typeof fixture>, ...args: string[]) {
   const child = Bun.spawn(
-    [process.execPath, ENTRY, "dispatch", f.ticket, ...args],
+    [process.execPath, f.entry, "dispatch", f.ticket, ...args],
     {
       cwd: f.env.FAKE_CALLER_CWD ?? f.repo,
       env: f.env,
@@ -659,7 +671,7 @@ if (Bun.argv[2] === "check") {
 process.exit(1);
 `,
   );
-  const child = Bun.spawn([process.execPath, ENTRY, "dispatch", f.ticket], {
+  const child = Bun.spawn([process.execPath, f.entry, "dispatch", f.ticket], {
     cwd: f.repo,
     env: f.env,
     stdout: "pipe",
@@ -685,6 +697,9 @@ test.each([
   "real jj continued workspace %s agrees with check (missing premise=%s)",
   async (workspaceName, missingPremise) => {
     const f = fixture();
+    f.env.AGX_CONFIG = fileURLToPath(
+      new URL("../src/roster/policy.example.toml", import.meta.url),
+    );
     f.env.AGX_DISPATCH_WAIT_MS = "1000";
     f.env.FAKE_INVOKE_TIMEOUT_MS = "45000";
     const jj = Bun.which("jj");
@@ -918,7 +933,7 @@ if (Bun.argv[2] === "check") {
 process.exit(1);
 `,
   );
-  const child = Bun.spawn([process.execPath, ENTRY, "dispatch", f.ticket], {
+  const child = Bun.spawn([process.execPath, f.entry, "dispatch", f.ticket], {
     cwd: f.repo,
     env: f.env,
     stdout: "pipe",
@@ -931,7 +946,9 @@ process.exit(1);
   ]);
   expect(code, err).toBe(75);
   expect(err).toContain("DISPATCH_CHECK_TIMEOUT_MS=60000ms");
-  expect(err).toContain('"agx-worker","check"');
+  expect(err).toContain(
+    JSON.stringify([process.execPath, f.entry, "check"]).slice(0, -1),
+  );
   expect(err).toContain(`cwd=${f.repo}`);
   expect(err).not.toContain("preflight failed");
   expect(err).not.toContain("late check verdict");
@@ -970,3 +987,75 @@ test("dispatch inspection helpers distinguish expiry from a completed failure", 
   expect(completed.code).toBe(2);
   expect(completed.err).toContain("completed refusal");
 });
+
+test("source dispatch pins bun, absolute source entry and dispatcher PATH", async () => {
+  const f = fixture();
+  const result = await invoke(f);
+  expect(result.exitCode, result.stderr).toBe(0);
+  const args = (await Bun.file(f.unitArgs).text()).trimEnd().split("\n");
+  expect(args.slice(args.indexOf("--") + 1, args.indexOf("--") + 4)).toEqual([
+    process.execPath,
+    f.entry,
+    "run",
+  ]);
+  expect(args).toContain(`--setenv=PATH=${f.env.PATH}`);
+  expect(args).toContain("--setenv=AGX_WORKER_PATH_SOURCE=dispatcher");
+});
+
+test("compiled dispatcher outside manager PATH pins its own executable", async () => {
+  const f = fixture();
+  const executable = join(f.root, "mise install", "bin", "agx-worker");
+  const built = Bun.spawnSync(
+    [process.execPath, "build", "--compile", f.entry, "--outfile", executable],
+    {
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 30_000,
+    },
+  );
+  expect(built.exitCode, built.stderr.toString()).toBe(0);
+  const child = Bun.spawn([executable, "dispatch", f.ticket], {
+    cwd: f.repo,
+    env: f.env,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 5000,
+  });
+  const [exit, out, err] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+  expect(exit, err).toBe(0);
+  expect(out.trim()).not.toBe("");
+  const args = (await Bun.file(f.unitArgs).text()).trimEnd().split("\n");
+  expect(args.slice(args.indexOf("--") + 1, args.indexOf("--") + 3)).toEqual([
+    executable,
+    "run",
+  ]);
+  expect(args).toContain(`--setenv=PATH=${f.env.PATH}`);
+}, 40_000);
+
+test.each([undefined, ""])(
+  "dispatch refuses missing PATH (%s) in one line",
+  async (path) => {
+    const f = fixture();
+    // Run a source wrapper so the actual stderr and exit contract is exercised.
+    const probe = join(f.root, "missing-path.ts");
+    writeFileSync(
+      probe,
+      `import { dispatch } from ${JSON.stringify(fileURLToPath(new URL("../src/dispatch.ts", import.meta.url)))}; process.exitCode = await dispatch({ ticketPath: ${JSON.stringify(f.ticket)}, env: ${JSON.stringify(path === undefined ? {} : { PATH: path })} });`,
+    );
+    const result = Bun.spawnSync([process.execPath, probe], {
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 5000,
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stdout.toString()).toBe("");
+    expect(result.stderr.toString()).toBe(
+      "agx worker dispatch: dispatcher PATH is missing; set PATH before dispatch\n",
+    );
+    expect(await Bun.file(f.unitArgs).exists()).toBe(false);
+  },
+);

@@ -78,11 +78,15 @@ const fixture = async (ticketName = "pin") => {
     ticket,
     ticketText("first prose").replace('name = "pin"', `name = "${ticketName}"`),
   );
-  const resume = (id: string) =>
+  const resume = (
+    id: string,
+    overrides: NodeJS.ProcessEnv = {},
+    entry = "tools/agx-worker/src/next/cli.ts",
+    compiled = false,
+  ) =>
     Bun.spawnSync(
       [
-        process.execPath,
-        "tools/agx-worker/src/next/cli.ts",
+        ...(compiled ? [entry] : [process.execPath, entry]),
         "run",
         ticket,
         "--cd",
@@ -106,6 +110,7 @@ const fixture = async (ticketName = "pin") => {
             import.meta.url,
           ).pathname,
           AGX_DISPATCHER_SESSION: "dispatcher",
+          ...overrides,
         },
         timeout: 10_000,
       },
@@ -220,3 +225,121 @@ describe("agx worker run --continue pins the prior row", () => {
     expect(brief).not.toContain("first prose");
   }, 30000);
 });
+
+test.each([false, true])(
+  "dispatched run (compiled=%s) re-enters itself and verification finds xmsg on dispatcher PATH",
+  async (compiled) => {
+    const f = await fixture();
+    const bin = join(f.root, "mise", "bin");
+    mkdirSync(bin, { recursive: true });
+    const xmsg = join(bin, "xmsg");
+    await Bun.write(xmsg, "#!/bin/sh\nprintf 'dispatcher xmsg\\n'\n");
+    const { chmodSync } = await import("node:fs");
+    chmodSync(xmsg, 0o755);
+    const mise = join(bin, "mise");
+    await Bun.write(
+      mise,
+      "#!/bin/sh\necho 'unexpected mise environment resolution' >&2\nexit 1\n",
+    );
+    chmodSync(mise, 0o755);
+    // Any accidental bare-name worker lookup fails instead of using the running entry.
+    const otherWorker = join(bin, "agx-worker");
+    await Bun.write(otherWorker, "#!/bin/sh\nexit 99\n");
+    chmodSync(otherWorker, 0o755);
+    const entry = join(f.root, "running-worker.ts");
+    await Bun.write(
+      entry,
+      `
+if (process.argv[2] === "--internal-codex") {
+  process.stdout.write(JSON.stringify({ exit: 0, report: { summary: "self worker", changes: [], checks: [], for_coordinator: [], open: [] } }) + "\\n");
+} else {
+  const { run } = await import(${JSON.stringify(new URL("../../src/next/run.ts", import.meta.url).pathname)});
+  const { flushRunPublications } = await import(${JSON.stringify(new URL("../../src/next/store.ts", import.meta.url).pathname)});
+  process.exitCode = await run({ ticket: process.argv[3], cd: ${JSON.stringify(f.root)}, sandbox: "read-only", continue: "codex-run" });
+  await flushRunPublications();
+}
+`,
+    );
+    writeFileSync(
+      f.ticket,
+      ticketText("test dispatcher lookup").replace(
+        "verify = []",
+        'verify = ["xmsg"]',
+      ),
+    );
+    let executable = entry;
+    if (compiled) {
+      executable = join(f.root, "compiled-worker");
+      const built = Bun.spawnSync(
+        [
+          process.execPath,
+          "build",
+          "--compile",
+          entry,
+          "--outfile",
+          executable,
+        ],
+        { stdout: "pipe", stderr: "pipe", timeout: 30_000 },
+      );
+      expect(built.exitCode, built.stderr.toString()).toBe(0);
+    }
+    const path = `${bin}:${process.env.PATH}`;
+    const result = f.resume(
+      "codex-run",
+      {
+        AGX_WORKER_BIN: undefined,
+        AGX_WORKER_COMMAND: undefined,
+        AGX_WORKER_PATH_SOURCE: "dispatcher",
+        PATH: path,
+      },
+      executable,
+      compiled,
+    );
+    expect(result.exitCode, result.stderr.toString()).toBe(0);
+    const receiptResult = jsonOf(
+      z.looseObject({
+        report_path: z.string(),
+        execution: z.object({
+          executable_path: z.string(),
+          executable_argv: z.array(z.string()),
+          path_source: z.string(),
+        }),
+      }),
+    ).safeParse(result.stdout.toString().trim());
+    expect(receiptResult.success).toBe(true);
+    if (!receiptResult.success) return;
+    const receipt = receiptResult.data;
+    expect(receipt.execution).toEqual({
+      executable_path: compiled ? executable : process.execPath,
+      executable_argv: compiled ? [executable] : [process.execPath, entry],
+      path_source: "PATH from dispatcher",
+    });
+    const report = jsonOf(z.looseObject({ execution: z.unknown() })).safeParse(
+      await Bun.file(receipt.report_path).text(),
+    );
+    expect(report.success).toBe(true);
+    if (!report.success) return;
+    expect(report.data.execution).toEqual(receipt.execution);
+    const ended = jsonOf(
+      z.looseObject({
+        kind: z.string(),
+        verify: z
+          .array(z.looseObject({ exit: z.number(), log_path: z.string() }))
+          .optional(),
+      }),
+    );
+    const results = readFileSync(join(f.state, "records.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .flatMap((line) => {
+        const parsed = ended.safeParse(line);
+        return parsed.success ? [parsed.data] : [];
+      });
+    const verification = results.findLast((event) => event.kind === "ended")
+      ?.verify?.[0];
+    expect(verification?.exit).toBe(0);
+    expect(await Bun.file(verification!.log_path).text()).toContain(
+      "dispatcher xmsg",
+    );
+  },
+);

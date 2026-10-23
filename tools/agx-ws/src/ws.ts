@@ -234,7 +234,7 @@ const gcCommand = command(
       },
       all: {
         type: Boolean,
-        description: "visit every consumer registry repo plus dotfiles",
+        description: "visit every repository registered by an agx L2 file",
       },
       includeUnrecorded: {
         type: Boolean,

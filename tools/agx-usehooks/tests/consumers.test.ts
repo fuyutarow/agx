@@ -193,3 +193,49 @@ test("an untouched agx-usehooks tree is SKIP; a missing consumer is SKIP", async
   ).toBe(0);
   expect(lines.join("")).toContain("SKIP fixture: consumer not present");
 });
+
+test("consumer resolution selects exactly L2 usehooks tables and propagates strict errors", async () => {
+  const { resolveUsehooksConsumers } =
+    await import("../src/check-consumers.ts");
+  const root = mkdtempSync(join(tmpdir(), "usehooks-l2-"));
+  temporary.push(root);
+  const directory = join(root, "agx/repos");
+  mkdirSync(directory, { recursive: true });
+  const originalXdg = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = root;
+  using _restore = {
+    [Symbol.dispose]: () => {
+      if (originalXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = originalXdg;
+    },
+  };
+  expect(await resolveUsehooksConsumers()).toEqual({ ok: true, value: [] });
+  writeFileSync(
+    join(directory, "plain.toml"),
+    `schema = 1\nroot = ${JSON.stringify(join(root, "plain"))}\n`,
+  );
+  const consumer = {
+    name: "example",
+    root: join(root, "example"),
+    hooks: ".agents/hooks",
+    link_task: "link:hooks",
+    link_path: "node_modules/agx-usehooks",
+    command: ["check", "{root}"],
+  };
+  const path = join(directory, "example.toml");
+  writeFileSync(
+    path,
+    `schema = 1\nroot = ${JSON.stringify(consumer.root)}\n[usehooks]\nhooks = ".agents/hooks"\nlink_task = "link:hooks"\nlink_path = "node_modules/agx-usehooks"\ncommand = ["check", "{root}"]\n`,
+  );
+  expect(await resolveUsehooksConsumers()).toEqual({
+    ok: true,
+    value: [consumer],
+  });
+  writeFileSync(
+    path,
+    `schema = 1\nroot = ${JSON.stringify(consumer.root)}\n[usehooks]\nunknown = true\n`,
+  );
+  const invalid = await resolveUsehooksConsumers();
+  expect(invalid.ok).toBe(false);
+  if (!invalid.ok) expect(String(invalid.error)).toContain(path);
+});

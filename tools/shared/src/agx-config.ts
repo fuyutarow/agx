@@ -47,6 +47,14 @@ const LocalConfig = z.strictObject({
   tickets: z.string().trim().min(1).optional(),
   ws: LocalWorkspaceConfig.optional(),
   verify: VerifyConfig.optional(),
+  usehooks: z
+    .strictObject({
+      hooks: z.string().min(1),
+      link_task: z.string().min(1),
+      link_path: z.string().min(1),
+      command: z.array(z.string()).min(1),
+    })
+    .optional(),
   root: z
     .string()
     .refine(isAbsolute, "root must be an absolute main-checkout path"),
@@ -175,9 +183,16 @@ const retired = (root: string) =>
     `${join(root, ".agx.toml")} is retired; rename it: mv .agx.toml agx.toml (machine-local absolute paths go in $XDG_CONFIG_HOME/agx/repos/<name>.toml (default ~/.config/agx/repos/<name>.toml) with root = ${JSON.stringify(root)})`,
   );
 
-async function localConfig(
-  root: string,
-): Promise<Attempt<z.output<typeof LocalConfig> | undefined>> {
+/** Registered repositories are exactly the files in agx's machine-local L2 directory. */
+export async function listAgxRepos(): Promise<
+  Attempt<
+    Array<{
+      name: string;
+      root: string;
+      config: z.output<typeof LocalConfig>;
+    }>
+  >
+> {
   const directory = join(
     process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"),
     "agx/repos",
@@ -185,8 +200,12 @@ async function localConfig(
   const entries = await attempt(() =>
     readdir(directory, { withFileTypes: true }),
   );
-  if (!entries.ok) return missing(entries.error) ? good(undefined) : entries;
-  let selected: z.output<typeof LocalConfig> | undefined;
+  if (!entries.ok) return missing(entries.error) ? good([]) : entries;
+  const repos: Array<{
+    name: string;
+    root: string;
+    config: z.output<typeof LocalConfig>;
+  }> = [];
   for (const entry of entries.value.toSorted((a, b) =>
     a.name.localeCompare(b.name),
   )) {
@@ -203,14 +222,25 @@ async function localConfig(
       return failure(`${path}: invalid TOML: ${errorMessage(raw.error)}`);
     const parsed = LocalConfig.safeParse(raw.value);
     if (!parsed.success) return failure(`${path}: ${parsed.error.message}`);
-    if (parsed.data.root !== root) continue;
-    if (selected !== undefined)
+    if (repos.some((repo) => repo.root === parsed.data.root))
       return failure(
-        `${directory}: two files claim root ${root}; keep one repository override`,
+        `${directory}: two files claim root ${parsed.data.root}; keep one repository override`,
       );
-    selected = parsed.data;
+    repos.push({
+      name: entry.name.slice(0, -5),
+      root: parsed.data.root,
+      config: parsed.data,
+    });
   }
-  return good(selected);
+  return good(repos);
+}
+
+async function localConfig(
+  root: string,
+): Promise<Attempt<z.output<typeof LocalConfig> | undefined>> {
+  const repos = await listAgxRepos();
+  if (!repos.ok) return repos;
+  return good(repos.value.find((repo) => repo.root === root)?.config);
 }
 
 async function resolveConfig(repoRoot: string, options: { vcs?: Vcs }) {

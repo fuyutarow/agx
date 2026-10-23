@@ -1711,24 +1711,27 @@ describe("gc integration branches", () => {
     expect(await Bun.file(join(dir, "a.txt")).exists()).toBe(true);
   });
 
-  test("all visits registry consumers, pending entries and dotfiles once, inside an isolated registry", async () => {
-    const dotfiles = await repo('trunk = "main"\n');
+  test("all visits exactly the L2 repositories once in an isolated config", async () => {
+    const primary = await repo('trunk = "main"\n');
     const consumer = await repo('trunk = "main"\n');
     const pending = await repo('trunk = "main"\n');
-    for (const path of [dotfiles, consumer, pending])
+    for (const path of [primary, consumer, pending])
       expect((await ws(["add", "all"], path)).code).toBe(0);
-    await Bun.write(
-      join(dotfiles, "presets/consumers.toml"),
-      `[[consumers]]\nroot = ${JSON.stringify(consumer)}\n[[consumers]]\nroot = ${JSON.stringify(wsDir(consumer, "all"))}\n[[pending]]\nroot = ${JSON.stringify(pending)}\n`,
-    );
+    const configHome = join(scratch, "all-config");
+    for (const [index, path] of [primary, consumer, pending].entries())
+      await Bun.write(
+        join(configHome, "agx/repos", `repo-${index}.toml`),
+        `schema = 1\nroot = ${JSON.stringify(path)}\n`,
+      );
     const module = join(import.meta.dir, "../src/workspace.ts");
     const result = await run(
       [
         "bun",
         "--eval",
-        `import {gcAll} from ${JSON.stringify(module)};const r=await gcAll({dryRun:true,includeUnrecorded:true,legacy:true},${JSON.stringify(dotfiles)});process.stdout.write(JSON.stringify(r));`,
+        `import {gcAll} from ${JSON.stringify(module)};const r=await gcAll({dryRun:true,includeUnrecorded:true,legacy:true},${JSON.stringify(primary)});process.stdout.write(JSON.stringify(r));`,
       ],
-      dotfiles,
+      primary,
+      baseEnv({ XDG_CONFIG_HOME: configHome }),
     );
     expect(result.code, result.err).toBe(0);
     const parsed = jsonOf(
@@ -1762,7 +1765,7 @@ describe("gc integration branches", () => {
         value: { counts: { total: 3, unlanded: 0, collectable: 3, legacy: 0 } },
       },
     });
-    for (const path of [dotfiles, consumer, pending]) {
+    for (const path of [primary, consumer, pending]) {
       expect(
         parsed.data.value.lines.some((line) =>
           line.startsWith(`${wsDir(path, "all")}\tws\tempty\t`),
@@ -1772,10 +1775,10 @@ describe("gc integration branches", () => {
         true,
       );
     }
-    const conflict = await ws(["gc", "--all", "--repo", dotfiles], dotfiles);
+    const conflict = await ws(["gc", "--all", "--repo", primary], primary);
     expect(conflict.code).toBe(1);
     expect(conflict.err).toContain("cannot be combined");
-    const help = await ws(["gc", "--help"], dotfiles);
+    const help = await ws(["gc", "--help"], primary);
     expect(help.code).toBe(0);
     expect(help.out).toContain("only creator");
   });

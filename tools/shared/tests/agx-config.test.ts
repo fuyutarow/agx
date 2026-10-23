@@ -5,12 +5,17 @@ import {
   readFile,
   readdir,
   rm,
+  symlink,
   unlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AgxConfigError, resolveAgxConfig } from "../src/agx-config.ts";
+import {
+  AgxConfigError,
+  listAgxRepos,
+  resolveAgxConfig,
+} from "../src/agx-config.ts";
 
 const roots: string[] = [];
 const originalXdg = process.env.XDG_CONFIG_HOME;
@@ -395,4 +400,127 @@ test("config read expiry carries its named operational timeout", async () => {
     expect(String(result.error)).toContain(JSON.stringify(argv));
     expect(String(result.error)).toContain(`cwd=${f.root}`);
   }
+});
+
+async function listingFixture() {
+  const parent = await mkdtemp(join(tmpdir(), "agx-list-"));
+  roots.push(parent);
+  process.env.XDG_CONFIG_HOME = join(parent, "config");
+  const directory = join(process.env.XDG_CONFIG_HOME, "agx/repos");
+  return { parent, directory };
+}
+
+test("L2 listing is empty without its directory and names sorted files by their stems", async () => {
+  const { parent, directory } = await listingFixture();
+  expect(await listAgxRepos()).toEqual({ ok: true, value: [] });
+  await mkdir(directory, { recursive: true });
+  const first = {
+    schema: 1,
+    root: join(parent, "first"),
+    tickets: "custom",
+  } satisfies { schema: 1; root: string; tickets: string };
+  await writeFile(
+    join(directory, "zeta.toml"),
+    `schema = 1\nroot = ${JSON.stringify(first.root)}\ntickets = "custom"\n`,
+  );
+  const second = { schema: 1, root: join(parent, "second") } satisfies {
+    schema: 1;
+    root: string;
+  };
+  const target = join(parent, "target.toml");
+  await writeFile(
+    target,
+    `schema = 1\nroot = ${JSON.stringify(second.root)}\n`,
+  );
+  await symlink(target, join(directory, "alpha.toml"));
+  await writeFile(join(directory, "ignored.txt"), "invalid");
+  await mkdir(join(directory, "ignored.toml"));
+  expect(await listAgxRepos()).toEqual({
+    ok: true,
+    value: [
+      { name: "alpha", root: second.root, config: second },
+      { name: "zeta", root: first.root, config: first },
+    ],
+  });
+});
+
+test.each([
+  'usehooks = "invalid"',
+  "[usehooks]\nunknown = true",
+  '[usehooks]\nhooks = ""\nlink_task = "link"\nlink_path = "pkg"\ncommand = ["check"]',
+  '[usehooks]\nhooks = "hooks"\nlink_task = ""\nlink_path = "pkg"\ncommand = ["check"]',
+  '[usehooks]\nhooks = "hooks"\nlink_task = "link"\nlink_path = ""\ncommand = ["check"]',
+  '[usehooks]\nhooks = "hooks"\nlink_task = "link"\nlink_path = "pkg"\ncommand = []',
+  '[usehooks]\nhooks = "hooks"\nlink_task = "link"\nlink_path = "pkg"\ncommand = [1]',
+  '[usehooks]\nhooks = "hooks"\nlink_task = "link"\nlink_path = "pkg"\ncommand = ["check"]\nextra = true',
+])(
+  "strict usehooks schema is shared by listing and local selection: %s",
+  async (table) => {
+    const { parent, directory } = await listingFixture();
+    await mkdir(directory, { recursive: true });
+    const root = join(parent, "repo");
+    await mkdir(root);
+    const path = join(directory, "example.toml");
+    await writeFile(
+      path,
+      `schema = 1\nroot = ${JSON.stringify(root)}\n${table}\n`,
+    );
+    for (const result of [
+      await listAgxRepos(),
+      await resolveAgxConfig(root, { vcs: "none" }),
+    ]) {
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toBeInstanceOf(AgxConfigError);
+        expect(String(result.error)).toContain(path);
+        expect(String(result.error)).toContain("usehooks");
+      }
+    }
+  },
+);
+
+test("listing and local selection preserve valid usehooks and report the same invalid TOML", async () => {
+  const { parent, directory } = await listingFixture();
+  await mkdir(directory, { recursive: true });
+  const root = join(parent, "repo");
+  await mkdir(root);
+  const path = join(directory, "example.toml");
+  await writeFile(
+    path,
+    `schema = 1\nroot = ${JSON.stringify(root)}\n[usehooks]\nhooks = "hooks"\nlink_task = "link"\nlink_path = "pkg"\ncommand = ["check", "{root}"]\n`,
+  );
+  const listed = await listAgxRepos();
+  expect(listed.ok).toBe(true);
+  if (listed.ok)
+    expect(listed.value[0]?.config.usehooks).toEqual({
+      hooks: "hooks",
+      link_task: "link",
+      link_path: "pkg",
+      command: ["check", "{root}"],
+    });
+  expect((await resolveAgxConfig(root, { vcs: "none" })).ok).toBe(true);
+  await writeFile(path, "schema = [");
+  const invalid = await listAgxRepos();
+  const selected = await resolveAgxConfig(root, { vcs: "none" });
+  expect(invalid.ok).toBe(false);
+  expect(selected.ok).toBe(false);
+  if (!invalid.ok && !selected.ok) {
+    expect(String(invalid.error)).toBe(String(selected.error));
+    expect(String(invalid.error)).toContain(`${path}: invalid TOML:`);
+  }
+});
+
+test("listing rejects duplicate roots and reports directory read failures", async () => {
+  const { parent, directory } = await listingFixture();
+  await mkdir(directory, { recursive: true });
+  const text = `schema = 1\nroot = ${JSON.stringify(join(parent, "repo"))}\n`;
+  await writeFile(join(directory, "one.toml"), text);
+  await writeFile(join(directory, "two.toml"), text);
+  const duplicates = await listAgxRepos();
+  expect(duplicates.ok).toBe(false);
+  if (!duplicates.ok)
+    expect(String(duplicates.error)).toContain("two files claim root");
+  await rm(directory, { recursive: true });
+  await writeFile(directory, "not a directory");
+  expect((await listAgxRepos()).ok).toBe(false);
 });

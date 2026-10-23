@@ -24,8 +24,24 @@ unavailable or empty value.
 **Semver rule:** a changed exported shape requires a major version, even during
 0.x. Adding exports without changing existing shapes is a minor version.
 
-`consumers.toml` declares consumer roots, hook scopes, commands, and their
-`link:agx-usehooks` link paths. `mise run usehooks:consumers` runs the declared consumer's
+Repositories are registered by `$XDG_CONFIG_HOME/agx/repos/<name>.toml`
+(default `~/.config/agx/repos/<name>.toml`). Each strict schema-1 L2 file declares
+an absolute `root`; its file stem supplies the repository name. Consumer checks
+select exactly the files with a `[usehooks]` table containing `hooks`, `link_task`,
+`link_path`, and a nonempty `command` array. For example:
+
+```toml
+schema = 1
+root = "/path/to/example-repo"
+
+[usehooks]
+hooks = ".agents/hooks"
+link_task = "link:agx-usehooks"
+link_path = "node_modules/agx-usehooks"
+command = ["bunx", "tsc", "--noEmit", "-p", "{root}"]
+```
+
+`bun tools/agx-usehooks/src/check-consumers.ts` runs the declared consumer's
 `bunx tsc --noEmit -p <root>`.
 The exact project command runs first, followed by a read-only hook check using a
 temporary config extending the project's config with `agx-usehooks` mapped to this
@@ -83,7 +99,7 @@ accepted environment names requires a major release, including during 0.x.
 `procRoot` defaults to `/proc` and
 may be supplied for alternate proc mounts or fixtures.
 
-Register the package once with `cd <dotfiles>/tools/agx-usehooks && bun link`.
+Register the package once with `cd <repository>/tools/agx-usehooks && bun link`.
 In the project, run `bun link agx-usehooks`, then import from `"agx-usehooks"`.
 The repo's `mise run deps` installs dependencies and links the root package's CLI bins;
 this library has no bin and needs the separate package registration above.

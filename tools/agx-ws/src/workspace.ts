@@ -23,6 +23,7 @@ import {
 import { homedir, hostname } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { projectSlug } from "../../shared/src/agent-name.ts";
+import { listAgxRepos } from "../../shared/src/agx-config.ts";
 import {
   attempt,
   errorMessage,
@@ -2068,32 +2069,15 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
   return run();
 }
 
-async function registeredRepoPaths(root: string): Promise<Attempt<string[]>> {
-  const read = await attempt(async () =>
-    Bun.TOML.parse(await Bun.file(join(root, "presets/consumers.toml")).text()),
-  );
-  if (!read.ok) return read;
-  const row = z.looseObject({ root: z.string() });
-  const registry = z
-    .looseObject({
-      consumers: z.array(row).default([]),
-      pending: z.array(row).default([]),
-    })
-    .safeParse(read.value);
-  if (!registry.success)
-    return bad(`consumer registry: ${registry.error.message}`);
-  return good([
-    ...new Set([
-      root,
-      ...registry.data.consumers.map((entry) => entry.root),
-      ...registry.data.pending.map((entry) => entry.root),
-    ]),
-  ]);
+export async function registeredRepoPaths(): Promise<Attempt<string[]>> {
+  const repos = await listAgxRepos();
+  if (!repos.ok) return repos;
+  return good(repos.value.map((repo) => repo.root));
 }
 
-async function doctorRepoPaths(root: string): Promise<Attempt<string[]>> {
+async function doctorRepoPaths(): Promise<Attempt<string[]>> {
   const workspaceHome = process.env.AGX_REPOS_ROOT;
-  if (workspaceHome === undefined) return registeredRepoPaths(root);
+  if (workspaceHome === undefined) return registeredRepoPaths();
   const entries = await readdir(workspaceHome, { withFileTypes: true }).catch(
     () => [],
   );
@@ -2116,10 +2100,10 @@ export type DoctorWorkspaceRow = {
 
 /** Read-only inventory built from the same workspaces and classifier as `agx ws gc --dry-run`. */
 export async function doctorInventory(
-  root = process.env.AGX_REGISTRY_ROOT ?? process.cwd(),
+  _root?: string,
   findingsOnly = false,
 ): Promise<Attempt<DoctorWorkspaceRow[]>> {
-  const paths = await doctorRepoPaths(root);
+  const paths = await doctorRepoPaths();
   if (!paths.ok) return paths;
   const seen = new Set<string>();
   const rows: DoctorWorkspaceRow[] = [];
@@ -2244,12 +2228,12 @@ export function doctorFindings(rows: DoctorWorkspaceRow[]): string[] {
   return findings;
 }
 
-/** Fleet-wide gc; the consumer registry is data, never executable configuration. */
+/** Fleet-wide gc over explicitly registered L2 repositories. */
 export async function gcAll(
   options: Omit<GcOptions, "repo">,
-  root = process.env.AGX_REGISTRY_ROOT ?? process.cwd(),
+  _root?: string,
 ): Promise<Attempt<GcResult>> {
-  const roots = await registeredRepoPaths(root);
+  const roots = await registeredRepoPaths();
   if (!roots.ok) return roots;
   const lines: string[] = [];
   const failed: string[] = [];

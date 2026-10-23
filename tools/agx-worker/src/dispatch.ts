@@ -20,6 +20,8 @@ import { JJ_READ_ARGS } from "../../shared/src/jj-read.ts";
 import { readonlyCommand } from "../../shared/src/readonly-command.ts";
 import { InspectionTimeout } from "../../shared/src/agx-config.ts";
 
+import { selfCommand } from "./self-command.ts";
+
 export const DISPATCH_CHECK_TIMEOUT_MS = 60_000;
 export const DISPATCH_LIST_TIMEOUT_MS = 60_000;
 export const DISPATCH_COMMAND_TIMEOUT_MS = 60_000;
@@ -194,7 +196,7 @@ async function listedRuns(
   env: NodeJS.ProcessEnv,
 ): Promise<{ rows?: RunRow[]; error?: string; code?: number }> {
   const result = await invoke(
-    ["agx-worker", "ls", "--json", "--all"],
+    [...selfCommand(), "ls", "--json", "--all"],
     cwd,
     env,
     DISPATCH_LIST_TIMEOUT_MS,
@@ -305,6 +307,13 @@ export async function dispatch(options: {
 }): Promise<number> {
   const cwd = resolve(options.cwd ?? process.cwd());
   const callerEnv = options.env ?? process.env;
+  if (callerEnv.PATH === undefined || callerEnv.PATH === "") {
+    process.stderr.write(
+      "agx worker dispatch: dispatcher PATH is missing; set PATH before dispatch\n",
+    );
+    return 2;
+  }
+  const workerCommand = selfCommand();
   // systemd does not inherit the caller's cwd; resolve the override once so
   // preflight and the child load the same file. Keep empty input invalid.
   const rosterPath = callerEnv.DISPATCH_ROSTER_PATH;
@@ -499,7 +508,7 @@ export async function dispatch(options: {
 
   const checked = await invoke(
     [
-      "agx-worker",
+      ...workerCommand,
       "check",
       ticketPath,
       "--cd",
@@ -564,8 +573,10 @@ export async function dispatch(options: {
     "-E",
     "CODEX_SESSION_ID",
     ...(rosterPath === undefined ? [] : ["-E", "DISPATCH_ROSTER_PATH"]),
+    `--setenv=PATH=${callerEnv.PATH}`,
+    "--setenv=AGX_WORKER_PATH_SOURCE=dispatcher",
     "--",
-    "agx-worker",
+    ...workerCommand,
     "run",
     ticketPath,
     "--cd",
@@ -605,7 +616,7 @@ export async function dispatch(options: {
     await Bun.sleep(100);
   }
   process.stderr.write(
-    `agx worker dispatch: ${unit}.service started but no matching run record appeared within ${waitMs}ms (AGX_DISPATCH_WAIT_MS=${waitMs}ms); command=["agx-worker","ls","--json","--all"]; cwd=${cwd}${listError === undefined ? "" : `: ${listError}`}\n`,
+    `agx worker dispatch: ${unit}.service started but no matching run record appeared within ${waitMs}ms (AGX_DISPATCH_WAIT_MS=${waitMs}ms); command=${JSON.stringify([...workerCommand, "ls", "--json", "--all"])}; cwd=${cwd}${listError === undefined ? "" : `: ${listError}`}\n`,
   );
   return 75;
 }

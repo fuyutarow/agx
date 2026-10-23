@@ -31,6 +31,21 @@ with one diagnostic line naming the recorded path, reason and repair: restore/re
 that path with `agx ws add`, or start a fresh run. Registry inspection timeouts retain
 temporary-unavailability exit 75.
 
+Dispatch starts the exact running worker: a compiled executable uses the absolute
+`process.execPath`; a source invocation uses the absolute Bun executable followed by the
+absolute source entry path. Preflight `check`, run-list inspection, and the default internal
+Codex/Claude child worker use the same invocation. Explicit `AGX_WORKER_BIN` and
+`AGX_WORKER_COMMAND` overrides retain their existing meaning.
+
+The unit receives `--setenv=PATH=<dispatcher's PATH>` and
+`AGX_WORKER_PATH_SOURCE=dispatcher`. Missing or empty dispatcher PATH refuses with exit 2
+and one diagnostic line before workspace creation or unit launch. The dispatched run,
+its worker, and verification preserve that PATH without repository mise environment
+resolution or added link directories. Suite utilities such as `agx-ws` and `xmsg` resolve
+through the supplied PATH. No bare worker-name fallback is used. The final JSON receipt
+and saved report include `execution.executable_path`, `execution.executable_argv`, and
+`execution.path_source: "PATH from dispatcher"` (direct runs say `"PATH from caller"`).
+
 Run events, progress, and judgments are stored in one append-only `records.jsonl` file. The state
 directory resolves from non-empty `AGX_STATE_DIR`, then non-empty `$XDG_STATE_HOME/agx`,
 then `~/.local/state/agx`. Legacy ledgers are read only from `<state>/legacy-v1`.
@@ -85,12 +100,9 @@ commands. It is read-only; the coordinator runs those commands separately.
 
 `dispatcher_session` uses `--session ID` first, then `AGX_DISPATCHER_SESSION`,
 `CLAUDE_CODE_SESSION_ID`, and `CODEX_SESSION_ID`. If none is available, the run records `null`
-and emits a `WARN` line. A durable systemd user unit does not inherit its caller's environment;
-forward both supported dispatcher variables explicitly:
-
-```sh
-systemd-run --user -E CLAUDE_CODE_SESSION_ID -E CODEX_SESSION_ID --unit=agt_<slug> --collect -- agx worker run TICKET.md
-```
+and emits a `WARN` line. Dispatch forwards both supported session variables explicitly
+alongside the executable and PATH described above. Use `agx worker dispatch TICKET.md`
+to construct the durable unit.
 
 Harness VCS reads in premise checks, official-execution tracking and repo-retrieve run inside
 OS-enforced write denial before jj/Git starts: Landlock ABI >=3 on Linux x64/arm64 and

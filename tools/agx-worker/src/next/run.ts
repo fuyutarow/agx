@@ -5,6 +5,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { InspectionUnavailable } from "../../../shared/src/agx-config.ts";
+import { selfCommand } from "../self-command.ts";
 import { verifyLine } from "../ticket.ts";
 import { parseReport, parseReturn, withReportInstruction } from "../report.ts";
 import { type NextTicket } from "./ticket.ts";
@@ -431,7 +432,7 @@ export async function run(flags: Flags): Promise<number> {
   const workerPath =
     process.env.AGX_WORKER_BIN ??
     process.env.AGX_WORKER_COMMAND ??
-    "agx-worker";
+    selfCommand()[0]!;
   const workerArgs = (): string[] => {
     if (process.env.AGX_WORKER_BIN !== undefined)
       return [
@@ -517,9 +518,21 @@ export async function run(flags: Flags): Promise<number> {
       `worker executable unavailable: looked for ${workerPath} on PATH=${runEnv.PATH ?? ""}; set AGX_WORKER_COMMAND to an executable or AGX_WORKER_BIN to a worker script`,
     );
   if (stopTask !== undefined) await stopTask;
+  const defaultCommand =
+    process.env.AGX_WORKER_COMMAND === undefined
+      ? selfCommand()
+      : [workerCommand ?? workerPath];
+  const execution = {
+    executable_path: selfCommand()[0]!,
+    executable_argv: selfCommand(),
+    path_source:
+      process.env.AGX_WORKER_PATH_SOURCE === "dispatcher"
+        ? "PATH from dispatcher"
+        : "PATH from caller",
+  };
   const child = Bun.spawn(
     process.env.AGX_WORKER_BIN === undefined
-      ? [workerCommand ?? workerPath, ...workerArgs().slice(1)]
+      ? [...defaultCommand, ...workerArgs().slice(1)]
       : [
           process.execPath,
           "--eval",
@@ -666,6 +679,10 @@ export async function run(flags: Flags): Promise<number> {
       ...(typeof report === "object" && report !== null ? report : {}),
       verify,
     };
+  report = {
+    ...(typeof report === "object" && report !== null ? report : {}),
+    execution,
+  };
   writeFileSync(reportPath, `${JSON.stringify(report)}\n`);
   const vendorSession =
     workerReceipt.vendor_session ??
@@ -709,7 +726,7 @@ export async function run(flags: Flags): Promise<number> {
   temp.remove();
   await workspaceLock.release();
   process.stdout.write(
-    `${JSON.stringify({ id, ticket: ticketName, row: row.id, exit, outcome, report_path: reportPath, state_file: recordPath(), host: hostname(), unit })}\n`,
+    `${JSON.stringify({ id, ticket: ticketName, row: row.id, exit, outcome, report_path: reportPath, state_file: recordPath(), host: hostname(), unit, execution })}\n`,
   );
   return exit;
 }
