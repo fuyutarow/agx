@@ -5,6 +5,21 @@ bun = "1.4.3"
 rumdl = "0.2.78"
 jj = "0.46.0"
 
+# Host integrations are command authority, not versions provisioned by mise.
+[vars]
+"host_command:systemctl" = "Linux user-service status, cancellation and resource probes"
+"host_command:systemd-run" = "Linux transient user-service worker launch"
+"host_command:ps" = "Host process liveness and resource inspection"
+"host_command:git" = "Temporary test repository initialization and commits"
+"host_command:rip" = "Recoverable workspace removal and its integration fixtures"
+"host_command:sleep" = "Shell fixture processes held alive for lock and lifecycle tests"
+"host_command:/usr/bin/sandbox-exec" = "macOS kernel sandbox for read-only execution"
+"host_command:lsof" = "Host open-file inspection before reference cleanup"
+"host_command:fnox" = "Optional host secret-store lookup"
+"host_command:stty" = "Terminal-mode fixtures for command help tests"
+"host_command:claude" = "Host session inventory and message transport"
+"host_command:codex" = "Host session inventory and message transport"
+
 [tasks.setup]
 alias = "i"
 run = "bun install --frozen-lockfile"

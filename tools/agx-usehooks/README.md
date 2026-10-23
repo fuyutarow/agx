@@ -1,6 +1,6 @@
 # agx-usehooks
 
-Part of the [tools/ architecture](../spec/architecture.md).
+Part of the tools architecture.
 
 “usehooks” names React-style `useXX` selectors: the IF side of an agent hook.
 Projects own the THEN side and write their actions in TypeScript.
@@ -43,7 +43,7 @@ the consumer owner migrates their hooks, with no `utilPct` compatibility alias.
 - `await runningJobs(ctx, { session })`: running systemd user services, optionally filtered by exact unit session. Each job includes `id`, `attribution`, optional `session`, `cwd`, `kind`, and `labels`.
 - `await unattributedJobs(ctx)`: running services classified as `projectUnattributed`.
 - `await laneCount(ctx, lane, { session })`: number of live runs in that lane, optionally filtered by session.
-- `await gpu(ctx)`: `{ nowPct, avg15Pct, avg60Pct, samples15, memUsedGiB, memTotalGiB } | { unavailable: reason }` (first GPU). Reads the shared owner state without launching a process. Observations expire after 120 s; missing, stale and unresponsive states have explicit reasons. The owner samples at most once per 60 s and keeps a two-hour history. Averages are estimates and remain `null` until their window has three samples. See [GPU sampler operations](../shared/GPU-SAMPLER.md).
+- `await gpu(ctx)`: `{ nowPct, avg15Pct, avg60Pct, samples15, memUsedGiB, memTotalGiB } | { unavailable: reason }` (first GPU). Reads the shared owner state without launching a process. Observations expire after 120 s; missing, stale and unresponsive states have explicit reasons. The owner samples at most once per 60 s and keeps a two-hour history. Averages are estimates and remain `null` until their window has three samples. See GPU sampler operations.
 - `await englishSegments(text)`: English prose segments using the reply-language hook rule.
 - `await dirtyFor(ctx)`: oldest changed-file modification age in hours, or 0.
 - `await unackedReturns(ctx)`: returned runs with no acknowledgement, as `{ id, lane, row }[]`.

@@ -1,5 +1,17 @@
 # Changelog
 
+## 10.0.0 — 2026-10-23
+
+- Unify worker state under AGX_STATE_DIR and agx with read-only legacy-v1 imports and explicit migration refusals
+
+## 9.1.4 — 2026-10-23
+
+- Record lost run endings under owner locks during publication and preserve live units.
+
+## 9.1.3 — 2026-10-23
+
+- Keep continuation dispatch in the recorded workspace and refuse missing or unregistered paths.
+
 ## 9.1.2 — 2026-10-23
 
 - Report preflight tree revision and child failure while keeping check judgments independent of inspection delays

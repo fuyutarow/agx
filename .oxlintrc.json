@@ -3,7 +3,7 @@
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "plugins": ["eslint", "typescript", "unicorn", "oxc", "node"],
   "jsPlugins": [
-    { "name": "house", "specifier": "./house-plugin.js" },
+    { "name": "house", "specifier": "./presets/typescript/house-plugin.js" },
     {
       "name": "eslint-js",
       "specifier": "oxlint-plugin-eslint"

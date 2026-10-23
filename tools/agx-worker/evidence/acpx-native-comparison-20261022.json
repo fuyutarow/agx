@@ -61,12 +61,7 @@
       "scenario": "hook-deny",
       "root": "/tmp/agx-native-LKigFR",
       "present": false,
-      "hooks": [
-        "SessionStart",
-        "UserPromptSubmit",
-        "PreToolUse",
-        "Stop"
-      ],
+      "hooks": ["SessionStart", "UserPromptSubmit", "PreToolUse", "Stop"],
       "elapsedMs": 2222,
       "modelCalls": 2,
       "receipt": {
@@ -132,11 +127,7 @@
       "scenario": "quote",
       "root": "/tmp/agx-native-UEPoij",
       "present": false,
-      "hooks": [
-        "SessionStart",
-        "UserPromptSubmit",
-        "Stop"
-      ],
+      "hooks": ["SessionStart", "UserPromptSubmit", "Stop"],
       "elapsedMs": 2595,
       "modelCalls": 1,
       "receipt": {
@@ -154,10 +145,7 @@
       "scenario": "capacity",
       "root": "/tmp/agx-native-HyKFSP",
       "present": false,
-      "hooks": [
-        "SessionStart",
-        "UserPromptSubmit"
-      ],
+      "hooks": ["SessionStart", "UserPromptSubmit"],
       "elapsedMs": 651,
       "modelCalls": 1,
       "receipt": {
@@ -203,10 +191,7 @@
       "scenario": "capacity",
       "root": "/tmp/agx-native-w0N0dG",
       "present": false,
-      "hooks": [
-        "SessionStart",
-        "UserPromptSubmit"
-      ],
+      "hooks": ["SessionStart", "UserPromptSubmit"],
       "elapsedMs": 2413,
       "modelCalls": 1,
       "receipt": {
@@ -248,12 +233,7 @@
       "scenario": "hook-deny",
       "root": "/tmp/agx-native-1YHxam",
       "present": false,
-      "hooks": [
-        "SessionStart",
-        "UserPromptSubmit",
-        "PreToolUse",
-        "Stop"
-      ],
+      "hooks": ["SessionStart", "UserPromptSubmit", "PreToolUse", "Stop"],
       "elapsedMs": 3176,
       "modelCalls": 4,
       "receipt": {
@@ -271,12 +251,7 @@
       "scenario": "sandbox",
       "root": "/tmp/agx-native-Z3FTTj",
       "present": false,
-      "hooks": [
-        "SessionStart",
-        "UserPromptSubmit",
-        "PreToolUse",
-        "Stop"
-      ],
+      "hooks": ["SessionStart", "UserPromptSubmit", "PreToolUse", "Stop"],
       "elapsedMs": 3544,
       "modelCalls": 4,
       "receipt": {
@@ -294,12 +269,7 @@
       "scenario": "read-only",
       "root": "/tmp/agx-native-WBbqHR",
       "present": false,
-      "hooks": [
-        "SessionStart",
-        "UserPromptSubmit",
-        "PreToolUse",
-        "Stop"
-      ],
+      "hooks": ["SessionStart", "UserPromptSubmit", "PreToolUse", "Stop"],
       "elapsedMs": 3350,
       "modelCalls": 3,
       "receipt": {
@@ -317,11 +287,7 @@
       "scenario": "quote",
       "root": "/tmp/agx-native-J5p3QF",
       "present": false,
-      "hooks": [
-        "SessionStart",
-        "UserPromptSubmit",
-        "Stop"
-      ],
+      "hooks": ["SessionStart", "UserPromptSubmit", "Stop"],
       "elapsedMs": 3073,
       "modelCalls": 2,
       "receipt": {
@@ -339,10 +305,7 @@
       "scenario": "capacity",
       "root": "/tmp/agx-native-pxsTiO",
       "present": false,
-      "hooks": [
-        "SessionStart",
-        "UserPromptSubmit"
-      ],
+      "hooks": ["SessionStart", "UserPromptSubmit"],
       "elapsedMs": 823,
       "modelCalls": 1,
       "receipt": {
@@ -358,10 +321,7 @@
       "scenario": "capacity",
       "root": "/tmp/agx-native-gi7dCp",
       "present": false,
-      "hooks": [
-        "SessionStart",
-        "UserPromptSubmit"
-      ],
+      "hooks": ["SessionStart", "UserPromptSubmit"],
       "elapsedMs": 19074,
       "modelCalls": 5,
       "receipt": {
@@ -398,10 +358,7 @@
       "elapsed_ms": 20653,
       "model_attempts": 5,
       "marker_written": false,
-      "hooks": [
-        "SessionStart",
-        "UserPromptSubmit"
-      ],
+      "hooks": ["SessionStart", "UserPromptSubmit"],
       "receipt": {
         "type": "bridge_receipt",
         "exit_code": 3,
@@ -684,12 +641,7 @@
         "scenario": "hook-deny",
         "root": "/tmp/agx-native-aGlN8i",
         "present": false,
-        "hooks": [
-          "SessionStart",
-          "UserPromptSubmit",
-          "PreToolUse",
-          "Stop"
-        ],
+        "hooks": ["SessionStart", "UserPromptSubmit", "PreToolUse", "Stop"],
         "elapsedMs": 2196,
         "modelCalls": 2,
         "receipt": {
@@ -755,11 +707,7 @@
         "scenario": "quote",
         "root": "/tmp/agx-native-4IZ0jF",
         "present": false,
-        "hooks": [
-          "SessionStart",
-          "UserPromptSubmit",
-          "Stop"
-        ],
+        "hooks": ["SessionStart", "UserPromptSubmit", "Stop"],
         "elapsedMs": 2301,
         "modelCalls": 1,
         "receipt": {
@@ -777,10 +725,7 @@
         "scenario": "capacity",
         "root": "/tmp/agx-native-OZvMU6",
         "present": false,
-        "hooks": [
-          "SessionStart",
-          "UserPromptSubmit"
-        ],
+        "hooks": ["SessionStart", "UserPromptSubmit"],
         "elapsedMs": 554,
         "modelCalls": 1,
         "receipt": {
@@ -826,10 +771,7 @@
         "scenario": "capacity",
         "root": "/tmp/agx-native-7wtvSd",
         "present": false,
-        "hooks": [
-          "SessionStart",
-          "UserPromptSubmit"
-        ],
+        "hooks": ["SessionStart", "UserPromptSubmit"],
         "elapsedMs": 2180,
         "modelCalls": 1,
         "receipt": {
@@ -871,12 +813,7 @@
         "scenario": "hook-deny",
         "root": "/tmp/agx-native-yec9z6",
         "present": false,
-        "hooks": [
-          "SessionStart",
-          "UserPromptSubmit",
-          "PreToolUse",
-          "Stop"
-        ],
+        "hooks": ["SessionStart", "UserPromptSubmit", "PreToolUse", "Stop"],
         "elapsedMs": 3634,
         "modelCalls": 4,
         "receipt": {
@@ -894,12 +831,7 @@
         "scenario": "sandbox",
         "root": "/tmp/agx-native-LUiiZ0",
         "present": false,
-        "hooks": [
-          "SessionStart",
-          "UserPromptSubmit",
-          "PreToolUse",
-          "Stop"
-        ],
+        "hooks": ["SessionStart", "UserPromptSubmit", "PreToolUse", "Stop"],
         "elapsedMs": 4028,
         "modelCalls": 4,
         "receipt": {
@@ -917,12 +849,7 @@
         "scenario": "read-only",
         "root": "/tmp/agx-native-HoUUNM",
         "present": false,
-        "hooks": [
-          "SessionStart",
-          "UserPromptSubmit",
-          "PreToolUse",
-          "Stop"
-        ],
+        "hooks": ["SessionStart", "UserPromptSubmit", "PreToolUse", "Stop"],
         "elapsedMs": 3808,
         "modelCalls": 3,
         "receipt": {
@@ -940,11 +867,7 @@
         "scenario": "quote",
         "root": "/tmp/agx-native-G3b8MD",
         "present": false,
-        "hooks": [
-          "SessionStart",
-          "UserPromptSubmit",
-          "Stop"
-        ],
+        "hooks": ["SessionStart", "UserPromptSubmit", "Stop"],
         "elapsedMs": 3579,
         "modelCalls": 2,
         "receipt": {
@@ -962,10 +885,7 @@
         "scenario": "capacity",
         "root": "/tmp/agx-native-wXBc93",
         "present": false,
-        "hooks": [
-          "SessionStart",
-          "UserPromptSubmit"
-        ],
+        "hooks": ["SessionStart", "UserPromptSubmit"],
         "elapsedMs": 1072,
         "modelCalls": 1,
         "receipt": {
@@ -981,10 +901,7 @@
         "scenario": "capacity",
         "root": "/tmp/agx-native-ss3IY1",
         "present": false,
-        "hooks": [
-          "SessionStart",
-          "UserPromptSubmit"
-        ],
+        "hooks": ["SessionStart", "UserPromptSubmit"],
         "elapsedMs": 19725,
         "modelCalls": 5,
         "receipt": {
@@ -1025,10 +942,7 @@
             "category": "connection",
             "severity": "error",
             "title": "unexpected status 503 Service Unavailable: Selected model is at capacity. Please try a different model., url: http://127.0.0.1:38889/v1/responses",
-            "actions": [
-              "retry",
-              "new_session"
-            ]
+            "actions": ["retry", "new_session"]
           }
         ]
       },
@@ -1287,10 +1201,7 @@
         "root": "/tmp/agx-native-ARYHO3",
         "elapsedMs": 598,
         "modelCalls": 4,
-        "hooks": [
-          "SessionStart",
-          "UserPromptSubmit"
-        ],
+        "hooks": ["SessionStart", "UserPromptSubmit"],
         "receipt": {
           "schema": 1,
           "run_id": "2026-10-22T06-33-05-813743546Z-1878653",

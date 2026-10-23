@@ -2,25 +2,44 @@
 
 `agx-worker` owns worker runs. Its package bin points to `src/next/cli.ts`. The suite also accepts `agx worker`.
 
-| Command | Purpose |
-| --- | --- |
-| `agx worker run TICKET [--cd TREE] [--sandbox MODE] [--continue RUN_ID] [--session ID]` | Route a ticket to a roster worker, run it, and append run records. |
-| `agx worker check TICKET [--cd TREE]` | Validate a ticket and its premises without starting a worker. |
-| `agx worker ls [SELECTOR] [--workspace PATH] [--json]` | List runs and judgments; SELECTOR is a run id, unique run-id prefix, or exact ticket name. Ticket selections put the newest run last. |
-| `agx worker judge RUN_ID accept\|reject [--note TEXT]` | Append an acceptance or rejection judgment. |
-| `agx worker stats [--import-legacy]` | Report run counts; optionally import legacy run records. |
-| `agx worker dispatch TICKET [--ws SLUG] [--unit NAME]` | Obtain a workspace through `agx ws` and start a durable worker unit. |
-| `agx worker roster TICKET` | Print one selected roster row. `roster --json` prints the full validated roster and routing objective. |
-| `agx worker doctor` | Diagnose worker records as tool/object/finding/remedy JSON Lines. |
+| Command                                                                                 | Purpose                                                                                                                               |
+| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `agx worker run TICKET [--cd TREE] [--sandbox MODE] [--continue RUN_ID] [--session ID]` | Route a ticket to a roster worker, run it, and append run records.                                                                    |
+| `agx worker check TICKET [--cd TREE]`                                                   | Validate a ticket and its premises without starting a worker.                                                                         |
+| `agx worker ls [SELECTOR] [--workspace PATH] [--json]`                                  | List runs and judgments; SELECTOR is a run id, unique run-id prefix, or exact ticket name. Ticket selections put the newest run last. |
+| `agx worker judge RUN_ID accept\|reject [--note TEXT]`                                  | Append an acceptance or rejection judgment.                                                                                           |
+| `agx worker stats [--import-legacy]`                                                    | Report run counts; optionally import legacy run records.                                                                              |
+| `agx worker dispatch TICKET [--ws SLUG] [--unit NAME] [--continue RUN_ID]`              | Obtain a workspace through `agx ws`, or reuse a continuation's recorded workspace, and start a durable worker unit.                   |
+| `agx worker roster TICKET`                                                              | Print one selected roster row. `roster --json` prints the full validated roster and routing objective.                                |
+| `agx worker doctor`                                                                     | Diagnose worker records as tool/object/finding/remedy JSON Lines.                                                                     |
 
 The top-level `objective` field in `roster --json` is the routing objective text used to select workers; the per-ticket `roster TICKET` output remains one selected row.
 
 Tickets are caller-owned files. `agx worker run` accepts positional ticket paths and optionally a working
 tree and sandbox mode. A continuation uses the previous run ID and resumes its vendor session,
 except for the capacity recovery described below.
-Run events, progress, and judgments are stored in one append-only `records.jsonl` file. The default
-state directory keeps its `agx-next` name for compatibility; the real state directory is not
-migrated by this CLI switch.
+
+`dispatch --continue RUN_ID` uses that run's recorded `workspace` path, falling back to
+`cwd` when `workspace` is absent or empty. Both preflight and the durable worker receive
+that path and the unchanged continuation ID, preserving the ordinary vendor-session resume.
+The ticket-derived default workspace is not used, even when the prior run used another
+`--ws` slug or `run --cd` path. Dispatch never invokes `agx ws add` for a continuation.
+An explicit `--ws` must name the recorded workspace (`ws_<slug>`); a different name exits 2.
+The recorded path must exist as a directory and be a registered workspace of the ticket's
+repository. A missing, unusable or unregistered path exits 2 before starting a worker,
+with one diagnostic line naming the recorded path, reason and repair: restore/register
+that path with `agx ws add`, or start a fresh run. Registry inspection timeouts retain
+temporary-unavailability exit 75.
+
+Run events, progress, and judgments are stored in one append-only `records.jsonl` file. The state
+directory resolves from non-empty `AGX_STATE_DIR`, then non-empty `$XDG_STATE_HOME/agx`,
+then `~/.local/state/agx`. Legacy ledgers are read only from `<state>/legacy-v1`.
+Every worker command refuses `AGX_NEXT_STATE_DIR`, even when empty, with exit 2 and
+`agx: AGX_NEXT_STATE_DIR is retired; use AGX_STATE_DIR`. If the resolved state directory
+is missing but `<base>/agx-next` exists, startup refuses with exit 2 and prints:
+`mv <base>/agx <base>/agx.legacy-v1.tmp && mv <base>/agx-next <base>/agx && mv <base>/agx.legacy-v1.tmp <base>/agx/legacy-v1`.
+Here `<base>` is non-empty `XDG_STATE_HOME` or `~/.local/state`. The CLI never moves data.
+
 Local judgments and graded run summaries remain audit data and do not enter the Jev request or
 deterministic fallback ranking. Selection uses the ticket, roster evidence, explicit route and
 capability policy, live quota availability, and operational capacity guards.
@@ -45,6 +64,20 @@ not the number of historical records or runs in other workspaces. Missing public
 (including those from older writers), invalid publications and stale log identities trigger
 the existing replay path with an explicit stderr diagnostic. Listing does not write or repair
 publications. The next owner publication produces them; rollout must update that writer.
+
+Owner publication, including the on-demand `agx worker doctor` command, reconciles lost
+runs. Under the publication lock and the run's workspace lock, it replays records and
+rechecks pid/start and unit liveness before appending exactly one `ended` event with
+outcome `lost`, the observed loss evidence, and `at` set to that locked observation time.
+A busy workspace is skipped until a later publication. An active unit or a live pid with
+a matching start prevents reconciliation. Existing records are never rewritten.
+After reconciliation, `ls --json --all` exposes a non-null `ended_at` and fixed
+`elapsed_seconds` for the lost run. Before an owner publication, read-only listing can
+still report derived loss with a null `ended_at`; run `agx worker doctor` to record it.
+Liveness always comes from pid/start and unit observations, never a missing end record.
+In-process full and incremental fold readers wait for already scheduled owner
+publication before reading. Publication uses its internal replay path to avoid
+waiting on itself; a read never schedules publication.
 
 `scripts/agx-accept.ts SELECTOR`, exposed as `mise run accept -- SELECTOR`, composes the selected
 latest run's verification exits, report preview, workspace diff stat, and suggested judge/land

@@ -34,12 +34,12 @@ the response does not report a usable model, it is `{na:true,why}`. Exit 1 still
 including every bit and any refuted answer; the exit status carries the yes/no result.
 Diagnostics go to stderr.
 
-| Exit | Meaning                                                                                  |
-| ---- | ---------------------------------------------------------------------------------------- |
-| 0    | Every bit is at least 0.5, and refuted is absent or below 0.5                            |
-| 1    | A bit is below 0.5, or refuted is at least 0.5                                           |
-| 2    | Usage error                                                                              |
-| 3    | No Jev response (transport failure, timeout, or unavailable key)                         |
+| Exit | Meaning                                                                                                           |
+| ---- | ----------------------------------------------------------------------------------------------------------------- |
+| 0    | Every bit is at least 0.5, and refuted is absent or below 0.5                                                     |
+| 1    | A bit is below 0.5, or refuted is at least 0.5                                                                    |
+| 2    | Usage error                                                                                                       |
+| 3    | No Jev response (transport failure, timeout, or unavailable key)                                                  |
 | 4    | Cannot judge: invalid questions/input, input over 30,000 bytes, non-200 HTTP, malformed answer, or mismatched ids |
 
 Malformed answers print `{bits:[]}`; well-shaped answers with mismatched ids retain

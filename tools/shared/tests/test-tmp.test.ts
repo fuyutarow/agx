@@ -51,10 +51,10 @@ test("this test process runs with its own TMPDIR under a run parent", () => {
   const parent = process.env[RUN_DIR_ENV] ?? "";
   expect(parent).toContain(RUN_PREFIX);
   expect(tmpdir().startsWith(`${parent}/`)).toBe(true);
-  expect(process.env.HOME).toContain("dotfiles-test-");
+  expect(process.env.HOME).toContain("agx-test-");
   expect(importHome?.startsWith(`${parent}/`)).toBe(true);
   expect(importHome).not.toBe(process.env.HOME);
-  expect(process.env.CLAUDE_BASH_DURATIONS_DIR).toContain("dotfiles-test-");
+  expect(process.env.CLAUDE_BASH_DURATIONS_DIR).toContain("agx-test-");
   for (const key of [
     "XDG_CACHE_HOME",
     "XDG_CONFIG_HOME",
@@ -62,7 +62,7 @@ test("this test process runs with its own TMPDIR under a run parent", () => {
     "XDG_RUNTIME_DIR",
     "XDG_STATE_HOME",
   ])
-    expect(process.env[key]).toContain("dotfiles-test-");
+    expect(process.env[key]).toContain("agx-test-");
 });
 
 test("a test may persist state only in its own home", async () => {
@@ -104,7 +104,7 @@ test("a dir the test forgets to clean is not in the outer temp dir", () => {
 
 test("ownerPidOf reads only run-parent names", () => {
   expect(ownerPidOf(`${RUN_PREFIX}123-abcDEF`)).toBe(123);
-  expect(ownerPidOf("dotfiles-test-run-x-abc")).toBeUndefined();
+  expect(ownerPidOf("agx-test-run-x-abc")).toBeUndefined();
   expect(ownerPidOf("claude-1000")).toBeUndefined();
 });
 
@@ -277,8 +277,8 @@ test("sweepStaleRuns keeps a live owner's parent and unrelated names", () => {
 test("a foreign PID namespace and legacy run cannot be swept by a local dead-PID probe", async () => {
   const root = scratch();
   const names = [
-    "dotfiles-test-run-ns-foreign-2147483646-live",
-    "dotfiles-test-run-2147483646-legacy",
+    "agx-test-run-ns-foreign-2147483646-live",
+    "agx-test-run-2147483646-legacy",
   ];
   for (const name of names) await mkdir(join(root, name));
   expect(sweepStaleRuns(root)).toEqual([]);

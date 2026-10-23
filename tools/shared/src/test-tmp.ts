@@ -3,7 +3,7 @@
 // entry in the system temp directory. Every helper that calls mkdtemp(join(tmpdir(), …)) follows
 // for free: os.tmpdir() reads TMPDIR at call time, and spawned children inherit it.
 //
-//   <system tmp>/dotfiles-test-run-ns-<namespace>-<owner pid>-XXXXXX/
+//   <system tmp>/agx-test-run-ns-<namespace>-<owner pid>-XXXXXX/
 //     p<pid>-XXXXXX/                                        one per test process = its TMPDIR
 //
 // The first process of a run creates the parent and publishes it in DOTFILES_TEST_RUN_DIR; a nested
@@ -40,8 +40,8 @@ const namespace =
         .then((value) => value.replaceAll(/\D/gu, ""))
         .catch(() => crypto.randomUUID().replaceAll("-", ""))
     : "host";
-export const RUN_PREFIX = `dotfiles-test-run-ns-${namespace}-`;
-const ANY_RUN = /^dotfiles-test-run-(?:ns-[a-z0-9]+-)?\d+-/u;
+export const RUN_PREFIX = `agx-test-run-ns-${namespace}-`;
+const ANY_RUN = /^agx-test-run-(?:ns-[a-z0-9]+-)?\d+-/u;
 export const RUN_DIR_ENV = "DOTFILES_TEST_RUN_DIR";
 const STALE_MS = 12 * 60 * 60 * 1000;
 const SIGNALS = { SIGHUP: 1, SIGINT: 2, SIGTERM: 15 } as const;
@@ -185,7 +185,6 @@ async function isolatedPaths(root: string) {
   const paths = {
     HOME: home,
     AGX_STATE_DIR: join(root, "xdg-state", "agx"),
-    AGX_NEXT_STATE_DIR: join(root, "xdg-state", "agx-next"),
     CLAUDE_BASH_DURATIONS_DIR: join(root, "xdg-state", "claude-bash-durations"),
     CLAUDE_CONFIG_DIR: join(home, ".claude"),
     CLAUDE_SESSION_SCRATCHPAD: join(root, "scratchpad"),
@@ -209,7 +208,7 @@ Object.assign(process.env, await isolatedPaths(processTmp.dir));
 /** Give each test and every process it starts an isolated home and temp tree. */
 fromThrowable(() => {
   beforeEach(async () => {
-    const root = await mkdtemp(join(processTmp.dir, "dotfiles-test-"));
+    const root = await mkdtemp(join(processTmp.dir, "agx-test-"));
     testRoot = root;
     const paths = await isolatedPaths(root);
     for (const key of Object.keys(paths))

@@ -21,7 +21,6 @@ import {
   stat as recordStat,
 } from "node:fs/promises";
 import { dlopen, FFIType } from "bun:ffi";
-import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fromPromise, fromThrowable } from "neverthrow";
@@ -29,7 +28,7 @@ import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { globsOverlap } from "../ticket.ts";
 import { exitWithError } from "./exit.ts";
 import { Outcome, deriveOutcome } from "./outcome.ts";
-import { lossEvidence, Lease, StopSignal } from "./lease.ts";
+import { lossEvidence, Lease, StopSignal, Evidence } from "./lease.ts";
 import { RunSchema, type FoldedRun, type ListedRun } from "./run-state.ts";
 export type { ListedRun } from "./run-state.ts";
 import { VerifyResult } from "./verify.ts";
@@ -99,6 +98,7 @@ const EventSchema = z.discriminatedUnion("kind", [
     at: z.string(),
     exit: z.number(),
     outcome: Outcome.optional(),
+    evidence: Evidence.optional(),
     signal: StopSignal.optional(),
     report_path: z.string().nullable(),
     vendor_session: z.string().nullable(),
@@ -123,18 +123,8 @@ const EventSchema = z.discriminatedUnion("kind", [
 ]);
 export type NextEvent = z.output<typeof EventSchema>;
 
-export const stateDir = (): string =>
-  resolve(
-    [process.env.AGX_NEXT_STATE_DIR, process.env.AGX_STATE_DIR].find(
-      (value) => value !== undefined && value !== "",
-    ) ??
-      join(
-        (process.env.XDG_STATE_HOME === ""
-          ? undefined
-          : process.env.XDG_STATE_HOME) ?? join(homedir(), ".local", "state"),
-        "agx-next",
-      ),
-  );
+import { stateDir } from "../state.ts";
+export { stateDir };
 export const recordPath = (root = stateDir()): string =>
   join(root, "records.jsonl");
 export const now = (): string => Temporal.Now.instant().toString();
@@ -189,8 +179,11 @@ export const runningWorkspaceRun = async (workspace: string) =>
       run.state === "running" && resolve(run.workspace) === resolve(workspace),
   );
 
-export function append(event: z.input<typeof EventSchema>): void {
-  const path = recordPath();
+export function append(
+  event: z.input<typeof EventSchema>,
+  root = stateDir(),
+): void {
+  const path = recordPath(root);
   mkdirSync(dirname(path), { recursive: true });
   const pickAudit = event.kind === "started" ? pendingPickAudit : undefined;
   if (event.kind === "started") pendingPickAudit = undefined;
@@ -204,7 +197,6 @@ export function append(event: z.input<typeof EventSchema>): void {
     encoding: "utf8",
     flag: "a",
   });
-  const root = stateDir();
   schedulePublication(root);
 }
 
@@ -245,10 +237,7 @@ const numberOf = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isFinite(value) ? value : undefined;
 const legacyId = (runId: string): string =>
   `legacy-${createHash("sha256").update(runId).digest("hex").slice(0, 24)}`;
-const legacySourceDir = (): string =>
-  resolve(
-    process.env.AGX_STATE_DIR ?? join(homedir(), ".local", "state", "agx"),
-  );
+const legacySourceDir = (): string => join(stateDir(), "legacy-v1");
 
 const importedEventKeys = (): Set<string> =>
   new Set(
@@ -565,6 +554,7 @@ function foldInto(runs: Map<string, FoldedRun>, input: NextEvent[]): void {
     if (event.kind === "ended") {
       run.state = "ended";
       run.signal = event.signal;
+      run.evidence = event.evidence;
       run.ended_at = event.at;
       run.exit = event.exit;
       // Historical records without workspace/report evidence must never become successes.
@@ -592,10 +582,12 @@ function foldInto(runs: Map<string, FoldedRun>, input: NextEvent[]): void {
 
 /** Full replay oracle; does not read or write the snapshot. */
 export async function fullFoldedRuns() {
-  const before = await recordStat(recordPath()).catch(() => null);
+  const root = stateDir();
+  await publications.get(root);
+  const before = await recordStat(recordPath(root)).catch(() => null);
   const runs = new Map<string, FoldedRun>();
-  foldInto(runs, events());
-  return liveRuns(runs, before);
+  foldInto(runs, events(root));
+  return liveRuns(runs, before, root);
 }
 
 /** Read-only, process-local cursor. Partial lines retain their original bytes. */
@@ -656,8 +648,14 @@ export function recordCursor(root = stateDir()) {
   return { read };
 }
 
-/** Read only bytes after the last complete line folded into the snapshot. */
+/** Wait for already scheduled owner writes; readers never initiate publication. */
 export async function foldedRuns(root = stateDir()) {
+  await publications.get(root);
+  return readFoldedRuns(root);
+}
+
+/** Read only bytes after the last complete line folded into the snapshot. */
+async function readFoldedRuns(root: string) {
   const path = recordPath(root);
   if (!existsSync(path)) return [];
   const fd = openSync(path, "r");
@@ -1019,6 +1017,56 @@ export async function endedFacts(runs: ListedRun[], at: number) {
   return { endedRuns, acceptedRuns };
 }
 
+/** Called only under the publication lock; the workspace lock excludes the run owner. */
+async function reconcileLostRuns(root: string): Promise<void> {
+  const candidates = (await readFoldedRuns(root)).filter(
+    (run) => run.outcome === "lost" && run.ended_at === null,
+  );
+  for (const workspace of new Set(candidates.map((run) => run.workspace))) {
+    const lock = await acquireWorkspaceLock(workspace, root);
+    if (!lock.ok) continue;
+    await using _ownership = { [Symbol.asyncDispose]: lock.release };
+    await sealWorkspaceLosses(workspace, root);
+  }
+}
+
+async function sealWorkspaceLosses(
+  workspace: string,
+  root: string,
+): Promise<void> {
+  // Replay and observe liveness again after taking ownership. An owner may
+  // have completed normally while publication was waiting for either lock.
+  const before = await recordStat(recordPath(root)).catch(() => null);
+  const stored = new Map<string, FoldedRun>();
+  foldInto(stored, events(root));
+  const selected = new Map(
+    [...stored].filter(([, run]) => run.workspace === workspace),
+  );
+  for (const run of await liveRuns(selected, before, root)) {
+    if (
+      run.workspace !== workspace ||
+      run.outcome !== "lost" ||
+      run.ended_at !== null ||
+      run.evidence === undefined
+    )
+      continue;
+    append(
+      {
+        kind: "ended",
+        id: run.id,
+        at: now(),
+        exit: 1,
+        outcome: "lost",
+        evidence: run.evidence,
+        report_path: run.report_path,
+        vendor_session: run.vendor_session,
+        verify: run.verify,
+      },
+      root,
+    );
+  }
+}
+
 export async function publishCurrentRuns(root = stateDir()): Promise<void> {
   const path = join(root, "current-runs.json");
   const deadline = performance.now() + 5000;
@@ -1036,8 +1084,9 @@ export async function publishCurrentRuns(root = stateDir()): Promise<void> {
   const held = lock;
   const result = await fromPromise(
     (async () => {
+      await reconcileLostRuns(root);
       const source = await recordIdentity(root);
-      const runs = await foldedRuns(root);
+      const runs = await readFoldedRuns(root);
       await publishWorkspaceRuns(root, source);
       const output = JSON.stringify({
         runs: listingRows(

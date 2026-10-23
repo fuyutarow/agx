@@ -452,9 +452,11 @@ function shellCommands(source: string): {
   let word = "";
   let dynamic = false;
   let started = false;
+  let redirectTarget = false;
   let quote = "";
   const flushWord = () => {
-    if (started) words.push({ text: word, dynamic });
+    if (started && !redirectTarget) words.push({ text: word, dynamic });
+    if (started) redirectTarget = false;
     word = "";
     dynamic = false;
     started = false;
@@ -500,6 +502,15 @@ function shellCommands(source: string): {
     } else if (char === "#" && !started) {
       while (i < source.length && source[i] !== "\n") i++;
       flushCommand();
+    } else if (
+      /^(?:\d+)?(?:>>?|<<?|<>)/u.test(source.slice(i)) &&
+      (!started || char === ">" || char === "<")
+    ) {
+      flushWord();
+      const operator =
+        source.slice(i).match(/^(?:\d+)?(?:<>|>>?|<<?)&?/u)?.[0] ?? "";
+      i += operator.length - 1;
+      redirectTarget = true;
     } else if (/[;|&\n()]/u.test(char)) {
       flushCommand();
     } else if (/\s/u.test(char)) {
@@ -867,6 +878,9 @@ export function sourceFindings(
 }
 
 const toolConfigSchema = z.object({
+  // Host-provided integrations cannot be provisioned as portable mise runtimes.
+  // Every exemption names its use; unknown commands still fail the audit.
+  vars: z.record(z.string(), z.unknown()).default({}),
   tools: z
     .record(
       z.string(),
@@ -931,6 +945,7 @@ async function taskSources(
 }
 
 const packageSchema = z.object({
+  bin: z.record(z.string(), z.string()).default({}),
   scripts: z.record(z.string(), z.string()).default({}),
   dependencies: z.record(z.string(), z.string()).default({}),
   devDependencies: z.record(z.string(), z.string()).default({}),
@@ -993,6 +1008,21 @@ function npmAuthorities(
   );
 }
 
+async function localAuthorities(
+  root: string,
+  binaries: Record<string, string>,
+  allowed: Set<string>,
+): Promise<string[]> {
+  const problems: string[] = [];
+  for (const [command, target] of Object.entries(binaries)) {
+    const path = resolve(root, target);
+    if (!path.startsWith(`${resolve(root)}/`) || !(await exists(path)))
+      problems.push(`invalid local binary ${command}: ${target}`);
+    else allowed.add(command);
+  }
+  return problems;
+}
+
 export async function checkTools(
   root: string,
   policy: ToolPolicy = {},
@@ -1020,6 +1050,16 @@ export async function checkTools(
       problems.push(`task includes must be exactly ${policy.taskDirectory}`);
   }
   const allowed = new Set(["mise"]);
+  for (const [name, reason] of Object.entries(config.vars)) {
+    if (!name.startsWith("host_command:")) continue;
+    const command = name.slice("host_command:".length);
+    if (
+      command.length === 0 ||
+      !z.string().trim().min(1).safeParse(reason).success
+    )
+      problems.push(`invalid host command declaration ${name}`);
+    else allowed.add(command);
+  }
   for (const [name, tool] of Object.entries(config.tools)) {
     const version = typeof tool === "string" ? tool : tool.version;
     if (policy.requirePinned === true && !/^\d+\.\d+(?:\.\d+)?$/u.test(version))
@@ -1042,6 +1082,7 @@ export async function checkTools(
     );
     if (!parsedPackage.success) return [...problems, "invalid package.json"];
     const pkg = parsedPackage.data;
+    problems.push(...(await localAuthorities(root, pkg.bin, allowed)));
     const lockPath = join(root, "bun.lock");
     // Bun's text lock is JSONC (comments/trailing commas); TOML is not its grammar.
     const lock = (await exists(lockPath))

@@ -44,15 +44,15 @@ the model HTTP endpoint is a deterministic localhost fixture. No real inference 
 vendor call is needed for these transport and failure contracts. This does not measure
 model quality, live quota, all sandbox escape classes, or all hook types.
 
-| Required observation | Codex replacement | Claude replacement |
-| --- | --- | --- |
-| Allowed tool call actually writes a marker | Passed | Passed |
-| SessionStart, UserPromptSubmit, PreToolUse, PostToolUse and Stop run | Passed | Passed |
-| Native PreToolUse denial prevents the marker write | Passed | Passed |
-| Workspace sandbox prevents an outside marker write | Passed | Passed |
-| Read-only mode prevents an inside marker write | Passed | Passed |
-| Quoted capacity words remain successful ordinary output | Passed | Passed |
-| Native overload becomes capacity/75 before attempt two | **Failed: returned/0** | **Failed: retries, then timeout/3** |
+| Required observation                                                 | Codex replacement      | Claude replacement                  |
+| -------------------------------------------------------------------- | ---------------------- | ----------------------------------- |
+| Allowed tool call actually writes a marker                           | Passed                 | Passed                              |
+| SessionStart, UserPromptSubmit, PreToolUse, PostToolUse and Stop run | Passed                 | Passed                              |
+| Native PreToolUse denial prevents the marker write                   | Passed                 | Passed                              |
+| Workspace sandbox prevents an outside marker write                   | Passed                 | Passed                              |
+| Read-only mode prevents an inside marker write                       | Passed                 | Passed                              |
+| Quoted capacity words remain successful ordinary output              | Passed                 | Passed                              |
+| Native overload becomes capacity/75 before attempt two               | **Failed: returned/0** | **Failed: retries, then timeout/3** |
 
 With provider HTTP retries disabled, the two native agx capacity controls both return 75
 after one model attempt. The complete
@@ -103,16 +103,16 @@ to arbitrary native provider retry configurations.
 
 ## Concrete code comparison
 
-| Current file | Whole-file lines | What acpx could replace | What still needs an owner |
-| --- | ---: | --- | --- |
-| `workers/codex.ts` | 811 | Native invocation and stream consumption, session resume transport | Model floor, host declaration, initial wait, bounded cleanup, receipts, checkpoint and spin handling |
-| `workers/codex-progress.ts` | 343 | Codex-specific event decoding | Shared tally, progress persistence, cost projection, error-streak semantics; Claude also imports the shared writer |
-| `workers/run-claude.ts` | 607 | Native invocation, session transport, JSONL consumption | Invocation policy, budget/turn constraints, bounded cleanup, interim reports, agx receipt mapping |
-| `workers/claude-progress.ts` | 157 | Claude-specific event decoding | Projection of ACP usage, cost, tool activity and session identity into the existing progress contract |
-| `workers/capacity.ts` | 86 | Nothing with the released combination | Typed capacity recognition, startup wait, exit 75 and stop grace |
-| `workers/environment.ts` | 65 | Nothing | Child credential/environment selection and separation from coordinator identity |
-| `workers/codex-host.ts` | 79 | Nothing | Explicit host-isolation declaration and effective-sandbox attribution |
-| `workers/codex-resource-probe.ts` | 77 | Nothing | Resource reachability and the declared sandbox fallback policy |
+| Current file                      | Whole-file lines | What acpx could replace                                            | What still needs an owner                                                                                          |
+| --------------------------------- | ---------------: | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| `workers/codex.ts`                |              811 | Native invocation and stream consumption, session resume transport | Model floor, host declaration, initial wait, bounded cleanup, receipts, checkpoint and spin handling               |
+| `workers/codex-progress.ts`       |              343 | Codex-specific event decoding                                      | Shared tally, progress persistence, cost projection, error-streak semantics; Claude also imports the shared writer |
+| `workers/run-claude.ts`           |              607 | Native invocation, session transport, JSONL consumption            | Invocation policy, budget/turn constraints, bounded cleanup, interim reports, agx receipt mapping                  |
+| `workers/claude-progress.ts`      |              157 | Claude-specific event decoding                                     | Projection of ACP usage, cost, tool activity and session identity into the existing progress contract              |
+| `workers/capacity.ts`             |               86 | Nothing with the released combination                              | Typed capacity recognition, startup wait, exit 75 and stop grace                                                   |
+| `workers/environment.ts`          |               65 | Nothing                                                            | Child credential/environment selection and separation from coordinator identity                                    |
+| `workers/codex-host.ts`           |               79 | Nothing                                                            | Explicit host-isolation declaration and effective-sandbox attribution                                              |
+| `workers/codex-resource-probe.ts` |               77 | Nothing                                                            | Resource reachability and the declared sandbox fallback policy                                                     |
 
 All paths in this table are relative to `src/`. The first four files total **1,918 lines**,
 an upper bound on the mixed transport/parser area, not a verified deletion count. Their

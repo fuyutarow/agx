@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
 test("test preload confines temporary files to the process directory", () => {
-  expect(basename(tmpdir()).startsWith("agx-test-")).toBe(true);
+  const runParent = process.env.DOTFILES_TEST_RUN_DIR ?? "";
+  expect(basename(runParent).startsWith("agx-test-run-ns-")).toBe(true);
+  expect(tmpdir().startsWith(`${runParent}/`)).toBe(true);
   expect(process.env.TMPDIR).toBe(tmpdir());
   const child = mkdtempSync(join(tmpdir(), "fixture-"));
   expect(dirname(child)).toBe(tmpdir());

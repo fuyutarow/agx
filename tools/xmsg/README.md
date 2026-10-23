@@ -34,12 +34,12 @@ resolve one exact, unique target; this selection remains model-assisted. The env
 and the `SendMessage` call ID are checked against its structured `tool_result`. Model prose is
 never accepted as a send receipt. Success requires `success: true` and a `msg_id`.
 
-| Exit | Outcome                                                                      |
-| ---- | ---------------------------------------------------------------------------- |
-| 0    | Accepted: Codex queue succeeded, or a Claude tool_result confirms acceptance |
-| 1    | Rejected/error reported by the transport                                     |
-| 2    | Invalid usage, invalid/missing selector, or ambiguous prefix                   |
-| 3    | CLI unavailable, required discovery unavailable/incomplete, or a complete Claude relay trace confirms no `SendMessage` was attempted |
+| Exit | Outcome                                                                                                                                              |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | Accepted: Codex queue succeeded, or a Claude tool_result confirms acceptance                                                                         |
+| 1    | Rejected/error reported by the transport                                                                                                             |
+| 2    | Invalid usage, invalid/missing selector, or ambiguous prefix                                                                                         |
+| 3    | CLI unavailable, required discovery unavailable/incomplete, or a complete Claude relay trace confirms no `SendMessage` was attempted                 |
 | 4    | Acceptance unknown: timeout, failed Claude run, malformed/incomplete trace, multiple sends, or a called `SendMessage` without one correlated receipt |
 
 A Claude no-send result requires a zero exit, parseable stream records, and a final

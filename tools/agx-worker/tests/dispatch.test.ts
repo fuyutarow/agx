@@ -37,6 +37,11 @@ async function observation(path: string) {
   return parsed.data;
 }
 const roots: string[] = [];
+function inheritedEnv() {
+  const env = { ...process.env };
+  Reflect.deleteProperty(env, "AGX_NEXT_STATE_DIR");
+  return env;
+}
 afterEach(() => {
   for (const root of roots.splice(0))
     rmSync(root, { recursive: true, force: true });
@@ -139,6 +144,8 @@ function fixture() {
     'if [ "$json" = "yes" ]; then printf \'{"workspace":"%s"}\\n\' "$workspace"; else printf \'%s\\n\' "$workspace"; fi',
   ]);
   shim("jj", [
+    'case " $* " in *" workspace list "*) printf "%s\\n" "default" "recorded"; exit 0 ;; esac',
+    'case " $* " in *"--name recorded"*) printf "%s\\n" "${FAKE_REGISTERED_WORKSPACE:-$FAKE_REPO}"; exit 0 ;; esac',
     'case " $* " in *" log "*) printf "%s\\n" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; exit 0 ;; esac',
     'case "$PWD" in',
     '  "$FAKE_REPO".ws/*) printf \'%s\\n\' "${FAKE_WORKSPACE_REPO:-$FAKE_REPO}" ;;',
@@ -164,12 +171,12 @@ function fixture() {
     "exit 2",
   ]);
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...inheritedEnv(),
     PATH: `${bin}:${process.env.PATH}`,
     HOME: home,
     XDG_CONFIG_HOME: join(home, "config"),
     XDG_STATE_HOME: join(home, "state"),
-    AGX_NEXT_STATE_DIR: join(home, "state", "agx"),
+    AGX_STATE_DIR: join(home, "state", "agx"),
     DISPATCH_ROSTER_PATH: undefined,
     CLAUDE_CODE_SESSION_ID: "fixture-claude",
     CODEX_SESSION_ID: "fixture-codex",
@@ -217,6 +224,129 @@ async function invoke(f: ReturnType<typeof fixture>, ...args: string[]) {
   ]);
   return { stdout, stderr, exitCode };
 }
+
+function priorRun(
+  f: ReturnType<typeof fixture>,
+  workspace: string,
+  fallback = false,
+) {
+  mkdirSync(join(workspace, ".jj"), { recursive: true });
+  writeFileSync(
+    f.records,
+    JSON.stringify([
+      {
+        id: "prior-run",
+        ticket: "foo-bar",
+        state: "ended",
+        cwd: workspace,
+        ...(fallback ? {} : { workspace }),
+      },
+    ]),
+  );
+  f.env.FAKE_REGISTERED_WORKSPACE = workspace;
+  return workspace;
+}
+
+test.each(["foo-bar", "foo-bar-2", "another-ticket"])(
+  "continuation keeps recorded workspace %s without creating one",
+  async (slug) => {
+    const f = fixture();
+    const workspace = priorRun(f, join(`${f.repo}.ws`, `ws_${slug}`));
+    const result = await invoke(f, "--continue", "prior-run");
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(await Bun.file(f.unitArgs).text()).toContain(`--cd\n${workspace}\n`);
+    expect(await Bun.file(f.unitArgs).text()).toContain(
+      "--continue\nprior-run\n",
+    );
+    expect(await Bun.file(f.wsArgs).exists()).toBe(false);
+  },
+);
+
+test.each([undefined, ""])(
+  "continuation of a run --cd falls back to recorded cwd (%s)",
+  async (recordedWorkspace) => {
+    const f = fixture();
+    const workspace = priorRun(f, join(`${f.repo}.ws`, "ws_other"), true);
+    writeFileSync(
+      f.records,
+      JSON.stringify([
+        {
+          id: "prior-run",
+          ticket: "foo-bar",
+          state: "ended",
+          cwd: workspace,
+          workspace: recordedWorkspace,
+        },
+      ]),
+    );
+    const result = await invoke(f, "--continue", "prior-run");
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(await Bun.file(f.unitArgs).text()).toContain(`--cd\n${workspace}\n`);
+    expect(await Bun.file(f.wsArgs).exists()).toBe(false);
+  },
+);
+
+test("recorded workspace takes precedence over a different cwd", async () => {
+  const f = fixture();
+  const workspace = priorRun(f, join(`${f.repo}.ws`, "ws_other"));
+  writeFileSync(
+    f.records,
+    JSON.stringify([
+      {
+        id: "prior-run",
+        ticket: "foo-bar",
+        state: "ended",
+        cwd: f.repo,
+        workspace,
+      },
+    ]),
+  );
+  const result = await invoke(f, "--continue", "prior-run");
+  expect(result.exitCode, result.stderr).toBe(0);
+  expect(await Bun.file(f.unitArgs).text()).toContain(`--cd\n${workspace}\n`);
+  expect(await Bun.file(f.wsArgs).exists()).toBe(false);
+});
+
+test("continuation accepts --ws only when it names the recorded workspace", async () => {
+  const f = fixture();
+  const workspace = priorRun(f, join(`${f.repo}.ws`, "ws_other"));
+  const result = await invoke(f, "--continue", "prior-run", "--ws", "other");
+  expect(result.exitCode, result.stderr).toBe(0);
+  expect(await Bun.file(f.unitArgs).text()).toContain(`--cd\n${workspace}\n`);
+  expect(await Bun.file(f.wsArgs).exists()).toBe(false);
+});
+
+test.each(["conflict", "missing", "unregistered", "foreign", "file"])(
+  "continuation refuses %s recorded workspace without starting or creating",
+  async (kind) => {
+    const f = fixture();
+    const workspace = priorRun(f, join(`${f.repo}.ws`, "ws_other"));
+    if (kind === "missing") rmSync(workspace, { recursive: true });
+    if (kind === "unregistered" || kind === "foreign")
+      f.env.FAKE_REGISTERED_WORKSPACE = f.repo;
+    if (kind === "foreign") f.env.FAKE_WORKSPACE_REPO = join(f.root, "foreign");
+    if (kind === "file") {
+      rmSync(workspace, { recursive: true });
+      writeFileSync(workspace, "not a directory");
+    }
+    const result = await invoke(
+      f,
+      "--continue",
+      "prior-run",
+      ...(kind === "conflict" ? ["--ws", "foo-bar"] : []),
+    );
+    expect(result.exitCode, result.stderr).toBe(2);
+    expect(result.stdout).toBe("");
+    expect(result.stderr.trim().split("\n")).toHaveLength(1);
+    expect(result.stderr).toContain(workspace);
+    expect(result.stderr).toContain("repair:");
+    expect(result.stderr).toContain(
+      kind === "conflict" ? "different workspace" : "agx ws add",
+    );
+    expect(await Bun.file(f.wsArgs).exists()).toBe(false);
+    expect(await Bun.file(f.unitArgs).exists()).toBe(false);
+  },
+);
 
 test("dispatch records its one ticket-derived binding", async () => {
   const f = fixture();
@@ -489,6 +619,7 @@ test.each(["malformed", "unavailable", "empty", "stale"])(
 
 test("preflight refusal identifies the checked tree, revision and child exit", async () => {
   const f = fixture();
+  priorRun(f, join(`${f.repo}.ws`, "ws_foo-bar"));
   f.env.FAKE_CHECK_FAIL = "yes";
   const result = await invoke(
     f,
@@ -545,9 +676,14 @@ process.exit(1);
   expect(await Bun.file(f.unitArgs).exists()).toBe(false);
 }, 45_000);
 
-test.each([false, true])(
-  "real jj continued workspace agrees with check (missing premise=%s)",
-  async (missingPremise) => {
+test.each([
+  ["foo-bar", false],
+  ["foo-bar-2", false],
+  ["another-ticket", false],
+  ["foo-bar-2", true],
+] as const)(
+  "real jj continued workspace %s agrees with check (missing premise=%s)",
+  async (workspaceName, missingPremise) => {
     const f = fixture();
     f.env.AGX_DISPATCH_WAIT_MS = "1000";
     f.env.FAKE_INVOKE_TIMEOUT_MS = "45000";
@@ -591,13 +727,13 @@ test.each([false, true])(
     writeFileSync(join(f.repo, "main-only"), "present only in main checkout\n");
     await jjCommand("new", "-m", "Fixture policy");
     await jjCommand("bookmark", "create", "main", "-r", "@-");
-    const workspace = join(`${f.repo}.ws`, "ws_foo-bar");
+    const workspace = join(`${f.repo}.ws`, `ws_${workspaceName}`);
     mkdirSync(`${f.repo}.ws`, { recursive: true });
     await jjCommand(
       "workspace",
       "add",
       "--name",
-      "foo-bar",
+      workspaceName,
       "-r",
       "root()",
       workspace,
@@ -607,7 +743,7 @@ test.each([false, true])(
       f.ticket,
       `+++\nschema = 2\nname = "foo-bar"\noutcome = "fixture"\npremises = ${missingPremise ? '["file:main-only"]' : "[]"}\n[proposition]\nid = "P1"\nclaim = "fixture"\nrefuted_by = "fixture"\n+++\n`,
     );
-    const state = f.env.AGX_NEXT_STATE_DIR!;
+    const state = f.env.AGX_STATE_DIR!;
     mkdirSync(state, { recursive: true });
     writeFileSync(
       join(state, "records.jsonl"),
@@ -638,6 +774,18 @@ test.each([false, true])(
       ]
         .map((row) => JSON.stringify(row))
         .join("\n") + "\n",
+    );
+    writeFileSync(
+      f.records,
+      JSON.stringify([
+        {
+          id: "prior-run",
+          ticket: "foo-bar",
+          state: "ended",
+          cwd: workspace,
+          workspace,
+        },
+      ]),
     );
     const checkArgs = [
       "check",
@@ -693,7 +841,7 @@ console.log(await Bun.file(${JSON.stringify(f.records)}).text());
       "--ignore-working-copy",
       "log",
       "-r",
-      "foo-bar@",
+      `${workspaceName}@`,
       "--no-graph",
       "-T",
       "commit_id",
@@ -718,7 +866,7 @@ console.log(await Bun.file(${JSON.stringify(f.records)}).text());
         "--ignore-working-copy",
         "log",
         "-r",
-        "foo-bar@",
+        `${workspaceName}@`,
         "--no-graph",
         "-T",
         "commit_id",

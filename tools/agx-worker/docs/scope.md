@@ -1,7 +1,7 @@
 # agx-worker scope and ownership
 
-This table describes `agx-worker`, routed by the process-only `agx` suite entry. See the [suite
-section of the tools architecture](../../spec/architecture.md#suite) for the part boundaries; the
+This table describes `agx-worker`, routed by the process-only `agx` suite entry. See the suite
+section of the tools architecture for the part boundaries; the
 architecture owns the whole pipeline, its invariants and their checks.
 
 ## 1. agx-worker does
@@ -57,20 +57,20 @@ commit as `base_rev`, including a scratch directory initialized with `jj git ini
 
 ## 2. agx-worker does not
 
-| concern | owner | why |
-| --- | --- | --- |
-| Ticket storage, history, and amendments | Plain files plus jj | Tickets are inputs; `agx worker check` validates an input and does not own its history. |
-| Write exclusion between workers | jj workspaces plus rebase at land | agx-worker only prints overlap `WARN` lines; it does not lock or block writes. |
-| Workspace creation, readiness, collection and landing | `agx ws` (`tools/agx-ws`) / `mise run land` | agx-worker consumes a tree via `--cd`; creating, readying and collecting trees is `agx ws` (`tools/agx-ws`). Landing belongs to `mise run land`. |
-| Durability or detach beyond the session | `systemd-run --user -E CLAUDE_CODE_SESSION_ID -E CODEX_SESSION_ID --unit=agt_<slug> --collect -- agx worker run ...` | The caller chooses a service lifecycle; `-E NAME` carries the dispatcher's session into the unit. |
-| CPU/GPU/RAM admission | `agent-resource-run` | Resource admission is outside agx-worker's routing and event-recording jobs. |
-| Commits and pushes | `mise run commit` / `mise run land` | agx-worker records worker outcomes; repository publication belongs to the repository tasks. |
-| Acceptance | A human or coordinator | Verify results are recorded facts; a human or coordinator reads them and decides acceptance. `agx worker judge` records the accept/reject decision and optional note; agx-worker does not decide acceptance. |
-| Notifications and recap demands | Hooks consuming `agx worker ls --json` | Hooks can derive notifications from folded state; they must run the installed suite entry, not a checkout's working copy. |
-| Waiting for a run | `agx worker ls --wait SELECTOR` (a read-only fold) | A stateful wait/detach command was removed on purpose; `ls --wait` only re-reads `records.jsonl` and writes nothing. |
-| Searching code | `rr` | Code retrieval belongs to the repository search tool, not agx-worker. |
-| Routing quality | Jev, corrected through the brief and roster `use_for` | Routing is Jev's choice among roster rows; agx-worker has no routing override. |
-| Worker continuity records | The worker harness | A dispatched worker receives a bounded environment without coordinator slot or vendor session IDs. It owns its brief and workspace and does not bind a continuation record. |
+| concern                                               | owner                                                                                                                | why                                                                                                                                                                                                          |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Ticket storage, history, and amendments               | Plain files plus jj                                                                                                  | Tickets are inputs; `agx worker check` validates an input and does not own its history.                                                                                                                      |
+| Write exclusion between workers                       | jj workspaces plus rebase at land                                                                                    | agx-worker only prints overlap `WARN` lines; it does not lock or block writes.                                                                                                                               |
+| Workspace creation, readiness, collection and landing | `agx ws` (`tools/agx-ws`) / `mise run land`                                                                          | agx-worker consumes a tree via `--cd`; creating, readying and collecting trees is `agx ws` (`tools/agx-ws`). Landing belongs to `mise run land`.                                                             |
+| Durability or detach beyond the session               | `systemd-run --user -E CLAUDE_CODE_SESSION_ID -E CODEX_SESSION_ID --unit=agt_<slug> --collect -- agx worker run ...` | The caller chooses a service lifecycle; `-E NAME` carries the dispatcher's session into the unit.                                                                                                            |
+| CPU/GPU/RAM admission                                 | `agent-resource-run`                                                                                                 | Resource admission is outside agx-worker's routing and event-recording jobs.                                                                                                                                 |
+| Commits and pushes                                    | `mise run commit` / `mise run land`                                                                                  | agx-worker records worker outcomes; repository publication belongs to the repository tasks.                                                                                                                  |
+| Acceptance                                            | A human or coordinator                                                                                               | Verify results are recorded facts; a human or coordinator reads them and decides acceptance. `agx worker judge` records the accept/reject decision and optional note; agx-worker does not decide acceptance. |
+| Notifications and recap demands                       | Hooks consuming `agx worker ls --json`                                                                               | Hooks can derive notifications from folded state; they must run the installed suite entry, not a checkout's working copy.                                                                                    |
+| Waiting for a run                                     | `agx worker ls --wait SELECTOR` (a read-only fold)                                                                   | A stateful wait/detach command was removed on purpose; `ls --wait` only re-reads `records.jsonl` and writes nothing.                                                                                         |
+| Searching code                                        | `rr`                                                                                                                 | Code retrieval belongs to the repository search tool, not agx-worker.                                                                                                                                        |
+| Routing quality                                       | Jev, corrected through the brief and roster `use_for`                                                                | Routing is Jev's choice among roster rows; agx-worker has no routing override.                                                                                                                               |
+| Worker continuity records                             | The worker harness                                                                                                   | A dispatched worker receives a bounded environment without coordinator slot or vendor session IDs. It owns its brief and workspace and does not bind a continuation record.                                  |
 
 ## 3. Derived, not stored
 
