@@ -1,5 +1,9 @@
 # Changelog
 
+## 10.0.4 — 2026-10-23
+
+- Preserve the recorded sandbox on continuation with flag and ticket overrides, and record sandbox provenance in receipts for source and compiled dispatch.
+
 ## 10.0.3 — 2026-10-23
 
 - Accept usehooks declarations through the shared strict agx L2 configuration reader.

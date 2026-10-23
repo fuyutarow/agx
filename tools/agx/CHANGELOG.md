@@ -3,6 +3,8 @@
 ## 1.3.0 — 2026-10-23
 
 - Distribute every agx suite executable and the usehooks library in one versioned GitHub release
+- Update suite member agx-worker to 10.0.4.
+- Update suite member agx-usehooks to 1.0.4.
 
 ## 1.2.1 — 2026-10-23
 
