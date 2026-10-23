@@ -1,5 +1,5 @@
 import { mkdir, rm, copyFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { err, ok } from "neverthrow";
 import { jsonOf, z } from "../zod.ts";
 
@@ -18,6 +18,7 @@ const manifestSchema = z.object({
   version: z
     .string()
     .regex(/^\d+\.\d+\.\d+(?:-[\da-zA-Z.-]+)?(?:\+[\da-zA-Z.-]+)?$/u),
+  source: z.string().optional(),
   bin: z.record(z.string().regex(/^[\da-z-]+$/u), z.string()).optional(),
 });
 
@@ -45,8 +46,6 @@ export async function packageInfo(pkg: string, root = repository) {
   if (!parsed.success)
     return err(`Invalid package.json for ${pkg}: ${parsed.error.message}`);
   const commands = { ...parsed.data.bin };
-  if (Object.keys(commands).length === 0)
-    return err(`Package ${pkg} has no commands`);
   if (pkg === "xmsg") commands["agx-msg"] = commands.xmsg ?? "src/xmsg.ts";
   return ok({
     pkg,
@@ -54,6 +53,7 @@ export async function packageInfo(pkg: string, root = repository) {
     version: parsed.data.version,
     tag: `${pkg}@${parsed.data.version}`,
     commands,
+    source: parsed.data.source,
   });
 }
 
@@ -74,6 +74,8 @@ export function platform(target?: string) {
 export async function build(pkg: string, target?: string, root = repository) {
   const info = await packageInfo(pkg, root);
   if (info.isErr()) return info;
+  if (Object.keys(info.value.commands).length === 0)
+    return buildLibrary(info.value, root);
   const host = platform(target);
   if (host.isErr()) return host;
   const { dir, version, commands } = info.value;
@@ -115,6 +117,98 @@ export async function build(pkg: string, target?: string, root = repository) {
   );
   const packed = await run(["tar", "-czf", archive, "-C", stage, "bin"], root);
   if (packed.exit !== 0) return err(`Archive failed: ${packed.stderr}`);
+  const sha256 = new Bun.CryptoHasher("sha256")
+    .update(await Bun.file(archive).arrayBuffer())
+    .digest("hex");
+  return ok({ archive, sha256 });
+}
+
+/** Build a standalone ESM package; source and declaration paths stay independent. */
+async function buildLibrary(
+  info: {
+    pkg: string;
+    dir: string;
+    version: string;
+    source: string | undefined;
+  },
+  root: string,
+) {
+  const { pkg, dir, version, source } = info;
+  if (source === undefined)
+    return err(`Package ${pkg} has no library source entry`);
+  const stage = join(root, "dist", pkg);
+  await rm(stage, { recursive: true, force: true });
+  await mkdir(stage, { recursive: true });
+  const bundled = await run(
+    [
+      process.execPath,
+      "build",
+      join(dir, source),
+      "--target",
+      "bun",
+      "--format",
+      "esm",
+      "--outfile",
+      join(stage, "index.js"),
+    ],
+    root,
+  );
+  if (bundled.exit !== 0)
+    return err(`Library build failed: ${bundled.stderr}${bundled.stdout}`);
+  const declarations = await run(
+    [
+      process.execPath,
+      "x",
+      "--bun",
+      "--offline",
+      "--package",
+      "typescript@6.0.3",
+      "tsc",
+      "--project",
+      join(dir, "tsconfig.release.json"),
+      "--outDir",
+      join(stage, "types"),
+      "--listFiles",
+    ],
+    root,
+  );
+  if (declarations.exit !== 0)
+    return err(
+      `Declaration build failed: ${declarations.stderr}${declarations.stdout}`,
+    );
+  // tsc references existing declarations but does not copy them (e.g. vendored types).
+  for (const file of declarations.stdout.split("\n")) {
+    const rel = relative(root, file.trim());
+    if (
+      !file.endsWith(".d.ts") ||
+      rel.startsWith("..") ||
+      rel.split("/").includes("node_modules")
+    )
+      continue;
+    const destination = join(stage, "types", rel);
+    await mkdir(dirname(destination), { recursive: true });
+    await copyFile(file.trim(), destination);
+  }
+  // Public shared declarations use NodeJS globals; resolve the declared type dependency
+  // even when the consumer does not otherwise load Node types.
+  const declarationEntry = join(
+    stage,
+    "types",
+    relative(root, join(dir, source)).replace(/\.ts$/u, ".d.ts"),
+  );
+  await Bun.write(
+    declarationEntry,
+    `/// <reference types="node" />\n${await Bun.file(declarationEntry).text()}`,
+  );
+  for (const file of ["package.json", "README.md", "CHANGELOG.md"])
+    await copyFile(join(dir, file), join(stage, file));
+  const archive = join(root, "dist", `${pkg}-${version}.tgz`);
+  const packed = await run(
+    [process.execPath, "pm", "pack", "--ignore-scripts", "--filename", archive],
+    stage,
+  );
+  if (packed.exit !== 0)
+    return err(`Package archive failed: ${packed.stderr}${packed.stdout}`);
   const sha256 = new Bun.CryptoHasher("sha256")
     .update(await Bun.file(archive).arrayBuffer())
     .digest("hex");

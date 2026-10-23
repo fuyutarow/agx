@@ -78,7 +78,25 @@ requires the matching Bun runtime to be available to the compiler; it may requir
 a download.
 
 Executable packages are agx, agx-worker, agx-ws, agx-ticket, agx-status, xmsg and
-jex. Unknown packages and the library agx-usehooks are refused with exit 2.
+jex. Unknown packages are refused with exit 2.
+
+Packages without commands are built as Bun ESM libraries. The library's `source`
+entry is bundled into `dist/<pkg>/index.js`, including sibling shared runtime
+sources. TypeScript 6.0.3 emits public declarations using the package's
+`tsconfig.release.json`; referenced local declarations are copied alongside them.
+The staged manifest selects the runtime and type entries. Its `files` allowlist
+ships the bundle, declarations, README and CHANGELOG, excluding tests and pending
+changesets. Declaration dependencies are pinned to the repository's resolved
+versions. This build requires the pinned TypeScript compiler in Bun's local cache
+and runs it offline.
+
+`bun pm pack` packs the staging directory as `dist/<pkg>-<version>.tgz`.
+The output includes its absolute path and SHA-256 checksum. Library archives are
+platform independent; `--target` applies only to executable packages.
+
+`mise run release:build -- agx-usehooks` builds the library tarball;
+`mise run release:publish -- agx-usehooks` previews attaching it to its own
+`agx-usehooks@<version>` release with the same publication refusals.
 
 ## Publish
 
@@ -120,3 +138,13 @@ agx-status = { version = "1.0.0", version_prefix = "agx-status@", bin_path = "bi
 
 Choose the version of the individual package. Other packages can advance without
 changing this pin.
+
+For a Bun library consumer, pin the public release tarball in `package.json`:
+
+```json
+"agx-usehooks": "https://github.com/fuyutarow/agx/releases/download/agx-usehooks@<v>/agx-usehooks-<v>.tgz"
+```
+
+Replace both `<v>` placeholders with the same package version. URL installation
+requires the repository and its release assets to be public. The tarball includes
+TypeScript declarations for the public API.

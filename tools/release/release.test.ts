@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import { chmod, cp, mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { writeChangeset } from "../changeset/changeset.ts";
@@ -55,7 +55,7 @@ async function fixture(pkg = "agx-status") {
   await Bun.write(join(fake, "gh"), executable);
   await chmod(join(fake, "git"), 0o755);
   await chmod(join(fake, "gh"), 0o755);
-  return { root, dir, fake };
+  return { root, dir, fake, pkg };
 }
 
 async function preview(
@@ -67,7 +67,7 @@ async function preview(
     [
       process.execPath,
       join(f.root, "tools/release/publish.ts"),
-      "agx-status",
+      f.pkg,
       ...args,
     ],
     {
@@ -140,18 +140,16 @@ test(
   COMPILE_TEST_TIMEOUT_MS,
 );
 
-test("unknown and library packages exit 2 without producing an archive", async () => {
+test("unknown packages exit 2 without producing an archive", async () => {
   const f = await fixture("agx-usehooks");
   await Bun.write(join(f.dir, "package.json"), '{"version":"1.0.0"}');
-  for (const pkg of ["unknown", "agx-usehooks", "../agx-status"]) {
+  for (const pkg of ["unknown", "../agx-status"]) {
     const result = await run(
       [process.execPath, join(f.root, "tools/release/build.ts"), pkg],
       f.root,
     );
     expect(result.exit).toBe(2);
-    expect(result.stderr).toContain(
-      pkg === "agx-usehooks" ? "no commands" : "Unknown package",
-    );
+    expect(result.stderr).toContain("Unknown package");
   }
 });
 
@@ -259,3 +257,134 @@ test("target parsing and changelog boundaries", () => {
     true,
   );
 });
+
+async function libraryFixture() {
+  const f = await fixture("agx-usehooks");
+  for (const path of ["tools/shared", "agents/hooks/vendor"])
+    await cp(join(repository, path), join(f.root, path), { recursive: true });
+  await cp(join(repository, "tools/agx-usehooks/src"), join(f.dir, "src"), {
+    recursive: true,
+  });
+  for (const file of ["package.json", "README.md", "tsconfig.release.json"])
+    await Bun.write(
+      join(f.dir, file),
+      Bun.file(join(repository, "tools/agx-usehooks", file)),
+    );
+  const manifest = await Bun.file(join(f.dir, "package.json")).text();
+  await Bun.write(
+    join(f.dir, "package.json"),
+    manifest.replace(/"version": "[^"\n]+"/u, '"version": "2.3.4"'),
+  );
+  await Bun.write(
+    join(f.root, "tsconfig.json"),
+    Bun.file(join(repository, "tsconfig.json")),
+  );
+  await Bun.write(
+    join(f.dir, "tests/should-not-ship.ts"),
+    "throw new Error('test');",
+  );
+  await Bun.write(join(f.dir, ".changes/should-not-ship.md"), "pending change");
+  return f;
+}
+
+test(
+  "library tarball installs offline, imports and supplies checked public declarations",
+  async () => {
+    const f = await libraryFixture();
+    const result = await build(f.pkg, undefined, f.root);
+    expect(result.isOk()).toBe(true);
+    if (result.isErr()) return;
+    expect(result.value.archive).toEndWith("agx-usehooks-2.3.4.tgz");
+    expect(result.value.sha256).toMatch(/^[a-f\d]{64}$/u);
+    const listing = await run(["tar", "-tzf", result.value.archive], f.root);
+    expect(listing.exit).toBe(0);
+    const files = listing.stdout.trim().split("\n");
+    for (const file of [
+      "package.json",
+      "index.js",
+      "README.md",
+      "CHANGELOG.md",
+      "types/tools/agx-usehooks/src/index.d.ts",
+      "types/agents/hooks/vendor/deps.d.ts",
+    ])
+      expect(files).toContain(`package/${file}`);
+    expect(
+      files.every((file) =>
+        /^package\/(?:package\.json|index\.js|README\.md|CHANGELOG\.md|types\/.+\.d\.ts)$/u.test(
+          file,
+        ),
+      ),
+    ).toBe(true);
+    expect(listing.stdout).not.toMatch(/(?:tests|\.changes)\//u);
+    const consumer = await mkdtemp(join(tmpdir(), "library-consumer-"));
+    roots.push(consumer);
+    await Bun.write(
+      join(consumer, "package.json"),
+      '{"name":"consumer","type":"module","private":true}',
+    );
+    const installed = await run(
+      [process.execPath, "add", "--offline", result.value.archive],
+      consumer,
+    );
+    expect(installed.exit, installed.stderr).toBe(0);
+    await Bun.write(
+      join(consumer, "consumer.ts"),
+      `
+import { onPrompt, runningRuns, RunSchema, type HookContext, type Run } from "agx-usehooks";
+const ctx: HookContext = { cwd: "/tmp", repoRoot: "/tmp", payload: {} };
+const runs: Run[] = await runningRuns(ctx, { stateDirs: [] });
+// @ts-expect-error public Run.row must remain a string
+const invalid: Run = { id: "fixture", lane: "test", row: 123 };
+void invalid;
+if (runs.length !== 0 || typeof onPrompt !== "function" || !RunSchema.safeParse({ id: "fixture", lane: "test", row: "fixture" }).success) throw new Error("public API failed");
+`,
+    );
+    const imported = await run([process.execPath, "consumer.ts"], consumer);
+    expect(imported).toEqual({ exit: 0, stdout: "", stderr: "" });
+    const typed = await run(
+      [
+        process.execPath,
+        "x",
+        "--bun",
+        "--offline",
+        "--package",
+        "typescript@6.0.3",
+        "tsc",
+        "--noEmit",
+        "--strict",
+        "--module",
+        "esnext",
+        "--moduleResolution",
+        "bundler",
+        "--target",
+        "esnext",
+        "consumer.ts",
+      ],
+      consumer,
+    );
+    expect(typed.exit, typed.stdout + typed.stderr).toBe(0);
+  },
+  COMPILE_TEST_TIMEOUT_MS,
+);
+
+test(
+  "library publish previews its own tag and tarball and retains refusals",
+  async () => {
+    const f = await libraryFixture();
+    const result = await preview(f);
+    expect(result.exit).toBe(0);
+    expect(result.stdout).toContain("DRY RUN");
+    expect(result.stdout).toContain(
+      "'gh' 'release' 'create' 'agx-usehooks@2.3.4'",
+    );
+    expect(result.stdout).toContain("agx-usehooks-2.3.4.tgz'");
+    const calls = await Bun.file(join(f.root, "calls")).text();
+    expect(calls).not.toContain('["tag"');
+    expect(calls).not.toContain('["release"');
+    expect((await preview(f, [], { RELEASE_TEST_DIRTY: "1" })).exit).toBe(2);
+    expect((await preview(f, [], { RELEASE_TEST_TAG: "1" })).exit).toBe(2);
+    await Bun.write(join(f.dir, "CHANGELOG.md"), "## 2.3.3\n\n- Earlier.\n");
+    expect((await preview(f)).exit).toBe(2);
+  },
+  COMPILE_TEST_TIMEOUT_MS,
+);
