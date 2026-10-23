@@ -1,12 +1,9 @@
-// Internal, flag-free transport: its single JSON job is passed through the
-// environment so no shell or argv parser can change the target's token order.
+// Internal, flag-free transport: argv and its canonical job envelope must agree.
 // FAIL CLOSED: never exec the target if kernel write denial cannot be installed.
 import { dlopen, FFIType, ptr } from "bun:ffi";
 import { open, realpath, stat } from "node:fs/promises";
-import { jsonOf, z } from "./zod.ts";
-import { READONLY_JOB_ENV } from "./readonly-command.ts";
-
-const Job = z.object({ argv: z.array(z.string()).min(1), cwd: z.string() });
+// This helper is embedded as text and evaluated in a separate Bun process.
+// Keep it standalone: the restricted exec must never load repository modules.
 const fatal = (message: string): never => {
   process.stderr.write(
     `FATAL: read-only VCS isolation: ${message}; target was not started\n`,
@@ -15,16 +12,25 @@ const fatal = (message: string): never => {
 };
 
 async function main(): Promise<void> {
-  const job = jsonOf(Job).safeParse(process.env[READONLY_JOB_ENV]);
-  if (!job.success) return fatal("missing or invalid internal job");
-  const requested = job.data.argv[0];
+  // argv-forwarding: native execv (no flag interpretation). Comparing the envelope
+  // validates the entire string tuple without loading a repository JSON decoder.
+  const [, cwd, ...argv] = process.argv;
+  if (
+    cwd === undefined ||
+    process.env.AGX_READONLY_COMMAND_JOB !== JSON.stringify({ argv, cwd })
+  )
+    return fatal("missing or invalid internal job");
+  const [requested, ...args] = argv;
   if (requested === undefined) return fatal("empty command");
+  // These variables belong to the helper, not the target executable.
+  delete process.env.AGX_READONLY_COMMAND_JOB;
+  delete process.env.BUN_BE_BUN;
   const found = Bun.which(requested);
   if (found === null) return fatal(`executable unavailable: ${requested}`);
   const executable = await realpath(found);
-  process.chdir(job.data.cwd);
-  const argv = [executable, ...job.data.argv.slice(1)];
-  let execArgv = argv;
+  process.chdir(cwd);
+  const targetArgv = [executable, ...args];
+  let execArgv = targetArgv;
   let libPath: string;
   if (process.platform === "linux") libPath = "libc.so.6";
   else if (process.platform === "darwin") {
@@ -36,14 +42,22 @@ async function main(): Promise<void> {
       "/usr/bin/sandbox-exec",
       "-p",
       '(version 1)(allow default)(deny file-write* (require-not (literal "/dev/null")))',
-      ...argv,
+      ...targetArgv,
     ];
   } else return fatal(`unsupported platform ${process.platform}`);
 
   const native = dlopen(libPath, {
     execv: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
     close: { args: [FFIType.i32], returns: FFIType.i32 },
+    unsetenv: { args: [FFIType.ptr], returns: FFIType.i32 },
   });
+  // execv inherits libc's environment, which Bun's process.env deletion does not
+  // update. Clear the native transport too, especially before executing a compiled target.
+  for (const name of ["BUN_BE_BUN", "AGX_READONLY_COMMAND_JOB"]) {
+    const key = Buffer.from(`${name}\0`);
+    if (native.symbols.unsetenv(ptr(key)) !== 0)
+      return fatal(`cannot clear internal environment ${name}`);
+  }
   // Prepare every exec argument BEFORE restricting the current native thread.
   // Direct execv is essential: a multithreaded runtime must not dispatch spawn
   // through a different, unrestricted thread. Exec replaces all runtime threads.
@@ -101,11 +115,8 @@ async function main(): Promise<void> {
     native.symbols.close(fd);
     if (restricted !== 0) return fatal("landlock_restrict_self failed");
   }
-  delete process.env[READONLY_JOB_ENV];
   native.symbols.execv(ptr(executableString), ptr(pointers));
   fatal(`execv failed for ${execArgv[0]}`);
 }
 
-if (import.meta.main) {
-  await main().catch((error: unknown) => fatal(String(error)));
-}
+await main().catch((error: unknown) => fatal(String(error)));

@@ -47,6 +47,50 @@ const fakeRg = (argv: string[], cwd: string) => {
 };
 
 describe("premise checks", () => {
+  test("tracked symbol selection uses imported enumeration and bounded VCS reads", () => {
+    const repo = join(scratch, "tracked-repo");
+    mkdirSync(join(repo, ".git"), { recursive: true });
+    const calls: string[][] = [];
+    const result = checkPremises(["symbol:needle"], repo, {
+      runner: (argv) => {
+        calls.push(argv);
+        if (argv.includes("rev-parse")) return { exitCode: 0, output: repo };
+        if (argv.includes("ls-files"))
+          return { exitCode: 0, output: "src/tracked.ts\0" };
+        return { exitCode: 0, output: "src/tracked.ts" };
+      },
+    });
+    expect(result).toEqual({ status: "ok" });
+    expect(calls.map((argv) => argv[0])).toEqual(["git", "git", "rg"]);
+    expect(calls.at(-1)).toEqual([
+      "rg",
+      "--fixed-strings",
+      "--files-with-matches",
+      "--",
+      "needle",
+      "src/tracked.ts",
+    ]);
+  });
+
+  test("an empty tracked selection reports missing symbols without searching untracked files", () => {
+    const repo = join(scratch, "empty-repo");
+    mkdirSync(join(repo, ".git"), { recursive: true });
+    const calls: string[][] = [];
+    expect(
+      checkPremises(["symbol:needle"], repo, {
+        runner: (argv) => {
+          calls.push(argv);
+          return { exitCode: 0, output: "" };
+        },
+      }),
+    ).toEqual({
+      status: "missing",
+      premises: ["symbol:needle"],
+      details: ["symbol:needle: no matching text"],
+    });
+    expect(calls.map((argv) => argv[0])).toEqual(["git", "git"]);
+  });
+
   test("every bounded jj premise read disables snapshots and operation reconciliation", () => {
     const calls: string[][] = [];
     const runner = (argv: string[]) => {

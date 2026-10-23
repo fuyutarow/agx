@@ -1,5 +1,9 @@
 # Changelog
 
+## 10.0.2 — 2026-10-23
+
+- Run compiled workers and read-only repository checks without requiring the source checkout.
+
 ## 10.0.1 — 2026-10-23
 
 - Move roster consumers into the worker-owned roster module.

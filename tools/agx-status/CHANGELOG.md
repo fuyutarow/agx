@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.1 — 2026-10-23
+
+- Align package documentation and compatibility checks with standalone installation.
+
 ## 1.0.0 — 2026-10-23
 
 - Read the single agx state directory and refuse retired state configuration

@@ -22,7 +22,9 @@ const message = "Literal ' $(touch nope)\n日本語";
 const envelope = (
   body: string,
   sender = "unknown (caller identity unavailable or inherited; use --from backend:<full-session-id>)",
-) => `from: ${sender}\n\n${body}`;
+  target?: string,
+) =>
+  `from: ${sender}${target === undefined ? "" : `\nto: claude:${target}`}\n\n${body}`;
 const msgId = "de2d35d2-4ad8-4bd3-a28d-21184c0218ca";
 const relayId = "cc6e829c-128f-4836-a11b-21b83b11bf12";
 const use = {
@@ -39,6 +41,18 @@ const use = {
     ],
   },
 };
+const uuidUse = (target: string) => ({
+  ...use,
+  message: {
+    ...use.message,
+    content: [
+      {
+        ...use.message.content[0],
+        input: { to: "peer", message: envelope(message, undefined, target) },
+      },
+    ],
+  },
+});
 const result = (content: unknown, toolUseId = "send-1", isError = false) => ({
   type: "user",
   message: {
@@ -188,10 +202,24 @@ async function run(
     discoveryDelay?: number;
     env?: Record<string, string | undefined>;
     transcript?: string | undefined;
+    registry?: ReadonlyArray<{
+      sessionId: string;
+      name?: string;
+      status: string;
+    }>;
+    relayPeer?: string;
   } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), "xmsg-test-"));
   roots.push(root);
+  if (options.registry !== undefined) {
+    await mkdir(join(root, ".claude", "sessions"), { recursive: true });
+    for (const [index, record] of options.registry.entries())
+      await Bun.write(
+        join(root, ".claude", "sessions", `${index + 100}.json`),
+        JSON.stringify(record),
+      );
+  }
   if (options.transcript !== undefined) {
     await mkdir(join(root, ".claude", "projects", "fixture"), {
       recursive: true,
@@ -273,8 +301,21 @@ process.exit(0);
 const args = Bun.argv.slice(2);
 const previous = await Bun.file(process.env.XMSG_FAKE_ARGS).exists() ? await Bun.file(process.env.XMSG_FAKE_ARGS).text() : "";
 await Bun.write(process.env.XMSG_FAKE_ARGS, previous + JSON.stringify(args) + "\\n");
-const inventory = args[0] === "agents" && process.env.XMSG_FAKE_INVENTORY !== undefined;
-process.stdout.write(inventory ? process.env.XMSG_FAKE_INVENTORY : (process.env.XMSG_FAKE_OUTPUT ?? ""));
+const inventory = args[0] === "agents";
+let output = process.env.XMSG_FAKE_INVENTORY ?? process.env.XMSG_FAKE_OUTPUT ?? "";
+if (inventory && process.env.XMSG_FAKE_REGISTRY === "1") {
+  const records = [];
+  for await (const file of new Bun.Glob("*.json").scan(process.env.HOME + "/.claude/sessions"))
+    records.push(await Bun.file(process.env.HOME + "/.claude/sessions/" + file).json());
+  output = JSON.stringify(records);
+}
+if (!inventory) {
+  output = process.env.XMSG_FAKE_OUTPUT ?? "";
+  const peer = process.env.XMSG_FAKE_PEER;
+  if (peer !== undefined && !args.at(-1)?.includes("Target: " + JSON.stringify(peer)))
+    output = ${JSON.stringify(completeStream(listUse, listResult))};
+}
+process.stdout.write(output);
 await Bun.sleep(Number(inventory ? process.env.XMSG_FAKE_INVENTORY_DELAY : (process.env.XMSG_FAKE_DELAY ?? 0)));
 process.exit(Number(process.env.XMSG_FAKE_EXIT ?? 0));
 `,
@@ -308,7 +349,11 @@ process.exit(Number(process.env.XMSG_FAKE_EXIT ?? 0));
         XMSG_RELAY_CAPTURE: undefined,
         ...options.env,
         XMSG_FAKE_INVENTORY: options.inventory,
-        XMSG_FAKE_INVENTORY_DELAY: String(options.inventoryDelay ?? 0),
+        XMSG_FAKE_REGISTRY: options.registry === undefined ? undefined : "1",
+        XMSG_FAKE_PEER: options.relayPeer,
+        XMSG_FAKE_INVENTORY_DELAY: String(
+          options.inventoryDelay ?? options.delay ?? 0,
+        ),
         XMSG_FAKE_ARGS: argsFile,
         XMSG_FAKE_OUTPUT: options.output ?? "",
         XMSG_FAKE_EXIT: String(options.exit ?? 0),
@@ -398,8 +443,9 @@ test.each(["codex", "claude"])(
     expect(r.stderr).toContain("Do not guess");
     expect(r.stderr).not.toContain("completed without delivery");
     expect(r.stdout).toBe("");
-    expect(r.calls).toHaveLength(sender === "codex" ? 1 : 2);
-    expect(r.argv.at(-1)).toContain(JSON.stringify(target));
+    expect(r.calls).toHaveLength(2);
+    expect(r.argv.at(-1)).toContain('Target: "intended-peer"');
+    expect(r.argv.at(-1)).toContain(`to: claude:${target}`);
   },
 );
 
@@ -956,18 +1002,20 @@ test("failed selected inventory cannot authorize a prefix send", async () => {
   expect(r.calls).toEqual([]);
 });
 
-test("Claude prefix queries only Claude, then invokes its unchanged native send path once", async () => {
+test("Claude prefix queries only Claude, then relays to its native name once", async () => {
   const r = await run({
-    inventory: JSON.stringify([{ sessionId: uuidA, status: "idle" }]),
-    output: stream(use, accepted),
+    inventory: JSON.stringify([
+      { sessionId: uuidA, name: "peer", status: "idle" },
+    ]),
+    output: stream(uuidUse(uuidA), accepted),
     args: sendArgs("claude:DEADBEEF-12"),
   });
   expect(r.exit).toBe(0);
   expect(r.calls).toHaveLength(2);
   expect(r.calls[0]).toEqual(["agents", "--json"]);
-  expect(r.calls[1]?.at(-1)).toContain(`Target: ${JSON.stringify(uuidA)}`);
+  expect(r.calls[1]?.at(-1)).toContain('Target: "peer"');
   expect(r.calls[1]?.at(-1)).toContain(
-    `Send this exact text once using SendMessage: ${JSON.stringify(envelope(message))}`,
+    `Send this exact text once using SendMessage: ${JSON.stringify(envelope(message, undefined, uuidA))}`,
   );
 });
 
@@ -1035,7 +1083,9 @@ test.each(["review (v2)", "dead*", "^dead[beef]$", "review? | {v2} \\ done"])(
 
 test("prefix discovery and send share one timeout budget with no retry", async () => {
   const r = await run({
-    inventory: JSON.stringify([{ sessionId: uuidA, status: "idle" }]),
+    inventory: JSON.stringify([
+      { sessionId: uuidA, name: "peer", status: "idle" },
+    ]),
     inventoryDelay: 550,
     delay: 550,
     output: stream(use, accepted),
@@ -1062,6 +1112,79 @@ const sends = (calls: string[][]) =>
   calls.filter((args) => args[0] !== "agents");
 const globalAgents = (id = uuidB, name = "Claude peer") =>
   JSON.stringify([{ sessionId: id, name, status: "idle" }]);
+
+test.each([
+  uuidB,
+  uuidB.toUpperCase(),
+  uuidB.replaceAll("-", "").toUpperCase(),
+])(
+  "live Claude UUID %s resolves from fixture registry before relay and retains its destination envelope",
+  async (selector) => {
+    const name = "fixture peer (v2)";
+    const r = await run({
+      registry: [{ sessionId: uuidB, name, status: "busy" }],
+      relayPeer: name,
+      output: completeStream(listUse, listResult, uuidUse(uuidB), accepted),
+      args: sendArgs(`claude:${selector}`),
+    });
+    expect(r.exit).toBe(0);
+    expect(r.stdout).toContain(`accepted for claude:${uuidB}`);
+    expect(r.stdout).toContain(msgId);
+    expect(r.calls).toHaveLength(2);
+    expect(r.calls[0]).toEqual(["agents", "--json"]);
+    expect(r.argv.at(-1)).toContain(`Target: ${JSON.stringify(name)}`);
+    expect(r.argv.at(-1)).toContain(
+      JSON.stringify(envelope(message, undefined, uuidB)),
+    );
+  },
+);
+
+test.each([
+  { records: [], reason: "found 0 live registrations" },
+  {
+    records: [{ sessionId: uuidB, name: "peer", status: "completed" }],
+    reason: "found 0 live registrations",
+  },
+  { records: [{ sessionId: uuidB, status: "idle" }], reason: "no native name" },
+  {
+    records: [
+      { sessionId: uuidB, name: "peer", status: "idle" },
+      { sessionId: uuidA, name: "peer", status: "busy" },
+    ],
+    reason: "not unique",
+  },
+])(
+  "Claude UUID resolution refuses before relay: $reason",
+  async ({ records, reason }) => {
+    const r = await run({
+      registry: records,
+      args: sendArgs(`claude:${uuidB}`),
+    });
+    expect(r.exit).toBe(3);
+    expect(r.calls).toEqual([["agents", "--json"]]);
+    expect(r.stdout).toBe("");
+    expect(r.stderr.trim().split("\n")).toHaveLength(1);
+    expect(r.stderr).toContain(
+      `Claude target resolution failed for claude:${uuidB}`,
+    );
+    expect(r.stderr).toContain(reason);
+    expect(r.stderr).toContain("searched claude agents --json");
+    expect(r.stderr).toContain("/.claude/sessions");
+    expect(r.stderr).not.toContain("relay step failed");
+  },
+);
+
+test("unavailable Claude UUID inventory names the target and searched source without relay", async () => {
+  const r = await run({
+    inventory: "invalid",
+    args: sendArgs(`claude:${uuidB}`),
+  });
+  expect(r.exit).toBe(3);
+  expect(r.calls).toEqual([["agents", "--json"]]);
+  expect(r.stderr).toContain(uuidB);
+  expect(r.stderr).toContain("Invalid Claude inventory schema");
+  expect(r.stderr).toContain("searched claude agents --json");
+});
 
 test.each([
   uuidA,
@@ -1101,14 +1224,14 @@ test.each([
     const r = await run({
       threads: [uuidThreads[0]!],
       inventory: globalAgents(uuidB, name),
-      output: stream(use, accepted),
+      output: stream(uuidUse(uuidB), accepted),
       args: sendArgs(selector),
     });
     expect(r.exit).toBe(0);
     expect(sends(r.calls)).toHaveLength(1);
-    expect(r.argv.at(-1)).toContain(`Target: ${JSON.stringify(uuidB)}`);
+    expect(r.argv.at(-1)).toContain(`Target: ${JSON.stringify(name)}`);
     expect(r.argv.at(-1)).toContain(
-      `Send this exact text once using SendMessage: ${JSON.stringify(envelope(message))}`,
+      `Send this exact text once using SendMessage: ${JSON.stringify(envelope(message, undefined, uuidB))}`,
     );
   },
 );
@@ -1154,12 +1277,12 @@ test.each(["deadbeef", "dead-beef", "dea"])(
     const r = await run({
       threads: [uuidThreads[0]!],
       inventory: globalAgents(uuidB, name),
-      output: stream(use, accepted),
+      output: stream(uuidUse(uuidB), accepted),
       args: sendArgs(name),
     });
     expect(r.exit).toBe(0);
     expect(sends(r.calls)).toHaveLength(1);
-    expect(r.argv.at(-1)).toContain(`Target: ${JSON.stringify(uuidB)}`);
+    expect(r.argv.at(-1)).toContain(`Target: ${JSON.stringify(name)}`);
   },
 );
 

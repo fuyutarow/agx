@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.1 — 2026-10-23
+
+- Keep read-only repository inspection working from compiled commands without adjacent helper source files.
+
 ## 2.0.0 — 2026-10-23
 
 - Refuse retired state configuration before ticket commands

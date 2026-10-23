@@ -430,12 +430,8 @@ export async function run(flags: Flags): Promise<number> {
 
   const workerPath =
     process.env.AGX_WORKER_BIN ??
-    join(
-      import.meta.dir,
-      "..",
-      "workers",
-      row.route === "codex" ? "codex.ts" : "run-claude.ts",
-    );
+    process.env.AGX_WORKER_COMMAND ??
+    "agx-worker";
   const workerArgs = (): string[] => {
     if (process.env.AGX_WORKER_BIN !== undefined)
       return [
@@ -451,6 +447,7 @@ export async function run(flags: Flags): Promise<number> {
     if (row.route === "codex")
       return [
         workerPath,
+        "--internal-codex",
         "--choice",
         row.id,
         "--sandbox",
@@ -483,6 +480,7 @@ export async function run(flags: Flags): Promise<number> {
         : undefined;
     return [
       workerPath,
+      "--internal-claude",
       "--target",
       cwd,
       "--prompt-file",
@@ -510,18 +508,41 @@ export async function run(flags: Flags): Promise<number> {
   const before = workspaceSnapshot(cwd, ticket.writes);
   const runEnv = verificationEnvironment(cwd, process.env, temp.env);
   if (runEnv instanceof InspectionUnavailable) return fatal(runEnv.message, 75);
-  if (stopTask !== undefined) await stopTask;
-  const child = Bun.spawn([process.execPath, ...workerArgs()], {
+  const workerCommand = Bun.which(workerPath, {
+    PATH: runEnv.PATH ?? "/usr/bin:/bin",
     cwd,
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "inherit",
-    env: {
-      ...runEnv,
-      AGX_INTERIM_REPORTS_FILE: interimPath,
-    },
-    timeout: (ticket.timeout_s ?? 600) * 1000,
   });
+  if (process.env.AGX_WORKER_BIN === undefined && workerCommand === null)
+    return fatal(
+      `worker executable unavailable: looked for ${workerPath} on PATH=${runEnv.PATH ?? ""}; set AGX_WORKER_COMMAND to an executable or AGX_WORKER_BIN to a worker script`,
+    );
+  if (stopTask !== undefined) await stopTask;
+  const child = Bun.spawn(
+    process.env.AGX_WORKER_BIN === undefined
+      ? [workerCommand ?? workerPath, ...workerArgs().slice(1)]
+      : [
+          process.execPath,
+          "--eval",
+          "delete process.env.BUN_BE_BUN; await import(process.argv[1]);",
+          "--",
+          resolve(cwd, workerPath),
+          ...workerArgs().slice(1),
+        ],
+    {
+      cwd,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "inherit",
+      env: {
+        ...runEnv,
+        ...(process.env.AGX_WORKER_BIN === undefined
+          ? {}
+          : { BUN_BE_BUN: "1" }),
+        AGX_INTERIM_REPORTS_FILE: interimPath,
+      },
+      timeout: (ticket.timeout_s ?? 600) * 1000,
+    },
+  );
   const firstReturnS =
     ticket.first_return_s ?? Math.floor((ticket.timeout_s ?? 600) / 2);
   const workerStartedAt = performance.now();

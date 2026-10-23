@@ -1,7 +1,8 @@
 // A deadline may kill the helper before exec, or its already restricted target.
 // In neither case can a shared-store writer have started. JJ_READ_ARGS alone
 // cannot establish this property: jj's backend can import refs during a read.
-import { join } from "node:path";
+// @ts-expect-error Bun's text loader returns file contents, not TypeScript exports.
+import readonlySource from "./readonly-exec.ts" with { type: "text" };
 
 export const READONLY_JOB_ENV = "AGX_READONLY_COMMAND_JOB";
 
@@ -11,9 +12,11 @@ export function readonlyCommand(
   environment: NodeJS.ProcessEnv = process.env,
 ): { cmd: [string, ...string[]]; env: NodeJS.ProcessEnv } {
   return {
-    cmd: [process.execPath, join(import.meta.dir, "readonly-exec.ts")],
+    cmd: [process.execPath, "--eval", readonlySource, "--", cwd, ...argv],
     env: {
       ...environment,
+      // Compiled executables can also host the embedded helper as Bun.
+      BUN_BE_BUN: "1",
       [READONLY_JOB_ENV]: JSON.stringify({ argv, cwd }),
     },
   };

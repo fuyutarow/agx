@@ -3,7 +3,10 @@ import { mkdir, mkdtemp, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { jsonOf, z } from "../../shared/src/zod.ts";
-import { publishCurrentRuns } from "../../agx-worker/src/next/store.ts";
+import {
+  flushRunPublications,
+  publishCurrentRuns,
+} from "../../agx-worker/src/next/store.ts";
 
 // agx-status reads only what agx-worker publishes; the pre-publication full-replay status
 // (tests/oracle/status-full-replay.ts) must answer the same JSON for the same state.
@@ -267,6 +270,9 @@ test("published facts answer the same JSON as the full-replay oracle", async () 
   const { dir, repo, lines } = await generated();
   expect(lines).toBeGreaterThan(8000);
   await publishCurrentRuns(dir);
+  // Reconciliation can append lost-run records and queue a second publication.
+  // Both readers must observe the same completed publication.
+  await flushRunPublications();
   const old = Temporal.Now.instant().epochMilliseconds - 5000;
   await utimes(join(dir, "records.jsonl"), old / 1000, old / 1000);
 

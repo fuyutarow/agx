@@ -40,9 +40,15 @@ const fixture = async () => {
     await readFile(new URL("fixtures/capacity-vendor.ts", import.meta.url)),
   );
   await chmod(bin, 0o755);
+  const workerCommand = join(root, "worker-command");
+  await writeFile(
+    workerCommand,
+    `#!${process.execPath}\nconst child = Bun.spawn([process.execPath, ${JSON.stringify(new URL("../src/next/cli.ts", import.meta.url).pathname)}, ...process.argv.slice(2)], {stdin: "inherit", stdout: "inherit", stderr: "inherit"});\nprocess.exitCode = await child.exited;\n`,
+  );
+  await chmod(workerCommand, 0o755);
   const prompt = join(root, "brief.md");
   await writeFile(prompt, "Do work.");
-  return { root, bin, prompt };
+  return { root, bin, prompt, workerCommand };
 };
 const execute = async (args: string[], env: NodeJS.ProcessEnv) => {
   const child = Bun.spawn([process.execPath, ...args], {
@@ -287,6 +293,7 @@ test("real dispatch records capacity; fresh and continued dispatches cannot reus
     TYPESAFE_API_KEY: "test-key",
     AGX_CODEX_BIN: f.bin,
     AGX_CAPACITY_FIXTURE: "sol-only",
+    AGX_WORKER_COMMAND: f.workerCommand,
     AGX_CAPACITY_LOG: join(f.root, "invocations.jsonl"),
     AGX_TMP_ROOT: join(f.root, "tmp"),
     AGX_CONFIG: new URL("../src/roster/policy.example.toml", import.meta.url)

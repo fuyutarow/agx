@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.2 — 2026-10-23
+
+- Bundle the consumer registry and resolve checks from the selected repository when running compiled commands.
+
 ## 1.0.1 — 2026-10-23
 
 - Use neutral consumer names in hook runtime fixtures

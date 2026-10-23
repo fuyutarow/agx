@@ -46,7 +46,7 @@ run = "bun tools/fmt-staged.ts --tool 'ts,js,json=bun x --bun --no-install oxfmt
 
 [tasks.lint]
 alias = "l"
-depends = ["lint:ts", "lint:all", "lint:md", "mise:contract"]
+depends = ["lint:ts", "lint:all", "lint:md", "lint:changesets", "mise:contract"]
 
 [tasks."lint:ts"]
 run = "bun tools/lint-ts-candidate.ts"
@@ -82,3 +82,23 @@ run = "bun tools/jj-push.ts"
 
 [tasks.pull]
 run = "jj git fetch --remote origin && jj rebase -b @ -d 'trunk()'"
+
+[tasks."release:build"]
+description = "Compile and archive one package at its own version"
+run = "bun tools/release/build.ts"
+
+[tasks.changeset]
+description = "Record one package change without changing its version"
+run = "bun tools/changeset/changeset.ts"
+
+[tasks."release:version"]
+description = "Apply one package's pending changesets and update its changelog"
+run = "bun tools/changeset/apply.ts"
+
+[tasks."lint:changesets"]
+description = "Validate pending changesets and their package owners"
+run = "bun tools/changeset/lint.ts"
+
+[tasks."release:publish"]
+description = "Preview one package release; --yes executes publication"
+run = "bun tools/release/publish.ts"

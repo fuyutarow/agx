@@ -8,6 +8,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { attempt, errorMessage } from "../../shared/src/attempt.ts";
 import { jsonOf, z } from "../../shared/src/zod.ts";
+import shippedConsumers from "../consumers.toml" with { type: "toml" };
 
 const RegistrySchema = z.object({
   consumers: z.array(
@@ -388,16 +389,13 @@ export async function materializeBase(
 }
 
 export async function main(): Promise<number> {
-  const text = await Bun.file(
-    join(import.meta.dir, "..", "consumers.toml"),
-  ).text();
-  const parsed = RegistrySchema.safeParse(Bun.TOML.parse(text));
+  const parsed = RegistrySchema.safeParse(shippedConsumers);
   if (!parsed.success) {
     process.stderr.write(`FAIL consumer registry: ${parsed.error.message}\n`);
     return 1;
   }
-  const workspace = resolve(import.meta.dir, "..");
-  const repo = resolve(workspace, "../..");
+  const repo = resolve(process.env.USEHOOKS_REPO_ROOT ?? process.cwd());
+  const workspace = join(repo, "tools/agx-usehooks");
   const revision = process.env.USEHOOKS_BASE ?? "alpha";
   const temporary = await mkdtemp(join(tmpdir(), "agx-usehooks-base-"));
   await using _temporary = {

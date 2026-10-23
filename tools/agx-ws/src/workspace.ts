@@ -2116,7 +2116,7 @@ export type DoctorWorkspaceRow = {
 
 /** Read-only inventory built from the same workspaces and classifier as `agx ws gc --dry-run`. */
 export async function doctorInventory(
-  root = resolve(import.meta.dir, "../../.."),
+  root = process.env.AGX_REGISTRY_ROOT ?? process.cwd(),
   findingsOnly = false,
 ): Promise<Attempt<DoctorWorkspaceRow[]>> {
   const paths = await doctorRepoPaths(root);
@@ -2247,7 +2247,7 @@ export function doctorFindings(rows: DoctorWorkspaceRow[]): string[] {
 /** Fleet-wide gc; the consumer registry is data, never executable configuration. */
 export async function gcAll(
   options: Omit<GcOptions, "repo">,
-  root = resolve(import.meta.dir, "../../.."),
+  root = process.env.AGX_REGISTRY_ROOT ?? process.cwd(),
 ): Promise<Attempt<GcResult>> {
   const roots = await registeredRepoPaths(root);
   if (!roots.ok) return roots;

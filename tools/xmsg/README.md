@@ -24,7 +24,7 @@ Ambiguity exits 2 with sorted fully qualified candidates and names; qualify the 
 or extend its UUID prefix. Missing or malformed selectors also exit 2. Incomplete or
 unavailable discovery exits 3, identifies the backend, and asks for `codex:` or `claude:`.
 These refusals send nothing. Exactly one global match sends once to its unchanged native
-ID. Discovery and the send share one overall deadline; inventories describe only the
+ID (Claude UUIDs are translated to native names before relay). Discovery and the send share one overall deadline; inventories describe only the
 native endpoints below, not all saved or remote sessions.
 
 For qualified selectors, only the selected CLI must be on `PATH`. Codex targets use `codex queue`. Claude targets use a
@@ -63,12 +63,18 @@ JSON-escaped excerpt of the correlated ListAgents result (at most 1,200 characte
 before escaping), with an explicit truncation marker. This is tool evidence, not a
 model-generated explanation or proof that a session is offline.
 
-Session UUIDs from `claude agents --json` may be absent from the relay's ListAgents
-names/references even while the target is live. If resolution stops there, verify
-the intended peer's exact native name using ListAgents in Claude. If uniquely identified,
-use `xmsg send --to 'claude:<exact-native-name>'`; do not infer identity from a similar
-name, cwd or short reference. If ListAgents was not called or returned an error, inspect
-Claude's tool availability and permissions for ListAgents and SendMessage first.
+Claude UUID targets are resolved before starting the relay using the read-only
+`claude agents --json` live registration view of
+`${CLAUDE_CONFIG_DIR:-~/.claude}/sessions`. Its session UUID and current name come
+from the same native registry used by ListAgents. Saved transcripts and leftover
+socket filenames do not establish liveness. The relay receives the exact native
+name; a `to: claude:<full-UUID>` envelope header retains the destination UUID.
+Unknown, inactive, unnamed or ambiguously named registrations exit 3 before relay,
+with one diagnostic naming the UUID and searched source. Prefix and global
+resolution reuse their existing inventory within the same deadline.
+ListAgents still verifies a unique live peer at send time; a session can exit or
+change its name after discovery. If ListAgents was not called or returned an
+error, inspect Claude's tool availability and permissions first.
 
 The default send deadline is 60 seconds; `--timeout-ms N` changes it. Required discovery and
 the subsequent send share this single budget. A timeout can occur after
@@ -117,7 +123,11 @@ from: codex:deadbeef-1234-4abc-8def-0123456789ab
 Exact caller body
 ```
 
-Only the first line is sender metadata; the blank line starts the body. Literal `from:` lines anywhere in the caller's body remain body text. xmsg never trusts, strips or deduplicates caller text as an existing header. Forwarding an already enveloped message therefore preserves it as body beneath the new sender envelope. Both native Codex queue and Claude relay receive the same composed text; Claude receipt correlation checks that exact envelope plus body, not the original body alone.
+The first line is sender metadata; Claude UUID destinations add a second header,
+`to: claude:<full-UUID>`. The blank line starts the exact caller body. Literal
+`from:` or `to:` lines in that body remain body text. xmsg never strips or
+deduplicates caller text as existing headers. Claude receipt correlation checks
+the exact composed envelope plus body.
 
 Without `--from`, the first line is `from: unknown (caller identity unavailable or inherited; use --from backend:<full-session-id>)`. Sends still work for existing callers, with truthful missing attribution. No environment-only identity is currently proven reliable: `CODEX_THREAD_ID`, `CODEX_SESSION_ID` and Claude session variables may be inherited or forwarded for parent ownership. Even agreeing values do not establish caller provenance. No cwd, inventory, transcript, latest session, name or lookup order determines the sender. Explicit attribution takes precedence over this untrusted environment; no extra discovery or native calls occur for sender selection.
 
@@ -144,7 +154,8 @@ Exactly one match becomes the full native ID for one unchanged send. Ambiguity p
 deterministically sorted full candidate addresses and names on stderr; missing, malformed,
 ambiguous or unverified prefixes cause no send. Exact registered names take precedence
 over prefix matching and UUID-format rejection; local name resolution also requires
-complete inventory. Full UUIDs take precedence over names and need no discovery.
+complete inventory. Full UUIDs take precedence over names. Codex full UUIDs need
+no discovery; Claude full UUIDs require live name resolution before relay.
 Opaque exact names retain the existing native send path even if discovery is unavailable.
 Spaces and punctuation in names, such as `review (v2)`, are passed literally; pattern-like
 characters are native exact-name text, never wildcard or fuzzy UUID-prefix syntax.
@@ -172,8 +183,8 @@ JSON contains `recipients`,
 evidence, not a delivery, read receipt, or guarantee the recipient remains available.
 The Claude receipt parser correlates a top-level `SendMessage` call ID and the exact
 message text, but it receives no verified shared identity field for the destination.
-Claude registration UUIDs therefore are not proven to identify relay-visible peers;
-this parser change does not establish or infer that mapping.
+Destination UUID-to-name resolution happens before relay; receipt parsing remains
+unchanged and does not independently verify the destination's identity.
 
 List exits **0** only when both inventories complete, including a genuinely empty result;
 **3** means at least one backend is unavailable, failed, timed out, exceeded bounds or

@@ -594,7 +594,7 @@ async function main(): Promise<void> {
   process.exit(exitCode);
 }
 
-async function runMain(): Promise<void> {
+export async function runMain(): Promise<void> {
   await Promise.try(main).then(undefined, (error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     process.stdout.write(

@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import shippedRoster from "../../../agents/models/dispatch-roster.toml" with { type: "toml" };
 import { fromThrowable, z } from "./zod.ts";
 
 export type TokenUsage = Readonly<{
@@ -64,10 +64,13 @@ const ROSTER_PRICES = z.object({
 /** Read the chosen row's route and token prices from the same roster agx uses. */
 export function dispatchRowPrice(
   choice: string,
-  path = process.env.DISPATCH_ROSTER_PATH ??
-    join(import.meta.dir, "../../../agents/models/dispatch-roster.toml"),
+  path = process.env.DISPATCH_ROSTER_PATH,
 ): DispatchRowPrice | undefined {
-  const raw = fromThrowable(() => Bun.TOML.parse(readFileSync(path, "utf8")))();
+  const raw = fromThrowable((): unknown =>
+    path === undefined
+      ? shippedRoster
+      : Bun.TOML.parse(readFileSync(path, "utf8")),
+  )();
   if (raw.isErr()) return undefined;
   const parsed = ROSTER_PRICES.safeParse(raw.value);
   if (!parsed.success) return undefined;

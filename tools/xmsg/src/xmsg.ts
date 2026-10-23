@@ -10,6 +10,7 @@ import {
   resolveRecipientSelector,
 } from "./recipient-prefix.ts";
 import { claudeReceipt } from "./claude-receipt.ts";
+import { resolveClaudeTarget } from "./claude-target.ts";
 import {
   relayCheckCommand,
   relayEvidence,
@@ -55,9 +56,14 @@ async function send(
   message: string,
   timeoutMs: number,
   sender: string,
+  relayTarget = id,
 ): Promise<number> {
-  // Only the first line is envelope metadata; never parse or strip the body.
-  message = `from: ${sender}\n\n${message}`;
+  // Headers precede the blank line; never parse or strip the caller's body.
+  const destination =
+    kind === "claude" && canonicalUuid(id) !== undefined
+      ? `\nto: claude:${canonicalUuid(id)}`
+      : "";
+  message = `from: ${sender}${destination}\n\n${message}`;
   // Known even if the child times out before its first frame.
   const relaySessionId = kind === "claude" ? crypto.randomUUID() : undefined;
   const args =
@@ -76,7 +82,7 @@ async function send(
           "--output-format",
           "stream-json",
           "--verbose",
-          claudePrompt(id, message),
+          claudePrompt(relayTarget, message),
         ];
   const timeout = AbortSignal.timeout(timeoutMs);
   const spawned = await attempt(() =>
@@ -281,6 +287,7 @@ async function main(): Promise<number> {
   }
   const deadline = performance.now() + timeoutMs;
   let target = canonicalUuid(id) ?? id;
+  let claudeSnapshot: Awaited<ReturnType<typeof selectedInventory>> | undefined;
   if (kind === undefined) {
     const inventories = await Promise.all([
       selectedInventory(
@@ -312,9 +319,12 @@ async function main(): Promise<number> {
     }
     kind = resolution.recipient.vendor;
     target = resolution.recipient.id;
+    claudeSnapshot = inventories[1];
   } else if (canonicalUuid(id) === undefined && /^[0-9a-f-]+$/iu.test(id)) {
     if (kind !== "codex" && kind !== "claude") return 2;
-    const { recipients, evidence } = await selectedInventory(kind, timeoutMs);
+    const inventory = await selectedInventory(kind, timeoutMs);
+    const { recipients, evidence } = inventory;
+    if (kind === "claude") claudeSnapshot = inventory;
     const resolution = resolveRecipientSelector(
       `${kind}:${id}`,
       recipients,
@@ -335,6 +345,20 @@ async function main(): Promise<number> {
     }
     target = canonicalUuid(resolution.recipient.id) ?? resolution.recipient.id;
   }
+  let relayTarget = target;
+  const uuid = canonicalUuid(target);
+  if (kind === "claude" && uuid !== undefined) {
+    const resolved = await resolveClaudeTarget(
+      uuid,
+      Math.max(1, Math.floor(deadline - performance.now())),
+      claudeSnapshot,
+    );
+    if (!resolved.ok) {
+      process.stderr.write(`xmsg: ${resolved.reason}\n`);
+      return 3;
+    }
+    relayTarget = resolved.name;
+  }
   const remaining = Math.floor(deadline - performance.now());
   if (remaining < 1) {
     process.stderr.write(
@@ -343,7 +367,7 @@ async function main(): Promise<number> {
     return 3;
   }
   if (kind !== "codex" && kind !== "claude") return 2;
-  return send(kind, target, message, remaining, sender);
+  return send(kind, target, message, remaining, sender, relayTarget);
 }
 
 if (import.meta.main) {

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1 — 2026-10-23
+
+- Resolve live Claude UUID targets to native names before relay, retain the UUID in the destination envelope, and name resolution failures before starting a relay.
+
 ## 0.4.0 — 2026-10-23
 
 - Accept evolving Claude relay receipt frames and add read-only relay status checks

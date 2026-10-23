@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { JJ_READ_ARGS } from "../../shared/src/jj-read.ts";
 import { readonlyCommand } from "../../shared/src/readonly-command.ts";
 import { jsonOf, z } from "../../shared/src/zod.ts";
+import { trackedPaths } from "../../shared/src/tracked-paths.ts";
 
 export type PremiseCheck =
   | { status: "ok" }
@@ -16,13 +17,11 @@ type CommandRunner = (
   timeoutMs: number,
 ) => CommandResult;
 
-const REPO_ROOT = resolve(import.meta.dir, "../../..");
-const TRACKED_FILES = resolve(REPO_ROOT, "scripts/tracked-files.ts");
 const DEFAULT_BUDGET_MS = 5_000;
 
 const runCommand: CommandRunner = (argv, cwd, timeoutMs) => {
   const invocation =
-    argv[0] === "jj" || argv[0] === "git" || argv.includes(TRACKED_FILES)
+    argv[0] === "jj" || argv[0] === "git"
       ? readonlyCommand(argv, cwd)
       : { cmd: argv, env: process.env };
   const result = Bun.spawnSync(invocation.cmd, {
@@ -224,11 +223,12 @@ export function checkPremises(
 
   const symbols = premises.filter((premise) => premise.startsWith("symbol:"));
   let files: string[] | undefined;
-  if (symbols.length > 0 && resolve(cwd) === REPO_ROOT) {
-    const result = runner(
-      [process.execPath, TRACKED_FILES],
-      cwd,
-      Math.max(1, remaining()),
+  if (
+    symbols.length > 0 &&
+    (existsSync(resolve(cwd, ".git")) || existsSync(resolve(cwd, ".jj")))
+  ) {
+    const result = trackedPaths((argv) =>
+      runner(argv, cwd, Math.max(1, remaining())),
     );
     if (isTimeout(result, startedAt, budgetMs) || result.exitCode !== 0)
       return { status: "timeout" };
@@ -236,6 +236,11 @@ export function checkPremises(
   }
 
   for (const premise of symbols) {
+    if (files?.length === 0) {
+      missing.push(premise);
+      details.push(`${premise}: no matching text`);
+      continue;
+    }
     const { name, glob } = parseSymbol(premise);
     const argv = ["rg", "--fixed-strings", "--files-with-matches"];
     if (glob !== undefined) argv.push("--glob", glob);

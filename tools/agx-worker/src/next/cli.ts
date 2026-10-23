@@ -29,6 +29,17 @@ export const COMMANDS = COMMAND_NAMES.map((name) => ({
 
 async function main(): Promise<void> {
   const rawArgs = cliArgv();
+  if (rawArgs[0] === "--internal-codex") {
+    process.argv.splice(2, 1);
+    await import("../workers/codex.ts");
+    return;
+  }
+  if (rawArgs[0] === "--internal-claude") {
+    process.argv.splice(2, 1);
+    const { runMain } = await import("../workers/run-claude.ts");
+    await runMain();
+    return;
+  }
   if (COMMAND_NAMES.some((name) => name === rawArgs[0])) stateDir();
   const root = cli(
     {

@@ -5,6 +5,7 @@ import { z } from "../../../shared/src/zod.ts";
 import { attempt, errorMessage } from "../../../shared/src/attempt.ts";
 
 import { generationExclusivityError } from "./generation.ts";
+import shippedCatalog from "./catalog.toml" with { type: "toml" };
 
 const RouteSchema = z.enum(["codex", "claude"]);
 const ChoiceSchema = z.strictObject({
@@ -160,15 +161,16 @@ export async function loadRoster(
   options: LoadRosterOptions = {},
 ): Promise<RosterLoad> {
   return Promise.try(async (): Promise<RosterLoad> => {
-    const catalogRaw = await parseToml(
-      options.catalogPath ?? join(import.meta.dir, "catalog.toml"),
-    );
+    const catalogRaw: unknown =
+      options.catalogPath === undefined
+        ? shippedCatalog
+        : await parseToml(options.catalogPath);
     const policyPath = options.policyPath ?? policyPathFromEnvironment();
     const policyRaw = await attempt(() => parseToml(policyPath));
     if (!policyRaw.ok)
       return {
         ok: false,
-        error: `cannot read policy ${JSON.stringify(policyPath)}; example: ${join(import.meta.dir, "policy.example.toml")}: ${errorMessage(policyRaw.error).replaceAll(/[\r\n]+/gu, " ")}`,
+        error: `cannot read policy ${JSON.stringify(policyPath)}; see the distributed policy.example.toml: ${errorMessage(policyRaw.error).replaceAll(/[\r\n]+/gu, " ")}`,
       };
     const catalogResult = CatalogSchema.safeParse(catalogRaw);
     if (!catalogResult.success)

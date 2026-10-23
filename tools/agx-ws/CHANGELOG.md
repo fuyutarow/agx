@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.1 — 2026-10-23
+
+- Resolve workspace inventory and cleanup registries from the selected repository when running compiled commands.
+
 ## 1.0.0 — 2026-10-23
 
 - Use the single agx state directory and refuse retired state configuration
