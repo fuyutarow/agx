@@ -1,5 +1,5 @@
-import { mkdir, rm, copyFile, link } from "node:fs/promises";
-import { dirname, join, relative, resolve } from "node:path";
+import { mkdir, rm, copyFile, link, stat } from "node:fs/promises";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { err, ok } from "neverthrow";
 import { jsonOf, z } from "../zod.ts";
 
@@ -23,18 +23,29 @@ const manifestSchema = z.object({
 });
 
 export async function run(cmd: string[], cwd: string) {
+  const timeout =
+    cmd[0] === "gh" && cmd[1] === "release" && cmd[2] === "upload"
+      ? 600_000
+      : 120_000;
+  const signal = AbortSignal.timeout(timeout);
   const child = Bun.spawn(cmd, {
     cwd,
     stdout: "pipe",
     stderr: "pipe",
-    timeout: 120_000,
+    signal,
   });
   const [exit, stdout, stderr] = await Promise.all([
     child.exited,
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
   ]);
-  return { exit, stdout, stderr };
+  return {
+    exit,
+    stdout,
+    stderr: signal.aborted
+      ? `${stderr}\nCommand timed out after ${timeout} ms`
+      : stderr,
+  };
 }
 
 export async function packageInfo(pkg: string, root = repository) {
@@ -351,6 +362,41 @@ export function shellCommand(args: string[]) {
   return args.map((arg) => `'${arg.replaceAll("'", "'\\''")}'`).join(" ");
 }
 
+const releaseAssetsSchema = z.object({
+  assets: z.array(
+    z.object({
+      name: z.string(),
+      state: z.string(),
+      size: z.number().int().nonnegative(),
+    }),
+  ),
+});
+
+function commandFailure(
+  command: string[],
+  result: Awaited<ReturnType<CommandRunner>>,
+) {
+  const output = [result.stderr.trim(), result.stdout.trim()]
+    .filter(Boolean)
+    .join("\n");
+  return `${shellCommand(command)} exited ${result.exit}: ${output.length > 0 ? output : "no stdout or stderr captured"}`;
+}
+
+async function uploadAsset(
+  command: string[],
+  root: string,
+  runner: CommandRunner,
+) {
+  const failures: string[] = [];
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const args = attempt === 1 ? command : [...command, "--clobber"];
+    const result = await runner(args, root);
+    if (result.exit === 0) return ok(undefined);
+    failures.push(`Attempt ${attempt}: ${commandFailure(args, result)}`);
+  }
+  return err(failures.join("\n"));
+}
+
 export async function publish(
   pkg: string,
   yes = false,
@@ -430,22 +476,37 @@ export async function publish(
   if (built.isErr()) return built;
   const notes = join(root, "dist", pkg, "release-notes.md");
   await Bun.write(notes, section.value);
-  const commands: string[][] = [
-    ["git", "tag", tag],
-    [
-      "gh",
-      "release",
-      "create",
-      tag,
-      ...built.value.assets.map((asset) => asset.archive),
-      "--title",
-      tag,
-      "--notes-file",
-      notes,
-      "--target",
-      headCommit,
-    ],
+  const assets = await Promise.all(
+    built.value.assets.map(async ({ archive }) => ({
+      archive,
+      name: basename(archive),
+      size: (await stat(archive)).size,
+    })),
+  );
+  const create = [
+    "gh",
+    "release",
+    "create",
+    tag,
+    "--draft",
+    "--title",
+    tag,
+    "--notes-file",
+    notes,
+    "--target",
+    headCommit,
   ];
+  const upload = (archive: string, retry = false) => [
+    "gh",
+    "release",
+    "upload",
+    tag,
+    archive,
+    ...(retry ? ["--clobber"] : []),
+  ];
+  const view = ["gh", "release", "view", tag, "--json", "assets"];
+  const edit = ["gh", "release", "edit", tag, "--draft=false", "--latest"];
+  const tags = [["git", "tag", tag]];
   for (const member of packages) {
     const memberInfo = await packageInfo(member, root);
     if (memberInfo.isErr()) return memberInfo;
@@ -454,23 +515,72 @@ export async function publish(
       ["git", "show-ref", "--verify", "--quiet", `refs/tags/${memberTag}`],
       root,
     );
-    if (exists.exit === 1)
-      commands.splice(commands.length - 1, 0, ["git", "tag", memberTag]);
+    if (exists.exit === 1) tags.push(["git", "tag", memberTag]);
     else if (exists.exit !== 0) return err(`Cannot inspect tag ${memberTag}`);
   }
+  const commands = [
+    ...tags,
+    create,
+    ...assets.map((asset) => upload(asset.archive)),
+    view,
+    edit,
+  ];
   if (!yes)
     return ok({
       ...built.value,
       commands: commands.map((command) => shellCommand(command)),
       dryRun: true,
     });
-  for (const command of commands) {
+  const recovery = [
+    `Recover the existing draft ${tag}; do not re-create the release or rerun publish:`,
+    ...assets.map((asset) => shellCommand(upload(asset.archive, true))),
+    shellCommand(view),
+    `Check every asset is uploaded with these byte sizes: ${assets.map((asset) => `${asset.name}=${asset.size}`).join(", ")}. Only then run:`,
+    shellCommand(edit),
+  ].join("\n");
+  for (const command of [...tags, create]) {
     const result = await runner(command, root);
     if (result.exit !== 0)
       return err(
-        `Release stopped at ${shellCommand(command)}: ${result.stderr}${result.stdout}`,
+        `Release stopped at ${commandFailure(command, result)}${command === create ? `\nCreation may have left a draft; inspect it first.\n${recovery}` : ""}`,
       );
   }
+  for (const asset of assets) {
+    const uploaded = await uploadAsset(upload(asset.archive), root, runner);
+    if (uploaded.isErr())
+      return err(
+        `Asset upload failed for ${asset.name} after 3 attempts. Draft ${tag} retained.\n${uploaded.error}\n${recovery}`,
+      );
+  }
+  const inspected = await runner(view, root);
+  if (inspected.exit !== 0)
+    return err(
+      `Cannot verify assets ${assets.map((asset) => asset.name).join(", ")}. Draft ${tag} retained.\n${commandFailure(view, inspected)}\n${recovery}`,
+    );
+  const remote = jsonOf(releaseAssetsSchema).safeParse(inspected.stdout);
+  if (!remote.success)
+    return err(
+      `Cannot verify assets ${assets.map((asset) => asset.name).join(", ")}: invalid gh release view response: ${remote.error.message}. Draft ${tag} retained.\n${recovery}`,
+    );
+  for (const asset of assets) {
+    const matches = remote.data.assets.filter(
+      (entry) => entry.name === asset.name,
+    );
+    const found = matches[0];
+    if (
+      matches.length !== 1 ||
+      found?.state !== "uploaded" ||
+      found.size !== asset.size
+    )
+      return err(
+        `Asset verification failed for ${asset.name}: expected uploaded, ${asset.size} bytes; got ${JSON.stringify(matches)}. Draft ${tag} retained.\n${recovery}`,
+      );
+  }
+  const published = await runner(edit, root);
+  if (published.exit !== 0)
+    return err(
+      `Release finalization failed for ${tag}. Assets verified; inspect the release state before recovery.\n${commandFailure(edit, published)}\n${recovery}`,
+    );
   return ok({
     ...built.value,
     commands: commands.map((command) => shellCommand(command)),

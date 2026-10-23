@@ -9,7 +9,8 @@ const args = cli({
     dryRun: { type: Boolean, description: "Preview only (the default)" },
     yes: {
       type: Boolean,
-      description: "Execute git tag and gh release create",
+      description:
+        "Create tags and a draft, upload and verify assets, then publish",
     },
   },
   strictFlags: true,

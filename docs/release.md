@@ -78,6 +78,9 @@ other than alpha, an existing suite tag, or missing version changelog entries.
 
 The preview builds both assets and prints exact shell-quoted commands for the
 suite Git tag, missing member Git tags, and one GitHub release at `v<version>`.
+It creates an empty draft, uploads each asset separately, inspects the assets
+with `gh release view --json assets`, and publishes with `--draft=false --latest`
+only after every expected asset is `uploaded` with the local file's byte size.
 The release targets the inspected HEAD. Existing member tags are retained.
 Release notes list every member version and include all changelog sections added
 since the previous reachable suite tag. The first suite release includes current
@@ -85,5 +88,29 @@ sections. Unreadable previous member history refuses publication.
 
 Only `mise run release:publish -- suite --yes` executes the plan. Review the
 preview in the canonical repository first. `--yes` and `--dry-run` conflict.
-Publication stops at the first failure; inspect existing tags and the remote
-release before recovery. The command never deletes tags or retries publication.
+Each asset upload has at most three attempts, with `--clobber` on retries and a
+ten-minute timeout per attempt. Other commands have a two-minute timeout.
+An upload or verification failure leaves the release as a draft and exits 2.
+The refusal names the failing asset, includes captured stderr and stdout (or an
+explicit empty-output diagnostic), and prints commands to recover the existing
+draft. Tags are never deleted, and release creation is never retried.
+
+For recovery, use the exact paths and expected byte sizes printed by the refusal.
+Re-upload the assets to the existing draft with `--clobber`, then inspect them:
+
+```sh
+gh release upload v<version> dist/agx-<version>-linux-x64.tar.gz --clobber
+gh release upload v<version> dist/agx-usehooks-<v>.tgz --clobber
+gh release view v<version> --json assets
+```
+
+Check that both names appear exactly once, each state is `uploaded`, and each size
+equals its local file's byte size. Only after those checks, publish the draft:
+
+```sh
+gh release edit v<version> --draft=false --latest
+```
+
+Do not re-create the release or rerun `release:publish` to recover a failed
+upload: local tags may already exist. If creation or final publication fails,
+inspect the remote release state before using the recovery commands.

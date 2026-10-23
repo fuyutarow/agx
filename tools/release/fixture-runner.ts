@@ -24,6 +24,8 @@ export async function fixtureRun(
   realGit = process.env.RELEASE_TEST_REAL_GIT === "1",
 ) {
   const [binary, ...args] = cmd;
+  const fakeGh =
+    binary === "gh" && process.env.RELEASE_TEST_GH_MODE !== undefined;
   // Publish tests exercise planning and preconditions. The dedicated library test
   // below this boundary still builds and checks the real public declarations.
   const fastLibrary =
@@ -62,9 +64,12 @@ export async function fixtureRun(
     await chmod(outfile, 0o755);
     return success;
   }
-  if (binary === "gh" || (binary === "git" && args[0] === "tag")) {
+  if ((binary === "gh" && !fakeGh) || (binary === "git" && args[0] === "tag")) {
     await appendFile(join(cwd, "calls"), JSON.stringify(args) + "\n");
-    return { ...success, exit: 99 };
+    return {
+      ...success,
+      exit: process.env.RELEASE_TEST_GH_MODE !== undefined ? 0 : 99,
+    };
   }
   if (binary === "git" && !gitCommands.has(args[0] ?? ""))
     return refused(`Forbidden Git command: ${JSON.stringify(cmd)}`);
@@ -82,28 +87,39 @@ export async function fixtureRun(
       args[0] === "consumer.ts" ||
       (args[0]?.endsWith("/tools/release/build.ts") ?? false));
   const localExecutable = binary?.startsWith(join(cwd, "dist") + "/") ?? false;
-  if (binary !== "git" && binary !== "tar" && !localBun && !localExecutable)
+  if (
+    binary !== "git" &&
+    binary !== "tar" &&
+    !localBun &&
+    !localExecutable &&
+    !fakeGh
+  )
     return refused(`Forbidden fixture command: ${JSON.stringify(cmd)}`);
-  const child = Bun.spawn(cmd, {
-    cwd,
-    env: {
-      ...process.env,
-      GIT_CONFIG_GLOBAL: "/dev/null",
-      GIT_CONFIG_NOSYSTEM: "1",
-      GIT_TERMINAL_PROMPT: "0",
-      GIT_ASKPASS: "/bin/false",
-      GIT_CONFIG_COUNT: "3",
-      GIT_CONFIG_KEY_0: "core.hooksPath",
-      GIT_CONFIG_VALUE_0: "/dev/null",
-      GIT_CONFIG_KEY_1: "commit.gpgSign",
-      GIT_CONFIG_VALUE_1: "false",
-      GIT_CONFIG_KEY_2: "protocol.allow",
-      GIT_CONFIG_VALUE_2: "never",
+  const child = Bun.spawn(
+    fakeGh
+      ? [process.execPath, join(import.meta.dir, "fake-gh.ts"), ...args]
+      : cmd,
+    {
+      cwd,
+      env: {
+        ...process.env,
+        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_CONFIG_NOSYSTEM: "1",
+        GIT_TERMINAL_PROMPT: "0",
+        GIT_ASKPASS: "/bin/false",
+        GIT_CONFIG_COUNT: "3",
+        GIT_CONFIG_KEY_0: "core.hooksPath",
+        GIT_CONFIG_VALUE_0: "/dev/null",
+        GIT_CONFIG_KEY_1: "commit.gpgSign",
+        GIT_CONFIG_VALUE_1: "false",
+        GIT_CONFIG_KEY_2: "protocol.allow",
+        GIT_CONFIG_VALUE_2: "never",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 10_000,
     },
-    stdout: "pipe",
-    stderr: "pipe",
-    timeout: 10_000,
-  });
+  );
   const [exit, stdout, stderr] = await Promise.all([
     child.exited,
     new Response(child.stdout).text(),

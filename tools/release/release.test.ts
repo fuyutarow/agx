@@ -13,6 +13,7 @@ import {
   packages,
   suiteNotes,
   repository,
+  run as productionRun,
 } from "./release.ts";
 
 import { fixtureRun as run } from "./fixture-runner.ts";
@@ -50,6 +51,7 @@ async function fixture(pkg = "agx-status") {
     "publish.ts",
     "release.ts",
     "fixture-runner.ts",
+    "fake-gh.ts",
   ])
     await Bun.write(
       join(
@@ -325,6 +327,175 @@ test("execution requires --yes; conflicting flags and excess arguments refuse", 
   expect(await Bun.file(join(f.root, "calls")).text()).toContain(
     '["tag","v2.3.4"]',
   );
+});
+
+const ghStateSchema = z.object({
+  draft: z.boolean(),
+  attempts: z.record(z.string(), z.number()),
+  assets: z.array(
+    z.object({ name: z.string(), state: z.string(), size: z.number() }),
+  ),
+});
+
+async function ghState(root: string) {
+  const parsed = jsonOf(ghStateSchema).safeParse(
+    await Bun.file(join(root, "gh-state.json")).text(),
+  );
+  expect(parsed.success).toBe(true);
+  return parsed.success
+    ? parsed.data
+    : { draft: true, attempts: {}, assets: [] };
+}
+
+for (const mode of ["success", "retry"]) {
+  test(`publish creates an empty draft, checks separate uploads and publishes (${mode})`, async () => {
+    const f = await suiteFixture();
+    const result = await preview(f, ["--yes"], { RELEASE_TEST_GH_MODE: mode });
+    expect(result.exit, result.stderr).toBe(0);
+    expect(result.stdout).toStartWith("PUBLISHED\n");
+    const state = await ghState(f.root);
+    expect(state.draft).toBe(false);
+    expect(state.assets).toHaveLength(2);
+    for (const asset of state.assets) {
+      expect(asset.state).toBe("uploaded");
+      expect(asset.size).toBe(
+        (await stat(join(f.root, "dist", asset.name))).size,
+      );
+      expect(state.attempts[asset.name]).toBe(
+        mode === "retry" && asset.name.endsWith(".tar.gz") ? 2 : 1,
+      );
+    }
+    const calls = (await Bun.file(join(f.root, "calls")).text()).split("\n");
+    const ghCalls = calls.filter((line) => line.startsWith('["release"'));
+    expect(ghCalls[0]).toContain('["release","create","v2.3.4","--draft"');
+    expect(ghCalls[0]).not.toContain(".tar.gz");
+    expect(ghCalls[0]).not.toContain(".tgz");
+    expect(ghCalls.filter((line) => line.includes('"create"'))).toHaveLength(1);
+    expect(ghCalls.at(-2)).toBe(
+      '["release","view","v2.3.4","--json","assets"]',
+    );
+    expect(ghCalls.at(-1)).toBe(
+      '["release","edit","v2.3.4","--draft=false","--latest"]',
+    );
+    const uploads = ghCalls.filter((line) => line.includes('"upload"'));
+    expect(uploads).toHaveLength(mode === "retry" ? 3 : 2);
+    expect(uploads[0]).not.toContain("--clobber");
+    if (mode === "retry") expect(uploads[1]).toContain("--clobber");
+  });
+}
+
+for (const mode of ["failure", "silent"]) {
+  test(`persistent upload failure names asset and preserves a recoverable draft (${mode})`, async () => {
+    const f = await suiteFixture();
+    const result = await preview(f, ["--yes"], { RELEASE_TEST_GH_MODE: mode });
+    const name = `agx-2.3.4-${process.platform}-${process.arch}.tar.gz`;
+    expect(result.exit).toBe(2);
+    expect(result.stdout).not.toContain("PUBLISHED");
+    expect(result.stderr).toContain(
+      `Asset upload failed for ${name} after 3 attempts`,
+    );
+    expect(result.stderr).toContain(
+      mode === "silent"
+        ? "no stdout or stderr captured"
+        : `HTTP 502: upload failed for ${name}`,
+    );
+    expect(result.stderr).toContain("exited 1");
+    expect(result.stderr).toContain("do not re-create the release");
+    expect(result.stderr).toContain(
+      `'gh' 'release' 'upload' 'v2.3.4' '${join(f.root, "dist", name)}' '--clobber'`,
+    );
+    expect(result.stderr).toContain(
+      "'gh' 'release' 'view' 'v2.3.4' '--json' 'assets'",
+    );
+    expect(result.stderr).toContain(
+      "'gh' 'release' 'edit' 'v2.3.4' '--draft=false' '--latest'",
+    );
+    const state = await ghState(f.root);
+    expect(state.draft).toBe(true);
+    expect(state.attempts[name]).toBe(3);
+    const calls = await Bun.file(join(f.root, "calls")).text();
+    expect(calls).not.toContain('["release","edit"');
+    expect(calls).not.toContain('["release","view"');
+    // Execute the printed recovery protocol against the SAME fake release.
+    const recover = (args: string[]) =>
+      productionRun(
+        [
+          process.execPath,
+          join(import.meta.dir, "fake-gh.ts"),
+          "release",
+          ...args,
+        ],
+        f.root,
+      );
+    for (const asset of [name, "agx-usehooks-2.3.4.tgz"]) {
+      const uploaded = await recover([
+        "upload",
+        "v2.3.4",
+        join(f.root, "dist", asset),
+        "--clobber",
+      ]);
+      expect(uploaded.exit, uploaded.stderr).toBe(0);
+    }
+    const inspected = await recover(["view", "v2.3.4", "--json", "assets"]);
+    expect(inspected.exit, inspected.stderr).toBe(0);
+    const verified = jsonOf(ghStateSchema.pick({ assets: true })).safeParse(
+      inspected.stdout,
+    );
+    expect(verified.success).toBe(true);
+    if (!verified.success) return;
+    for (const asset of verified.data.assets) {
+      expect(asset.state).toBe("uploaded");
+      expect(asset.size).toBe(
+        (await stat(join(f.root, "dist", asset.name))).size,
+      );
+    }
+    expect(
+      (await recover(["edit", "v2.3.4", "--draft=false", "--latest"])).exit,
+    ).toBe(0);
+    expect((await ghState(f.root)).draft).toBe(false);
+    expect(
+      (await Bun.file(join(f.root, "calls")).text()).match(
+        /\["release","create"/gu,
+      ),
+    ).toHaveLength(1);
+  });
+}
+
+for (const mode of ["missing", "wrong-size", "starter", "malformed"]) {
+  test(`asset verification refuses publication (${mode})`, async () => {
+    const f = await suiteFixture();
+    const result = await preview(f, ["--yes"], { RELEASE_TEST_GH_MODE: mode });
+    expect(result.exit).toBe(2);
+    expect(result.stderr).toContain(
+      `agx-2.3.4-${process.platform}-${process.arch}.tar.gz`,
+    );
+    expect(result.stderr).toContain(
+      mode === "malformed"
+        ? "Cannot verify assets"
+        : "Asset verification failed",
+    );
+    expect(result.stderr).toContain("Draft v2.3.4 retained");
+    expect(result.stdout).not.toContain("PUBLISHED");
+    expect((await ghState(f.root)).draft).toBe(true);
+    expect(await Bun.file(join(f.root, "calls")).text()).not.toContain(
+      '["release","edit"',
+    );
+  });
+}
+
+test("production runner captures stderr and stdout with non-TTY pipes on failure", async () => {
+  const f = await fixture();
+  const result = await productionRun(
+    [
+      process.execPath,
+      "-e",
+      'process.stdout.write("x".repeat(262144)); process.stderr.write("pipe-only upload error\\n"); process.exitCode = 1;',
+    ],
+    f.root,
+  );
+  expect(result.exit).toBe(1);
+  expect(result.stdout).toHaveLength(262144);
+  expect(result.stderr).toBe("pipe-only upload error\n");
 });
 
 test("target parsing and changelog boundaries", () => {
