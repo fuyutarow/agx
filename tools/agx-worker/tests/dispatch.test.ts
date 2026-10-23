@@ -274,6 +274,55 @@ test.each(["foo-bar", "foo-bar-2", "another-ticket"])(
   },
 );
 
+test("continuation resolves a unique run id prefix before reading its workspace", async () => {
+  const f = fixture();
+  const workspace = priorRun(f, join(`${f.repo}.ws`, "ws_foo-bar"));
+  writeFileSync(
+    f.records,
+    JSON.stringify([
+      {
+        id: "aa94ee5d12345678",
+        ticket: "foo-bar",
+        state: "ended",
+        cwd: workspace,
+        workspace,
+      },
+    ]),
+  );
+  const result = await invoke(f, "--continue", "aa94ee5d");
+  expect(result.exitCode, result.stderr).toBe(0);
+  expect(await Bun.file(f.unitArgs).text()).toContain(`--cd\n${workspace}\n`);
+  expect(await Bun.file(f.unitArgs).text()).toContain(
+    "--continue\naa94ee5d12345678\n",
+  );
+});
+
+test("continuation refuses ambiguous and unknown prefixes with run candidates", async () => {
+  const f = fixture();
+  const workspace = join(`${f.repo}.ws`, "ws_foo-bar");
+  mkdirSync(workspace, { recursive: true });
+  const records = ["aa94ee5d12345678", "aa94ee5d87654321"].map((id) => ({
+    id,
+    ticket: "foo-bar",
+    state: "ended",
+    cwd: workspace,
+    workspace,
+  }));
+  writeFileSync(f.records, JSON.stringify(records));
+  for (const [selector, candidates] of [
+    ["aa94ee5d", records.map((row) => row.id)],
+    ["missing", records.map((row) => row.id)],
+  ] as const) {
+    const result = await invoke(f, "--continue", selector);
+    expect(result.exitCode).toBe(2);
+    expect(result.stdout).toBe("");
+    const lines = result.stderr.trim().split("\n");
+    expect(lines).toHaveLength(1);
+    for (const candidate of candidates) expect(lines[0]).toContain(candidate);
+    expect(await Bun.file(f.unitArgs).exists()).toBe(false);
+  }
+});
+
 test.each([undefined, ""])(
   "continuation of a run --cd falls back to recorded cwd (%s)",
   async (recordedWorkspace) => {

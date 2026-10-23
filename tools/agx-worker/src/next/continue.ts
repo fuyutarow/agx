@@ -3,6 +3,7 @@ import { exitWithError } from "./exit.ts";
 import { foldedRuns } from "./store.ts";
 import { readRouteUsage } from "./usage.ts";
 import { route } from "./route.ts";
+import { resolveRunId } from "./run-id.ts";
 
 export type PinnedContinuation = Readonly<{
   previousId: string;
@@ -36,10 +37,10 @@ export async function pinContinuation(
       2,
     );
   };
-  const previous = (await foldedRuns()).find(
-    (entry) => entry.id === continuationId,
-  );
-  if (previous === undefined) return refuse("unknown run");
+  const selected = resolveRunId(await foldedRuns(), continuationId);
+  if (selected.kind === "error")
+    return refuse(selected.error.replace(/^unknown run id /u, "unknown run "));
+  const previous = selected.row;
   if (previous.vendor_session === null && previous.outcome !== "capacity")
     return refuse(
       previous.outcome === "stopped"

@@ -27,6 +27,7 @@ import {
 import { leaseFor, type StopSignal } from "./lease.ts";
 import { route } from "./route.ts";
 import { pinContinuation } from "./continue.ts";
+import { resolveRunId } from "./run-id.ts";
 import { routeFilterLabel } from "../roster/index.ts";
 import {
   earlyQuitRows,
@@ -419,7 +420,10 @@ export async function run(flags: Flags): Promise<number> {
     sandbox_source,
     dispatcher_session: dispatcher,
     vendor_session: resumeSession ?? null,
-    continues: supersedes === undefined ? (continuationId ?? null) : null,
+    continues:
+      supersedes === undefined
+        ? (pinned?.previousId ?? continuationId ?? null)
+        : null,
     supersedes: supersedes ?? null,
     base_rev: ctx.base_rev ?? undefined,
     premise_commits,
@@ -759,15 +763,12 @@ const selectedRuns = (
         (startedAt.get(a.id) ?? "").localeCompare(startedAt.get(b.id) ?? ""),
       ),
     };
-  const idMatches = rows.filter((entry) => entry.id.startsWith(selector));
-  if (idMatches.length === 1) return { rows: idMatches };
-  if (idMatches.length > 1)
+  const resolution = resolveRunId(rows, selector);
+  if (resolution.kind === "resolved") return { rows: [resolution.row] };
+  if (resolution.error.includes("ambiguous"))
     return {
       rows: [],
-      error: `selector '${selector}' is ambiguous; run id candidates: ${idMatches
-        .map((entry) => entry.id)
-        .toSorted()
-        .join(", ")}`,
+      error: `selector '${selector}' is ambiguous; ${resolution.error.split("; ")[1]}`,
     };
   return {
     rows: [],
@@ -904,8 +905,8 @@ export async function judgeRun(flags: {
     return fatal("judge requires RUN_ID and accept|reject", 2);
   if (decision !== "accept" && decision !== "reject")
     return fatal("judge decision must be accept or reject", 2);
-  if (!(await foldedRuns()).some((entry) => entry.id === id))
-    return fatal(`unknown run ${id}`, 2);
+  const resolution = resolveRunId(await foldedRuns(), id);
+  if (resolution.kind === "error") return fatal(resolution.error, 2);
   const evidence = [];
   for (const path of flags.evidence ?? []) {
     const bytes = await readFile(path).catch(() =>
@@ -922,7 +923,7 @@ export async function judgeRun(flags: {
   }
   append({
     kind: "judged",
-    id,
+    id: resolution.row.id,
     at: now(),
     decision,
     note: flags.note ?? "",

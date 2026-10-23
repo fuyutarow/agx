@@ -23,6 +23,7 @@ import { InspectionTimeout } from "../../shared/src/agx-config.ts";
 import { selfCommand } from "./self-command.ts";
 import { parseNextTicket } from "./next/ticket.ts";
 import { recordedSandbox, resolveSandbox, Sandbox } from "./next/sandbox.ts";
+import { resolveRunId } from "./next/run-id.ts";
 
 export const DISPATCH_CHECK_TIMEOUT_MS = 60_000;
 export const DISPATCH_LIST_TIMEOUT_MS = 60_000;
@@ -407,7 +408,12 @@ export async function dispatch(options: {
       );
       return runs.code ?? 1;
     }
-    previous = runs.rows.find((row) => row.id === options.continuation);
+    const selected = resolveRunId(runs.rows, options.continuation);
+    if (selected.kind === "error") {
+      process.stderr.write(`agx worker dispatch: ${selected.error}\n`);
+      return 2;
+    }
+    previous = selected.row;
     const recorded =
       previous?.workspace === ""
         ? previous.cwd
@@ -544,9 +550,7 @@ export async function dispatch(options: {
       workspace,
       "--sandbox",
       sandbox,
-      ...(options.continuation === undefined
-        ? []
-        : ["--continue", options.continuation]),
+      ...(previous === undefined ? [] : ["--continue", previous.id]),
     ],
     cwd,
     env,
@@ -617,9 +621,7 @@ export async function dispatch(options: {
     sandbox,
     "--sandbox-source",
     sandbox_source,
-    ...(options.continuation === undefined
-      ? []
-      : ["--continue", options.continuation]),
+    ...(previous === undefined ? [] : ["--continue", previous.id]),
   ];
   const started = await invoke(args, cwd, env);
   if (started.code !== 0) {

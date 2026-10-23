@@ -326,6 +326,58 @@ describe("agx worker run --continue pins the prior row", () => {
     30000,
   );
 
+  test("a unique run id prefix resolves to the full prior id", async () => {
+    const f = await fixture();
+    const result = f.resume("codex-");
+    expect(result.exitCode, result.stderr.toString()).toBe(0);
+    const receipt = jsonOf(Receipt).safeParse(result.stdout.toString().trim());
+    expect(receipt.success).toBe(true);
+    if (!receipt.success) return;
+    expect(
+      f
+        .events()
+        .find(
+          (event) => event.kind === "started" && event.id === receipt.data.id,
+        ),
+    ).toMatchObject({ continues: "codex-run" });
+  }, 30000);
+
+  test("ambiguous and unknown run id prefixes refuse on one line with candidates", async () => {
+    const f = await fixture();
+    const original = f.events();
+    const extra = [
+      { ...original[0], id: "codex-run-extra" },
+      {
+        kind: "ended",
+        id: "codex-run-extra",
+        at: "2026-10-14T01:10:00.000Z",
+        exit: 0,
+        report_path: null,
+        vendor_session: "extra-session",
+        verify: [],
+      },
+    ];
+    writeFileSync(
+      join(f.state, "records.jsonl"),
+      `${[...original, ...extra].map((event) => JSON.stringify(event)).join("\n")}\n`,
+    );
+    for (const [selector, candidates] of [
+      ["codex-r", ["codex-run", "codex-run-extra"]],
+      [
+        "absent",
+        ["bare-run", "claude-run", "codex-run", "codex-run-extra", "ghost-run"],
+      ],
+    ] as const) {
+      const before = f.events().length;
+      const result = f.resume(selector);
+      expect(result.exitCode).toBe(2);
+      const lines = result.stderr.toString().trim().split("\n");
+      expect(lines).toHaveLength(1);
+      for (const candidate of candidates) expect(lines[0]).toContain(candidate);
+      expect(f.events()).toHaveLength(before);
+    }
+  });
+
   test("a claude run resumes its claude session on its claude row", async () => {
     const f = await fixture();
     const result = f.resume("claude-run");
