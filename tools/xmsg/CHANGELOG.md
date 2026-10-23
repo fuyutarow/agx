@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.2 — 2026-10-23
+
+- Make agx msg canonical and ship xmsg as a hard-link alias
+
 ## 0.4.1 — 2026-10-23
 
 - Resolve live Claude UUID targets to native names before relay, retain the UUID in the destination envelope, and name resolution failures before starting a relay.

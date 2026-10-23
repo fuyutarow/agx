@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.1 — 2026-10-23
+
+- Update suite member agx-worker to 10.0.5.
+- Update suite member xmsg to 0.4.2.
+
 ## 1.3.0 — 2026-10-23
 
 - Distribute every agx suite executable and the usehooks library in one versioned GitHub release
