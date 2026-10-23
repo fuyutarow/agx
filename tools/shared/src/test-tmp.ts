@@ -169,6 +169,8 @@ process.env.MISE_DATA_DIR ??= join(
   process.env.XDG_DATA_HOME ?? join(homedir(), ".local/share"),
   "mise",
 );
+// Preserve the caller's Bun cache before isolating HOME; explicit overrides win.
+process.env.BUN_INSTALL_CACHE_DIR ??= join(homedir(), ".bun/install/cache");
 // Subprocess integration tests have 30 s child guards. Bun's 5 s default otherwise kills an
 // awaited child under load before its own guard can report a result. This is a hang guard;
 // deadline behavior is asserted separately with injected clocks.

@@ -71,21 +71,29 @@ export function platform(target?: string) {
   return ok({ os: os === "windows" ? "win32" : os, arch });
 }
 
-export async function build(pkg: string, target?: string, root = repository) {
-  if (pkg === "suite") return buildSuite(target, root);
-  return buildMember(pkg, target, root);
+export type CommandRunner = typeof run;
+
+export async function build(
+  pkg: string,
+  target?: string,
+  root = repository,
+  runner: CommandRunner = run,
+) {
+  if (pkg === "suite") return buildSuite(target, root, runner);
+  return buildMember(pkg, target, root, runner);
 }
 
 async function buildMember(
   pkg: string,
   target?: string,
   root = repository,
+  runner: CommandRunner = run,
   suiteBin?: string,
 ) {
   const info = await packageInfo(pkg, root);
   if (info.isErr()) return info;
   if (Object.keys(info.value.commands).length === 0)
-    return buildLibrary(info.value, root);
+    return buildLibrary(info.value, root, runner);
   const host = platform(target);
   if (host.isErr()) return host;
   const { dir, version, commands } = info.value;
@@ -113,7 +121,7 @@ async function buildMember(
       outfile,
     ];
     if (target !== undefined) args.push("--target", target);
-    const result = await run(args, root);
+    const result = await runner(args, root);
     if (result.exit !== 0)
       return err(
         `Build failed for ${command}: ${result.stderr}${result.stdout}`,
@@ -127,7 +135,10 @@ async function buildMember(
     "dist",
     `${pkg}-${version}-${host.value.os}-${host.value.arch}.tar.gz`,
   );
-  const packed = await run(["tar", "-czf", archive, "-C", stage, "bin"], root);
+  const packed = await runner(
+    ["tar", "-czf", archive, "-C", stage, "bin"],
+    root,
+  );
   if (packed.exit !== 0) return err(`Archive failed: ${packed.stderr}`);
   const sha256 = new Bun.CryptoHasher("sha256")
     .update(await Bun.file(archive).arrayBuffer())
@@ -135,7 +146,11 @@ async function buildMember(
   return ok({ archive, sha256, assets: [{ archive, sha256 }] });
 }
 
-async function buildSuite(target: string | undefined, root: string) {
+async function buildSuite(
+  target: string | undefined,
+  root: string,
+  runner: CommandRunner,
+) {
   const suite = await packageInfo("agx", root);
   if (suite.isErr()) return suite;
   const host = platform(target);
@@ -146,7 +161,7 @@ async function buildSuite(target: string | undefined, root: string) {
   await mkdir(bin, { recursive: true });
   for (const member of packages) {
     if (member === "agx-usehooks") continue;
-    const compiled = await buildMember(member, target, root, bin);
+    const compiled = await buildMember(member, target, root, runner, bin);
     if (compiled.isErr()) return compiled;
   }
   const archive = join(
@@ -154,12 +169,15 @@ async function buildSuite(target: string | undefined, root: string) {
     "dist",
     `agx-${suite.value.version}-${host.value.os}-${host.value.arch}.tar.gz`,
   );
-  const packed = await run(["tar", "-czf", archive, "-C", stage, "bin"], root);
+  const packed = await runner(
+    ["tar", "-czf", archive, "-C", stage, "bin"],
+    root,
+  );
   if (packed.exit !== 0) return err(`Archive failed: ${packed.stderr}`);
   const sha256 = new Bun.CryptoHasher("sha256")
     .update(await Bun.file(archive).arrayBuffer())
     .digest("hex");
-  const library = await buildMember("agx-usehooks", target, root);
+  const library = await buildMember("agx-usehooks", target, root, runner);
   if (library.isErr()) return library;
   return ok({
     archive,
@@ -168,7 +186,11 @@ async function buildSuite(target: string | undefined, root: string) {
   });
 }
 
-export async function suiteNotes(root: string, previousTag?: string) {
+export async function suiteNotes(
+  root: string,
+  previousTag?: string,
+  runner: CommandRunner = run,
+) {
   const sections: string[] = [];
   for (const member of packages) {
     const info = await packageInfo(member, root);
@@ -182,7 +204,7 @@ export async function suiteNotes(root: string, previousTag?: string) {
       sections.push(current.value);
       continue;
     }
-    const prior = await run(
+    const prior = await runner(
       ["git", "show", `${previousTag}:tools/${member}/package.json`],
       root,
     );
@@ -210,6 +232,7 @@ async function buildLibrary(
     source: string | undefined;
   },
   root: string,
+  runner: CommandRunner,
 ) {
   const { pkg, dir, version, source } = info;
   if (source === undefined)
@@ -217,7 +240,7 @@ async function buildLibrary(
   const stage = join(root, "dist", pkg);
   await rm(stage, { recursive: true, force: true });
   await mkdir(stage, { recursive: true });
-  const bundled = await run(
+  const bundled = await runner(
     [
       process.execPath,
       "build",
@@ -233,7 +256,7 @@ async function buildLibrary(
   );
   if (bundled.exit !== 0)
     return err(`Library build failed: ${bundled.stderr}${bundled.stdout}`);
-  const declarations = await run(
+  const declarations = await runner(
     [
       process.execPath,
       "x",
@@ -281,7 +304,7 @@ async function buildLibrary(
   for (const file of ["package.json", "README.md", "CHANGELOG.md"])
     await copyFile(join(dir, file), join(stage, file));
   const archive = join(root, "dist", `${pkg}-${version}.tgz`);
-  const packed = await run(
+  const packed = await runner(
     [process.execPath, "pm", "pack", "--ignore-scripts", "--filename", archive],
     stage,
   );
@@ -322,12 +345,13 @@ export async function publish(
   yes = false,
   target?: string,
   root = repository,
+  runner: CommandRunner = run,
 ) {
   if (pkg !== "suite") return err("Use release:publish -- suite");
   const info = await packageInfo("agx", root);
   if (info.isErr()) return info;
   const tag = `v${info.value.version}`;
-  const status = await run(
+  const status = await runner(
     ["git", "status", "--porcelain", "--untracked-files=all"],
     root,
   );
@@ -337,17 +361,49 @@ export async function publish(
     return err(
       "Working copy is dirty; record or remove changes before publishing",
     );
-  const existing = await run(
+  const existing = await runner(
     ["git", "show-ref", "--verify", "--quiet", `refs/tags/${tag}`],
     root,
   );
   if (existing.exit === 0) return err(`Tag already exists: ${tag}`);
   if (existing.exit !== 1)
     return err(`Cannot inspect tag ${tag}: ${existing.stderr}`);
-  const branch = await run(["git", "branch", "--show-current"], root);
-  if (branch.exit !== 0 || branch.stdout.trim() !== "alpha")
-    return err("Publish requires branch alpha");
-  const previous = await run(
+  const head = await runner(["git", "rev-parse", "HEAD"], root);
+  if (head.exit !== 0) return err(`Cannot resolve HEAD: ${head.stderr}`);
+  const alpha = await runner(
+    ["git", "rev-parse", "--verify", "refs/heads/alpha"],
+    root,
+  );
+  if (alpha.exit !== 0)
+    return err(`Cannot resolve refs/heads/alpha: ${alpha.stderr}`);
+  const headCommit = head.stdout.trim();
+  const alphaCommit = alpha.stdout.trim();
+  if (headCommit !== alphaCommit)
+    return err(
+      `Publish requires HEAD ${headCommit} to match refs/heads/alpha ${alphaCommit}`,
+    );
+  const remoteAlpha = await runner(
+    ["git", "show-ref", "--verify", "--quiet", "refs/remotes/origin/alpha"],
+    root,
+  );
+  if (remoteAlpha.exit !== 0 && remoteAlpha.exit !== 1)
+    return err(
+      `Cannot inspect refs/remotes/origin/alpha: ${remoteAlpha.stderr}`,
+    );
+  if (remoteAlpha.exit === 0) {
+    const remote = await runner(
+      ["git", "rev-parse", "--verify", "refs/remotes/origin/alpha"],
+      root,
+    );
+    if (remote.exit !== 0)
+      return err(`Cannot resolve refs/remotes/origin/alpha: ${remote.stderr}`);
+    const remoteCommit = remote.stdout.trim();
+    if (alphaCommit !== remoteCommit)
+      return err(
+        `Publish requires refs/heads/alpha ${alphaCommit} to match refs/remotes/origin/alpha ${remoteCommit}`,
+      );
+  }
+  const previous = await runner(
     ["git", "describe", "--tags", "--match", "v[0-9]*", "--abbrev=0", "HEAD"],
     root,
   );
@@ -356,11 +412,10 @@ export async function publish(
   const section = await suiteNotes(
     root,
     previous.exit === 0 ? previous.stdout.trim() : undefined,
+    runner,
   );
   if (section.isErr()) return section;
-  const head = await run(["git", "rev-parse", "HEAD"], root);
-  if (head.exit !== 0) return err(`Cannot resolve HEAD: ${head.stderr}`);
-  const built = await build(pkg, target, root);
+  const built = await build(pkg, target, root, runner);
   if (built.isErr()) return built;
   const notes = join(root, "dist", pkg, "release-notes.md");
   await Bun.write(notes, section.value);
@@ -377,14 +432,14 @@ export async function publish(
       "--notes-file",
       notes,
       "--target",
-      head.stdout.trim(),
+      headCommit,
     ],
   ];
   for (const member of packages) {
     const memberInfo = await packageInfo(member, root);
     if (memberInfo.isErr()) return memberInfo;
     const memberTag = memberInfo.value.tag;
-    const exists = await run(
+    const exists = await runner(
       ["git", "show-ref", "--verify", "--quiet", `refs/tags/${memberTag}`],
       root,
     );
@@ -399,7 +454,7 @@ export async function publish(
       dryRun: true,
     });
   for (const command of commands) {
-    const result = await run(command, root);
+    const result = await runner(command, root);
     if (result.exit !== 0)
       return err(
         `Release stopped at ${shellCommand(command)}: ${result.stderr}${result.stdout}`,
