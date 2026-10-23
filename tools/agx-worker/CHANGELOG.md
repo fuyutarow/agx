@@ -1,5 +1,10 @@
 # Changelog
 
+## 10.0.3 — 2026-10-23
+
+- Accept usehooks declarations through the shared strict agx L2 configuration reader.
+- Pin dispatched units and internal workers to the running executable and preserve dispatcher PATH for suite commands and verification.
+
 ## 10.0.2 — 2026-10-23
 
 - Run compiled workers and read-only repository checks without requiring the source checkout.

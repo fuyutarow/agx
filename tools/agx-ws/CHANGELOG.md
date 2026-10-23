@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.2 — 2026-10-23
+
+- Discover registered repositories exclusively from agx L2 files.
+
 ## 1.0.1 — 2026-10-23
 
 - Resolve workspace inventory and cleanup registries from the selected repository when running compiled commands.

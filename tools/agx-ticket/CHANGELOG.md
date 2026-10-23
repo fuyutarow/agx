@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.2 — 2026-10-23
+
+- Accept usehooks declarations through the shared strict agx L2 configuration reader.
+
 ## 2.0.1 — 2026-10-23
 
 - Keep read-only repository inspection working from compiled commands without adjacent helper source files.

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.3 — 2026-10-23
+
+- Resolve consumer checks from strict usehooks tables in agx L2 files.
+- Ship a standalone library tarball with runtime bundle and public TypeScript declarations
+
 ## 1.0.2 — 2026-10-23
 
 - Bundle the consumer registry and resolve checks from the selected repository when running compiled commands.
