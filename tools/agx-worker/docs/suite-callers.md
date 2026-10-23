@@ -10,7 +10,7 @@ Raw output, including snippets and pre-edit matches: `/tmp/agx-suite-callers.jso
 
 The previously inventoried external DX caller declared `["agx", "jev"]`; that external repository is outside this checkout. This repository no longer provides either Jev command; use `jex`.
 
-## Before rename: /home/fuyu/dotfiles.ws/ws_agx-suite-thin
+## Before rename: $HOME/dotfiles.ws/ws_agx-suite-thin
 
 - `README.md:108,141,149,150,154,183,214,215,219,222`
 - `tools/spec/agx-ticket.md:4,11,67,69,90,101,107`
@@ -164,7 +164,7 @@ The previously inventoried external DX caller declared `["agx", "jev"]`; that ex
 - `tools/statusline/tests/fixtures/codex-rollout-run-activity.jsonl:1`
 - `scripts/agx-accept.ts:158,167,172,182`
 
-## After rename search: /home/fuyu/dotfiles.ws/ws_agx-suite-thin
+## After rename search: $HOME/dotfiles.ws/ws_agx-suite-thin
 
 - `README.md:108,141,149,150,154,183,214,215,219,222`
 - `tools/disk-reclaim/tests/targets/d-tmpfs.test.ts:71`
@@ -298,7 +298,7 @@ The previously inventoried external DX caller declared `["agx", "jev"]`; that ex
 - `scripts/tests/agx-doctor.test.ts:147,160,177,409,564,695,702`
 - `tools/agx-worker/tests/next/ls-selector.test.ts:107`
 
-## After rename search: /home/fuyu/dotfiles
+## After rename search: $HOME/dotfiles
 
 - `README.md:108,141,149,150,154,183,214,215,219,222`
 - `CLAUDE.md:49,117,118`
@@ -503,11 +503,11 @@ The previously inventoried external DX caller declared `["agx", "jev"]`; that ex
 - `agents/claude/hooks/tests/bash-durations.test.ts:36`
 - `agents/claude/hooks/tests/log-agx-snapshot.test.ts:26`
 
-## After rename search: /home/fuyu/Workspace/Example-science
+## After rename search: $HOME/Workspace/Example-science
 
 No matching callers or mentions (search exit 1).
 
-## After rename search: /home/fuyu/Workspace/retrospectives
+## After rename search: $HOME/Workspace/review-notes
 
 - `records/20261015_scope-reversal-retro.md:27,90,93,94,95,96,98,101,134,135`
 - `records/20261016_coordinator-idle-overnight-retro.md:18,20,79`
@@ -540,7 +540,7 @@ No matching callers or mentions (search exit 1).
 - `records/20261014_example-learner-evening-retro.md:45`
 - `records/20261015_dispatch-architecture.md:24,25,26,27,28,29,40,41,42,43,44,56,57,58,59,78,81,82,85,96,109,167,168,169,170,172,209,283,286,290,293,296`
 - `records/20261016_frustration-review-5-and-devx.md:111,132`
-- `records/20261016_retrospectives-schema-and-review-gate-frustration.md:85`
+- `records/20261016_review-notes-schema-and-review-gate-frustration.md:85`
 - `records/20261016_example-app-layering-and-usecase-gap-frustration-review.md:45`
 - `records/20261017_dotfiles-statusline-heavy-render-frustration.md:4,28,35,50,52,84,107,110`
 - `records/20261014_coordination-blockers-retro.md:21,29,35,76,80,88`
@@ -558,11 +558,11 @@ No matching callers or mentions (search exit 1).
 - `.agents/tickets/rg-agx-cli.md:4,17,19,22`
 - `.agents/tickets/rg-simplify.md:16`
 
-## After rename search: /home/fuyu/Workspace/Coral-dpp
+## After rename search: $HOME/Workspace/Coral-dpp
 
 - `move/plustag-core/spec/revisions/2026-10-14-r1-credential-gated-record-ledger.md:346`
 
-## After rename search: /home/fuyu/Workspace/dx
+## After rename search: $HOME/Workspace/dx
 
 - `README.md:295`
 - `.agents/tickets/dx-review.md:16,25,45`
@@ -574,9 +574,9 @@ No matching callers or mentions (search exit 1).
 - `src/config.ts:16`
 - `docs/spec.md:36,265,439`
 - `tests/contracts.test.ts:236`
-- `tests/fixtures/retrospectives-review.json:13,14,15`
+- `tests/fixtures/review-notes-review.json:13,14,15`
 
-## After rename search: /home/fuyu/Workspace/example-app
+## After rename search: $HOME/Workspace/example-app
 
 - `.agents/tickets/int19-fix.md:53`
 - `.agents/tickets/accept-ledger.md:39`
@@ -650,7 +650,7 @@ No matching callers or mentions (search exit 1).
 - `.agents/tickets/lint-scripts.md:23`
 - `.agents/tickets/sp-rules.md:25`
 
-## After rename search: /home/fuyu/Workspace/example-search-v1
+## After rename search: $HOME/Workspace/example-search-v1
 
 - `.agents/tickets/261016-gatebudget.md:6`
 - `.agents/tickets/261016-doctormem.md:6`
@@ -663,19 +663,19 @@ No matching callers or mentions (search exit 1).
 - `docs/v0-port/COORDINATOR-RETRO.md:61`
 - `docs/spec-drafts/1.202610.6-delta.md:45`
 
-## After rename search: /home/fuyu/Workspace/example-suite-monorepo
+## After rename search: $HOME/Workspace/example-suite-monorepo
 
 No matching callers or mentions (search exit 1).
 
-## After rename search: /home/fuyu/Workspace/example-records-v2
+## After rename search: $HOME/Workspace/example-records-v2
 
 - `.agents/tickets/rr2-review-rubric.md:11,38,68`
 
-## After rename search: /home/fuyu/Workspace/example-search
+## After rename search: $HOME/Workspace/example-search
 
 No matching callers or mentions (search exit 1).
 
-## After rename search: /home/fuyu/Workspace/example-records-v1
+## After rename search: $HOME/Workspace/example-records-v1
 
 - `fragments/0d99891aed96603a17a0139ad56fb841ac3aa1b173679087fb3a023546206b55/objects/248177d2778f653c941bbf428d3655906e7af5eed380760c27f425408c75eef7:8`
 - `fragments/0d99891aed96603a17a0139ad56fb841ac3aa1b173679087fb3a023546206b55/objects/e501055ec716bb74478649516d18cccac79d4e8650898db53b5b3b10de303929:8`
@@ -816,23 +816,23 @@ No matching callers or mentions (search exit 1).
 - `fragments/cf37a11570e20a318833f2882b7b7a20ee2adee00ab0e88660b1412f6d17cc25/objects/8d5a9bf3113ab9faa89178a64acbee24e9bdfc4622f3a1ae40a8f9dc437d34ed:7`
 - `fragments/cf37a11570e20a318833f2882b7b7a20ee2adee00ab0e88660b1412f6d17cc25/objects/1e52395f625688335c0207bede9c276e718fb5cfa3e313d08ab46c9e77ccbc33:2`
 
-## After rename search: /home/fuyu/Workspace/example-service
+## After rename search: $HOME/Workspace/example-service
 
 No matching callers or mentions (search exit 1).
 
-## After rename search: /home/fuyu/Workspace/Example-notebook
+## After rename search: $HOME/Workspace/Example-notebook
 
 No matching callers or mentions (search exit 1).
 
-## After rename search: /home/fuyu/Workspace/soks
+## After rename search: $HOME/Workspace/soks
 
 No matching callers or mentions (search exit 1).
 
-## After rename search: /home/fuyu/Workspace/example-skills
+## After rename search: $HOME/Workspace/example-skills
 
 No matching callers or mentions (search exit 1).
 
-## After rename search: /home/fuyu/Workspace/example-learner
+## After rename search: $HOME/Workspace/example-learner
 
 - `.agents/hooks/stop.test.ts:52,89`
 - `.agents/hooks/lanes.ts:102,103`
@@ -840,13 +840,13 @@ No matching callers or mentions (search exit 1).
 
 ## Rendered global guidance
 
-- `/home/fuyu/.claude/CLAUDE.md:10,57,58,59,62,63,64,69,72`
+- `$HOME/.claude/CLAUDE.md:10,57,58,59,62,63,64,69,72`
 
 ## Additional argv and binary-name candidates
 
 Query `["']agx["']` catches arrays split across lines and variable assignments. These references include bin declarations and availability checks; they are candidates, not all executable calls. Raw snippets: `/tmp/agx-suite-argv-callers.json`.
 
-### /home/fuyu/dotfiles.ws/ws_agx-suite-thin
+### $HOME/dotfiles.ws/ws_agx-suite-thin
 
 - `package.json:24`
 - `scripts/tests/doctor.test.ts:81,93,104`
@@ -894,7 +894,7 @@ Query `["']agx["']` catches arrays split across lines and variable assignments. 
 - `tools/shared/tests/dispatch-state.test.ts:63,65`
 - `tools/agx-worker/src/next/store.ts:240`
 
-### /home/fuyu/dotfiles
+### $HOME/dotfiles
 
 - `package.json:24`
 - `scripts/agx-accept.ts:150`
@@ -943,19 +943,19 @@ Query `["']agx["']` catches arrays split across lines and variable assignments. 
 - `tools/shared/src/test-tmp.ts:187`
 - `tools/shared/src/dispatch-state.ts:6`
 
-### /home/fuyu/Workspace/Example-science
+### $HOME/Workspace/Example-science
 
 No matching literal bin names.
 
-### /home/fuyu/Workspace/retrospectives
+### $HOME/Workspace/review-notes
 
 No matching literal bin names.
 
-### /home/fuyu/Workspace/Coral-dpp
+### $HOME/Workspace/Coral-dpp
 
 No matching literal bin names.
 
-### /home/fuyu/Workspace/dx
+### $HOME/Workspace/dx
 
 - `docs/spec.md:265`
 - `.agents/tickets/dx-review.md:25`
@@ -964,46 +964,46 @@ No matching literal bin names.
 - `README.md:295`
 - `tests/contracts.test.ts:236`
 
-### /home/fuyu/Workspace/example-app
+### $HOME/Workspace/example-app
 
 No matching literal bin names.
 
-### /home/fuyu/Workspace/example-search-v1
+### $HOME/Workspace/example-search-v1
 
 No matching literal bin names.
 
-### /home/fuyu/Workspace/example-suite-monorepo
+### $HOME/Workspace/example-suite-monorepo
 
 No matching literal bin names.
 
-### /home/fuyu/Workspace/example-records-v2
+### $HOME/Workspace/example-records-v2
 
 No matching literal bin names.
 
-### /home/fuyu/Workspace/example-search
+### $HOME/Workspace/example-search
 
 No matching literal bin names.
 
-### /home/fuyu/Workspace/example-records-v1
+### $HOME/Workspace/example-records-v1
 
 No matching literal bin names.
 
-### /home/fuyu/Workspace/example-service
+### $HOME/Workspace/example-service
 
 No matching literal bin names.
 
-### /home/fuyu/Workspace/Example-notebook
+### $HOME/Workspace/Example-notebook
 
 No matching literal bin names.
 
-### /home/fuyu/Workspace/soks
+### $HOME/Workspace/soks
 
 No matching literal bin names.
 
-### /home/fuyu/Workspace/example-skills
+### $HOME/Workspace/example-skills
 
 No matching literal bin names.
 
-### /home/fuyu/Workspace/example-learner
+### $HOME/Workspace/example-learner
 
 - `.agents/hooks/lanes.ts:98,106,107`

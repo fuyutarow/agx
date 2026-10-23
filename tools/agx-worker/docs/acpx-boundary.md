@@ -4,8 +4,7 @@ Keep the native Codex and Claude transports. Do not introduce an acpx production
 this change. The released replacement fails two required capacity contracts; this is an
 executed rejection, not a decision deferred because testing is missing.
 
-The reproducible observations and fixture source snapshots are in
-[the comparison receipt](../evidence/acpx-native-comparison-20261022.json).
+The comparison receipt and fixture source snapshots are retained privately as run evidence.
 
 ## Required outcome and responsibility boundary
 

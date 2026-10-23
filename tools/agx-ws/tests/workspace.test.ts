@@ -556,7 +556,7 @@ process.exitCode = stage === "add" && args.includes("add") && code === 0 ? 1 : c
 describe("agx ws add", () => {
   test("JSON output stays machine readable through install chatter and reuse", async () => {
     const chatter =
-      "30 packages installed …\n/home/fuyu/dotfiles.ws/ws_fleet-line-real'\n";
+      "30 packages installed …\n$HOME/dotfiles.ws/ws_fleet-line-real'\n";
     const command = `printf '%s' '${chatter.replaceAll("'", "'\\''")}'`;
     const path = await repo(`ready = [${JSON.stringify(command)}]\n`);
     const created = await ws(["add", "fleet-line-real", "--json"], path);

@@ -135,7 +135,7 @@ function fixture() {
   };
   shim("agx-ws", [
     `printf '%s\\n' "$@" > "$FAKE_WS_ARGS"`,
-    'if [ "$FAKE_WS_FAIL" = "yes" ]; then echo "ws: /home/fuyu is not a valid local jj workspace" >&2; exit 1; fi',
+    'if [ "$FAKE_WS_FAIL" = "yes" ]; then echo "ws: fixture-home is not a valid local jj workspace" >&2; exit 1; fi',
     'slug="$2"',
     "shift 2",
     "json=no",
@@ -143,11 +143,11 @@ function fixture() {
     '  if [ "$1" = "--json" ]; then json=yes; fi',
     '  if [ "$1" = "--repo" ]; then repo="$2"; shift 2; else shift; fi',
     "done",
-    'if [ "$repo" != "$FAKE_REPO" ]; then echo "ws: /home/fuyu is not a valid local jj workspace" >&2; exit 1; fi',
+    'if [ "$repo" != "$FAKE_REPO" ]; then echo "ws: fixture-home is not a valid local jj workspace" >&2; exit 1; fi',
     'workspace="$(dirname "$repo")/$(basename "$repo").ws/ws_$slug"',
     'mkdir -p "$workspace/.jj"',
     'if [ "$FAKE_WS_CHATTER" = "yes" ]; then',
-    '  chatter="30 packages installed …\n/home/fuyu/dotfiles.ws/ws_fleet-line-real\'"',
+    '  chatter="30 packages installed …\n$HOME/dotfiles.ws/ws_fleet-line-real\'"',
     '  if [ "$json" = "yes" ]; then printf "%s\\n" "$chatter" >&2; else printf "%s\\n" "$chatter"; exit 0; fi',
     "fi",
     'if [ "$FAKE_WS_INVALID" = "yes" ]; then echo "invalid workspace response"; exit 0; fi',
@@ -493,7 +493,7 @@ test("dispatch uses machine output when readiness prints the reported install ch
 test.each([
   [
     "FAKE_WS_FAIL",
-    "agx ws add failed: ws: /home/fuyu is not a valid local jj workspace",
+    "agx ws add failed: ws: fixture-home is not a valid local jj workspace",
   ],
   ["FAKE_WS_INVALID", "agx ws add returned an invalid workspace"],
 ])(

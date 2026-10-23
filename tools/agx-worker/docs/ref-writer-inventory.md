@@ -1,7 +1,7 @@
 # Harness VCS reads and REDO-JJSAFE4 disposition
 
 Audience: maintainers reviewing the recovered patch against alpha `3d7c611804d4`.
-Source: `/home/fuyu/.cache/coord/triage2/dotfiles-ws-jjsafe4.patch`;
+Source: `$HOME/.cache/coord/triage2/dotfiles-ws-jjsafe4.patch`;
 triage: `verdicts.tsv` marks it REDO; its adjacent `.desc` file is empty.
 
 The recovered intent is to install filesystem write denial before a bounded VCS read can

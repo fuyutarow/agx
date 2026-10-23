@@ -1,6 +1,6 @@
 # rumdl — Markdown linter/formatter config for the dotfiles repo.
 #
-# Stance (ported from the qoed repo): a STRUCTURAL-INTEGRITY gate, not a
+# Stance (ported from the example-project repo): a STRUCTURAL-INTEGRITY gate, not a
 # cosmetic-style enforcer. Keep only the rules that catch render-breaking or
 # genuinely-wrong defects (broken/empty/reversed links, link fragments, heading
 # hierarchy, list-numbering, trailing-newline); disable everything that is
