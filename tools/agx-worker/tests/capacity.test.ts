@@ -154,6 +154,8 @@ test.each(["codex", "stderr", "stubborn", "wait", "claude", "claude-stderr"])(
         ]
       : [
           "tools/agx-worker/src/workers/codex.ts",
+          "--choice",
+          "sol-medium",
           "--model",
           "gpt-6.1-sol",
           "--effort",
@@ -186,6 +188,8 @@ test("a worker doing real work can exceed the startup wait without capacity", as
   const result = await execute(
     [
       "tools/agx-worker/src/workers/codex.ts",
+      "--choice",
+      "sol-medium",
       "--model",
       "gpt-6.1-sol",
       "--effort",
@@ -214,6 +218,8 @@ test("authentication failures remain worker errors rather than cooling a model",
   const result = await execute(
     [
       "tools/agx-worker/src/workers/codex.ts",
+      "--choice",
+      "sol-medium",
       "--model",
       "gpt-6.1-sol",
       "--effort",

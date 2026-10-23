@@ -708,6 +708,8 @@ describe("agx-worker run", () => {
     expect(firstRow.continues).toBeNull();
     expect(firstRow.judgment?.decision).toBe("accept");
     expect(firstRow.verify).toEqual([]);
+    expect(firstRow.sandbox).toBe("read-only");
+    expect(firstRow.sandbox_source).toBe("flag");
     expect(firstRow.started_at).toBe(started.at);
     expect(firstRow.ended_at).toBe(ended.at);
     expect(secondRow.dispatcher_session).toBe("claude-session");
@@ -753,6 +755,8 @@ describe("agx-worker run", () => {
         "returned",
         "changed_files",
         "row",
+        "sandbox",
+        "sandbox_source",
         "state",
         "ticket",
         "vendor_session",
