@@ -26,7 +26,7 @@ async function main() {
     return;
   }
   process.stdout.write(
-    `${result.value.archive}\nsha256 ${result.value.sha256}\n`,
+    `${result.value.assets.map((asset) => `${asset.archive}\nsha256 ${asset.sha256}`).join("\n")}\n`,
   );
 }
 

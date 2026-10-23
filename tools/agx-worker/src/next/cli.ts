@@ -82,6 +82,10 @@ async function main(): Promise<void> {
             type: String,
             description: "none | read-only | workspace-write",
           },
+          sandboxSource: {
+            type: String,
+            description: "internal sandbox provenance supplied by dispatch",
+          },
           continue: {
             type: String,
             description: "previous agx worker run id to continue",
@@ -109,6 +113,7 @@ async function main(): Promise<void> {
       ticket: parsed._[0],
       cd: parsed.flags.cd,
       sandbox: parsed.flags.sandbox,
+      sandboxSource: parsed.flags.sandboxSource,
       continue: parsed.flags["continue"],
       supersedes: parsed.flags.supersedes,
       session: parsed.flags.session,

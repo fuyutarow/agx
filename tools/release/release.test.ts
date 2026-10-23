@@ -4,11 +4,14 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { writeChangeset } from "../changeset/changeset.ts";
 import { applyChangesets } from "../changeset/apply.ts";
+import { jsonOf, z } from "../zod.ts";
 import {
   build,
   changelogSection,
   packageInfo,
   platform,
+  packages,
+  suiteNotes,
   repository,
   run,
 } from "./release.ts";
@@ -50,7 +53,7 @@ async function fixture(pkg = "agx-status") {
   await symlink(join(repository, "node_modules"), join(root, "node_modules"));
   const fake = join(root, "fake-bin");
   await mkdir(fake);
-  const executable = `#!${process.execPath}\nconst args = process.argv.slice(2);\nawait Bun.write(${JSON.stringify(join(root, "calls"))}, (await Bun.file(${JSON.stringify(join(root, "calls"))}).text().catch(() => "")) + JSON.stringify(args) + "\\n");\nif (args[0] === "status") process.stdout.write(process.env.RELEASE_TEST_DIRTY === "1" ? " M changed\\n" : "");\nif (args[0] === "show-ref") process.exit(process.env.RELEASE_TEST_TAG === "1" ? 0 : 1);\nif (args[0] === "rev-parse") process.stdout.write("0123456789012345678901234567890123456789\\n");\nif (args[0] === "tag" || args[0] === "release") process.exit(99);\n`;
+  const executable = `#!${process.execPath}\nconst args = process.argv.slice(2);\nawait Bun.write(${JSON.stringify(join(root, "calls"))}, (await Bun.file(${JSON.stringify(join(root, "calls"))}).text().catch(() => "")) + JSON.stringify(args) + "\\n");\nif (args[0] === "status") process.stdout.write(process.env.RELEASE_TEST_DIRTY === "1" ? " M changed\\n" : "");\nif (args[0] === "show-ref") process.exit(process.env.RELEASE_TEST_TAG === "1" ? 0 : 1);\nif (args[0] === "branch") process.stdout.write(process.env.RELEASE_TEST_BRANCH ?? "alpha");\nif (args[0] === "describe") { if (process.env.RELEASE_TEST_PREVIOUS === "1") process.stdout.write("v2.3.2"); else process.exit(128); }\nif (args[0] === "show") process.stdout.write(JSON.stringify({version: "2.3.2"}));\nif (args[0] === "rev-parse") process.stdout.write("0123456789012345678901234567890123456789\\n");\nif (args[0] === "tag" || args[0] === "release") process.exit(99);\n`;
   await Bun.write(join(fake, "git"), executable);
   await Bun.write(join(fake, "gh"), executable);
   await chmod(join(fake, "git"), 0o755);
@@ -154,16 +157,25 @@ test("unknown packages exit 2 without producing an archive", async () => {
 });
 
 test(
-  "publish defaults to dry-run and prints exact commands with only current notes",
+  "publish defaults to dry-run and includes all sections since previous suite tag",
   async () => {
-    const f = await fixture();
-    const result = await preview(f);
+    const f = await suiteFixture();
+    for (const pkg of packages) {
+      const path = join(f.root, "tools", pkg, "CHANGELOG.md");
+      await Bun.write(
+        path,
+        (await Bun.file(path).text()) + "\n## 2.3.2\n\n- Oldest version.\n",
+      );
+    }
+    const result = await preview(f, [], { RELEASE_TEST_PREVIOUS: "1" });
     expect(result.exit).toBe(0);
     expect(result.stdout).toContain("DRY RUN");
+    expect(result.stdout.match(/'gh' 'release' 'create'/gu)).toHaveLength(1);
+    expect(result.stdout).toContain("agx-usehooks-2.3.4.tgz");
+    if (process.env.AGX_RELEASE_PLAN_RECEIPT !== undefined)
+      await Bun.write(process.env.AGX_RELEASE_PLAN_RECEIPT, result.stdout);
     expect(result.stdout).toContain("'git' 'tag' 'agx-status@2.3.4'");
-    expect(result.stdout).toContain(
-      "'gh' 'release' 'create' 'agx-status@2.3.4'",
-    );
+    expect(result.stdout).toContain("'gh' 'release' 'create' 'v2.3.4'");
     expect(result.stdout).toContain(
       "'--target' '0123456789012345678901234567890123456789'",
     );
@@ -171,10 +183,11 @@ test(
     expect(calls).not.toContain('["tag"');
     expect(calls).not.toContain('["release"');
     const notes = await Bun.file(
-      join(f.root, "dist/agx-status/release-notes.md"),
+      join(f.root, "dist/suite/release-notes.md"),
     ).text();
     expect(notes).toContain("This version only");
-    expect(notes).not.toContain("Earlier version");
+    expect(notes).toContain("Earlier version");
+    expect(notes).not.toContain("Oldest version");
   },
   COMPILE_TEST_TIMEOUT_MS,
 );
@@ -182,7 +195,7 @@ test(
 test(
   "publish reads precisely the dated section produced by release:version",
   async () => {
-    const f = await fixture();
+    const f = await suiteFixture();
     expect(
       (
         await writeChangeset(
@@ -199,8 +212,8 @@ test(
     expect(result.exit).toBe(0);
     expect(result.stdout).toContain("'git' 'tag' 'agx-status@2.4.0'");
     expect(
-      await Bun.file(join(f.root, "dist/agx-status/release-notes.md")).text(),
-    ).toBe("## 2.4.0 — 2026-10-23\n\n- New release entry.\n");
+      await Bun.file(join(f.root, "dist/suite/release-notes.md")).text(),
+    ).toContain("## 2.4.0 — 2026-10-23\n\n- New release entry.\n");
     expect(
       await Bun.file(join(f.dir, ".changes/new-release-entry.md")).exists(),
     ).toBe(false);
@@ -209,13 +222,18 @@ test(
 );
 
 test("explicit dry-run refuses dirty copies, existing tags and missing version entries", async () => {
-  const f = await fixture();
+  const f = await suiteFixture();
+  const branch = await preview(f, ["--dry-run"], {
+    RELEASE_TEST_BRANCH: "feature",
+  });
+  expect(branch.exit).toBe(2);
+  expect(branch.stderr).toContain("branch alpha");
   const dirty = await preview(f, ["--dry-run"], { RELEASE_TEST_DIRTY: "1" });
   expect(dirty.exit).toBe(2);
   expect(dirty.stderr).toContain("dirty");
   const tagged = await preview(f, ["--dry-run"], { RELEASE_TEST_TAG: "1" });
   expect(tagged.exit).toBe(2);
-  expect(tagged.stderr).toContain("Tag already exists: agx-status@2.3.4");
+  expect(tagged.stderr).toContain("Tag already exists: v2.3.4");
   await Bun.write(
     join(f.dir, "CHANGELOG.md"),
     "## 2.3.40\n\n- Wrong version\n",
@@ -228,7 +246,7 @@ test("explicit dry-run refuses dirty copies, existing tags and missing version e
 test(
   "execution requires --yes; conflicting flags and excess arguments refuse",
   async () => {
-    const f = await fixture();
+    const f = await suiteFixture();
     for (const args of [["--yes", "--dry-run"], ["extra"]]) {
       const result = await preview(f, args);
       expect(result.exit).toBe(2);
@@ -237,7 +255,7 @@ test(
     expect(result.exit).toBe(2);
     expect(result.stderr).toContain("Release stopped");
     expect(await Bun.file(join(f.root, "calls")).text()).toContain(
-      '["tag","agx-status@2.3.4"]',
+      '["tag","v2.3.4"]',
     );
   },
   COMPILE_TEST_TIMEOUT_MS,
@@ -316,17 +334,75 @@ test(
       ),
     ).toBe(true);
     expect(listing.stdout).not.toMatch(/(?:tests|\.changes)\//u);
+    const packed = await run(
+      ["tar", "-xOzf", result.value.archive, "package/package.json"],
+      f.root,
+    );
+    expect(packed.exit, packed.stderr).toBe(0);
+    const manifest = jsonOf(
+      z.object({
+        dependencies: z.record(z.string(), z.string()),
+        peerDependencies: z.record(z.string(), z.string()),
+        peerDependenciesMeta: z.record(
+          z.string(),
+          z.object({ optional: z.boolean() }),
+        ),
+      }),
+    ).safeParse(packed.stdout);
+    expect(manifest.success, packed.stdout).toBe(true);
+    if (!manifest.success) return;
+    expect(
+      Object.keys(manifest.data.dependencies).filter(
+        (name) => name.startsWith("@types/") || name === "typescript",
+      ),
+    ).toEqual([]);
+    expect(manifest.data.dependencies.neverthrow).toBe("8.2.0");
+    expect(manifest.data.dependencies.zod).toBe("4.6.5");
+    expect(manifest.data.peerDependencies["@types/node"]).toBe("*");
+    expect(manifest.data.peerDependenciesMeta["@types/node"]).toEqual({
+      optional: true,
+    });
     const consumer = await mkdtemp(join(tmpdir(), "library-consumer-"));
     roots.push(consumer);
     await Bun.write(
       join(consumer, "package.json"),
-      '{"name":"consumer","type":"module","private":true}',
+      JSON.stringify({
+        name: "consumer",
+        type: "module",
+        private: true,
+        devDependencies: { "@types/node": "22.20.2" },
+      }),
     );
+    // Resolve and lock an older major BEFORE adding the tarball, using only the local cache.
+    const baseline = await run(
+      [process.execPath, "install", "--offline"],
+      consumer,
+    );
+    expect(baseline.exit, baseline.stdout + baseline.stderr).toBe(0);
+    expect(await Bun.file(join(consumer, "bun.lock")).exists()).toBe(true);
+    const nodeVersion = async () => {
+      const parsed = jsonOf(z.object({ version: z.string() })).safeParse(
+        await Bun.file(
+          join(consumer, "node_modules/@types/node/package.json"),
+        ).text(),
+      );
+      expect(parsed.success).toBe(true);
+      return parsed.success ? parsed.data.version : undefined;
+    };
+    const before = await nodeVersion();
+    expect(before).toBe("22.20.2");
     const installed = await run(
       [process.execPath, "add", "--offline", result.value.archive],
       consumer,
     );
     expect(installed.exit, installed.stderr).toBe(0);
+    expect(await nodeVersion()).toBe(before);
+    const lockfile = await Bun.file(join(consumer, "bun.lock")).text();
+    expect(lockfile).toContain("@types/node@22.20.2");
+    // A nested newer copy would also defeat the consumer's ownership of Node types.
+    expect(lockfile.match(/@types\/node@\d+\.[\d.]+/gu)).toEqual([
+      "@types/node@22.20.2",
+    ]);
     await Bun.write(
       join(consumer, "consumer.ts"),
       `
@@ -367,24 +443,71 @@ if (runs.length !== 0 || typeof onPrompt !== "function" || !RunSchema.safeParse(
   COMPILE_TEST_TIMEOUT_MS,
 );
 
-test(
-  "library publish previews its own tag and tarball and retains refusals",
-  async () => {
-    const f = await libraryFixture();
-    const result = await preview(f);
-    expect(result.exit).toBe(0);
-    expect(result.stdout).toContain("DRY RUN");
-    expect(result.stdout).toContain(
-      "'gh' 'release' 'create' 'agx-usehooks@2.3.4'",
+test("single member publishing refuses with suite pointer", async () => {
+  const f = await fixture();
+  for (const pkg of packages) {
+    const result = await preview({ ...f, pkg });
+    expect(result.exit).toBe(2);
+    expect(result.stderr).toBe("FATAL: Use release:publish -- suite\n");
+  }
+});
+
+async function suiteFixture() {
+  const f = await libraryFixture();
+  for (const pkg of packages) {
+    if (pkg === "agx-usehooks") continue;
+    const dir = join(f.root, "tools", pkg);
+    await mkdir(join(dir, "src"), { recursive: true });
+    await Bun.write(
+      join(dir, "package.json"),
+      JSON.stringify({ version: "2.3.4", bin: { [pkg]: "src/main.ts" } }),
     );
-    expect(result.stdout).toContain("agx-usehooks-2.3.4.tgz'");
-    const calls = await Bun.file(join(f.root, "calls")).text();
-    expect(calls).not.toContain('["tag"');
-    expect(calls).not.toContain('["release"');
-    expect((await preview(f, [], { RELEASE_TEST_DIRTY: "1" })).exit).toBe(2);
-    expect((await preview(f, [], { RELEASE_TEST_TAG: "1" })).exit).toBe(2);
-    await Bun.write(join(f.dir, "CHANGELOG.md"), "## 2.3.3\n\n- Earlier.\n");
-    expect((await preview(f)).exit).toBe(2);
+    await Bun.write(
+      join(dir, "src/main.ts"),
+      `process.stdout.write("${pkg} 2.3.4\\n");`,
+    );
+    await Bun.write(
+      join(dir, "CHANGELOG.md"),
+      "# Changelog\n\n## 2.3.4\n\n- This version only.\n\n## 2.3.3\n\n- Earlier version.\n",
+    );
+  }
+  return { ...f, pkg: "suite", dir: join(f.root, "tools/agx") };
+}
+
+test(
+  "suite archive contains all commands with member versions and exactly two assets",
+  async () => {
+    const f = await suiteFixture();
+    const result = await build("suite", undefined, f.root);
+    expect(result.isOk(), result.isErr() ? result.error : "").toBe(true);
+    if (result.isErr()) return;
+    expect(result.value.assets).toHaveLength(2);
+    const listing = await run(["tar", "-tzf", result.value.archive], f.root);
+    const names = [...packages]
+      .filter((pkg) => pkg !== "agx-usehooks")
+      .concat("agx-msg");
+    expect(listing.stdout.trim().split("\n").toSorted()).toEqual(
+      ["bin/", ...names.map((name) => `bin/${name}`)].toSorted(),
+    );
+    for (const name of names) {
+      const version = await run(
+        [join(f.root, "dist/suite/bin", name), "--version"],
+        f.root,
+      );
+      expect(version.exit).toBe(0);
+      expect(version.stdout).toBe(
+        `${name === "agx-msg" ? "xmsg" : name} 2.3.4\n`,
+      );
+    }
+    const archives = await Array.fromAsync(
+      new Bun.Glob("*.tar.gz").scan(join(f.root, "dist")),
+    );
+    expect(archives).toHaveLength(1);
   },
   COMPILE_TEST_TIMEOUT_MS,
 );
+
+test("suite notes reject unavailable history", async () => {
+  const f = await suiteFixture();
+  expect((await suiteNotes(f.root, "v0.0.0")).isErr()).toBe(true);
+});

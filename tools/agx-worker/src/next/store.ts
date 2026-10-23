@@ -35,6 +35,7 @@ import { VerifyResult } from "./verify.ts";
 import { runningSummary, listingRows } from "./listing.ts";
 import { runHealth } from "./health.ts";
 import { ticketContext } from "./ticket-home.ts";
+import { Sandbox, SandboxSource } from "./sandbox.ts";
 
 const PickAuditSchema = z.object({
   source: z.string(),
@@ -61,6 +62,8 @@ const EventSchema = z.discriminatedUnion("kind", [
     unit: z.string().optional(),
     workspace_name: z.string().optional(),
     row: z.string(),
+    sandbox: Sandbox.optional(),
+    sandbox_source: SandboxSource.optional(),
     dispatcher_session: z.string().nullable(),
     vendor_session: z.string().nullable(),
     continues: z.string().nullable().optional(),
@@ -524,6 +527,8 @@ function foldInto(runs: Map<string, FoldedRun>, input: NextEvent[]): void {
         exit: null,
         outcome: null,
         row: event.row,
+        sandbox: event.sandbox,
+        sandbox_source: event.sandbox_source,
         worker_name: event.worker_name ?? `agt_${event.ticket}`,
         unit: event.unit ?? event.worker_name ?? `agt_${event.ticket}`,
         workspace_name: event.workspace_name ?? basename(event.workspace),

@@ -23,11 +23,11 @@ function bumpedVersion(current: string, bump: Bump): Result<string, Error> {
   return ok(`${major}.${minor}.${patch + 1n}`);
 }
 
-/** Apply only the selected package. Validate every input before the first write. */
-export async function applyChangesets(
+async function prepareChangesets(
   root: string,
   pkg: string,
-  date = Temporal.Now.plainDateISO().toString(),
+  date: string,
+  extra: Changeset[] = [],
 ) {
   if (!/^\d{4}-\d{2}-\d{2}$/u.test(date))
     return err(new Error(`invalid release date: ${date}`));
@@ -46,13 +46,13 @@ export async function applyChangesets(
     .filter((file) => file.isFile() && file.name.endsWith(".md"))
     .map((file) => file.name)
     .toSorted();
-  if (names.length === 0)
+  if (names.length === 0 && extra.length === 0)
     return err(
       new Error(
         `No pending changesets for ${pkg}; create one with mise run changeset -- ${pkg} <patch|minor|major> "<entry>"`,
       ),
     );
-  const changes: Changeset[] = [];
+  const changes: Changeset[] = [...extra];
   for (const name of names) {
     const parsed = parseChangeset(
       await Bun.file(join(changesDir, name)).text(),
@@ -85,18 +85,52 @@ export async function applyChangesets(
     );
   const section = `## ${next.value} — ${date}\n\n${changes.map(({ entry }) => `- ${entry}`).join("\n")}`;
   const older = previous.slice("# Changelog\n".length).trim();
-  await Bun.write(
-    join(dir, "package.json"),
-    `${JSON.stringify({ ...manifest, version: next.value }, null, 2)}\n`,
-  );
-  await Bun.write(
-    changelog,
-    ["# Changelog", section, older]
-      .filter((part) => part.length > 0)
-      .join("\n\n") + "\n",
-  );
-  for (const name of names) await unlink(join(changesDir, name));
-  return ok({ pkg, version: next.value, entries: changes.length });
+  return ok({
+    pkg,
+    version: next.value,
+    entries: changes.length,
+    bump,
+    dir,
+    changesDir,
+    names,
+    manifest: `${JSON.stringify({ ...manifest, version: next.value }, null, 2)}\n`,
+    changelog:
+      ["# Changelog", section, older]
+        .filter((part) => part.length > 0)
+        .join("\n\n") + "\n",
+  });
+}
+
+/** Validate member and suite inputs before writing either version. */
+export async function applyChangesets(
+  root: string,
+  pkg: string,
+  date = Temporal.Now.plainDateISO().toString(),
+) {
+  const member = await prepareChangesets(root, pkg, date);
+  if (member.isErr()) return member;
+  const plans = [member.value];
+  if (pkg !== "agx") {
+    const suite = await prepareChangesets(root, "agx", date, [
+      {
+        bump: member.value.bump,
+        entry: `Update suite member ${pkg} to ${member.value.version}.`,
+      },
+    ]);
+    if (suite.isErr()) return suite;
+    plans.unshift(suite.value);
+  }
+  // Write the suite first: a failed member write cannot leave a member bumped alone.
+  for (const plan of plans) {
+    await Bun.write(join(plan.dir, "package.json"), plan.manifest);
+    await Bun.write(join(plan.dir, "CHANGELOG.md"), plan.changelog);
+    for (const name of plan.names) await unlink(join(plan.changesDir, name));
+  }
+  return ok({
+    pkg,
+    version: member.value.version,
+    entries: member.value.entries,
+  });
 }
 
 async function main() {

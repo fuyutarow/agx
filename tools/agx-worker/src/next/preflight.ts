@@ -18,6 +18,12 @@ import { readRouteUsage } from "./usage.ts";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { DispatchBindingSchema } from "../../../shared/src/agx-dispatch-binding.ts";
 import {
+  recordedSandbox,
+  resolveSandbox,
+  Sandbox,
+  SandboxSource,
+} from "./sandbox.ts";
+import {
   AgxConfigError,
   InspectionTimeout,
   InspectionUnavailable,
@@ -269,17 +275,35 @@ export async function preflight(
   );
   if (environment instanceof InspectionUnavailable)
     return { temporary: environment };
-  const sandbox =
-    value(flags, "sandbox") ?? ticket?.sandbox ?? "workspace-write";
-  if (!["none", "read-only", "workspace-write"].includes(sandbox))
+  let continuedSandbox: string | undefined;
+  if (
+    continuationId !== undefined &&
+    value(flags, "sandbox") === undefined &&
+    ticket?.sandbox === undefined
+  ) {
+    const previous = (await foldedRuns()).find(
+      (run) => run.id === continuationId,
+    );
+    const recorded = await recordedSandbox(previous);
+    if (!recorded.ok)
+      add(
+        String(recorded.error),
+        "repair the continued run sandbox record or specify --sandbox",
+      );
+    else continuedSandbox = recorded.value;
+  }
+  const resolvedSandbox = resolveSandbox(
+    value(flags, "sandbox"),
+    ticket?.sandbox,
+    continuedSandbox,
+  );
+  const { sandbox } = resolvedSandbox;
+  let sandbox_source = resolvedSandbox.sandbox_source;
+  const parsedSandbox = Sandbox.safeParse(sandbox);
+  if (!parsedSandbox.success)
     add(
       "--sandbox must be none, read-only, or workspace-write",
       "choose a supported sandbox",
-    );
-  if (ticket?.sandbox !== undefined && sandbox !== ticket.sandbox)
-    add(
-      `--sandbox ${sandbox} differs from ticket sandbox ${ticket.sandbox}`,
-      "use the ticket sandbox or amend the ticket",
     );
   const rawBinding = value(flags, "dispatchBinding");
   const binding =
@@ -300,6 +324,20 @@ export async function preflight(
       "dispatch binding does not match the ticket and --cd workspace",
       "dispatch again for the intended ticket and workspace",
     );
+  const source = value(flags, "sandboxSource");
+  if (source !== undefined) {
+    const parsedSource = SandboxSource.safeParse(source);
+    if (
+      !parsedSource.success ||
+      binding?.success !== true ||
+      value(flags, "sandbox") === undefined
+    )
+      add(
+        "--sandbox-source requires a dispatch binding, a sandbox and a supported source",
+        "use agx worker dispatch",
+      );
+    else sandbox_source = parsedSource.data;
+  }
   const supersedes = value(flags, "supersedes") ?? ticket?.supersedes;
   if (continuationId !== undefined && supersedes !== undefined)
     add(
@@ -393,7 +431,8 @@ export async function preflight(
     bytes,
     ctx,
     premise_commits,
-    sandbox,
+    sandbox: parsedSandbox.success ? parsedSandbox.data : "workspace-write",
+    sandbox_source,
     binding: binding?.success === true ? binding.data : undefined,
     pinned,
     loaded,

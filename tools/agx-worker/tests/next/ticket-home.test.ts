@@ -625,12 +625,8 @@ test("base_rev mismatch names both ids before routing, artifacts or launch", asy
   ).toBe(false);
 }, 30000);
 
-test("conflicting sandbox and replacement declarations refuse before launch", async () => {
+test("conflicting replacement declarations refuse before launch", async () => {
   const f = await fixture();
-  await writeFile(f.ticket, text('sandbox = "read-only"'));
-  const sandbox = await f.invoke(["run", f.ticket, "--sandbox", "none"]);
-  expect(sandbox.exit).toBe(2);
-  expect(sandbox.err).toContain("differs from ticket sandbox read-only");
   const replacement = await f.invoke([
     "run",
     f.ticket,

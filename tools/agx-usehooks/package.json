@@ -18,8 +18,15 @@
     "CHANGELOG.md"
   ],
   "dependencies": {
-    "@types/node": "26.6.5",
     "neverthrow": "8.2.0",
     "zod": "4.6.5"
+  },
+  "peerDependencies": {
+    "@types/node": "*"
+  },
+  "peerDependenciesMeta": {
+    "@types/node": {
+      "optional": true
+    }
   }
 }

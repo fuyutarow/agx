@@ -1036,6 +1036,80 @@ test("compiled dispatcher outside manager PATH pins its own executable", async (
   expect(args).toContain(`--setenv=PATH=${f.env.PATH}`);
 }, 40_000);
 
+test.each([false, true])(
+  "dispatch passes resolved continuation sandbox and provenance (compiled=%s)",
+  async (compiled) => {
+    const f = fixture();
+    priorRun(f, join(`${f.repo}.ws`, "ws_foo-bar"));
+    mkdirSync(join(f.env.AGX_STATE_DIR!, "runs", "prior-run"), {
+      recursive: true,
+    });
+    writeFileSync(
+      join(f.env.AGX_STATE_DIR!, "runs", "prior-run", "prior-run.json"),
+      JSON.stringify({ sandbox: "none" }),
+    );
+    let command = [process.execPath, f.entry];
+    if (compiled) {
+      const executable = join(f.root, "installed", "agx-worker");
+      const built = Bun.spawnSync(
+        [
+          process.execPath,
+          "build",
+          "--compile",
+          f.entry,
+          "--outfile",
+          executable,
+        ],
+        { stdout: "pipe", stderr: "pipe", timeout: 30_000 },
+      );
+      expect(built.exitCode, built.stderr.toString()).toBe(0);
+      command = [executable];
+    }
+    for (const item of [
+      { flag: [], ticket: undefined, mode: "none", source: "continued run" },
+      { flag: [], ticket: "read-only", mode: "read-only", source: "ticket" },
+      {
+        flag: ["--sandbox", "workspace-write"],
+        ticket: "none",
+        mode: "workspace-write",
+        source: "flag",
+      },
+    ]) {
+      // The fake service replaces its listing, so restore the prior row for each dispatch.
+      priorRun(f, join(`${f.repo}.ws`, "ws_foo-bar"));
+      const ticket = `+++\nschema = 2\nname = "foo-bar"\noutcome = "fixture"\n${item.ticket === undefined ? "" : `sandbox = "${item.ticket}"\n`}[proposition]\nid = "P1"\nclaim = "fixture"\nrefuted_by = "fixture"\n+++\n`;
+      writeFileSync(f.ticket, ticket);
+      const child = Bun.spawn(
+        [
+          ...command,
+          "dispatch",
+          f.ticket,
+          "--continue",
+          "prior-run",
+          ...item.flag,
+        ],
+        {
+          cwd: f.repo,
+          env: f.env,
+          stdout: "pipe",
+          stderr: "pipe",
+          timeout: 10_000,
+        },
+      );
+      const [exit, , err] = await Promise.all([
+        child.exited,
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+      ]);
+      expect(exit, err).toBe(0);
+      const args = (await Bun.file(f.unitArgs).text()).trimEnd().split("\n");
+      expect(args[args.indexOf("--sandbox") + 1]).toBe(item.mode);
+      expect(args[args.indexOf("--sandbox-source") + 1]).toBe(item.source);
+    }
+  },
+  40_000,
+);
+
 test.each([undefined, ""])(
   "dispatch refuses missing PATH (%s) in one line",
   async (path) => {

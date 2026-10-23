@@ -258,6 +258,7 @@ export async function run(flags: Flags): Promise<number> {
     bytes,
     ctx,
     sandbox,
+    sandbox_source,
     binding,
     pinned: inspectedContinuation,
     premise_commits,
@@ -414,6 +415,8 @@ export async function run(flags: Flags): Promise<number> {
     unit,
     workspace_name: basename(workspace),
     row: row.id,
+    sandbox,
+    sandbox_source,
     dispatcher_session: dispatcher,
     vendor_session: resumeSession ?? null,
     continues: supersedes === undefined ? (continuationId ?? null) : null,
@@ -623,6 +626,11 @@ export async function run(flags: Flags): Promise<number> {
     }),
   ).safeParse(receiptLine);
   const workerReceipt = receipt.success ? receipt.data : {};
+  if (receipt.success)
+    writeFileSync(
+      join(runDir, `${id}.json`),
+      `${JSON.stringify({ ...workerReceipt, sandbox, sandbox_source })}\n`,
+    );
   // Capacity never ran the promised work; verification cannot turn it into a worker failure
   // or delay releasing this model to the router's cool-down.
   const capacity = workerReceipt.outcome === "capacity";
@@ -682,6 +690,8 @@ export async function run(flags: Flags): Promise<number> {
   report = {
     ...(typeof report === "object" && report !== null ? report : {}),
     execution,
+    sandbox,
+    sandbox_source,
   };
   writeFileSync(reportPath, `${JSON.stringify(report)}\n`);
   const vendorSession =
@@ -726,7 +736,7 @@ export async function run(flags: Flags): Promise<number> {
   temp.remove();
   await workspaceLock.release();
   process.stdout.write(
-    `${JSON.stringify({ id, ticket: ticketName, row: row.id, exit, outcome, report_path: reportPath, state_file: recordPath(), host: hostname(), unit, execution })}\n`,
+    `${JSON.stringify({ id, ticket: ticketName, row: row.id, sandbox, sandbox_source, exit, outcome, report_path: reportPath, state_file: recordPath(), host: hostname(), unit, execution })}\n`,
   );
   return exit;
 }

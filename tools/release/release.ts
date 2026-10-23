@@ -4,7 +4,7 @@ import { err, ok } from "neverthrow";
 import { jsonOf, z } from "../zod.ts";
 
 export const repository = resolve(import.meta.dir, "../..");
-const packages = new Set([
+export const packages = new Set([
   "agx",
   "agx-worker",
   "agx-ws",
@@ -72,6 +72,16 @@ export function platform(target?: string) {
 }
 
 export async function build(pkg: string, target?: string, root = repository) {
+  if (pkg === "suite") return buildSuite(target, root);
+  return buildMember(pkg, target, root);
+}
+
+async function buildMember(
+  pkg: string,
+  target?: string,
+  root = repository,
+  suiteBin?: string,
+) {
   const info = await packageInfo(pkg, root);
   if (info.isErr()) return info;
   if (Object.keys(info.value.commands).length === 0)
@@ -80,7 +90,7 @@ export async function build(pkg: string, target?: string, root = repository) {
   if (host.isErr()) return host;
   const { dir, version, commands } = info.value;
   const stage = join(root, "dist", pkg);
-  const bin = join(stage, "bin");
+  const bin = suiteBin ?? join(stage, "bin");
   await rm(stage, { recursive: true, force: true });
   await mkdir(bin, { recursive: true });
   const compiled = new Map<string, string>();
@@ -110,6 +120,8 @@ export async function build(pkg: string, target?: string, root = repository) {
       );
     compiled.set(entry, outfile);
   }
+  if (suiteBin !== undefined)
+    return ok({ archive: "", sha256: "", assets: [] });
   const archive = join(
     root,
     "dist",
@@ -120,7 +132,73 @@ export async function build(pkg: string, target?: string, root = repository) {
   const sha256 = new Bun.CryptoHasher("sha256")
     .update(await Bun.file(archive).arrayBuffer())
     .digest("hex");
-  return ok({ archive, sha256 });
+  return ok({ archive, sha256, assets: [{ archive, sha256 }] });
+}
+
+async function buildSuite(target: string | undefined, root: string) {
+  const suite = await packageInfo("agx", root);
+  if (suite.isErr()) return suite;
+  const host = platform(target);
+  if (host.isErr()) return host;
+  const stage = join(root, "dist", "suite");
+  await rm(stage, { recursive: true, force: true });
+  const bin = join(stage, "bin");
+  await mkdir(bin, { recursive: true });
+  for (const member of packages) {
+    if (member === "agx-usehooks") continue;
+    const compiled = await buildMember(member, target, root, bin);
+    if (compiled.isErr()) return compiled;
+  }
+  const archive = join(
+    root,
+    "dist",
+    `agx-${suite.value.version}-${host.value.os}-${host.value.arch}.tar.gz`,
+  );
+  const packed = await run(["tar", "-czf", archive, "-C", stage, "bin"], root);
+  if (packed.exit !== 0) return err(`Archive failed: ${packed.stderr}`);
+  const sha256 = new Bun.CryptoHasher("sha256")
+    .update(await Bun.file(archive).arrayBuffer())
+    .digest("hex");
+  const library = await buildMember("agx-usehooks", target, root);
+  if (library.isErr()) return library;
+  return ok({
+    archive,
+    sha256,
+    assets: [{ archive, sha256 }, ...library.value.assets],
+  });
+}
+
+export async function suiteNotes(root: string, previousTag?: string) {
+  const sections: string[] = [];
+  for (const member of packages) {
+    const info = await packageInfo(member, root);
+    if (info.isErr()) return info;
+    const { version, dir } = info.value;
+    sections.push(`# ${member} ${version}`);
+    const text = await Bun.file(join(dir, "CHANGELOG.md")).text();
+    const current = changelogSection(text, version);
+    if (current.isErr()) return current;
+    if (previousTag === undefined) {
+      sections.push(current.value);
+      continue;
+    }
+    const prior = await run(
+      ["git", "show", `${previousTag}:tools/${member}/package.json`],
+      root,
+    );
+    if (prior.exit !== 0)
+      return err(`Cannot read previous member version: ${member}`);
+    const parsed = jsonOf(manifestSchema).safeParse(prior.stdout);
+    if (!parsed.success) return err(`Invalid previous manifest: ${member}`);
+    if (parsed.data.version === version) continue;
+    const old = changelogSection(text, parsed.data.version);
+    if (old.isErr()) return old;
+    const start = text.indexOf(current.value.trim());
+    const end = text.indexOf(old.value.trim());
+    if (end <= start) return err(`Invalid changelog order: ${member}`);
+    sections.push(text.slice(start, end).trim());
+  }
+  return ok(sections.join("\n\n") + "\n");
 }
 
 /** Build a standalone ESM package; source and declaration paths stay independent. */
@@ -189,7 +267,7 @@ async function buildLibrary(
     await mkdir(dirname(destination), { recursive: true });
     await copyFile(file.trim(), destination);
   }
-  // Public shared declarations use NodeJS globals; resolve the declared type dependency
+  // Public shared declarations use NodeJS globals; resolve the consumer's optional type peer
   // even when the consumer does not otherwise load Node types.
   const declarationEntry = join(
     stage,
@@ -212,7 +290,7 @@ async function buildLibrary(
   const sha256 = new Bun.CryptoHasher("sha256")
     .update(await Bun.file(archive).arrayBuffer())
     .digest("hex");
-  return ok({ archive, sha256 });
+  return ok({ archive, sha256, assets: [{ archive, sha256 }] });
 }
 
 export function changelogSection(text: string, version: string) {
@@ -245,9 +323,10 @@ export async function publish(
   target?: string,
   root = repository,
 ) {
-  const info = await packageInfo(pkg, root);
+  if (pkg !== "suite") return err("Use release:publish -- suite");
+  const info = await packageInfo("agx", root);
   if (info.isErr()) return info;
-  const { tag, dir, version } = info.value;
+  const tag = `v${info.value.version}`;
   const status = await run(
     ["git", "status", "--porcelain", "--untracked-files=all"],
     root,
@@ -265,9 +344,18 @@ export async function publish(
   if (existing.exit === 0) return err(`Tag already exists: ${tag}`);
   if (existing.exit !== 1)
     return err(`Cannot inspect tag ${tag}: ${existing.stderr}`);
-  const section = changelogSection(
-    await Bun.file(join(dir, "CHANGELOG.md")).text(),
-    version,
+  const branch = await run(["git", "branch", "--show-current"], root);
+  if (branch.exit !== 0 || branch.stdout.trim() !== "alpha")
+    return err("Publish requires branch alpha");
+  const previous = await run(
+    ["git", "describe", "--tags", "--match", "v[0-9]*", "--abbrev=0", "HEAD"],
+    root,
+  );
+  if (previous.exit !== 0 && previous.exit !== 128)
+    return err("Cannot resolve previous suite tag");
+  const section = await suiteNotes(
+    root,
+    previous.exit === 0 ? previous.stdout.trim() : undefined,
   );
   if (section.isErr()) return section;
   const head = await run(["git", "rev-parse", "HEAD"], root);
@@ -276,14 +364,14 @@ export async function publish(
   if (built.isErr()) return built;
   const notes = join(root, "dist", pkg, "release-notes.md");
   await Bun.write(notes, section.value);
-  const commands = [
+  const commands: string[][] = [
     ["git", "tag", tag],
     [
       "gh",
       "release",
       "create",
       tag,
-      built.value.archive,
+      ...built.value.assets.map((asset) => asset.archive),
       "--title",
       tag,
       "--notes-file",
@@ -292,6 +380,18 @@ export async function publish(
       head.stdout.trim(),
     ],
   ];
+  for (const member of packages) {
+    const memberInfo = await packageInfo(member, root);
+    if (memberInfo.isErr()) return memberInfo;
+    const memberTag = memberInfo.value.tag;
+    const exists = await run(
+      ["git", "show-ref", "--verify", "--quiet", `refs/tags/${memberTag}`],
+      root,
+    );
+    if (exists.exit === 1)
+      commands.splice(commands.length - 1, 0, ["git", "tag", memberTag]);
+    else if (exists.exit !== 0) return err(`Cannot inspect tag ${memberTag}`);
+  }
   if (!yes)
     return ok({
       ...built.value,

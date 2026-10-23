@@ -46,6 +46,8 @@ async function fixture() {
     );
   await symlink(join(repository, "tools/zod.ts"), join(root, "tools/zod.ts"));
   await symlink(join(repository, "node_modules"), join(root, "node_modules"));
+  await Bun.write(join(root, "tools/agx/package.json"), '{"version":"1.2.1"}');
+  await Bun.write(join(root, "tools/agx/CHANGELOG.md"), "# Changelog\n");
   return { root, dir, changes: join(dir, ".changes") };
 }
 
@@ -319,3 +321,38 @@ test.each(["changeset.ts", "apply.ts", "lint.ts"])(
     ).toBe(2);
   },
 );
+
+test.each([
+  ["patch", "1.2.2"],
+  ["minor", "1.3.0"],
+  ["major", "2.0.0"],
+])("member %s bump forces suite version %s", async (level, version) => {
+  const f = await fixture();
+  await writeChangeset(f.root, "sample", level, "Member change");
+  const result = await applyChangesets(f.root, "sample", "2026-10-23");
+  expect(result.isOk()).toBe(true);
+  expect(
+    await Bun.file(join(f.root, "tools/agx/package.json")).text(),
+  ).toContain(`"version": "${version}"`);
+  expect(
+    await Bun.file(join(f.root, "tools/agx/CHANGELOG.md")).text(),
+  ).toContain(
+    `Update suite member sample to ${result.isOk() ? result.value.version : ""}.`,
+  );
+  expect(await lintChangesets(f.root)).toEqual([]);
+});
+
+test("invalid suite input prevents member writes; pending suite level participates", async () => {
+  const f = await fixture();
+  await writeChangeset(f.root, "sample", "patch", "Member change");
+  const before = await releaseBytes(f.dir);
+  await Bun.write(join(f.root, "tools/agx/CHANGELOG.md"), "# Invalid\n");
+  expect((await applyChangesets(f.root, "sample")).isErr()).toBe(true);
+  expect(await releaseBytes(f.dir)).toEqual(before);
+  await Bun.write(join(f.root, "tools/agx/CHANGELOG.md"), "# Changelog\n");
+  await writeChangeset(f.root, "agx", "major", "Suite change");
+  expect((await applyChangesets(f.root, "sample")).isOk()).toBe(true);
+  expect(
+    await Bun.file(join(f.root, "tools/agx/package.json")).text(),
+  ).toContain('"version": "2.0.0"');
+});

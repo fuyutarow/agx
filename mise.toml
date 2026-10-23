@@ -84,7 +84,7 @@ run = "bun tools/jj-push.ts"
 run = "jj git fetch --remote origin && jj rebase -b @ -d 'trunk()'"
 
 [tasks."release:build"]
-description = "Compile and archive one package at its own version"
+description = "Build the suite distribution or a development member archive"
 run = "bun tools/release/build.ts"
 
 [tasks.changeset]
@@ -92,7 +92,7 @@ description = "Record one package change without changing its version"
 run = "bun tools/changeset/changeset.ts"
 
 [tasks."release:version"]
-description = "Apply one package's pending changesets and update its changelog"
+description = "Apply member changesets and advance the suite version"
 run = "bun tools/changeset/apply.ts"
 
 [tasks."lint:changesets"]
@@ -100,5 +100,5 @@ description = "Validate pending changesets and their package owners"
 run = "bun tools/changeset/lint.ts"
 
 [tasks."release:publish"]
-description = "Preview one package release; --yes executes publication"
+description = "Preview one suite release; --yes executes publication"
 run = "bun tools/release/publish.ts"

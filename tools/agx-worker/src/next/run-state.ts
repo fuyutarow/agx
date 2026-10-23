@@ -2,6 +2,7 @@ import { z } from "../../../shared/src/zod.ts";
 import { Outcome } from "./outcome.ts";
 import { Lease, Evidence, StopSignal } from "./lease.ts";
 import { VerifyResult } from "./verify.ts";
+import { Sandbox, SandboxSource } from "./sandbox.ts";
 
 export const RunSchema = z.object({
   id: z.string(),
@@ -15,6 +16,8 @@ export const RunSchema = z.object({
   exit: z.number().nullable(),
   outcome: Outcome.nullable(),
   row: z.string(),
+  sandbox: Sandbox.optional(),
+  sandbox_source: SandboxSource.optional(),
   worker_name: z.string().optional(),
   unit: z.string().optional(),
   workspace_name: z.string().optional(),

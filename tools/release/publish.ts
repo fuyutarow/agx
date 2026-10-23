@@ -36,7 +36,7 @@ async function main() {
     return;
   }
   process.stdout.write(
-    `${result.value.dryRun ? "DRY RUN" : "PUBLISHED"}\n${result.value.archive}\nsha256 ${result.value.sha256}\n${result.value.commands.join("\n")}\n`,
+    `${result.value.dryRun ? "DRY RUN" : "PUBLISHED"}\n${result.value.assets.map((asset) => `${asset.archive}\nsha256 ${asset.sha256}`).join("\n")}\n${result.value.commands.join("\n")}\n`,
   );
 }
 

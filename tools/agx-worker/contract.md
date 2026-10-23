@@ -19,6 +19,21 @@ Tickets are caller-owned files. `agx worker run` accepts positional ticket paths
 tree and sandbox mode. A continuation uses the previous run ID and resumes its vendor session,
 except for the capacity recovery described below.
 
+Sandbox resolution is `--sandbox` > ticket `sandbox` > continued run's recorded
+sandbox > built-in `workspace-write`. An explicit flag overrides the ticket even
+on continuation. Without a flag or ticket declaration, `--continue` inherits the
+requested mode (for example `none`), rather than a vendor's effective fallback
+(for example `danger-full-access`). Older runs are read from their saved native
+receipt when their started event omits sandbox; if neither records it, the built-in
+default applies. Invalid recorded sandbox data refuses resolution unless a flag
+or ticket supplies the value. Repository L1/L2 and routing L3 do not configure sandbox.
+
+Dispatch uses the same resolution and passes the selected value to the unit with
+its provenance (`--sandbox-source`, an internal run argument requiring a dispatch
+binding). Run receipts, saved native receipts, reports, started events and JSON
+listings expose `sandbox` and `sandbox_source`. Source values are `flag`, `ticket`,
+`continued run`, and `built-in default`. Historical events may omit these fields.
+
 `dispatch --continue RUN_ID` uses that run's recorded `workspace` path, falling back to
 `cwd` when `workspace` is absent or empty. Both preflight and the durable worker receive
 that path and the unchanged continuation ID, preserving the ordinary vendor-session resume.

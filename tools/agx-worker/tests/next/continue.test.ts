@@ -79,10 +79,11 @@ const fixture = async (ticketName = "pin") => {
     ticketText("first prose").replace('name = "pin"', `name = "${ticketName}"`),
   );
   const resume = (
-    id: string,
+    id: string | undefined,
     overrides: NodeJS.ProcessEnv = {},
     entry = "tools/agx-worker/src/next/cli.ts",
     compiled = false,
+    sandboxArgs: string[] = ["--sandbox", "read-only"],
   ) =>
     Bun.spawnSync(
       [
@@ -91,10 +92,8 @@ const fixture = async (ticketName = "pin") => {
         ticket,
         "--cd",
         root,
-        "--sandbox",
-        "read-only",
-        "--continue",
-        id,
+        ...sandboxArgs,
+        ...(id === undefined ? [] : ["--continue", id]),
       ],
       {
         cwd: process.cwd(),
@@ -131,6 +130,166 @@ const fixture = async (ticketName = "pin") => {
       });
   return { root, state, ticket, resume, events };
 };
+
+test.each([false, true])(
+  "sandbox precedence and receipts agree without adjacent source (compiled=%s)",
+  async (compiled) => {
+    const f = await fixture();
+    let entry = new URL("../../src/next/cli.ts", import.meta.url).pathname;
+    if (compiled) {
+      const executable = join(f.root, "installed", "agx-worker");
+      mkdirSync(join(f.root, "installed"));
+      const build = Bun.spawnSync(
+        [
+          process.execPath,
+          "build",
+          "--compile",
+          entry,
+          "--outfile",
+          executable,
+        ],
+        { stdout: "pipe", stderr: "pipe", timeout: 30_000 },
+      );
+      expect(build.exitCode, build.stderr.toString()).toBe(0);
+      entry = executable;
+    }
+    // Production-era events had no sandbox: recover it from the native receipt.
+    mkdirSync(join(f.state, "runs", "codex-run"), { recursive: true });
+    writeFileSync(
+      join(f.state, "runs", "codex-run", "codex-run.json"),
+      JSON.stringify({
+        sandbox: "none",
+        sandbox_effective: "danger-full-access",
+      }),
+    );
+    const schema = jsonOf(
+      z.looseObject({
+        id: z.string(),
+        sandbox: z.string(),
+        sandbox_source: z.string(),
+        report_path: z.string(),
+      }),
+    );
+    const cases = [
+      {
+        prior: "codex-run",
+        ticket: undefined,
+        args: [],
+        mode: "none",
+        source: "continued run",
+      },
+      {
+        prior: "codex-run",
+        ticket: undefined,
+        args: ["--sandbox", "workspace-write"],
+        mode: "workspace-write",
+        source: "flag",
+      },
+      {
+        prior: "codex-run",
+        ticket: "read-only",
+        args: [],
+        mode: "read-only",
+        source: "ticket",
+      },
+      {
+        prior: "codex-run",
+        ticket: "none",
+        args: ["--sandbox", "workspace-write"],
+        mode: "workspace-write",
+        source: "flag",
+      },
+      {
+        prior: "codex-run",
+        ticket: undefined,
+        args: [
+          "--sandbox",
+          "none",
+          "--sandbox-source",
+          "continued run",
+          "--dispatch-binding",
+          JSON.stringify({
+            id: "89fdece7-a42d-4f69-a28d-9f15efad5426",
+            ticket: "pin",
+            workspace: f.root,
+            unit: "agt_pin",
+          }),
+        ],
+        mode: "none",
+        source: "continued run",
+      },
+      {
+        prior: undefined,
+        ticket: undefined,
+        args: [],
+        mode: "workspace-write",
+        source: "built-in default",
+      },
+      {
+        prior: "claude-run",
+        ticket: undefined,
+        args: [],
+        mode: "workspace-write",
+        source: "built-in default",
+      },
+    ];
+    let inheritedId: string | undefined;
+    for (const item of cases) {
+      writeFileSync(
+        f.ticket,
+        ticketText("sandbox precedence").replace(
+          "schema = 2",
+          `schema = 2${item.ticket === undefined ? "" : `\nsandbox = "${item.ticket}"`}`,
+        ),
+      );
+      const result = f.resume(item.prior, {}, entry, compiled, item.args);
+      expect(result.exitCode, result.stderr.toString()).toBe(0);
+      const parsedReceipt = schema.safeParse(result.stdout.toString().trim());
+      expect(parsedReceipt.success).toBe(true);
+      if (!parsedReceipt.success) return;
+      const receipt = parsedReceipt.data;
+      expect([receipt.sandbox, receipt.sandbox_source]).toEqual([
+        item.mode,
+        item.source,
+      ]);
+      expect(
+        readFileSync(join(f.state, "runs", receipt.id, "brief.md"), "utf8"),
+      ).toContain(`Sandbox mode: ${item.mode}`);
+      // All saved receipts and the report expose the same requested sandbox provenance.
+      for (const path of [
+        join(f.state, "runs", receipt.id, `${receipt.id}.json`),
+        receipt.report_path,
+      ]) {
+        const saved = jsonOf(
+          z.looseObject({ sandbox: z.string(), sandbox_source: z.string() }),
+        ).safeParse(readFileSync(path, "utf8"));
+        expect(saved.success).toBe(true);
+        expect(saved.data).toMatchObject({
+          sandbox: item.mode,
+          sandbox_source: item.source,
+        });
+      }
+      expect(
+        f
+          .events()
+          .find((event) => event.id === receipt.id && event.kind === "started"),
+      ).toMatchObject({ sandbox: item.mode, sandbox_source: item.source });
+      if (item.source === "continued run") inheritedId = receipt.id;
+    }
+    // A newly recorded run can be continued from its started event without its receipt.
+    expect(inheritedId).toBeDefined();
+    rmSync(join(f.state, "runs", inheritedId!, `${inheritedId}.json`));
+    const chained = f.resume(inheritedId, {}, entry, compiled, []);
+    expect(chained.exitCode, chained.stderr.toString()).toBe(0);
+    const parsedChain = schema.safeParse(chained.stdout.toString().trim());
+    expect(parsedChain.success).toBe(true);
+    expect(parsedChain.data).toMatchObject({
+      sandbox: "none",
+      sandbox_source: "continued run",
+    });
+  },
+  60_000,
+);
 
 const Started = z.looseObject({
   kind: z.literal("started"),

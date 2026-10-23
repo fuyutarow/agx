@@ -21,6 +21,8 @@ import { readonlyCommand } from "../../shared/src/readonly-command.ts";
 import { InspectionTimeout } from "../../shared/src/agx-config.ts";
 
 import { selfCommand } from "./self-command.ts";
+import { parseNextTicket } from "./next/ticket.ts";
+import { recordedSandbox, resolveSandbox, Sandbox } from "./next/sandbox.ts";
 
 export const DISPATCH_CHECK_TIMEOUT_MS = 60_000;
 export const DISPATCH_LIST_TIMEOUT_MS = 60_000;
@@ -44,6 +46,7 @@ const RunRow = z.looseObject({
   cwd: z.string(),
   workspace: z.string().optional(),
   unit: z.string().optional(),
+  sandbox: Sandbox.optional(),
 });
 const Rows = jsonOf(z.array(RunRow));
 const WorkspaceResult = jsonOf(z.object({ workspace: z.string().min(1) }));
@@ -332,6 +335,16 @@ export async function dispatch(options: {
     return 1;
   }
   const slug = ticket.value;
+  const parsedTicket = parseNextTicket(
+    await readFile(ticketPath, "utf8"),
+    true,
+  );
+  if (!parsedTicket.success) {
+    process.stderr.write(
+      `agx worker dispatch: invalid ticket: ${parsedTicket.reason}\n`,
+    );
+    return 2;
+  }
   const wsSlug = options.ws ?? slug;
   const ticketRepo = await defaultRepositoryRoot(dirname(ticketPath), env);
   if (ticketRepo.root === undefined) {
@@ -385,6 +398,7 @@ export async function dispatch(options: {
       `agx worker dispatch: unit ${unit}.service is already running; repair: wait for it to end or choose --unit`,
     );
   let workspace: string;
+  let previous: RunRow | undefined;
   if (options.continuation !== undefined) {
     const runs = await listedRuns(cwd, env);
     if (runs.rows === undefined) {
@@ -393,7 +407,7 @@ export async function dispatch(options: {
       );
       return runs.code ?? 1;
     }
-    const previous = runs.rows.find((row) => row.id === options.continuation);
+    previous = runs.rows.find((row) => row.id === options.continuation);
     const recorded =
       previous?.workspace === ""
         ? previous.cwd
@@ -506,6 +520,21 @@ export async function dispatch(options: {
     );
   }
 
+  const recordedMode =
+    options.sandbox === undefined && parsedTicket.ticket.sandbox === undefined
+      ? await recordedSandbox(previous, env)
+      : { ok: true as const, value: undefined };
+  if (!recordedMode.ok) {
+    process.stderr.write(
+      `agx worker dispatch: ${errorMessage(recordedMode.error)}; repair: specify --sandbox or repair the continued run receipt\n`,
+    );
+    return 2;
+  }
+  const { sandbox, sandbox_source } = resolveSandbox(
+    options.sandbox,
+    parsedTicket.ticket.sandbox,
+    recordedMode.value,
+  );
   const checked = await invoke(
     [
       ...workerCommand,
@@ -513,7 +542,8 @@ export async function dispatch(options: {
       ticketPath,
       "--cd",
       workspace,
-      ...(options.sandbox === undefined ? [] : ["--sandbox", options.sandbox]),
+      "--sandbox",
+      sandbox,
       ...(options.continuation === undefined
         ? []
         : ["--continue", options.continuation]),
@@ -583,7 +613,10 @@ export async function dispatch(options: {
     workspace,
     "--dispatch-binding",
     JSON.stringify(binding),
-    ...(options.sandbox === undefined ? [] : ["--sandbox", options.sandbox]),
+    "--sandbox",
+    sandbox,
+    "--sandbox-source",
+    sandbox_source,
     ...(options.continuation === undefined
       ? []
       : ["--continue", options.continuation]),
