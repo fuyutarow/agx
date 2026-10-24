@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.6.0 — 2026-10-24
+
+- Keep decodable imported legacy runs visible in ls; hide and count only undecodable imported started records.
+- Publish four suite platform archives and isolate the usehooks library release
+- Quote jj fileset paths literally when judging workspace integration and orphan files.
+- Add lease-checked worker stop with explicit stopped outcome and stopper attribution
+- Explain unknown live progress and usage, preserve unreported token counts, and document vendor usage timing.
+- Expose dispatch execution receipts in human and JSON output, classify own deadlines as timeout, and document all run outcomes with stats counts.
+- Speed up worker listings, hide and count malformed legacy runs with --include-legacy, normalize moved report paths, and document selectors.
+- Warn before worker startup when the requested sandbox conflicts with shared VCS stores or declared user-systemd commands; preserve the requested sandbox.
+- Document active-run upgrade and rollback safety, old-install retention, state compatibility and mandatory release safety notes
+- Add bounded native Codex reply observation with agx msg wait, test Codex-to-Claude replies, and expose send timing.
+
 ## 1.5.0 — 2026-10-24
 
 - Unify every command and release under the suite version with one changeset and changelog path
