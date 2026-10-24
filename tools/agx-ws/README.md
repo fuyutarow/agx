@@ -195,3 +195,16 @@ rows; source counts describe distinct repositories and can overlap. Unreachable
 roots have zero inspected workspaces, are reported explicitly, cause a nonzero
 exit, and are never collected. Unindexed historical repositories outside all
 three sources are not covered; the discovery summary states this limitation.
+
+Worker results belong in `$AGX_RUN_DIR`, not the workspace. GC can collect a
+workspace immediately, without `--abandoned`, when every run in its lineage is
+judged reject, no source changes remain unlanded, and there are no unpreserved
+untracked files. For existing results, copy each file to
+`<its-run-directory>/results/<workspace-relative-path>` before collection. GC
+compares the bytes and refuses missing, changed or symlink copies. It does not
+infer preservation from a result-like filename or copy files itself.
+Live processes/runs, conflicts, unjudged runs, unlanded changes, keep declarations,
+and other untracked content retain their protections. Dry-run rows retain the existing `empty` or `landed` labels and landing evidence,
+and append `all runs judged reject; remaining results preserved in run directories
+(...); no age wait`. `collectable` counts classified candidates; layout and
+explicit opt-in rules still govern collection.

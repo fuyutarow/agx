@@ -91,7 +91,7 @@ describe("agx-worker run", () => {
       const worker = join(root, "worker.ts");
       writeFileSync(
         worker,
-        'import { writeFileSync } from "node:fs"; writeFileSync("order", ""); console.log(JSON.stringify({ report: { summary: "done", changes: [], checks: [], for_coordinator: [], open: [] } }));\n',
+        'import { writeFileSync } from "node:fs"; writeFileSync("order", ""); writeFileSync(process.env.AGX_RUN_DIR + "/fixture-result.log", "result"); console.log(JSON.stringify({ report: { summary: "done", changes: [], checks: [], for_coordinator: [], open: [] } }));\n',
       );
       const jevFile = join(root, "jev.ts");
       const probe = Bun.serve({ port: 0, fetch: () => new Response() });
@@ -173,6 +173,12 @@ describe("agx-worker run", () => {
       ).safeParse(readFileSync(run.report_path, "utf8"));
       expect(parsedReport.success).toBe(true);
       if (!parsedReport.success) return;
+      expect(
+        readFileSync(join(state, "runs", run.id, "fixture-result.log"), "utf8"),
+      ).toBe("result");
+      expect(
+        readFileSync(join(state, "runs", run.id, "brief.md"), "utf8"),
+      ).toContain(`AGX_RUN_DIR=${join(state, "runs", run.id)}`);
       const report = parsedReport.data;
       if (mode === "absent") {
         expect(run.verify[0]).not.toHaveProperty("source");

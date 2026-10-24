@@ -424,6 +424,9 @@ mkdirSync(argv.flags.receiptDir, { recursive: true });
 // `codex exec resume` (codex-cli help read 2026-10-06) takes [SESSION_ID] [PROMPT] and -m, -c, -o,
 // --json, --skip-git-repo-check — but no --sandbox and no -C. The sandbox goes in as the config
 // override it is, and the directory is the process's own cwd, which a resumed session also expects.
+const writableRoots = sharedCaches.map((cache) => cache.root);
+if (process.env.AGX_RUN_DIR !== undefined)
+  writableRoots.push(resolve(process.env.AGX_RUN_DIR));
 const execFlags = [
   "--json",
   "--skip-git-repo-check",
@@ -437,7 +440,7 @@ const execFlags = [
   ...(codexSandbox === "workspace-write"
     ? [
         "-c",
-        `sandbox_workspace_write.writable_roots=${JSON.stringify(sharedCaches.map((cache) => cache.root))}`,
+        `sandbox_workspace_write.writable_roots=${JSON.stringify(writableRoots)}`,
       ]
     : []),
   "-o",

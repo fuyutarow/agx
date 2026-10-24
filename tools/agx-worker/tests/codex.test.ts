@@ -327,6 +327,32 @@ describe("agx", () => {
     expect(r.receipt.cause).toBe("Reading additional input from stdin...");
   }, 10_000);
 
+  test("run results root is writable in fresh and resumed Codex configuration", () => {
+    for (const resume of [false, true]) {
+      const root = scratch();
+      const { bin, log } = fakeCodex(root);
+      const runDir = join(root, "results");
+      const r = run(
+        [
+          ...FULL,
+          "--sandbox",
+          "workspace-write",
+          ...(resume ? ["--resume", "thread-test"] : []),
+        ],
+        { AGX_CODEX_BIN: bin, AGX_RUN_DIR: runDir },
+      );
+      expect(r.code).toBe(0);
+      const args = readFileSync(log, "utf8").split("\n");
+      const roots = args.find((arg) =>
+        arg.startsWith("sandbox_workspace_write.writable_roots="),
+      );
+      expect(roots).toContain(JSON.stringify(runDir));
+      expect(readFileSync(join(root, "worker-env.log"), "utf8")).toContain(
+        "AGX_RUN_DIR=" + runDir,
+      );
+    }
+  });
+
   test.each(["none", "read-only", "workspace-write"])(
     "explicit sandbox %s reaches Codex and the receipt, including resume",
     (sandbox) => {

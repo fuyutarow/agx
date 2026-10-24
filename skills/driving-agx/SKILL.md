@@ -194,3 +194,9 @@ excluded. The pick audit preserves the numbers and text shown for every option.
 The objective favors accepted results per hour and per dollar, with local
 acceptance ahead of published benchmarks for sufficiency. Different rows received
 different tickets; treat this evidence as observational, with selection bias.
+
+Worker results, logs and measurements go in `$AGX_RUN_DIR`, which the runner creates,
+exports and allows in the sandbox. Keep workspace paths for source changes. GC
+can promptly reclaim fully rejected workspaces after landing and preservation
+checks; legacy workspace results must have identical copies under the matching
+run directory's `results/<workspace-relative-path>`.

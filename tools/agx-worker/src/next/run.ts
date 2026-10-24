@@ -114,6 +114,7 @@ const renderPromise = (
   cwd: string,
   sandbox: string,
   prose: string,
+  runDir: string,
 ): string =>
   withReportInstruction(
     [
@@ -121,6 +122,7 @@ const renderPromise = (
       `refuted_by: ${ticket.proposition.refuted_by}`,
       "Everything below serves this proposition; do not let a side task displace it.",
       "",
+      `AGX_RUN_DIR=${runDir}. Write worker results, logs and measurements there; keep only source changes in the workspace.`,
       "Promise:",
       `outcome: ${ticket.outcome}`,
       `writes: ${JSON.stringify(ticket.writes.map((glob) => resolve(cwd, glob)))}`,
@@ -388,7 +390,7 @@ export async function run(flags: Flags): Promise<number> {
     ["SIGHUP", 129],
   ] as const)
     process.on(signal, stop.bind(undefined, signal, code));
-  const runDir = join(stateDir(), "runs", id);
+  const runDir = resolve(stateDir(), "runs", id);
   mkdirSync(runDir, { recursive: true });
   const ticketPath = join(runDir, "ticket.orig.md");
   const ticket_sha256 = createHash("sha256").update(bytes).digest("hex");
@@ -422,7 +424,7 @@ export async function run(flags: Flags): Promise<number> {
   const workspace = resolve(cwd);
   writeFileSync(
     workerBrief,
-    withReportInstruction(renderPromise(ticket, cwd, sandbox, prose)),
+    withReportInstruction(renderPromise(ticket, cwd, sandbox, prose, runDir)),
   );
   let sandbox_effective: string = sandbox;
   let sandbox_effective_source: string = sandbox_source;
@@ -559,11 +561,13 @@ export async function run(flags: Flags): Promise<number> {
     const claudeSettings =
       sandbox === "workspace-write"
         ? JSON.stringify({
+            permissions: { additionalDirectories: [runDir] },
             sandbox: {
               enabled: true,
               autoAllowBashIfSandboxed: true,
               allowUnsandboxedCommands: false,
               failIfUnavailable: true,
+              filesystem: { allowWrite: [runDir] },
             },
           })
         : undefined;
@@ -642,6 +646,7 @@ export async function run(flags: Flags): Promise<number> {
         ...(process.env.AGX_WORKER_BIN === undefined
           ? {}
           : { BUN_BE_BUN: "1" }),
+        AGX_RUN_DIR: runDir,
         AGX_INTERIM_REPORTS_FILE: interimPath,
         AGX_CODEX_PROGRESS_FILE: join(runDir, "worker-progress.jsonl"),
       },

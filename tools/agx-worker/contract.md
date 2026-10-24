@@ -977,3 +977,11 @@ picks), `tb4_removed_all_luna_pick_count` (the TB4 stage had luna rows and
 removed all of them), `refusal_count`, and `pre_start_failure_count`.
 Legacy records remain readable and contribute picks but no invented margins.
 No tie threshold, cheaper-row preference or exploration policy is introduced.
+
+## Worker result directory
+
+`run` creates and exports absolute `AGX_RUN_DIR=<state-root>/runs/<run-id>` before
+spawning the worker. It adds that directory to the worker sandbox's writable
+paths and names it in the brief. Workers write results, logs and measurements
+there, alongside runner-owned `report.json`; workspace paths hold source changes.
+A continuation receives its own run directory, not its parent's directory.

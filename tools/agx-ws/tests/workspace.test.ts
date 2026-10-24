@@ -1343,6 +1343,115 @@ const recFor = (dir: string) => ({
 });
 
 describe("gc integration branches", () => {
+  test("result preservation requires every file, equal bytes and no symlink escape", async () => {
+    const path = await repo('trunk = "main"\n');
+    const runDir = join(scratch, "preservation-run");
+    await Bun.write(join(path, ".gitignore"), "*.result.md\n");
+    await jj(["status"], path);
+    for (let i = 0; i < 7; i++) {
+      await Bun.write(join(path, `${i}.result.md`), `result-${i}`);
+      await Bun.write(join(runDir, "results", `${i}.result.md`), `result-${i}`);
+    }
+    const inventory = () => untrackedContent(path, [], 10_000, [runDir]);
+    const complete = await inventory();
+    expect(complete.ok && complete.value.count).toBe(0);
+    await Bun.write(join(runDir, "results", "6.result.md"), "different bytes");
+    const changed = await inventory();
+    expect(changed.ok && changed.value.count).toBe(1);
+    await unlink(join(runDir, "results", "6.result.md"));
+    await symlink(
+      join(path, "6.result.md"),
+      join(runDir, "results", "6.result.md"),
+    );
+    const escaped = await inventory();
+    expect(escaped.ok && escaped.value.count).toBe(1);
+  });
+
+  test("fully rejected runs collect promptly only after landing and result preservation", async () => {
+    const path = await repo('trunk = "main"\n');
+    for (const slug of [
+      "reject-clean",
+      "reject-copy",
+      "reject-other",
+      "reject-edit",
+      "reject-unjudged",
+      "reject-accept",
+    ]) {
+      expect((await ws(["add", slug], path)).code).toBe(0);
+    }
+    const rows = [
+      "reject-clean",
+      "reject-copy",
+      "reject-other",
+      "reject-edit",
+      "reject-unjudged",
+      "reject-accept",
+    ].map((slug) => ({
+      state: "ended",
+      cwd: wsDir(path, slug),
+      workspace: wsDir(path, slug),
+      id: slug,
+      ended_at: Temporal.Now.instant().toString(),
+      outcome: "ok",
+      judgment: { decision: slug === "reject-accept" ? "accept" : "reject" },
+    }));
+    setRecords([
+      ...rows,
+      {
+        ...recFor(wsDir(path, "reject-unjudged")),
+        id: "pending",
+        judgment: null,
+      },
+    ]);
+    for (const slug of ["reject-copy", "reject-other"]) {
+      // Ignore local results so jj does not turn them into source changes.
+      await Bun.write(join(wsDir(path, slug), ".gitignore"), "*.result.md\n");
+      await jj(["status"], wsDir(path, slug));
+      await Bun.write(join(path, ".gitignore"), "*.result.md\n");
+      await jj(["commit", "-m", "ignore results"], path);
+      await jj(["bookmark", "set", "main", "-r", "@-"], path);
+      await Bun.write(
+        join(wsDir(path, slug), "worker.result.md"),
+        "measurement",
+      );
+    }
+    const copied = join(
+      baseEnv().AGX_STATE_DIR!,
+      "runs",
+      "reject-copy",
+      "results",
+      "worker.result.md",
+    );
+    await Bun.write(copied, "measurement");
+    await Bun.write(
+      join(wsDir(path, "reject-accept"), "a.txt"),
+      "accepted but unlanded",
+    );
+    await jj(["status"], wsDir(path, "reject-accept"));
+    await Bun.write(join(wsDir(path, "reject-edit"), "a.txt"), "unlanded edit");
+    await jj(["status"], wsDir(path, "reject-edit"));
+    const dry = await ws(["gc", "--dry-run"], path);
+    expect(dry.code, dry.err).toBe(0);
+    expect(dry.out).toContain(wsDir(path, "reject-clean") + "\tws\tempty\t");
+    expect(dry.out).toContain(wsDir(path, "reject-copy") + "\tws\tlanded\t");
+    expect(dry.out).toContain("no age wait");
+    expect(dry.out).toContain("untracked content: 1 files (worker.result.md)");
+    expect(dry.out).toContain(wsDir(path, "reject-edit") + "\tws\tunlanded\t");
+    expect(dry.out).toContain("unjudged; keep");
+    const collected = await ws(["gc"], path);
+    expect(collected.code, collected.err).toBe(0);
+    for (const slug of ["reject-clean", "reject-copy"])
+      expect(existsSync(wsDir(path, slug))).toBe(false);
+    for (const slug of [
+      "reject-other",
+      "reject-edit",
+      "reject-unjudged",
+      "reject-accept",
+    ])
+      expect(existsSync(wsDir(path, slug))).toBe(true);
+    expect(await Bun.file(copied).text()).toBe("measurement");
+  });
+
   test("filesets select literal paths without selecting neighboring files", async () => {
     const path = await repo();
     const names = [

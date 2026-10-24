@@ -10,6 +10,8 @@ import {
   realpathSync,
 } from "node:fs";
 import {
+  readFile,
+  realpath,
   rename,
   writeFile,
   lstat,
@@ -152,11 +154,21 @@ async function jjOut(
 }
 
 /** Let jj diagnose staleness; unrelated status failures must never trigger a repair. */
-async function updateStale(dir: string): Promise<Attempt<void>> {
-  const status = await jjOut(["status"], dir, false);
+async function updateStale(
+  dir: string,
+  preserveUntracked = false,
+): Promise<Attempt<void>> {
+  const flags = preserveUntracked
+    ? ["--config", 'snapshot.auto-track="none()"']
+    : [];
+  const status = await jjOut([...flags, "status"], dir, false);
   if (status.ok) return good(undefined);
   if (!msg(status).includes("working copy is stale")) return status;
-  const updated = await jjOut(["workspace", "update-stale"], dir, false);
+  const updated = await jjOut(
+    [...flags, "workspace", "update-stale"],
+    dir,
+    false,
+  );
   return updated.ok ? good(undefined) : updated;
 }
 
@@ -863,6 +875,7 @@ type Classification = {
   age: string;
   reason: string;
   collect: boolean;
+  abandon?: boolean;
 };
 
 function landState(ws: Workspace): string | undefined {
@@ -1820,7 +1833,20 @@ async function classify(
     return verdict("keep", `live or continuing run ${live.id} (${live.state})`);
   const blocked = runRemovalReason(ws.dir, records);
   if (blocked !== undefined) return verdict("keep", blocked);
-  const inventory = await untrackedContent(ws.dir, cfg.regenerable);
+  const allRejected =
+    lineage.length > 0 &&
+    lineage.every((r) => r.judgment?.decision === "reject");
+  const resultDirs = allRejected
+    ? lineage
+        .filter((r) => /^[a-zA-Z0-9_-]+$/u.test(r.id))
+        .map((r) => join(stateDir(), "runs", r.id))
+    : [];
+  const inventory = await untrackedContent(
+    ws.dir,
+    cfg.regenerable,
+    10_000,
+    resultDirs,
+  );
   if (!inventory.ok)
     return verdict("unknown", `untracked inventory failed: ${msg(inventory)}`);
   if (inventory.value.count > 0)
@@ -1839,7 +1865,7 @@ async function classify(
         );
   const fresh = readOnly
     ? await jjOut(["status"], ws.dir, true)
-    : await updateStale(ws.dir);
+    : await updateStale(ws.dir, allRejected);
   if (!fresh.ok)
     return verdict(
       readOnly && msg(fresh).includes("working copy is stale")
@@ -1879,6 +1905,7 @@ async function classify(
   );
   const cutoff = Temporal.Now.instant().epochMilliseconds - 24 * 60 * 60 * 1000;
   if (
+    !allRejected &&
     local.length > 0 &&
     !lineage.some((r) => r.judgment?.decision === "accept") &&
     local.every((r) => {
@@ -1936,16 +1963,22 @@ async function classify(
     if (work.value.integratedAt !== undefined)
       releases.add(work.value.integratedAt);
   }
-  return verdict(
-    empty === "true" ? "empty" : "landed",
-    (consumed.size === 0
-      ? "nothing unlanded"
-      : `nothing unlanded; land-consumed changesets: ${[...consumed].join(", ")}`) +
-      (releases.size === 0
-        ? ""
-        : `; matched release snapshot: ${[...releases].join(", ")}`),
-    true,
-  );
+  return {
+    ...verdict(
+      empty === "true" ? "empty" : "landed",
+      (consumed.size === 0
+        ? "nothing unlanded"
+        : `nothing unlanded; land-consumed changesets: ${[...consumed].join(", ")}`) +
+        (releases.size === 0
+          ? ""
+          : `; matched release snapshot: ${[...releases].join(", ")}`) +
+        (allRejected
+          ? `; all runs judged reject; remaining results preserved in run directories (${lineage.map((r) => r.id).join(", ")}); no age wait`
+          : ""),
+      true,
+    ),
+    abandon: allRejected,
+  };
 }
 
 function gcCounts(lines: string[]) {
@@ -1975,11 +2008,39 @@ type GcResult = {
   discovery?: { state: number; record: number; L2: number; note: string };
 };
 
+async function preservedResult(
+  dir: string,
+  path: string,
+  resultDirs: string[],
+): Promise<boolean> {
+  const preserved = await attempt(async () => {
+    const bytes = await readFile(join(dir, path));
+    for (const runDir of resultDirs) {
+      const root = resolve(runDir);
+      const copy = join(root, "results", path);
+      const equal = await attempt(async () => {
+        const target = await realpath(copy);
+        if (
+          !target.startsWith(root + sep) ||
+          target.startsWith(realOr(dir) + sep)
+        )
+          return false;
+        if (!(await lstat(copy)).isFile()) return false;
+        return bytes.equals(await readFile(copy));
+      });
+      if (equal.ok && equal.value) return true;
+    }
+    return false;
+  });
+  return preserved.ok && preserved.value;
+}
+
 /** Inventory disk entries against the saved snapshot; never follow directory symlinks. */
 export async function untrackedContent(
   dir: string,
   regenerable: string[],
   timeoutMs = 10_000,
+  resultDirs: string[] = [],
 ): Promise<Attempt<{ count: number; paths: string[] }>> {
   const tracked = await runStep(
     [
@@ -2023,6 +2084,14 @@ export async function untrackedContent(
       if (entry.name === "node_modules" && entry.isDirectory()) continue;
       if (entry.isDirectory()) pending.push(path);
       if (entry.isDirectory() || files.has(path)) continue;
+      // A filename alone is not evidence of preservation. Require an ordinary file
+      // and an identical copy at the same relative path in a run's results/ tree.
+      if (
+        entry.isFile() &&
+        resultDirs.length > 0 &&
+        (await preservedResult(dir, path, resultDirs))
+      )
+        continue;
       count++;
       if (paths.length < 5) paths.push(path);
     }
@@ -2155,7 +2224,7 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
               repo,
               graveyard.value,
               ws,
-              checked.verdict === "abandoned",
+              checked.verdict === "abandoned" || checked.abandon === true,
             );
             return good({
               ...checked,

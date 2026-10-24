@@ -211,3 +211,9 @@ margins, TB4 luna exclusions, refusals and pre-start failures. Counts describe
 routing selections, including fallbacks, rather than worker success or rejection.
 See [the routing audit contract](contract.md#routing-audit-journal) for retained
 request, filtering, replay and missing-evidence semantics.
+
+Worker results belong in `$AGX_RUN_DIR`, the current run's directory under the agx
+state root (`runs/<run-id>`, alongside `report.json`). The runner creates and exports
+this directory and grants it sandbox write access. Write results, logs and
+measurements there; keep source changes in the workspace. Each continuation has
+its own run directory.
