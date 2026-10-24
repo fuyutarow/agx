@@ -1,6 +1,6 @@
 # agx
 
-A PATH dispatcher for five tools:
+A suite dispatcher for five tools:
 
 - `agx worker ARGS` → `agx-worker ARGS`
 - `agx ticket ARGS` → `agx-ticket ARGS`
@@ -12,7 +12,9 @@ A PATH dispatcher for five tools:
 Help, version output, and diagnostics use `agx msg`.
 
 Arguments and child exit status pass through. `agx -V` prints the suite version only.
-`agx -h` takes each tool’s one-line description from its own PATH help.
+Compiled `agx` first uses executable tools in its own installation directory, then
+falls back to PATH. Running from source under Bun uses PATH only.
+`agx -h` takes each tool’s one-line description from its help using the same lookup.
 
 Only `worker`, `ticket`, `ws`, `status`, and `msg` are accepted as tools. An unknown tool exits 2
 with one stderr line naming the five accepted tools and no stdout output.

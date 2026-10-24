@@ -463,7 +463,20 @@ export async function doctor(): Promise<Attempt<string[]>> {
     const git = await exists(join(candidate, ".git"));
     if (!git.ok || !git.value) continue;
     const ctx = await context(candidate);
-    if (!ctx.ok) return ctx;
+    if (!ctx.ok) {
+      findings.push(
+        [
+          "agx-ticket",
+          candidate,
+          "agx.toml",
+          errorMessage(ctx.error),
+          "Correct the repository configuration and rerun doctor",
+        ]
+          .map((value) => doctorClean(value))
+          .join("\t"),
+      );
+      continue;
+    }
     const backing =
       ctx.value.store === null
         ? ctx.value.root

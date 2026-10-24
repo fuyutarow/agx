@@ -1,11 +1,16 @@
 # Consumer contracts
 
-These contract files are **to be filled at S5**:
+The following contracts now exist:
 
-- `ticket.schema.json`: ticket format.
-- `agx-toml.schema.json`: project configuration and its schema version.
-- `records.md`: records, state location, permitted watch paths, and single-writer rules.
-- `cli.md`: argv, exit codes (0/1/2/3/75), and JSON output schemas.
-- `env.md`: environment variables, state-directory precedence, and session/run naming rules.
+- [Configuration](config.md): repository `agx.toml`, machine-local overrides, user policy,
+  catalog selection, precedence, retired declarations and implementation limits.
+- [Workspace lifecycle](../tools/agx-ws/README.md): creation, readiness, refresh, removal,
+  collection, locks and workspace policy.
+- [Ticket lifecycle](../tools/agx-ticket/README.md): issuance, derived states, landing and collection.
+- [Worker contract](../tools/agx-worker/contract.md): worker execution and records.
+- [Compiled runtime paths](../tools/shared/compiled-runtime.md): shipped data and runtime inputs.
 
-Contracts will be versioned; breaking changes require a major version.
+JSON schemas (`ticket.schema.json`, `agx-toml.schema.json` and the configuration-layer schemas)
+and dedicated `records.md`, `cli.md` and `env.md` contracts have not been published here.
+Current validation lives in the code; the linked documents describe the implemented interfaces
+and identify retained design requirements separately. Breaking contract changes require a major version.

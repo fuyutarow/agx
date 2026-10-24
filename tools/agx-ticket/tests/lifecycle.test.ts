@@ -482,6 +482,12 @@ test.each([
         (await f.run(["jj", "bookmark", "set", "main", "-r", "@-"])).code,
       ).toBe(0);
     }
+    const doctor = await f.run([bun, cli, "doctor", "--quiet"], f.repo, {
+      AGX_REPOS_ROOT: f.root,
+    });
+    expect(doctor.code, doctor.err).toBe(1);
+    expect(doctor.err).toBe("");
+    expect(doctor.out).toContain(message);
     for (const args of [["new", "refused"], ["ls"], ["gc"]]) {
       const result = await f.tkt(args);
       expect(result.code, result.err).toBe(2);
@@ -495,6 +501,31 @@ test.each([
     }
   },
 );
+
+test("doctor retains retired configuration and healthy repository findings together", async () => {
+  const f = await fixture();
+  await writeFile(join(f.repo, ".agx.toml"), "");
+  expect((await f.run(["jj", "commit", "-m", "Retired policy"])).code).toBe(0);
+  expect(
+    (await f.run(["jj", "bookmark", "set", "main", "-r", "@-"])).code,
+  ).toBe(0);
+  const healthy = join(f.root, "healthy");
+  expect((await f.run(["jj", "git", "init", healthy], f.root)).code).toBe(0);
+  await writeFile(
+    join(healthy, "stray.md"),
+    "+++\nschema = 2\n[proposition]\n+++\n",
+  );
+  const result = await f.run([bun, cli, "doctor", "--quiet"], f.repo, {
+    AGX_REPOS_ROOT: f.root,
+  });
+  expect(result.code, result.err).toBe(1);
+  expect(result.err).toBe("");
+  expect(result.out).toContain(
+    `${f.repo}/.agx.toml is retired; rename it: mv .agx.toml agx.toml`,
+  );
+  expect(result.out).toContain(healthy);
+  expect(result.out).toContain("outside-home");
+});
 
 test("other operational failures retain exit 1", async () => {
   const f = await fixture();

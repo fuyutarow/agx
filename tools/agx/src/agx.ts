@@ -1,7 +1,10 @@
 #!/usr/bin/env bun
 import { printVersion } from "../../shared/src/cli.ts";
 import cliPackage from "../package.json" with { type: "json" };
-import { forwardPath } from "../../shared/src/path-dispatch.ts";
+import {
+  forwardPath,
+  resolveSuiteTool,
+} from "../../shared/src/path-dispatch.ts";
 
 const argv = process.argv.slice(2);
 const tools = ["worker", "ticket", "ws", "status", "msg"];
@@ -11,7 +14,7 @@ async function help(): Promise<void> {
     `agx ${cliPackage.version}\n\nUSAGE: agx <tool> [args...]\n\nTOOLS:\n`,
   );
   for (const tool of tools) {
-    const child = Bun.spawn([`agx-${tool}`, "--help"], {
+    const child = Bun.spawn([await resolveSuiteTool(`agx-${tool}`), "--help"], {
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
@@ -54,7 +57,10 @@ async function main(): Promise<void> {
     process.exitCode = 2;
     return;
   }
-  process.exitCode = await forwardPath(`agx-${first}`, remaining);
+  process.exitCode = await forwardPath(
+    await resolveSuiteTool(`agx-${first}`),
+    remaining,
+  );
 }
 await main().catch((error: unknown) => {
   process.stderr.write(`agx: ${String(error)}\n`);
