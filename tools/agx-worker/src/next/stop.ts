@@ -12,9 +12,9 @@ import {
   now,
 } from "./store.ts";
 
-const refuse = (message: string) => {
+const refuse = (message: string, exit = 2) => {
   process.stderr.write(`agx worker stop: ${message}\n`);
-  return 2;
+  return exit;
 };
 
 /** Only a recorded live lease authorizes an effect on a process or unit. */
@@ -33,7 +33,10 @@ async function stopOwnedRun(run: ListedRun): Promise<number> {
     run.state !== "running" ||
     events().some((e) => e.id === run.id && e.kind === "ended")
   )
-    return refuse(`run ${run.id} already ended (${run.outcome ?? "ended"})`);
+    return refuse(
+      `run ${run.id} already ended (${run.outcome ?? "ended"}); not running`,
+      1,
+    );
   const lease = run.lease;
   if (lease === undefined || lease.pid <= 1 || lease.start === null)
     return refuse(
@@ -65,7 +68,44 @@ async function stopOwnedRun(run: ListedRun): Promise<number> {
       probe.exited,
       new Response(probe.stdout).text(),
     ]);
-    if (exit !== 0 || pid.trim() !== String(lease.pid))
+    // agx's launcher may be MainPID while the leased worker is its child.
+    // Unit membership, together with the verified process start, proves ownership.
+    let member = exit === 0 && pid.trim() === String(lease.pid);
+    if (!member && exit === 0 && process.platform === "linux") {
+      const group = Bun.spawn(
+        [
+          systemctl,
+          "--user",
+          "show",
+          lease.unit,
+          "--property=ControlGroup",
+          "--value",
+        ],
+        { stdout: "pipe", stderr: "ignore", timeout: 2000 },
+      );
+      const [groupExit, groupText, cgroup] = await Promise.all([
+        group.exited,
+        new Response(group.stdout).text(),
+        Bun.file(`/proc/${lease.pid}/cgroup`)
+          .text()
+          .catch(() => ""),
+      ]);
+      const path = groupText.trim();
+      member =
+        groupExit === 0 &&
+        path.startsWith("/") &&
+        path !== "/" &&
+        cgroup.split("\n").some((line) => {
+          const [hierarchy, controllers, ...parts] = line.split(":");
+          const owned = parts.join(":");
+          return (
+            (hierarchy === "0" ||
+              controllers?.split(",").includes("name=systemd") === true) &&
+            (owned === path || owned.startsWith(`${path}/`))
+          );
+        });
+    }
+    if (!member)
       return refuse(
         `unit ${lease.unit} no longer owns run ${run.id}; no signal sent`,
       );
