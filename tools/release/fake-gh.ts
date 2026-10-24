@@ -35,8 +35,14 @@ const state = parsed.data;
 if (args[0] !== "release") refuse("Expected gh release");
 if (args[1] === "create") {
   if (await file.exists()) refuse("Release already exists");
-  if (!args.includes("--draft") || !args.includes("--target"))
-    refuse("Create must use a draft and an explicit target");
+  if (
+    !args.includes("--draft") ||
+    !args.includes("--verify-tag") ||
+    args.some((arg) => arg === "--target" || arg.startsWith("--target="))
+  )
+    refuse(
+      "Create must use a draft and verify the existing tag without a target",
+    );
   // The release tag is immediately followed by flags: no bundled asset paths.
   if (args[3] !== "--draft") refuse("Create must not upload assets");
   await Bun.write(path, JSON.stringify(state));

@@ -1037,7 +1037,23 @@ for (const tag of ["v2.3.4", "usehooks-v2.3.4"]) {
             .toSorted(),
     );
     const calls = await Bun.file(join(f.root, "calls")).text();
-    expect(calls.match(/\["release","create"/gu)).toHaveLength(1);
+    const creates = calls
+      .trim()
+      .split("\n")
+      .filter((line) => line.startsWith('["release","create"'));
+    expect(creates).toEqual([
+      JSON.stringify([
+        "release",
+        "create",
+        tag,
+        "--draft",
+        "--title",
+        tag,
+        "--notes-file",
+        join(f.root, "dist/suite/release-notes.md"),
+        "--verify-tag",
+      ]),
+    ]);
     expect(calls).not.toContain('["tag"');
   });
 }

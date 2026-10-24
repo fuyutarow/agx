@@ -118,7 +118,9 @@ Local publication refuses `--target` so a partial suite cannot be published.
 CI creates an empty draft, uploads each asset separately, inspects the assets
 with `gh release view --json assets`, and publishes with `--draft=false --latest`
 only after every expected asset is `uploaded` with the local file's byte size.
-The release targets the inspected HEAD. Existing member tags are retained.
+CI creates each draft with `gh release create <tag> --draft --title <tag> --notes-file <file> --verify-tag`,
+without `--target`. The already-pushed tag decides the release commit;
+creation refuses if the remote tag is missing. Existing member tags are retained.
 Release notes include suite changelog sections added since the previous reachable
 suite tag. The first suite release includes the current section. Unreadable
 previous suite history refuses publication.

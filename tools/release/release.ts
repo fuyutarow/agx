@@ -557,7 +557,6 @@ export async function publishCI(
     return err(`Tag does not match suite version: ${releaseTag}`);
   const head = await runner(["git", "rev-parse", "HEAD"], root);
   if (head.exit !== 0) return err("Cannot resolve HEAD");
-  const headCommit = head.stdout.trim();
   const previous = await runner(
     ["git", "describe", "--tags", "--match", "v[0-9]*", "--abbrev=0", "HEAD^"],
     root,
@@ -595,7 +594,6 @@ export async function publishCI(
       release.assets,
       release.latest,
       notes,
-      headCommit,
       true,
       root,
       runner,
@@ -617,7 +615,6 @@ async function publishAssets(
   releaseAssets: { archive: string; sha256: string }[],
   latest: boolean,
   notes: string,
-  headCommit: string,
   yes: boolean,
   root: string,
   runner: CommandRunner,
@@ -639,8 +636,7 @@ async function publishAssets(
     tag,
     "--notes-file",
     notes,
-    "--target",
-    headCommit,
+    "--verify-tag",
   ];
   const upload = (archive: string, retry = false) => [
     "gh",
