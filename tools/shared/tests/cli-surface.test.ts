@@ -85,6 +85,10 @@ for await (const packagePath of new Bun.Glob("tools/*/package.json").scan({
     ([name]) => name !== "gpu-sampler",
   );
   for (const [name, source] of bins) {
+    const isMsgAlias = name === "agx-msg" || name === "xmsg";
+    const canonicalName = isMsgAlias
+      ? "agx msg"
+      : Object.keys(pkg.bin ?? {})[0];
     test(`${name}: version aliases, typed short flag, deterministic plain help`, async () => {
       const root = await mkdtemp(join(tmpdir(), "cli-surface-"));
       await using _cleanup = {
@@ -96,7 +100,7 @@ for await (const packagePath of new Bun.Glob("tools/*/package.json").scan({
         for (const flag of ["-V", "--version"]) {
           const result = await run(entry, [flag]);
           expect(result).toEqual({
-            stdout: `${Object.keys(pkg.bin ?? {})[0]} ${pkg.version}\n`,
+            stdout: `${canonicalName} ${pkg.version}\n`,
             stderr: "",
             exit: 0,
           });
@@ -105,6 +109,12 @@ for await (const packagePath of new Bun.Glob("tools/*/package.json").scan({
         expect(plain.exit, plain.stderr).toBe(0);
         expect(plain.stderr).toBe("");
         expect(plain.stdout).toContain(name === "agx" ? "TOOLS:" : "Show help");
+        if (isMsgAlias) {
+          expect(plain.stdout).toContain(`${canonicalName} v${pkg.version}\n`);
+          expect(plain.stdout).toContain(
+            `  ${canonicalName} [flags...] [action]\n`,
+          );
+        }
         expect(plain.stdout).not.toContain("\u001B");
         for (const { tty, color } of environments) {
           const rendered = await run(entry, ["--help"], tty, color);
@@ -123,7 +133,11 @@ for await (const packagePath of new Bun.Glob("tools/*/package.json").scan({
         }
         const error = await run(entry, ["-Z"], false, false, extraEnv);
         expect(error.exit).toBeGreaterThan(0);
-        expect(error.stderr).toMatch(/(?:-Z|unknown option: Z)/u);
+        if (isMsgAlias) {
+          expect(error.stderr).toBe(`${canonicalName}: unknown flag Z\n`);
+        } else {
+          expect(error.stderr).toMatch(/(?:-Z|unknown option: Z)/u);
+        }
         expect(error.stderr).not.toContain("--Z");
       }
     });
