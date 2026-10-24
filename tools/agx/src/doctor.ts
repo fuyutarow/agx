@@ -1,26 +1,34 @@
 import { attempt } from "../../shared/src/attempt.ts";
 import { cli as cleyeCli } from "cleye";
-import { mkdir, rename, rm, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
 import { standardCli } from "../../shared/src/cli.ts";
 import { DoctorRecord } from "../../shared/src/doctor-record.ts";
-import {
-  doctorAggregatePath,
-  doctorTools,
-  type DoctorAggregate,
-} from "../../shared/src/doctor-aggregate.ts";
+import { doctorTools } from "../../shared/src/doctor-aggregate.ts";
 import { resolveSuiteTool } from "../../shared/src/path-dispatch.ts";
 import { checkState } from "../../shared/src/state-dir.ts";
 import { jsonOf } from "../../shared/src/zod.ts";
 import pkg from "../package.json" with { type: "json" };
+
+import { refreshDoctor, type DoctorAggregate } from "./refresh.ts";
 
 const outputLimit = 1024 * 1024;
 
 async function readBounded(
   stream: ReadableStream<Uint8Array>,
   overflow: () => void,
+  signal: AbortSignal,
 ): Promise<string> {
   const reader = stream.getReader();
+  const cancel = () => {
+    void reader.cancel().catch(() => {});
+  };
+  signal.addEventListener("abort", cancel, { once: true });
+  using _cleanup = {
+    [Symbol.dispose]: () => {
+      signal.removeEventListener("abort", cancel);
+      reader.releaseLock();
+    },
+  };
+  if (signal.aborted) cancel();
   const chunks: Uint8Array[] = [];
   let bytes = 0;
   while (true) {
@@ -30,13 +38,15 @@ async function readBounded(
     if (bytes <= outputLimit) chunks.push(next.value);
     else overflow();
   }
-  return new Response(new Blob(chunks)).text();
+  return await new Response(new Blob(chunks)).text();
 }
 
 async function collect(tool: (typeof doctorTools)[number], timeout: number) {
   const findings: DoctorRecord[] = [];
   let exit: number | null = null;
   let complete = true;
+  let timedOut = false;
+  let signalCode: string | null = null;
   const collected = await attempt(async () => {
     const signal = AbortSignal.timeout(timeout);
     const child = Bun.spawn(
@@ -50,19 +60,29 @@ async function collect(tool: (typeof doctorTools)[number], timeout: number) {
       },
     );
     const [stdout, stderr, code] = await Promise.all([
-      readBounded(child.stdout, () => {
-        complete = false;
-        child.kill("SIGKILL");
-      }),
-      readBounded(child.stderr, () => {
-        complete = false;
-        child.kill("SIGKILL");
-      }),
+      readBounded(
+        child.stdout,
+        () => {
+          complete = false;
+          child.kill("SIGKILL");
+        },
+        signal,
+      ),
+      readBounded(
+        child.stderr,
+        () => {
+          complete = false;
+          child.kill("SIGKILL");
+        },
+        signal,
+      ),
       child.exited,
     ]);
     exit = code;
+    timedOut = signal.aborted;
+    signalCode = child.signalCode;
     if (stderr !== "") process.stderr.write(`${tool}: ${stderr}`);
-    if (signal.aborted) complete = false;
+    if (timedOut) complete = false;
     for (const line of stdout.split(/\r?\n/u)) {
       if (line.trim() === "") continue;
       const parsed = jsonOf(DoctorRecord).safeParse(line);
@@ -85,9 +105,21 @@ async function collect(tool: (typeof doctorTools)[number], timeout: number) {
   }
   if (!complete)
     process.stderr.write(
-      `agx doctor: ${tool} collection incomplete (exit ${exit})\n`,
+      timedOut
+        ? `agx doctor: ${tool} exceeded ${timeout} ms (signal ${signalCode}, exit ${exit}); collection incomplete\n`
+        : `agx doctor: ${tool} collection incomplete (exit ${exit})\n`,
     );
-  return { findings, member: { tool, exit, complete } };
+  return {
+    findings,
+    member: {
+      tool,
+      exit,
+      complete,
+      timed_out: timedOut,
+      deadline_ms: timeout,
+      signal: signalCode,
+    },
+  };
 }
 
 export async function doctor(argv: string[]): Promise<void> {
@@ -104,10 +136,21 @@ export async function doctor(argv: string[]): Promise<void> {
         type: Boolean,
         description: "Emit one aggregate JSON object (refreshes state)",
       },
+      refresh: {
+        type: Boolean,
+        description: "Explicitly request the default bounded refresh",
+      },
+      deadlineMs: {
+        type: Number,
+        default: 125000,
+        description:
+          "Whole request deadline including queue wait (1..125000 ms)",
+      },
       timeoutMs: {
         type: Number,
-        default: 10000,
-        description: "Per-member deadline in milliseconds (1..60000)",
+        default: 60000,
+        description:
+          "Per-member deadline in milliseconds (1..60000; default 60000)",
       },
     },
     help: {
@@ -117,19 +160,37 @@ export async function doctor(argv: string[]): Promise<void> {
   });
   if (
     args._.length > 0 ||
+    !Number.isInteger(args.flags.deadlineMs) ||
+    args.flags.deadlineMs < 1 ||
+    args.flags.deadlineMs > 125000 ||
     !Number.isInteger(args.flags.timeoutMs) ||
     args.flags.timeoutMs < 1 ||
     args.flags.timeoutMs > 60000
   ) {
     process.stderr.write(
-      "agx doctor: no operands; --timeout-ms must be an integer in 1..60000\n",
+      "agx doctor: no operands; --timeout-ms must be an integer in 1..60000; --deadline-ms in 1..125000\n",
     );
     process.exitCode = 2;
     return;
   }
   await checkState();
+  const response = await refreshDoctor(
+    collectAggregate,
+    args.flags.timeoutMs,
+    args.flags.deadlineMs,
+  );
+  if (response.error !== null)
+    process.stderr.write(`agx doctor: ${response.error}\n`);
+  process.stdout.write(`${JSON.stringify(response)}\n`);
+  process.exitCode =
+    response.error === null && response.complete
+      ? Number(response.total > 0)
+      : 2;
+}
+
+async function collectAggregate(timeout: number): Promise<DoctorAggregate> {
   const results = await Promise.all(
-    doctorTools.map((tool) => collect(tool, args.flags.timeoutMs)),
+    doctorTools.map((tool) => collect(tool, timeout)),
   );
   const findings = results.flatMap((result) => result.findings);
   const kinds = Object.fromEntries(
@@ -148,23 +209,5 @@ export async function doctor(argv: string[]): Promise<void> {
     captured_at: Temporal.Now.instant().epochMilliseconds,
     members: results.map((result) => result.member),
   };
-  const path = doctorAggregatePath();
-  const temp = `${path}.${process.pid}.${crypto.randomUUID()}.tmp`;
-  const published = await attempt(async () => {
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(temp, `${JSON.stringify(aggregate)}\n`, {
-      flag: "wx",
-      mode: 0o600,
-    });
-    await rename(temp, path);
-  });
-  if (!published.ok) {
-    aggregate.complete = false;
-    process.stderr.write(
-      `agx doctor: snapshot publication failed: ${String(published.error)}\n`,
-    );
-  }
-  await rm(temp, { force: true }).catch(() => {});
-  process.stdout.write(`${JSON.stringify(aggregate)}\n`);
-  process.exitCode = aggregate.complete ? Number(aggregate.total > 0) : 2;
+  return aggregate;
 }

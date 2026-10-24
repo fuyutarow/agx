@@ -9,4 +9,15 @@ It never moves data automatically.
 
 See tools architecture.
 
-`agx status --json` reads the aggregate published by `agx doctor --json`; it does not refresh doctors. See the [doctor contract](../../contract/doctor.md) for completeness, freshness and legacy fallback.
+`agx status --json` is read-only. Poll every **60 seconds**, as indicated by
+top-level `poll_after_ms:60000`. Schedule `agx doctor --json --refresh` on the same
+cadence when fresh member observations are required. Keep one request outstanding
+per poller and coalesce overlapping ticks; agx also bounds collections across
+processes. Read CLI JSON instead of watching private files.
+
+Aggregate `findings` includes `complete`, `stale`, `error` and `last_good_at`. A
+failed refresh retains last-good findings with an explicit error; a later success
+clears it. Observations at least 60 seconds old are stale. Missing/malformed state
+can yield null; status exiting 0 does not establish freshness. See the
+[doctor contract](../../contract/doctor.md) for deadlines, coalescing, exits and
+legacy fallback.

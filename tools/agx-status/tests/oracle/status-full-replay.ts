@@ -346,6 +346,7 @@ async function readStatus(env: NodeJS.ProcessEnv, cwd: string) {
   }
   return {
     schema: 1,
+    poll_after_ms: 60000,
     runs: runOutput,
     workspaces,
     findings: statusFindings,

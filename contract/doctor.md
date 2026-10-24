@@ -1,94 +1,148 @@
 # Doctor consumer contract (schema 1)
 
-Shell scripts, agents and interactive operators use `agx doctor --json` to refresh
-all member observations. `agx status --json` reads the latest owner snapshot without
-running doctors. The aggregate is implemented inside the agx package: composition
-and persistence belong to the umbrella, so no additional member binary is needed.
+Shell scripts, agents and interactive operators use `agx doctor --json --refresh`
+for bounded member observation. `agx status --json` reads the latest owner result
+without running doctors. Composition, refresh admission and persistence belong to
+agx. Consumers poll CLI JSON; no state file or filesystem watch is a public API.
 
 ## Invocation and effects
 
-`agx doctor [--json] [--timeout-ms N]` accepts no operands or stdin. Output is always
-one JSON object followed by a newline, including when `--json` is omitted. Help
-(`--help`, `-h`) and version (`--version`, `-V`) do not collect or publish.
-Unknown flags are rejected by the standard parser; invalid operands or deadlines
-exit 2 before collection. `--timeout-ms` is an integer from 1 through 60000;
-the default is 10000 milliseconds per member.
+`agx doctor [--json] [--refresh] [--timeout-ms N] [--deadline-ms N]` accepts no
+operands or stdin. Output is one JSON object followed by a newline, including when
+`--json` is omitted. Help and version do not collect or publish. Unknown flags are
+rejected by the standard parser; invalid operands or deadlines exit 2 before
+collection. Retired state configuration is refused before collection.
 
-The default is **refresh**, not snapshot. Every invocation concurrently runs
-`agx-worker doctor --quiet`, `agx-ws doctor --quiet` and
-`agx-ticket doctor --quiet`, then publishes the result. The member commands may
-reconcile or publish their own state; this command is not a read-only preview.
-There is no separate `--refresh` flag. Use status for a read-only snapshot.
-Compiled installs prefer executable sibling member tools; source runs resolve
-members on PATH. Existing member JSONL and exit behavior remain unchanged.
+Refresh remains the default for compatibility with the original aggregate
+command. `--refresh` explicitly requests that same behavior. Use status for a
+read-only snapshot. A collection concurrently runs `agx-worker doctor --quiet`,
+`agx-ws doctor --quiet` and `agx-ticket doctor --quiet`. Those members may reconcile
+or publish their own state; refresh is not a preview or a transaction across them.
+Compiled installs prefer executable sibling tools; source runs resolve members on
+PATH. Existing member JSONL and exits are unchanged.
 
-Each member has a deadline and a 1 MiB limit for each of stdout and stderr.
-Timeout or overflow kills the member. Member stderr and collection diagnostics
-are relayed to stderr; stdout contains only aggregate JSON, on TTY and pipes alike.
-Member order and finding order are deterministic (worker, ws, ticket; then member
-line order). This is a bounded collection, not a transaction across member state.
+| Bound               | Default   | Accepted values and meaning                                                                                                                                          |
+| ------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--timeout-ms`      | 60000 ms  | Integer 1..60000; each member's collection deadline.                                                                                                                 |
+| `--deadline-ms`     | 125000 ms | Integer 1..125000; whole request budget including admission, queue wait and collection. A member gets the smaller of its timeout and the request's remaining budget. |
+| Output              | 1 MiB     | Per member, separately for stdout and stderr; overflow kills the member.                                                                                             |
+| Active collections  | 1         | Per resolved state directory, across CLI processes; the three members run concurrently within that collection.                                                       |
+| Pending collections | 1         | Concurrent arrivals coalesce into the next collection, sharing its completed response. No per-caller collection queue is created.                                    |
+
+The 60000 ms member default allows real inventories that take tens of seconds:
+production agx-ticket returned 263 findings after more than ten seconds, so the
+former 10000 ms limit killed a healthy doctor. Sixty seconds provides headroom
+while bounding a stalled member. The 125000 ms request default allows one active
+and one pending 60000 ms collection plus admission and publication overhead.
+Explicit shorter request budgets still cap the effective member deadline.
+
+A caller arriving during a collection requests the single pending collection.
+After the active collection finishes, one waiting caller collects and the others
+share its result. Further arrivals during that next collection may request one
+more pending collection. Pending work needs a surviving caller: if every waiter
+times out, no background refresh is launched. A waiter's timeout returns its own
+stale/error response and does not cancel the active owner or replace the shared
+result. The caller elected to collect supplies that collection's deadlines; a
+waiter's flags cannot lengthen the active owner's deadline.
+
+Timeout kills the direct member and closes its output readers, including pipes
+held open by descendants. Process scheduling, uninterruptible filesystem I/O and
+startup overhead can delay return beyond the requested budget; the deadline is
+not a real-time scheduling guarantee. No automatic retries occur inside a request.
+An abruptly terminated owner is not replaced automatically: admission fails closed
+and later callers reach their deadlines rather than risk duplicate member effects.
+
+Member stderr and collection diagnostics go to stderr. Stdout contains only JSON
+on TTY and pipes alike. Finding order is deterministic: worker, ws, ticket, then
+member line order. A joined caller receives the completed JSON result, while
+member stderr belongs to the collecting caller.
 
 ## JSON and outcomes
 
-The object has these fields:
+| Field          | Meaning                                                                                                                                                              |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schema`       | Integer 1.                                                                                                                                                           |
+| `findings`     | Validated member records `{tool,object,finding,remedy}`; no synthetic collection errors.                                                                             |
+| `kinds`        | Counts keyed by the exact finding string.                                                                                                                            |
+| `total`        | Number of validated records, including duplicates.                                                                                                                   |
+| `lost`         | Count whose finding is exactly `lost`, also included in total and kinds.                                                                                             |
+| `complete`     | Latest completed refresh collected valid observations and published successfully. False for a failed request even when cached findings are available.                |
+| `captured_at`  | Unix epoch milliseconds when the displayed findings were collected. A failed refresh does not advance the last-good observation time.                                |
+| `members`      | Three member objects described below; on collection failure these describe the attempted collection, including when findings are cached.                             |
+| `stale`        | Always present. True on refresh failure; status also marks observations stale at age 60000 ms or when another observed owner publication is newer.                   |
+| `error`        | Always present. Null on success, otherwise a diagnostic string for collection, deadline, publication or coordination failure. Text is diagnostic, not a stable enum. |
+| `last_good_at` | Always present. Last complete observation's epoch milliseconds, or null if no good snapshot is available.                                                            |
 
-| Field         | Meaning                                                                                                                                    |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `schema`      | Integer 1.                                                                                                                                 |
-| `findings`    | Validated member records `{tool,object,finding,remedy}`; no synthetic collection-error records.                                            |
-| `kinds`       | Counts keyed by the exact `finding` string.                                                                                                |
-| `total`       | Number of validated records, including duplicates.                                                                                         |
-| `lost`        | Count whose `finding` is exactly `lost`; also included in total and kinds.                                                                 |
-| `complete`    | All three observations valid and publication succeeded.                                                                                    |
-| `captured_at` | Unix epoch milliseconds at the end of collection.                                                                                          |
-| `members`     | Three `{tool,exit,complete}` objects; tool is the member executable name; exit is its numeric status, or null if it could not be observed. |
+Each member has `tool`, `exit` (numeric or null if unavailable), `complete`,
+`timed_out`, `deadline_ms` (effective budget after the request cap), and `signal`
+(signal name or null). Deadline kills set `timed_out:true` and name the tool,
+budget and signal on stderr, for example `agx-ticket exceeded 60000 ms (signal
+SIGKILL, exit 137)`. External kills and output overflow do not set `timed_out`.
+Older snapshots and failures before collection may omit the additive fields.
 
-A member is complete only for valid JSONL matching its tool, exit 0 with no
-findings, or exit 1 with at least one finding. Blank lines are ignored. Malformed
-JSON, invalid fields, a different tool, unexplained exit 1, findings with exit 0,
-exit 2 or another exit, spawn failure, timeout and overflow make it incomplete.
-Valid records already collected remain visible; counts describe observed records,
-never an estimate of missing findings. A member failure is not itself a finding.
+A member is complete only for valid JSONL matching its tool, exit 0 without
+findings, or exit 1 with findings. Blank lines are ignored. Invalid JSON or fields,
+a different tool, unexplained exit 1, findings with exit 0, exit 2 or another exit,
+spawn failure, timeout and overflow make the observation incomplete.
 
-| Exit | Meaning                                              | Caller action                                   |
-| ---- | ---------------------------------------------------- | ----------------------------------------------- |
-| 0    | Complete, no findings.                               | Continue.                                       |
-| 1    | Complete, findings present.                          | Inspect findings and remedies.                  |
-| 2    | Incomplete/invalid collection or failed publication. | Inspect stderr and members; retry after repair. |
+On failure, findings, counts and capture time come from the last complete
+snapshot, with `complete:false`, `stale:true` and a non-null error. If no complete
+snapshot exists, validated records from the failed attempt remain visible with
+`last_good_at:null`; they are partial evidence, never an estimate of missing
+findings. Members describe the failed attempt when one was collected; failures
+before collection retain cached members or unavailable placeholders. Inspect
+stderr for failed-member details.
 
-Incomplete aggregates are published too, replacing an older successful snapshot,
-so status cannot silently present an older success after failed collection.
-Publication failure emits `complete:false` and exits 2, leaving the prior target
-intact. Retrying refresh is supported; member reconciliation effects still apply.
+| Exit | Meaning                                                                                   | Caller action                                                                                                            |
+| ---- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| 0    | Complete refresh, no findings.                                                            | Continue polling.                                                                                                        |
+| 1    | Complete refresh, findings present.                                                       | Inspect findings and remedies.                                                                                           |
+| 2    | Invalid invocation, incomplete collection, deadline, coordination or publication failure. | Inspect JSON error and stderr; retain the displayed last-good observation and retry on the polling cadence after repair. |
 
-## Persistence, status and compatibility
+Usage and startup refusals can exit before a JSON response exists. A rendered
+error response never exits 0. A subsequent successful refresh clears the retained
+error and replaces the good snapshot.
 
-Agx owns `doctor-aggregate.json` under non-empty `AGX_STATE_DIR`, otherwise
-`$XDG_STATE_HOME/agx`, otherwise `~/.local/state/agx`. Retired state configuration
-is refused before collection. A unique, exclusive, mode-0600 temporary file in the
-same directory is fully written, then renamed over the target. Readers see a
-whole old or new snapshot; concurrent writers use last successful rename wins.
-This provides atomic visibility, not power-loss durability or global locking.
-Temporary files are cleaned on handled failures. A forced umbrella termination can
-leave a temporary file and the previous snapshot.
+## Polling and persistence
 
-The file is private storage, **not a public file API**; consumers use CLI JSON.
-`agx status --json` exposes the validated aggregate under `findings`, adding
-`stale` when incomplete or captured before another observed state file changed.
-A malformed aggregate yields `findings:null`. When the aggregate is absent,
-status preserves its existing legacy summary fallback (or null). Status itself
-remains read-only and exits 0 for a successfully produced status response;
-callers must inspect `findings.complete`, `stale`, or absence.
+Poll `agx status --json` every **60 seconds**; its top-level `poll_after_ms:60000`
+publishes this cadence. Arrange `agx doctor --json --refresh` on the same cadence
+when fresh member observations are required. Keep one invocation outstanding per
+poller; skip overlapping ticks or coalesce them into one pending tick. Agx enforces
+the collection bounds across pollers too. Use process completion and JSON fields,
+not private file changes, as the observation boundary.
 
-Consumers must tolerate additive fields and unknown finding strings. Field
-removal, renaming, type/meaning changes or incompatible exit semantics require a
-major release. Shape changes use a new schema version. No public pathname
-or direct-file compatibility promise is made.
+Agx uses non-empty `AGX_STATE_DIR`, otherwise `$XDG_STATE_HOME/agx`, otherwise
+`~/.local/state/agx`. Its private coordination database atomically admits collectors
+and retains one completed response. It does not hold a database transaction while
+members run. A complete aggregate is written to an exclusive mode-0600 temporary
+file beside the owner snapshot, then atomically renamed over it. Failed collection
+and publication leave the prior good target intact. Handled failures clean up
+temporary files. These guarantees concern visibility, not power-loss durability.
+
+`agx status --json` exposes the completed response under `findings`, including the
+retained failure and cached findings. While a refresh is active, status reads the
+previous completed result; age and publication checks still apply. Malformed or
+unreadable owner state yields `findings:null`. Before any aggregate exists, status
+preserves the legacy summary fallback or null. Legacy summaries do not supply the
+full refresh contract. Status is read-only and exits 0 when it produces a status
+response; consumers must inspect completeness, stale/error and absence.
+
+Consumers tolerate additive fields and unknown finding strings. The new fields
+extend schema 1. Removal, renaming, incompatible types/meanings or exit changes
+require a major release and an incompatible shape uses a new schema version.
+No pathname or direct-file compatibility promise is made.
 
 ## Verification
 
-`bun test ./tools/agx ./tools/agx-status` spawns the real umbrella against isolated
-fixture member executables, checks exits 0/1/2, invalid JSONL/records, tool mismatch,
-unexplained exits, timeout, output overflow, partial retention, publication failure,
-replacement inode and file permissions, and the real status CLI reading exactly
-the persisted aggregate. All CLI fixtures set both AGX_STATE_DIR and XDG_STATE_HOME.
+`bun test ./tools/agx ./tools/agx-status` spawns the real umbrella CLI against
+isolated fixture executables. It checks exits 0/1/2, invalid records, missing
+members, timeout, overflow, partial evidence, publication failure, atomic
+replacement and permissions, plus real status output. The refresh tests also
+check seven simultaneous callers producing exactly two non-overlapping member
+rounds, last-good bytes and inode surviving failure, error visibility through
+status, successful recovery, a whole-request deadline and an independent waiter's
+deadline. Slow-member fixtures also verify that 15-second and 30-second doctors
+complete under defaults, deadline kills retain their tool, budget and signal
+through status and cached findings, and external SIGKILL is distinguished from
+a deadline. CLI fixtures set both AGX_STATE_DIR and XDG_STATE_HOME.

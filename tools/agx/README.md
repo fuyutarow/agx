@@ -2,7 +2,7 @@
 
 A suite dispatcher with an aggregate doctor:
 
-- `agx doctor --json` → refresh and atomically persist the aggregate inside agx
+- `agx doctor --json --refresh` → bounded, coalesced refresh with last-good findings and stale/error fields
 - `agx worker ARGS` → `agx-worker ARGS`
 - `agx ticket ARGS` → `agx-ticket ARGS`
 - `agx ws ARGS` → `agx-ws ARGS`
@@ -26,5 +26,9 @@ The suite forwards the environment unchanged. Its owner tools use non-empty
 `AGX_STATE_DIR`, then `$XDG_STATE_HOME/agx`, then `~/.local/state/agx`.
 The legacy ledger is read-only at `<state dir>/legacy-v1/`. Owner tools refuse
 retired state configuration with exit 2 before running a command.
+
+Poll `agx status --json` every 60 seconds (`poll_after_ms:60000`); schedule
+`agx doctor --json --refresh` at that cadence to refresh member observations.
+The default whole-request deadline is 25 seconds, including queue wait.
 
 See the [doctor contract](../../contract/doctor.md) for JSON, deadlines, exits and persistence.

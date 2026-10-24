@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DoctorAggregate } from "../../shared/src/doctor-aggregate.ts";
+import { DoctorResponse } from "../src/refresh.ts";
 import { jsonOf, z } from "../../shared/src/zod.ts";
 
 const entry = join(import.meta.dir, "../src/agx.ts");
@@ -20,18 +20,22 @@ async function fixture() {
   const member = async (tool: string, body: string) =>
     writeFile(
       join(root, `agx-${tool}`),
-      `#!${process.execPath}\nif (process.argv.slice(2).join(" ") !== "doctor --quiet") process.exit(99);\n${body}`,
+      `#!${process.execPath}\nif (${JSON.stringify(tool)} !== "status" && process.argv.slice(2).join(" ") !== "doctor --quiet") process.exit(99);\n${body}`,
       { mode: 0o755 },
     );
   for (const tool of ["worker", "ws", "ticket"])
     await member(tool, "process.exitCode = 0;");
-  const run = async (args = ["doctor", "--json"]) => {
+  await member(
+    "status",
+    `await import(${JSON.stringify(join(import.meta.dir, "../../agx-status/src/status.ts"))});`,
+  );
+  const run = async (args = ["doctor", "--json"], timeout = 10000) => {
     const child = Bun.spawn([process.execPath, entry, ...args], {
       env,
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
-      timeout: 10000,
+      timeout,
     });
     const [stdout, stderr, exit] = await Promise.all([
       child.stdout.text(),
@@ -48,8 +52,8 @@ async function fixture() {
     [Symbol.asyncDispose]: () => rm(root, { recursive: true, force: true }),
   };
 }
-function decode(text: string): DoctorAggregate {
-  const result = jsonOf(DoctorAggregate).safeParse(text);
+function decode(text: string): DoctorResponse {
+  const result = jsonOf(DoctorResponse).safeParse(text);
   expect(result.success).toBe(true);
   return result.success
     ? result.data
@@ -62,6 +66,9 @@ function decode(text: string): DoctorAggregate {
         complete: false,
         captured_at: 0,
         members: [],
+        stale: true,
+        error: "decode failed",
+        last_good_at: null,
       };
 }
 const finding = {
@@ -71,6 +78,68 @@ const finding = {
   remedy: "agx worker judge fixture reject",
 };
 const emit = `process.stdout.write(${JSON.stringify(JSON.stringify(finding) + "\n")});`;
+
+test("default deadlines allow real-inventory durations and exit 1 findings", async () => {
+  await using f = await fixture();
+  await f.member(
+    "worker",
+    `await Bun.sleep(15000); ${emit} process.exitCode = 1;`,
+  );
+  await f.member(
+    "ticket",
+    `await Bun.sleep(30000); ${emit.replace("agx-worker", "agx-ticket")} process.exitCode = 1;`,
+  );
+  const result = await f.run(undefined, 40000);
+  expect(result.exit, result.stderr).toBe(1);
+  expect(result.stderr).toBe("");
+  const data = decode(result.stdout);
+  expect(data.complete).toBe(true);
+  expect(data.total).toBe(2);
+  for (const member of data.members) {
+    expect(member).toMatchObject({
+      complete: true,
+      timed_out: false,
+      deadline_ms: 60000,
+      signal: null,
+    });
+  }
+}, 45000);
+
+test("member deadline names tool, budget and signal even with last-good findings", async () => {
+  await using f = await fixture();
+  expect((await f.run()).exit).toBe(0);
+  await f.member("ticket", "await Bun.sleep(60000);");
+  const result = await f.run(["doctor", "--json", "--timeout-ms", "500"]);
+  expect(result.exit, result.stderr).toBe(2);
+  expect(result.stderr).toContain(
+    "agx-ticket exceeded 500 ms (signal SIGKILL, exit 137)",
+  );
+  const data = decode(result.stdout);
+  expect(data).toMatchObject({ complete: false, stale: true, findings: [] });
+  expect(data.members[2]).toMatchObject({
+    tool: "agx-ticket",
+    complete: false,
+    timed_out: true,
+    deadline_ms: 500,
+    signal: "SIGKILL",
+    exit: 137,
+  });
+  const status = await f.run(["status", "--json"]);
+  expect(status.stdout).toContain('"timed_out":true');
+});
+
+test("external signal is not reported as a deadline kill", async () => {
+  await using f = await fixture();
+  await f.member("ticket", 'process.kill(process.pid, "SIGKILL");');
+  const result = await f.run();
+  expect(result.exit).toBe(2);
+  expect(result.stderr).not.toContain("exceeded");
+  expect(decode(result.stdout).members[2]).toMatchObject({
+    timed_out: false,
+    signal: "SIGKILL",
+    exit: 137,
+  });
+});
 
 test("public doctor refreshes, publishes exact output, and status reads the owned aggregate", async () => {
   await using f = await fixture();
@@ -105,7 +174,10 @@ test("public doctor refreshes, publishes exact output, and status reads the owne
   expect(await Bun.file(path).text()).toBe(result.stdout);
   expect((await stat(path)).ino).not.toBe(before.ino);
   expect((await stat(path)).mode & 0o777).toBe(0o600);
-  expect(await readdir(f.state)).toEqual(["doctor-aggregate.json"]);
+  expect((await readdir(f.state)).toSorted()).toEqual([
+    "doctor-aggregate.json",
+    "doctor-refresh.sqlite",
+  ]);
   await f.member("status", `process.exit(99);`);
   // Use the real status entrypoint, with the same isolated owner state.
   const child = Bun.spawn(
@@ -132,7 +204,7 @@ test("public doctor refreshes, publishes exact output, and status reads the owne
     child.exited,
   ]);
   expect(exit, err).toBe(0);
-  const status = jsonOf(z.object({ findings: DoctorAggregate })).safeParse(out);
+  const status = jsonOf(z.object({ findings: DoctorResponse })).safeParse(out);
   expect(status.success).toBe(true);
   if (status.success) expect(status.data.findings).toEqual(data);
 });
@@ -160,9 +232,19 @@ for (const [name, body] of [
     expect(data.complete).toBe(false);
     expect(data.members[0]?.complete).toBe(false);
     expect(data.findings.every((row) => row.finding === "lost")).toBe(true);
-    expect(await Bun.file(join(f.state, "doctor-aggregate.json")).text()).toBe(
-      result.stdout,
+    expect(data.stale).toBe(true);
+    expect(data.error).toBeString();
+    expect(data.last_good_at).toBeNull();
+    expect(
+      await Bun.file(join(f.state, "doctor-aggregate.json")).exists(),
+    ).toBe(false);
+    const status = await f.run(["status", "--json"]);
+    expect(status.exit, status.stderr).toBe(0);
+    const parsed = jsonOf(z.object({ findings: DoctorResponse })).safeParse(
+      status.stdout,
     );
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.findings).toEqual(data);
   });
 
 test("valid findings survive invalid JSONL from another member", async () => {
@@ -191,7 +273,12 @@ test("failed publication exits 2 and leaves the old target intact", async () => 
   expect(result.exit).toBe(2);
   expect(decode(result.stdout).complete).toBe(false);
   expect(await Bun.file(join(path, "sentinel")).text()).toBe("old");
-  expect(await readdir(f.state)).toEqual(["doctor-aggregate.json"]);
+  // C11 retains the coordination database; directory iteration order is unspecified.
+  // Compare every entry so a leaked publication temporary file still fails.
+  expect((await readdir(f.state)).toSorted()).toEqual([
+    "doctor-aggregate.json",
+    "doctor-refresh.sqlite",
+  ]);
 });
 
 test("doctor owns help and rejects invalid deadlines and operands before collection", async () => {
@@ -201,6 +288,9 @@ test("doctor owns help and rejects invalid deadlines and operands before collect
     ["--timeout-ms", "0"],
     ["--timeout-ms", "60001"],
     ["--timeout-ms", "NaN"],
+    ["--deadline-ms", "0"],
+    ["--deadline-ms", "125001"],
+    ["--deadline-ms", "NaN"],
     ["extra"],
   ]) {
     const result = await f.run(["doctor", ...args]);
@@ -215,7 +305,7 @@ test("missing member is incomplete while other member observations survive", asy
   await rm(join(f.root, "agx-ws"));
   const result = await f.run();
   expect(result.exit).toBe(2);
-  expect(decode(result.stdout).members[1]).toEqual({
+  expect(decode(result.stdout).members[1]).toMatchObject({
     tool: "agx-ws",
     exit: null,
     complete: false,
@@ -265,4 +355,181 @@ test("status exposes incomplete snapshots and refuses malformed ones over legacy
     await status(),
   );
   expect(parsed.success).toBe(true);
+});
+
+test("failed refresh retains last-good findings and reports the error through public status", async () => {
+  await using f = await fixture();
+  await f.member("worker", `${emit} process.exitCode = 1;`);
+  const first = await f.run(["doctor", "--json", "--refresh"]);
+  expect(first.exit, first.stderr).toBe(1);
+  const good = decode(first.stdout);
+  const path = join(f.state, "doctor-aggregate.json");
+  const before = await stat(path);
+  await f.member(
+    "worker",
+    'process.stdout.write("broken\\n"); process.exitCode = 2;',
+  );
+  const failed = await f.run(["doctor", "--json", "--refresh"]);
+  expect(failed.exit, failed.stderr).toBe(2);
+  const bad = decode(failed.stdout);
+  expect(bad).toMatchObject({
+    findings: good.findings,
+    kinds: good.kinds,
+    total: 1,
+    lost: 1,
+    captured_at: good.captured_at,
+    last_good_at: good.captured_at,
+    complete: false,
+    stale: true,
+  });
+  expect(bad.error).toContain("incomplete");
+  expect(await Bun.file(path).text()).toBe(first.stdout);
+  expect((await stat(path)).ino).toBe(before.ino);
+  const status = await f.run(["status", "--json"]);
+  expect(status.exit, status.stderr).toBe(0);
+  const parsed = jsonOf(
+    z.object({ findings: DoctorResponse, poll_after_ms: z.number() }),
+  ).safeParse(status.stdout);
+  expect(parsed.success).toBe(true);
+  if (parsed.success) {
+    expect(parsed.data.findings).toEqual(bad);
+    expect(parsed.data.poll_after_ms).toBe(60000);
+  }
+  await f.member("worker", "process.exitCode = 0;");
+  const recovered = await f.run(["doctor", "--json", "--refresh"]);
+  expect(recovered.exit, recovered.stderr).toBe(0);
+  expect(decode(recovered.stdout)).toMatchObject({
+    stale: false,
+    error: null,
+    total: 0,
+    complete: true,
+  });
+});
+
+async function waitFor(path: string) {
+  const until = performance.now() + 3000;
+  while (!(await Bun.file(path).exists()) && performance.now() < until)
+    await Bun.sleep(10);
+  expect(await Bun.file(path).exists(), path).toBe(true);
+}
+
+test("concurrent CLI refreshes serialize all members and coalesce callers into one pending round", async () => {
+  await using f = await fixture();
+  const events = join(f.root, "events");
+  const gate = join(f.root, "gate");
+  for (const tool of ["worker", "ws", "ticket"]) {
+    await f.member(
+      tool,
+      `
+      const { appendFile, mkdir, rm } = await import("node:fs/promises");
+      const lock = ${JSON.stringify(f.root)} + "/active-${tool}";
+      await mkdir(lock); // atomic: overlapping invocations of this member fail
+      await appendFile(${JSON.stringify(events)}, "start ${tool}\\n");
+      await Bun.write(${JSON.stringify(join(f.root, `started-${tool}`))}, "ready");
+      while (!(await Bun.file(${JSON.stringify(gate)}).exists())) await Bun.sleep(10);
+      await Bun.sleep(80);
+      await appendFile(${JSON.stringify(events)}, "end ${tool}\\n");
+      await rm(lock, { recursive: true });
+    `,
+    );
+  }
+  const first = f.run(["doctor", "--json", "--refresh"]);
+  await Promise.all(
+    ["worker", "ws", "ticket"].map((tool) =>
+      waitFor(join(f.root, `started-${tool}`)),
+    ),
+  );
+  const pending = Array.from({ length: 6 }, () =>
+    f.run(["doctor", "--json", "--refresh"]),
+  );
+  // Hold every member until all concurrent source CLIs have had time to join the queue.
+  await Bun.sleep(750);
+  await writeFile(gate, "go");
+  const results = await Promise.all([first, ...pending]);
+  for (const result of results) expect(result.exit, result.stderr).toBe(0);
+  const responses = results.map((result) => decode(result.stdout));
+  expect(
+    new Set(responses.slice(1).map((response) => response.captured_at)).size,
+  ).toBe(1);
+  expect(responses[1]?.captured_at).toBeGreaterThan(
+    responses[0]?.captured_at ?? 0,
+  );
+  const lines = (await Bun.file(events).text()).trim().split("\n");
+  for (const tool of ["worker", "ws", "ticket"]) {
+    expect(lines.filter((line) => line === `start ${tool}`).length).toBe(2);
+    expect(lines.filter((line) => line === `end ${tool}`).length).toBe(2);
+  }
+  expect(lines.slice(0, 3).every((line) => line.startsWith("start "))).toBe(
+    true,
+  );
+  expect(lines.slice(3, 6).every((line) => line.startsWith("end "))).toBe(true);
+  expect(lines.slice(6, 9).every((line) => line.startsWith("start "))).toBe(
+    true,
+  );
+  expect(lines.slice(9).every((line) => line.startsWith("end "))).toBe(true);
+});
+
+test("whole-request deadline kills a hanging collection and preserves the prior snapshot", async () => {
+  await using f = await fixture();
+  const good = await f.run();
+  expect(good.exit, good.stderr).toBe(0);
+  await f.member("worker", "await Bun.sleep(60000);");
+  const started = performance.now();
+  const result = await f.run([
+    "doctor",
+    "--json",
+    "--refresh",
+    "--timeout-ms",
+    "60000",
+    "--deadline-ms",
+    "200",
+  ]);
+  expect(performance.now() - started).toBeLessThan(2500);
+  expect(result.exit, result.stderr).toBe(2);
+  expect(decode(result.stdout)).toMatchObject({
+    stale: true,
+    complete: false,
+    captured_at: decode(good.stdout).captured_at,
+  });
+  expect(decode(result.stdout).error).toBeString();
+  expect(await Bun.file(join(f.state, "doctor-aggregate.json")).text()).toBe(
+    good.stdout,
+  );
+  await f.member("worker", "process.exitCode = 0;");
+  expect((await f.run()).exit).toBe(0);
+});
+
+test("a waiting caller has its own deadline and does not cancel the owner", async () => {
+  await using f = await fixture();
+  const started = join(f.root, "owner-started");
+  const gate = join(f.root, "owner-gate");
+  await f.member(
+    "worker",
+    `
+    await Bun.write(${JSON.stringify(started)}, "ready");
+    while (!(await Bun.file(${JSON.stringify(gate)}).exists())) await Bun.sleep(10);
+  `,
+  );
+  const owner = f.run(["doctor", "--json", "--refresh"]);
+  await waitFor(started);
+  const waiter = await f.run([
+    "doctor",
+    "--json",
+    "--refresh",
+    "--deadline-ms",
+    "100",
+  ]);
+  expect(waiter.exit, waiter.stderr).toBe(2);
+  expect(decode(waiter.stdout)).toMatchObject({
+    stale: true,
+    last_good_at: null,
+    complete: false,
+  });
+  expect(decode(waiter.stdout).error).toContain("waiting");
+  await writeFile(gate, "go");
+  const result = await owner;
+  expect(result.exit, result.stderr).toBe(0);
+  const status = await f.run(["status", "--json"]);
+  expect(status.exit, status.stderr).toBe(0);
+  expect(status.stdout).toContain('"error":null');
 });

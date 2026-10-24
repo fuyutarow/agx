@@ -6,10 +6,7 @@ import pkg from "../package.json" with { type: "json" };
 
 import { stateDir, checkState } from "./state-dir.ts";
 
-import {
-  DoctorAggregate,
-  doctorAggregatePath,
-} from "../../shared/src/doctor-aggregate.ts";
+import { readDoctorResponse, pollAfterMs } from "../../agx/src/refresh.ts";
 
 await checkState();
 
@@ -283,25 +280,25 @@ async function readStatus(env: NodeJS.ProcessEnv, cwd: string) {
       stale: snap.findings.stale,
     };
   }
-  const aggregateText = await Bun.file(doctorAggregatePath(env))
-    .text()
-    .catch((error: unknown) => {
-      const reason = z.object({ code: z.string() }).safeParse(error);
-      return reason.success && reason.data.code === "ENOENT" ? undefined : null;
-    });
-  if (aggregateText !== undefined) {
-    const aggregate = jsonOf(DoctorAggregate).safeParse(aggregateText);
-    statusFindings = aggregate.success
-      ? {
-          ...aggregate.data,
-          stale:
-            !aggregate.data.complete ||
-            aggregate.data.captured_at < Math.max(...times),
-        }
-      : null;
+  const aggregate = await readDoctorResponse(env);
+  if (aggregate !== undefined) {
+    statusFindings =
+      aggregate === null
+        ? null
+        : {
+            ...aggregate,
+            stale:
+              aggregate.stale ||
+              !aggregate.complete ||
+              Temporal.Now.instant().epochMilliseconds -
+                aggregate.captured_at >=
+                pollAfterMs ||
+              aggregate.captured_at < Math.max(...times),
+          };
   }
   return {
     schema: 1,
+    poll_after_ms: pollAfterMs,
     runs: runOutput,
     workspaces,
     findings: statusFindings,
@@ -355,7 +352,10 @@ else {
           description: "repository path (default: current directory)",
         },
       },
-      help: { description: "Read-only summary of agx state files." },
+      help: {
+        description:
+          "Read-only agx status; poll every 60s. Refresh via agx doctor --json --refresh.",
+      },
     },
     async (args) => {
       if (args.flags.json !== true) {
