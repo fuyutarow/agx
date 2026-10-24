@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.9.0 — 2026-10-25
+
+- Export writable AGX_RUN_DIR for worker results and promptly collect fully rejected workspaces with preserved results.
+
 ## 1.8.1 — 2026-10-25
 
 - Preserve complete preflight diagnostics and cover immediate ticket edits before repeated continuation dispatch.
