@@ -1,3 +1,4 @@
+import { newRoutingAudit, recordRoutingPick } from "./routing-events.ts";
 import { fromThrowable } from "neverthrow";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
@@ -104,7 +105,7 @@ const contextFor = async (path: string, cwd: string, ticket: NextTicket) => {
   };
   if (ticket.base_rev !== undefined && ticket.base_rev !== ctx.base_rev)
     return fatal(
-      `base_rev mismatch: ticket ${resolve(path)}, declared ${ticket.base_rev}, repository ${ctx.root}, worker ${cwd} commit ${ctx.base_rev ?? "unavailable"}`,
+      `base_rev mismatch: ticket ${resolve(path)}, declared ${ticket.base_rev}, repository ${ctx.root}, worker ${cwd} commit ${ctx.base_rev ?? null}`,
     );
   return ctx;
 };
@@ -261,6 +262,30 @@ export async function run(flags: Flags): Promise<number> {
   const cwd = resolve(value(flags, "cd") ?? process.cwd());
   if (path === undefined) return fatal("run requires positional TICKET", 2);
   const inspected = await preflight(path, cwd, flags);
+  if (inspected.temporary !== undefined || inspected.failures.length > 0) {
+    const audit = newRoutingAudit(
+      {
+        path: resolve(path),
+        sha256:
+          inspected.bytes === null || inspected.bytes === undefined
+            ? "unavailable"
+            : createHash("sha256").update(inspected.bytes).digest("hex"),
+        launch: true,
+      },
+      inspected.ticket?.capabilities,
+      inspected.ticket?.timeout_s,
+    );
+    audit.outcome_kind = "held";
+    audit.reason =
+      inspected.temporary?.message ??
+      (inspected.failures ?? []).map(String).join("; ");
+    if (inspected.loaded?.ok === true) {
+      audit.policy_version = inspected.loaded.provenance.policy_version;
+      audit.catalog_version = inspected.loaded.provenance.catalog_version;
+      audit.pick_temperature = inspected.loaded.value.auto.pick_temperature;
+    }
+    recordRoutingPick(null, "preflight-refusal", audit, "refusal");
+  }
   if (inspected.temporary !== undefined)
     return fatal(inspected.temporary.message, 75);
   if (inspected.failures.length > 0)
@@ -307,6 +332,12 @@ export async function run(flags: Flags): Promise<number> {
       routing.capabilities,
       routing.timeoutS,
       routing.maskedRows,
+      {},
+      {
+        path: resolve(path),
+        launch: true,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+      },
     ));
   const id = binding?.id ?? randomUUID();
   // The run owns its temp space: removed on any exit path (process.exit included); a SIGKILL

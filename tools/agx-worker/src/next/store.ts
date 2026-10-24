@@ -42,7 +42,10 @@ import { runHealth } from "./health.ts";
 import { ticketContext } from "./ticket-home.ts";
 import { Sandbox, SandboxSource } from "./sandbox.ts";
 
+import { recordRoutingPick } from "./routing-events.ts";
+
 export const PickAuditSchema = z.object({
+  audit: z.record(z.string(), z.unknown()).optional(),
   source: z.string(),
   anonymization_map: z.record(z.string(), z.string()).optional(),
   answer: z.unknown().optional(),
@@ -70,6 +73,22 @@ export type PickAudit = z.output<typeof PickAuditSchema>;
 let pendingPickAudit: PickAudit | undefined;
 export function setPendingPickAudit(audit: PickAudit): void {
   pendingPickAudit = audit;
+  if (audit.audit?.launch_expected !== true) return;
+  const root = stateDir();
+  process.once("exit", (exit) => {
+    if (
+      pendingPickAudit === audit &&
+      audit.audit !== undefined &&
+      audit.audit.ticket_path !== null
+    )
+      recordRoutingPick(
+        null,
+        "pre-start-failure",
+        { ...audit.audit, outcome_kind: "held", exit },
+        "pre-start failure",
+        root,
+      );
+  });
 }
 
 const EventSchema = z.discriminatedUnion("kind", [
@@ -228,7 +247,6 @@ export function append(
   const path = recordPath(root);
   mkdirSync(dirname(path), { recursive: true });
   const pickAudit = event.kind === "started" ? pendingPickAudit : undefined;
-  if (event.kind === "started") pendingPickAudit = undefined;
   const recorded =
     event.kind === "started" &&
     event.pick_audit === undefined &&
@@ -239,6 +257,25 @@ export function append(
     encoding: "utf8",
     flag: "a",
   });
+  if (event.kind === "started") pendingPickAudit = undefined;
+  if (event.kind === "ended") {
+    const origin = events(root).find(
+      (row) => row.kind === "started" && row.id === event.id,
+    );
+    if (origin?.kind === "started" && origin.pick_audit?.audit !== undefined)
+      recordRoutingPick(
+        null,
+        "lifecycle",
+        {
+          ...origin.pick_audit.audit,
+          outcome_kind: event.returned === true ? "returned" : "held",
+          run_id: event.id,
+          worker_outcome: event.outcome ?? null,
+        },
+        event.returned === true ? "returned" : "held",
+        root,
+      );
+  }
   schedulePublication(root);
 }
 

@@ -1,5 +1,5 @@
 import { fromThrowable } from "neverthrow";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { jevEndpoint, postJev } from "../../../shared/src/jev-client.ts";
 import { sampleRow } from "../selection.ts";
 import {
@@ -17,7 +17,11 @@ import { readRouteUsage } from "./usage.ts";
 import { foldedRuns, setPendingPickAudit } from "./store.ts";
 import { CAPACITY_COOLDOWN_MS, capacityRows } from "./capacity.ts";
 import { recordJevUsage } from "./jev-usage.ts";
-import { recordRoutingPick, recordRoutingRefusal } from "./routing-events.ts";
+import {
+  newRoutingAudit,
+  recordRoutingPick,
+  recordRoutingRefusal,
+} from "./routing-events.ts";
 
 const Reply = z.looseObject({
   answers: z.record(
@@ -171,6 +175,8 @@ export function blindCriterion(text: string, rows: readonly Choice[]): string {
         `${prefix}${first.toUpperCase()}`,
     );
 }
+const hash = (value: unknown) =>
+  createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
 export async function route(
   brief: string,
@@ -178,14 +184,22 @@ export async function route(
   timeoutS = 600,
   maskedRows: readonly string[] = [],
   rosterOptions: LoadRosterOptions = {},
+  ticket: { path: string; sha256: string; launch?: boolean } | null = null,
 ): Promise<Choice> {
+  const audit = newRoutingAudit(ticket, capabilities, timeoutS);
+  const refuse = (message: string, code: number): never => {
+    audit.reason = message;
+    audit.outcome_kind = "held";
+    recordRoutingPick(null, "refusal", audit, "refusal");
+    return exitWithError(message, code);
+  };
   const loaded = await loadRoster(rosterOptions);
   if (!loaded.ok)
-    return exitWithError(
-      `agx: cannot read dispatch roster: ${loaded.error}\n`,
-      1,
-    );
+    return refuse(`agx: cannot read dispatch roster: ${loaded.error}\n`, 1);
   const roster = loaded.value;
+  audit.policy_version = loaded.provenance.policy_version;
+  audit.catalog_version = loaded.provenance.catalog_version;
+  audit.pick_temperature = roster.auto.pick_temperature;
   const runs = await foldedRuns();
   const cooling = capacityRows(runs, roster.choice);
   const coolingNote =
@@ -193,7 +207,7 @@ export async function route(
       ? ""
       : `; capacity rows cooling down for up to ${CAPACITY_COOLDOWN_MS / 1000} s`;
   const endpoint = jevEndpoint(roster.auto.jev.url);
-  if (!endpoint.ok) return exitWithError(`agx: ${endpoint.error}\n`, 2);
+  if (!endpoint.ok) return refuse(`agx: ${endpoint.error}\n`, 2);
   let timeoutClass = "standard";
   if (timeoutS > 600) timeoutClass = "extended";
   if (timeoutS >= 3600) timeoutClass = "multi-hour";
@@ -202,24 +216,91 @@ export async function route(
   )
     ? 30
     : undefined;
-  const eligible = roster.choice
-    .filter(
-      (row) =>
-        (roster.auto.routes === undefined ||
-          roster.auto.routes.includes(row.route)) &&
-        !maskedRows.includes(row.id) &&
-        !cooling.has(row.id) &&
-        (minimumTb4 === undefined || (row.tb4 ?? 0) >= minimumTb4),
-    )
-    .toSorted(
-      (a, b) =>
-        ["low", "medium", "high", "xhigh", "max"].indexOf(a.effort) -
-        ["low", "medium", "high", "xhigh", "max"].indexOf(b.effort),
-    );
+  audit.timeout_class = timeoutClass;
+  const filters: {
+    reason: string;
+    before: string[];
+    after: string[];
+    removed: unknown[];
+  }[] = [];
+  const filter = (
+    rows: Choice[],
+    reason: string,
+    keep: (row: Choice) => boolean,
+    detail: (row: Choice) => unknown = () => null,
+  ) => {
+    const after = rows.filter((row) => keep(row));
+    filters.push({
+      reason,
+      before: rows.map((row) => row.id),
+      after: after.map((row) => row.id),
+      removed: rows
+        .filter((row) => !after.includes(row))
+        .map((row) => ({ row: row.id, detail: detail(row) })),
+    });
+    return after;
+  };
+  filters.push({
+    reason: "policy excluded",
+    before: loaded.provenance.before,
+    after: roster.choice.map((row) => row.id),
+    removed: loaded.provenance.excluded.map((row) => ({
+      row,
+      detail: "policy.route.exclude",
+    })),
+  });
+  audit.filters = filters;
+  let eligible = filter(
+    roster.choice,
+    "route not allowed",
+    (row) =>
+      roster.auto.routes === undefined ||
+      roster.auto.routes.includes(row.route),
+  );
+  eligible = filter(eligible, "masked", (row) => !maskedRows.includes(row.id));
+  eligible = filter(
+    eligible,
+    "capacity cooldown",
+    (row) => !cooling.has(row.id),
+  );
+  const beforeTb4 = eligible.filter((row) => row.id.startsWith("luna-"));
+  eligible = filter(
+    eligible,
+    "TB4 gate",
+    (row) => minimumTb4 === undefined || (row.tb4 ?? 0) >= minimumTb4,
+    (row) => ({
+      tb4: row.tb4 ?? null,
+      minimum: minimumTb4,
+      triggering_tags: capabilities.filter((tag) =>
+        ["terminal-agentic", "long-tool-loop"].includes(tag),
+      ),
+    }),
+  );
+  audit.tb4_removed_all_luna =
+    beforeTb4.length > 0 && !eligible.some((row) => row.id.startsWith("luna-"));
+  const beforeSort = eligible.map((row) => row.id);
+  eligible = eligible.toSorted(
+    (a, b) =>
+      ["low", "medium", "high", "xhigh", "max"].indexOf(a.effort) -
+      ["low", "medium", "high", "xhigh", "max"].indexOf(b.effort),
+  );
+  filters.push({
+    reason: "effort order",
+    before: beforeSort,
+    after: eligible.map((row) => row.id),
+    removed: [],
+  });
   const usage = await readRouteUsage(undefined, exhaustionPolicy(roster.auto));
-  const candidates = eligible.filter((row) => usage[row.route].available);
+  const candidates = filter(
+    eligible,
+    "route unavailable",
+    (row) => usage[row.route].available,
+    (row) => usage[row.route],
+  );
+  audit.filters = filters;
+  audit.usage_snapshot = usage;
   if (candidates.length === 0)
-    return exitWithError(
+    return refuse(
       eligible.length === 0
         ? `agx: no roster row satisfies required capabilities (${routeFilterLabel(roster.auto)})${coolingNote}\n`
         : "agx: all capability-eligible routes are at their subscription limit\n",
@@ -332,16 +413,26 @@ export async function route(
     },
   };
   if (roster.auto.jev.api === "typesafe") request.model = roster.auto.jev.model;
+  audit.input = request;
+  audit.input_sha256 = hash(request);
+  audit.input_truncated =
+    brief.length > Math.min(roster.auto.max_task_chars, 2400);
   const post = await postJev(endpoint.value, request, roster.auto.timeout_ms);
   const usageId = recordJevUsage(post, roster);
+  audit.usage_id = usageId;
+  audit.raw_reply = post.ok ? post.text : null;
+  audit.jev_model_version = post.ok ? (post.model ?? null) : null;
+  audit.request_failure = post.ok ? null : post.reason;
+  audit.http_status = post.ok ? post.status : null;
   const fallback =
     candidates.find((row) => row.id === roster.default) ?? candidates[0];
   if (fallback === undefined) return exitWithError("no routing candidates", 2);
   let rawAnswer: unknown = null;
-  const audit = (
+  const pickAudit = (
     source: string,
     probabilities: Record<string, number> | undefined,
   ) => ({
+    audit,
     source,
     probabilities: probabilities ?? null,
     answer: rawAnswer,
@@ -350,14 +441,42 @@ export async function route(
     usage_id: usageId,
     measured_evidence: measuredEvidence,
   });
+  let selectionMode = "fallback";
   const recordPick = (
     row: Choice,
     source: string,
     probabilities: Record<string, number> | undefined,
   ): Choice => {
-    recordRoutingPick(row, source);
+    audit.anonymization_map = anonymizationMap;
+    audit.measured_evidence = measuredEvidence;
+    audit.answer = rawAnswer;
+    audit.selection_mode = selectionMode;
+    audit.choice_probabilities = probabilities ?? null;
+    const ranked = Object.values(probabilities ?? {}).toSorted((a, b) => b - a);
+    audit.top_margin =
+      ranked.length >= 2 &&
+      Object.values(probabilities ?? {}).every(
+        (value) => Number.isFinite(value) && value >= 0 && value <= 1,
+      )
+        ? (ranked[0] ?? 0) - (ranked[1] ?? 0)
+        : null;
+    audit.outcome_kind = "selected";
+    if (selectionMode === "fallback") audit.outcome_kind = "fallback";
+    if (
+      source.includes("invalid") ||
+      source.includes("ineligible") ||
+      source.includes("missing-answer")
+    )
+      audit.outcome_kind = "invalid reply";
+    recordRoutingPick(
+      row,
+      source,
+      audit,
+      selectionMode === "fallback" ? "fallback" : "selected",
+    );
     setPendingPickAudit({
-      ...audit(source, probabilities),
+      ...pickAudit(source, probabilities),
+      audit,
       chosen_row: row.id,
     });
     return row;
@@ -375,13 +494,20 @@ export async function route(
   const probabilities = answer?.probabilities;
   const reason = ReturnReason.safeParse(selected);
   if (reason.success) {
+    audit.outcome_kind = "held";
+    audit.selection_mode = "return";
+    audit.anonymization_map = anonymizationMap;
+    audit.measured_evidence = measuredEvidence;
+    audit.answer = rawAnswer;
+    audit.choice_probabilities = probabilities ?? null;
+    recordRoutingPick(null, "jev-return", audit, "refusal");
     recordRoutingRefusal({
       ticket: brief,
       reason: reason.data,
       ...(probabilities?.[reason.data] === undefined
         ? {}
         : { probability: probabilities[reason.data] }),
-      pick_audit: audit("jev-return", probabilities),
+      pick_audit: pickAudit("jev-return", probabilities),
     });
     return exitWithError(
       `agx: ticket returned: ${reason.data}: ${returns[reason.data].criterion} Fix: ${returns[reason.data].fix}\n`,
@@ -407,16 +533,19 @@ export async function route(
             Object.hasOwn(anonymizationMap, id),
           ),
         );
+  const samplingSeed = randomUUID();
+  audit.sampling_seed = samplingSeed;
   const sampled =
     modelProbabilities === undefined
       ? undefined
       : sampleRow(
           modelProbabilities,
           roster.auto.pick_temperature,
-          randomUUID(),
+          samplingSeed,
         );
   const sampledRow = candidates.find(
     (row) => row.id === anonymizationMap[sampled?.row ?? ""],
   );
+  selectionMode = sampled?.mode ?? "choice";
   return recordPick(sampledRow ?? selectedRow, "jev", probabilities);
 }

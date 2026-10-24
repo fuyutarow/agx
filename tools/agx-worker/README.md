@@ -204,3 +204,10 @@ completion is `ok` when promised files changed and `no-change` when none changed
 both require a valid report and passing verification. See the full
 [receipt and outcome contract](contract.md#dispatch-receipt-and-run-outcomes)
 for all values, precedence, compatibility and exit semantics.
+
+Routing audits are retained in the private routing journal before worker startup.
+`agx worker stats --routing --json` reports row pick counts, top-two probability
+margins, TB4 luna exclusions, refusals and pre-start failures. Counts describe
+routing selections, including fallbacks, rather than worker success or rejection.
+See [the routing audit contract](contract.md#routing-audit-journal) for retained
+request, filtering, replay and missing-evidence semantics.

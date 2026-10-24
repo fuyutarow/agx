@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -139,6 +140,12 @@ export type RosterLoad =
       readonly ok: true;
       readonly value: Roster;
       readonly catalogRows: readonly Choice[];
+      readonly provenance: {
+        policy_version: string;
+        catalog_version: string;
+        before: string[];
+        excluded: string[];
+      };
     }
   | { readonly ok: false; readonly error: string };
 
@@ -240,7 +247,21 @@ export async function loadRoster(
     const generationError = generationExclusivityError(rosterResult.data);
     if (generationError !== undefined)
       return { ok: false, error: generationError };
-    return { ok: true, value: rosterResult.data, catalogRows: catalog.choice };
+    return {
+      ok: true,
+      value: rosterResult.data,
+      catalogRows: catalog.choice,
+      provenance: {
+        policy_version: createHash("sha256")
+          .update(JSON.stringify(policy))
+          .digest("hex"),
+        catalog_version: createHash("sha256")
+          .update(JSON.stringify(catalog))
+          .digest("hex"),
+        before: catalog.choice.map((row) => row.id),
+        excluded: policy.route.exclude,
+      },
+    };
   }).then(
     (result) => result,
     (error: unknown): RosterLoad => ({

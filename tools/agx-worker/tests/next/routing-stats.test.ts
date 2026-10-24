@@ -302,3 +302,48 @@ test("real roster CLI selections are persisted before any worker starts", async 
     expect(after.fallback_count).toBe(1);
   }
 });
+
+test("audit statistics count rows and margins independently of refusals and launch failures", () => {
+  const { root, env } = fixture();
+  const pick = {
+    ...event(1),
+    audit: { top_margin: 0.04, tb4_removed_all_luna: true },
+  };
+  writeFileSync(
+    join(root, "state/routing.jsonl"),
+    [
+      pick,
+      { ...pick, source: "fallback-invalid-response" },
+      { ...pick, row: null, route: null, outcome: "refusal" },
+      { ...pick, row: null, route: null, outcome: "pre-start failure" },
+    ]
+      .map((row) => JSON.stringify(row))
+      .join("\n") + "\n",
+  );
+  const result = stats(env, ["--routing", "--json", "--window", "24h"]);
+  expect(result.exitCode, result.stderr.toString()).toBe(0);
+  const parsed = jsonOf(
+    z.object({
+      per_row_pick_counts: z.record(z.string(), z.number()),
+      top1_minus_top2_margins: z.object({
+        count: z.number(),
+        values: z.array(z.number()),
+        unknown: z.number(),
+      }),
+      tb4_removed_all_luna_pick_count: z.number(),
+      refusal_count: z.number(),
+      pre_start_failure_count: z.number(),
+    }),
+  ).safeParse(result.stdout.toString());
+  expect(parsed.success).toBe(true);
+  if (!parsed.success) return;
+  expect(parsed.data.per_row_pick_counts).toEqual({ [pick.row]: 2 });
+  expect(parsed.data.top1_minus_top2_margins).toEqual({
+    count: 1,
+    values: [0.04],
+    unknown: 0,
+  });
+  expect(parsed.data.tb4_removed_all_luna_pick_count).toBe(2);
+  expect(parsed.data.refusal_count).toBe(1);
+  expect(parsed.data.pre_start_failure_count).toBe(1);
+});

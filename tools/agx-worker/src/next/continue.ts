@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { resolve } from "node:path";
 import { exhaustionPolicy, loadRoster, type Choice } from "../roster/index.ts";
 import { exitWithError } from "./exit.ts";
 import { foldedRuns } from "./store.ts";
@@ -67,6 +69,14 @@ export async function pinContinuation(
       routing.capabilities,
       routing.timeoutS,
       [...routing.maskedRows, previous.row, ...masked],
+      {},
+      {
+        path: resolve(ticketPath),
+        launch: true,
+        sha256: createHash("sha256")
+          .update(new Uint8Array(await Bun.file(ticketPath).arrayBuffer()))
+          .digest("hex"),
+      },
     );
     // Verified with `codex exec resume --help`: -m/--model overrides the resumed model.
     if (

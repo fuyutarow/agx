@@ -308,6 +308,7 @@ async function main(): Promise<void> {
         name: "agx-worker stats",
         parameters: [],
         flags: {
+          json: { type: Boolean, description: "JSON output (routing)" },
           importLegacy: {
             type: Boolean,
             description: "import legacy agx JSONL records",
@@ -338,6 +339,7 @@ async function main(): Promise<void> {
     );
     if (
       parsed._.length > 0 ||
+      (parsed.flags.routing !== true && parsed.flags.json === true) ||
       (parsed.flags.routing === true && parsed.flags.importLegacy === true) ||
       (parsed.flags.usage !== undefined &&
         (parsed.flags.usage !== "jev" ||
@@ -350,7 +352,7 @@ async function main(): Promise<void> {
         parsed.flags.window !== undefined)
     ) {
       process.stderr.write(
-        "agx worker stats: --window requires --routing or --usage jev; --host requires --routing; usage, routing and import-legacy are exclusive; no positional arguments\n",
+        "agx worker stats: --window requires --routing or --usage jev; --host and --json require --routing; usage, routing and import-legacy are exclusive; no positional arguments\n",
       );
       exit = 2;
     } else if (parsed.flags.usage === "jev") {

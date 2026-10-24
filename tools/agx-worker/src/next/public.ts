@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { resolve } from "node:path";
 import { attempt, errorMessage } from "../../../shared/src/attempt.ts";
 import { parseNextTicket } from "./ticket.ts";
 import { route } from "./route.ts";
@@ -23,6 +25,12 @@ export async function roster(ticketPath?: string): Promise<number> {
       source.value,
       parsed.ticket.capabilities,
       parsed.ticket.timeout_s ?? 600,
+      [],
+      {},
+      {
+        path: resolve(ticketPath),
+        sha256: createHash("sha256").update(source.value).digest("hex"),
+      },
     );
     process.stdout.write(`${JSON.stringify(row)}\n`);
     return 0;

@@ -48,7 +48,21 @@ export async function routingStats(
         const at = Temporal.Instant.from(event.at).epochMilliseconds;
         return event.host === host && at >= bounds.startMs && at < bounds.endMs;
       });
-      const picks = selected.filter((event) => event.source === "jev");
+      const selections = selected.filter((event) => event.row !== null);
+      const picks = selections.filter((event) => event.source === "jev");
+      const perRow = Object.fromEntries(
+        [...new Set(selections.map((event) => event.row))].map((row) => [
+          row ?? "unknown",
+          selections.filter((event) => event.row === row).length,
+        ]),
+      );
+      const margins = picks
+        .flatMap((event) =>
+          typeof event.audit?.top_margin === "number"
+            ? [event.audit.top_margin]
+            : [],
+        )
+        .toSorted((a, b) => a - b);
       const codex = picks.filter((event) => event.route === "codex").length;
       const local = host === hostname();
       const loaded = local ? await loadRoster() : undefined;
@@ -82,7 +96,21 @@ export async function routingStats(
           codex_pick_count: codex,
           codex_share: picks.length === 0 ? null : codex / picks.length,
         },
-        fallback_count: selected.length - picks.length,
+        fallback_count: selections.length - picks.length,
+        per_row_pick_counts: perRow,
+        top1_minus_top2_margins: {
+          count: margins.length,
+          values: margins,
+          unknown: picks.length - margins.length,
+        },
+        tb4_removed_all_luna_pick_count: selections.filter(
+          (event) => event.audit?.tb4_removed_all_luna === true,
+        ).length,
+        refusal_count: selected.filter((event) => event.outcome === "refusal")
+          .length,
+        pre_start_failure_count: selected.filter(
+          (event) => event.outcome === "pre-start failure",
+        ).length,
         routes: {
           codex: capability(local, enabled("codex"), "codex", usage?.codex),
           claude: capability(local, enabled("claude"), "claude", usage?.claude),

@@ -950,3 +950,30 @@ The pick audit's `measured_evidence`, keyed by blinded option ID, saves judged a
 accepted counts, displayed percent, eligible ended-run count, displayed median
 minutes and exact evidence text for every candidate, including fallback picks
 and ticket returns. The audit retains the separate private anonymization map.
+
+### Routing audit journal
+
+`routing.jsonl` retains each selection before a worker starts, independently of
+worker judgments. Its optional `audit` adds a decision UUID, ticket path and
+SHA-256, exact structured Jev input and SHA-256 of its JSON serialization,
+truncation flag, ordered before/after filter traces and removal details,
+capability tags, timeout class, effective temperature and selection mode,
+normalized complete policy/catalog SHA-256 hashes (before exclusions), returned model version, redacted raw reply,
+usage ID, sampling seed and top-two probability margin. Null means unavailable
+or no request sent. No environment object or authorization headers are retained.
+The sampling seed permits replay through the existing selection guard.
+
+Refusal records have null row/route and outcome `refusal`; their audit outcome kind is `held` because no row was selected. The first filter records policy exclusions before route eligibility filters. Selected requests
+that exit before a started receipt have an additional `pre-start failure`
+record with the same decision ID. Ended workers add `returned` or `held`
+lifecycle evidence; these records do not count as picks or worker rejects.
+Preview calls do not count as pre-start failures. SIGKILL cannot execute an exit
+hook; a selection without a subsequent receipt remains evidence of an unknown
+launch outcome.
+
+Routing stats add `per_row_pick_counts` (all Jev and fallback selections),
+`top1_minus_top2_margins` (sorted values, known count and unknown count for Jev
+picks), `tb4_removed_all_luna_pick_count` (the TB4 stage had luna rows and
+removed all of them), `refusal_count`, and `pre_start_failure_count`.
+Legacy records remain readable and contribute picks but no invented margins.
+No tie threshold, cheaper-row preference or exploration policy is introduced.

@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { routingEvents } from "../../src/next/routing-events.ts";
+import { sampleRow } from "../../src/selection.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
@@ -1211,4 +1214,129 @@ test("local record evidence follows each blinded option and survives the pick au
     median_wall_minutes: 5.1,
     text: "agx measured: 84% of 25 judged runs accepted, median 5.1 min.",
   });
+});
+test("audit retains the exact request and replays the existing sampling guard", async () => {
+  await isolateState();
+  const server = startServer("sol-medium", {
+    "sol-medium": 0.36,
+    "sonnet-high": 0.32,
+    "sol-high": 0.32,
+  });
+  const selected = await route("x".repeat(3000), ["terminal-agentic"], 900, [
+    "sol-low",
+  ]);
+  const journal = routingEvents();
+  const decision = journal.events.at(-1);
+  const audit = decision?.audit;
+  expect(audit?.input).toEqual(server.rawRequest());
+  expect(audit?.input_sha256).toBe(
+    createHash("sha256")
+      .update(server.rawBody() ?? "")
+      .digest("hex"),
+  );
+  expect(audit?.input_truncated).toBe(true);
+  expect(audit?.timeout_class).toBe("extended");
+  expect(audit?.capability_tags).toEqual(["terminal-agentic"]);
+  expect(audit?.filters).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        reason: "masked",
+        removed: [{ row: "sol-low", detail: null }],
+      }),
+    ]),
+  );
+  expect(audit?.top_margin).toBeCloseTo(0.04);
+  const replay = z
+    .object({
+      choice_probabilities: z.record(z.string(), z.number()),
+      pick_temperature: z.number(),
+      sampling_seed: z.string(),
+    })
+    .safeParse(audit);
+  expect(replay.success).toBe(true);
+  if (!replay.success) return;
+  expect(
+    sampleRow(
+      replay.data.choice_probabilities,
+      replay.data.pick_temperature,
+      replay.data.sampling_seed,
+    )?.row,
+  ).toBe(
+    Object.entries(server.wireIds()).find(([id]) => id === selected.id)?.[1],
+  );
+  const started = appendStarted(selected.id);
+  if (started?.kind === "started")
+    expect(started.pick_audit?.audit).toEqual(audit);
+});
+
+const auditFields = [
+  "decision_id",
+  "ticket_path",
+  "ticket_sha256",
+  "input",
+  "input_sha256",
+  "input_truncated",
+  "filters",
+  "capability_tags",
+  "timeout_class",
+  "pick_temperature",
+  "selection_mode",
+  "policy_version",
+  "catalog_version",
+  "jev_model_version",
+  "raw_reply",
+  "outcome_kind",
+  "usage_id",
+];
+
+for (const choice of ["sol-medium", "not-a-row"]) {
+  test(`audit field coverage for ${choice}`, async () => {
+    await isolateState();
+    startServer(choice);
+    await route(
+      "fixture",
+      [],
+      600,
+      [],
+      {},
+      { path: "/fixture/ticket.md", sha256: "fixture-hash" },
+    );
+    const decision = routingEvents().events.at(-1);
+    for (const field of auditFields)
+      expect(Object.hasOwn(decision?.audit ?? {}, field)).toBe(true);
+    expect(decision?.audit?.raw_reply).toContain(
+      choice === "sol-medium" ? "model_" : choice,
+    );
+    expect(decision?.audit?.ticket_path).toBe("/fixture/ticket.md");
+    expect(JSON.stringify(decision)).not.toContain("TYPESAFE_API_KEY");
+  });
+}
+
+test("refusal and pre-start failure retain full audit fields without a started receipt", async () => {
+  await isolateState();
+  startServer("sol-medium");
+  const modulePath = new URL("../../src/next/route.ts", import.meta.url)
+    .pathname;
+  for (const masked of [[], ["all"]]) {
+    const child = Bun.spawn(
+      [
+        process.execPath,
+        "--eval",
+        `import {route} from ${JSON.stringify(modulePath)}; import {loadRoster} from ${JSON.stringify(new URL("../../src/roster/index.ts", import.meta.url).pathname)}; const loaded = await loadRoster(); const masked = ${JSON.stringify(masked)}.length && loaded.ok ? loaded.value.choice.map(row => row.id) : []; await route("fixture", [], 600, masked, {}, {path:"/fixture/ticket.md", sha256:"fixture-hash", launch:true}); process.exit(1);`,
+      ],
+      { env: process.env, stdout: "pipe", stderr: "pipe", timeout: 5000 },
+    );
+    const [exit] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    expect(exit).toBe(masked.length === 0 ? 1 : 2);
+    const event = routingEvents().events.at(-1);
+    expect(event?.outcome).toBe(
+      masked.length === 0 ? "pre-start failure" : "refusal",
+    );
+    for (const field of auditFields)
+      expect(Object.hasOwn(event?.audit ?? {}, field)).toBe(true);
+  }
 });
