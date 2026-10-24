@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.10.1 — 2026-10-25
+
+- Keep workspace gc dry-runs read-only with unwritable repository parents and state directories
+
 ## 1.10.0 — 2026-10-25
 
 - Refuse tickets without declared write scope or acceptance basis before model routing and record ticket hashes
