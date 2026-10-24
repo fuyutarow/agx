@@ -2,6 +2,7 @@ import { prepareTicketRepo } from "../ticket-repo.ts";
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import {
   existsSync,
+  chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -32,6 +33,10 @@ const fixture = async (ticketName = "pin") => {
   );
   roots.push(root);
   await prepareTicketRepo(root);
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "mise"), '#!/usr/bin/env bun\nconsole.log("{}");\n');
+  chmodSync(join(bin, "mise"), 0o755);
   const state = join(root, "state");
   mkdirSync(state, { recursive: true });
   const seed = (id: string, row: string, session: string | null) => [
@@ -84,14 +89,14 @@ const fixture = async (ticketName = "pin") => {
     entry = "tools/agx-worker/src/next/cli.ts",
     compiled = false,
     sandboxArgs: string[] = ["--sandbox", "read-only"],
+    command = "run",
   ) =>
     Bun.spawnSync(
       [
         ...(compiled ? [entry] : [process.execPath, entry]),
-        "run",
+        command,
         ticket,
-        "--cd",
-        root,
+        ...(command === "run" ? ["--cd", root] : []),
         ...sandboxArgs,
         ...(id === undefined ? [] : ["--continue", id]),
       ],
@@ -99,7 +104,10 @@ const fixture = async (ticketName = "pin") => {
         cwd: process.cwd(),
         env: {
           ...process.env,
+          PATH: `${bin}:${process.env.PATH}`,
           AGX_STATE_DIR: state,
+          MISE_GLOBAL_CONFIG_FILE: join(root, "mise-config.toml"),
+          XDG_CONFIG_HOME: join(root, "config"),
           AGX_TMP_ROOT: join(root, "agx-tmp"),
           JEV_URL: "http://127.0.0.1:1/choice",
           AGX_WORKER_BIN: worker,
@@ -302,6 +310,64 @@ const Started = z.looseObject({
 });
 const Receipt = z.looseObject({ id: z.string(), row: z.string() });
 
+test("dispatch immediately after a ticket edit agrees on both attempts", async () => {
+  const f = await fixture();
+  const bin = join(f.root, "bin");
+  mkdirSync(bin, { recursive: true });
+  // Mock only the service boundary; dispatch and its child check are real.
+  for (const [name, body] of [
+    ["systemctl", "process.exitCode = 3;"],
+    [
+      "systemd-run",
+      `
+const args = process.argv.slice(2);
+const binding = JSON.parse(args[args.indexOf("--dispatch-binding") + 1]);
+const { appendFileSync } = await import("node:fs");
+const started = { kind: "started", ...binding, at: "2026-10-25T00:00:00Z", cwd: binding.workspace, writes: [], row: "terra-high", dispatcher_session: null, vendor_session: "continued", pid: 0 };
+const ended = { kind: "ended", id: binding.id, at: "2026-10-25T00:01:00Z", exit: 0, report_path: null, vendor_session: "continued", verify: [] };
+appendFileSync(${JSON.stringify(join(f.state, "records.jsonl"))}, JSON.stringify(started) + "\\n" + JSON.stringify(ended) + "\\n");
+`,
+    ],
+  ]) {
+    const path = join(bin, name!);
+    writeFileSync(path, `#!/usr/bin/env bun\n${body}\n`);
+    chmodSync(path, 0o755);
+  }
+  const env = { PATH: `${bin}:${process.env.PATH}` };
+  for (const missing of [false, true]) {
+    writeFileSync(
+      f.ticket,
+      ticketText("edited immediately before dispatch").replace(
+        "verify = []",
+        `verify = []\npremises = ["file:${missing ? "missing" : "agx.toml"}"]`,
+      ),
+    );
+    const results = Array.from({ length: 2 }, () =>
+      f.resume(
+        "codex-run",
+        env,
+        undefined,
+        false,
+        ["--sandbox", "none"],
+        "dispatch",
+      ),
+    );
+    expect(
+      results.map((result) => result.exitCode),
+      results.map((result) => result.stderr.toString()).join("\n"),
+    ).toEqual(missing ? [2, 2] : [0, 0]);
+    for (const result of missing ? results : []) {
+      const err = result.stderr.toString().trim();
+      expect(err.split("\n")).toHaveLength(1);
+      expect(err).toContain("file:missing: file does not exist");
+      expect(err).toContain("check=worker-check expected=0 observed=2");
+    }
+    if (missing) {
+      expect(results[0]!.stderr.toString()).toBe(results[1]!.stderr.toString());
+    }
+  }
+}, 30000);
+
 describe("agx worker run --continue pins the prior row", () => {
   test.each(["design_g5", "Design-G5"])(
     "legacy ticket %s resumes on its pinned row",
@@ -447,7 +513,6 @@ test.each([false, true])(
     mkdirSync(bin, { recursive: true });
     const xmsg = join(bin, "xmsg");
     await Bun.write(xmsg, "#!/bin/sh\nprintf 'dispatcher xmsg\\n'\n");
-    const { chmodSync } = await import("node:fs");
     chmodSync(xmsg, 0o755);
     const mise = join(bin, "mise");
     await Bun.write(

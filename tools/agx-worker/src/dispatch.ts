@@ -580,7 +580,7 @@ export async function dispatch(options: {
     );
   if (failures.length > 0) {
     process.stderr.write(
-      `agx worker dispatch: preflight failed ${tree}; check exit=${checked.code}: ${failures.join("; ")}\n`,
+      `agx worker dispatch: preflight failed ${tree}; check=worker-check expected=0 observed=${checked.code}; check exit=${checked.code}: ${failures.join("; ")}\n`,
     );
     return 2;
   }

@@ -10,14 +10,37 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { prepareTicketRepo } from "../ticket-repo.ts";
 import { parseNextTicket } from "../../src/next/ticket.ts";
+import { checkPremises } from "../../src/premises.ts";
 
 const roots: string[] = [];
+
+test("premise refusal preserves the first diagnostic line and all observed output", () => {
+  const output =
+    "first failure reason\ncontext one\ncontext two\ncontext three\nlast detail\n";
+  const result = checkPremises(["rev:missing"], tmpdir(), {
+    runner: () => ({ exitCode: 1, output }),
+  });
+  expect(result.status).toBe("missing");
+  if (result.status !== "missing") return;
+  expect(result.details[0]).toContain(output.trim());
+  expect(result.details[0]).toContain(
+    "check=rev-exists expected=true observed=false exit=1",
+  );
+});
 function inheritedEnv() {
   const env = { ...process.env };
   Reflect.deleteProperty(env, "AGX_NEXT_STATE_DIR");
+  env.MISE_GLOBAL_CONFIG_FILE = join(tmpdir(), "agx-preflight-mise.toml");
+  env.XDG_CONFIG_HOME = join(tmpdir(), "agx-preflight-config");
+  const bin = join(tmpdir(), "preflight-bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, "mise"), '#!/usr/bin/env bun\nconsole.log("{}");\n');
+  chmodSync(join(bin, "mise"), 0o755);
+  env.PATH = `${bin}:${process.env.PATH}`;
   return env;
 }
 afterEach(async () => {
@@ -78,7 +101,7 @@ test("public check warns about user bus and shared VCS store without changing ti
       {
         env: {
           ...inheritedEnv(),
-          PATH: `${bin}:${process.env.PATH}`,
+          PATH: `${bin}:${inheritedEnv().PATH}`,
           AGX_STATE_DIR: join(root, "state"),
           XDG_STATE_HOME: join(root, "xdg-state"),
           XDG_CONFIG_HOME: join(root, "config"),
@@ -249,7 +272,6 @@ test("check warns only about overlapping runs whose ticket or workspace shares t
 test("inspection deadlines stay operational across VCS, mise and premise reads", async () => {
   const { treeRead } = await import("../../src/next/ticket-home.ts");
   const { verificationEnvironment } = await import("../../src/next/verify.ts");
-  const { checkPremises } = await import("../../src/premises.ts");
   const { InspectionTimeout } =
     await import("../../../shared/src/agx-config.ts");
   const root = await mkdtemp(join(tmpdir(), "agx-inspection-timeout-"));

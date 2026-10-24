@@ -455,6 +455,9 @@ export function printPreflightFailures(
   const lines = failures.map((failure) =>
     failure instanceof AgxConfigError ? failure.message : `agx: ${failure}`,
   );
-  for (const line of new Set(lines)) process.stderr.write(`${line}\n`);
+  for (const line of new Set(lines))
+    process.stderr.write(
+      `${line.replaceAll(/[\r\n]+/gu, "; ")}; check=launch-premises expected=satisfied observed=refused\n`,
+    );
   return 2;
 }

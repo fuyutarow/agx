@@ -38,11 +38,10 @@ const runCommand: CommandRunner = (argv, cwd, timeoutMs) => {
   };
 };
 
-const outputTail = (output: string): string => {
+const outputDetail = (output: string): string => {
   const lines = output
     .trim()
     .split(/\r?\n/u)
-    .slice(-3)
     .map((line) => line.trim());
   return lines.length === 0 || (lines.length === 1 && lines[0] === "")
     ? "(no output)"
@@ -145,7 +144,7 @@ function bookmarkExists(
   return {
     status: "ok",
     exists: result.exitCode === 0 && (jjRepo ? existsInJj : existsInGit),
-    detail: `${premise}: ${outputTail(result.output)}`,
+    detail: `${premise}: check=bookmark-exists expected=true observed=false exit=${result.exitCode}; ${outputDetail(result.output)}`,
   };
 }
 
@@ -181,7 +180,7 @@ function simpleCommandExists(
   return {
     status: "ok",
     exists,
-    detail: `${premise}: ${outputTail(result.output)}`,
+    detail: `${premise}: check=${kind}-exists expected=true observed=false exit=${result.exitCode}; ${outputDetail(result.output)}`,
   };
 }
 
@@ -217,7 +216,9 @@ export function checkPremises(
       !existsSync(resolve(cwd, premise.slice("file:".length)))
     ) {
       missing.push(premise);
-      details.push(`${premise}: file does not exist`);
+      details.push(
+        `${premise}: file does not exist; check=file-exists expected=true observed=false`,
+      );
     }
   }
 
