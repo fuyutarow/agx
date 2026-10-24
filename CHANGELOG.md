@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.6.2 — 2026-10-24
+
+- Keep workspaces containing non-regenerable untracked or ignored files and fail closed when inventory is unavailable.
+
 ## 1.6.1 — 2026-10-24
 
 - Judge workspace GC by current unlanded content instead of accepted run commit reachability.
