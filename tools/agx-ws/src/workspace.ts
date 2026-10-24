@@ -31,6 +31,7 @@ import {
 } from "../../shared/src/attempt.ts";
 import { acquire, pidAlive } from "../../shared/src/dir-lock.ts";
 import { stateDir } from "./state-dir.ts";
+import { indexedWorkspaces, recordWorkspace } from "./workspace-index.ts";
 import { validateSlug } from "../../shared/src/slug.ts";
 import { fromThrowable, jsonOf, z } from "../../shared/src/zod.ts";
 import { jjWorkspace, refLocks } from "./jj-workspace.ts";
@@ -567,8 +568,10 @@ export async function add(options: AddOptions): Promise<Attempt<string>> {
       if (!names.ok) return names;
       const present = existsSync(dir);
       if (present) {
-        if (options.reuse === true && names.value.includes(name))
-          return good(dir);
+        if (options.reuse === true && names.value.includes(name)) {
+          const recorded = await recordWorkspace(repo.value.backing, dir);
+          return recorded.ok ? good(dir) : recorded;
+        }
         return bad(`${dir} already exists`);
       }
       if (names.value.includes(name))
@@ -595,6 +598,9 @@ export async function add(options: AddOptions): Promise<Attempt<string>> {
         false,
       );
       if (!made.ok) return made;
+      // Record immediately: failed readiness may retain the new workspace.
+      const recorded = await recordWorkspace(repo.value.backing, dir);
+      if (!recorded.ok) return recorded;
       const ready = await readyWorkspace(dir, cfg.value, options.json === true);
       if (!ready.ok) {
         enterStep("roll back workspace readiness failure");
@@ -791,7 +797,7 @@ async function removalGuard(
 async function agxRecords(cwd: string): Promise<Attempt<RunRecord[]>> {
   if (Bun.which("agx") === null)
     return bad("agx is not on PATH: mise run deps");
-  const ran = await exec(["agx", "worker", "ls", "--json"], cwd);
+  const ran = await exec(["agx", "worker", "ls", "--all", "--json"], cwd);
   if (!ran.ok) return bad(`agx worker ls --json: ${msg(ran)}`);
   if (ran.value.code !== 0)
     return bad(
@@ -889,7 +895,7 @@ async function landBusy(state: string): Promise<boolean> {
   );
 }
 
-/** Enumeration and path resolution both come from this repository's jj record. */
+/** Enumerate jj registrations and verify sibling workspace ownership before admission. */
 async function workspaces(repo: Repo): Promise<Attempt<Workspace[]>> {
   const listed = await jjOut(
     [
@@ -925,6 +931,26 @@ async function workspaces(repo: Repo): Promise<Attempt<Workspace[]>> {
     const dir = resolve(repo.backing, resolvedRoot);
     if (realOr(dir) !== realOr(repo.backing))
       found.push({ name, dir, change: change ?? "?", age: age ?? "?" });
+  }
+  const siblings = await attempt(() =>
+    readdir(repo.wsRoot, { withFileTypes: true }),
+  );
+  if (
+    !siblings.ok &&
+    !z.object({ code: z.literal("ENOENT") }).safeParse(siblings.error).success
+  )
+    return siblings;
+  for (const entry of siblings.ok ? siblings.value : []) {
+    if (!entry.isDirectory() || !entry.name.startsWith("ws_")) continue;
+    const dir = join(repo.wsRoot, entry.name);
+    if (found.some((ws) => realOr(ws.dir) === realOr(dir))) continue;
+    const owner = jjWorkspace(dir);
+    if (
+      owner.ok &&
+      owner.value.root === realOr(dir) &&
+      owner.value.backingRoot === repo.backing
+    )
+      found.push({ name: entry.name, dir, change: "?", age: "?" });
   }
   return good(found);
 }
@@ -1925,7 +1951,7 @@ async function classify(
 function gcCounts(lines: string[]) {
   const rows = lines
     .map((line) => line.split("\t"))
-    .filter((row) => row[2] !== "collected");
+    .filter((row) => row[1] !== "repo" && row[2] !== "collected");
   return {
     total: rows.length,
     unlanded: rows.filter((row) => row[2] === "unlanded").length,
@@ -1940,6 +1966,13 @@ type GcResult = {
   failed: string[];
   counts: ReturnType<typeof gcCounts>;
   complete: boolean;
+  repositories?: Array<{
+    root: string;
+    sources: string[];
+    status: string;
+    counts: ReturnType<typeof gcCounts>;
+  }>;
+  discovery?: { state: number; record: number; L2: number; note: string };
 };
 
 /** Inventory disk entries against the saved snapshot; never follow directory symlinks. */
@@ -2325,40 +2358,87 @@ export function doctorFindings(rows: DoctorWorkspaceRow[]): string[] {
   return findings;
 }
 
-/** Fleet-wide gc over explicitly registered L2 repositories. */
+/** Discover from creation history, every run and optional machine policy. */
 export async function gcAll(
   options: Omit<GcOptions, "repo">,
   _root?: string,
 ): Promise<Attempt<GcResult>> {
-  const roots = await registeredRepoPaths();
-  if (!roots.ok) return roots;
+  const index = await indexedWorkspaces();
+  if (!index.ok) return index;
+  const registered = await registeredRepoPaths();
+  if (!registered.ok) return registered;
+  const records = await agxRecords(process.cwd());
+  if (!records.ok) return records;
+  const roots = new Map<string, Set<string>>();
+  const addRoot = (path: string, source: string) => {
+    const repo = resolveRepo(path);
+    const root = repo.ok ? repo.value.backing : resolve(path);
+    const sources = roots.get(root) ?? new Set<string>();
+    sources.add(source);
+    roots.set(root, sources);
+  };
+  for (const entry of index.value) addRoot(entry.root, "state");
+  for (const path of records.value.flatMap((record) => [
+    record.workspace,
+    record.cwd,
+  ])) {
+    if (path === undefined || path === null || path === "") continue;
+    const repo = resolveRepo(path);
+    if (repo.ok) addRoot(repo.value.backing, "record");
+  }
+  for (const root of registered.value) addRoot(root, "L2");
   const lines: string[] = [];
   const failed: string[] = [];
   const seen = new Set<string>();
-  for (const path of roots.value) {
-    const expanded = path.startsWith("~/")
-      ? join(homedir(), path.slice(2))
-      : path;
-    const repo = resolveRepo(expanded);
+  const repositories: NonNullable<GcResult["repositories"]> = [];
+  for (const [path, sources] of [...roots].toSorted(([a], [b]) =>
+    a.localeCompare(b),
+  )) {
+    const repo = resolveRepo(path);
     if (!repo.ok) {
       failed.push(path);
-      lines.push(`${path}\trepo\tFAILED\t?\t?\t${msg(repo)}`);
+      repositories.push({
+        root: path,
+        sources: [...sources].toSorted(),
+        status: "unreachable",
+        counts: gcCounts([]),
+      });
       continue;
     }
-    if (seen.has(repo.value.backing)) continue;
     seen.add(repo.value.backing);
     const done = await gc({ ...options, repo: repo.value.backing });
     if (!done.ok) {
       failed.push(path);
+      repositories.push({
+        root: path,
+        sources: [...sources].toSorted(),
+        status: "FAILED",
+        counts: gcCounts([]),
+      });
       lines.push(`${path}\trepo\tFAILED\t?\t?\t${msg(done)}`);
       continue;
     }
+    repositories.push({
+      root: path,
+      sources: [...sources].toSorted(),
+      status: done.value.complete ? "complete" : "incomplete",
+      counts: done.value.counts,
+    });
     lines.push(...done.value.lines);
     failed.push(...done.value.failed);
   }
+  const discovery = {
+    state: repositories.filter((repo) => repo.sources.includes("state")).length,
+    record: repositories.filter((repo) => repo.sources.includes("record"))
+      .length,
+    L2: repositories.filter((repo) => repo.sources.includes("L2")).length,
+    note: "unindexed historical repositories are not covered",
+  };
   const result = {
     lines,
     failed,
+    repositories,
+    discovery,
     counts: gcCounts(lines),
     complete:
       failed.length === 0 &&

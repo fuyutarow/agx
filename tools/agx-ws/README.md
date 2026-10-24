@@ -178,3 +178,20 @@ from directory names. Set `AGX_WS_LEGACY_PREFIX` to an additional literal prefix
 (including its trailing separator) to adopt a consumer's older layout. Orphan
 inventory includes that prefix only when jj confirms the workspace belongs to the
 selected backing repository. Unset or empty means no additional prefix.
+
+`gc --all` discovers repositories from the append-only
+`$AGX_STATE_DIR/workspace-index.jsonl` creation history, every run's workspace
+and cwd via `agx worker ls --all --json`, and optional machine-local L2 files.
+`add` (including `--reuse`) records the repository root and workspace path;
+no manual repository registration is needed. Each discovered repository's
+sibling `<root>.ws/` is also inspected, admitting only local jj workspaces
+belonging to that repository. Existing GC protection rules still apply.
+
+Text output includes a discovery summary and a repository row with its sources
+(`state`, `record`, `L2`), status and workspace counts. JSON output adds
+`repositories` and `discovery` alongside the existing workspace `rows` and
+`counts`. Counts describe classified workspaces, excluding repository summary
+rows; source counts describe distinct repositories and can overlap. Unreachable
+roots have zero inspected workspaces, are reported explicitly, cause a nonzero
+exit, and are never collected. Unindexed historical repositories outside all
+three sources are not covered; the discovery summary states this limitation.

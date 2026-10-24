@@ -234,7 +234,8 @@ const gcCommand = command(
       },
       all: {
         type: Boolean,
-        description: "visit every repository registered by an agx L2 file",
+        description:
+          "visit repositories discovered from creation state, all run records and L2 policy",
       },
       includeUnrecorded: {
         type: Boolean,
@@ -269,10 +270,21 @@ const gcCommand = command(
           rows,
           counts: done.value.counts,
           complete: done.value.complete,
+          repositories: done.value.repositories,
+          discovery: done.value.discovery,
         }) + "\n",
       );
-    } else
+    } else {
+      if (done.value.discovery !== undefined)
+        process.stdout.write(
+          `discovery\t${JSON.stringify(done.value.discovery)}\n`,
+        );
+      for (const repo of done.value.repositories ?? [])
+        process.stdout.write(
+          `${repo.root}\trepo\t${repo.status}\t${repo.sources.join(",")}\t${JSON.stringify(repo.counts)}\n`,
+        );
       for (const line of done.value.lines) process.stdout.write(`${line}\n`);
+    }
     if (done.value.failed.length > 0)
       fail(`could not collect: ${done.value.failed.join(", ")}`);
   },

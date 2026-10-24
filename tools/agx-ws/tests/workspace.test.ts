@@ -1947,12 +1947,25 @@ describe("gc integration branches", () => {
     expect(await Bun.file(join(dir, "a.txt")).exists()).toBe(true);
   });
 
-  test("all visits exactly the L2 repositories once in an isolated config", async () => {
+  test("all unions creation state and L2 repositories once in an isolated config", async () => {
+    const allEnv = baseEnv({ AGX_STATE_DIR: join(scratch, "all-state") });
     const primary = await repo('trunk = "main"\n');
     const consumer = await repo('trunk = "main"\n');
     const pending = await repo('trunk = "main"\n');
     for (const path of [primary, consumer, pending])
-      expect((await ws(["add", "all"], path)).code).toBe(0);
+      expect(
+        (
+          await ws(
+            ["add", "all"],
+            path,
+            path === pending
+              ? baseEnv({
+                  AGX_STATE_DIR: join(scratch, "all-historical-state"),
+                })
+              : allEnv,
+          )
+        ).code,
+      ).toBe(0);
     const configHome = join(scratch, "all-config");
     for (const [index, path] of [primary, consumer, pending].entries())
       await Bun.write(
@@ -1967,7 +1980,7 @@ describe("gc integration branches", () => {
         `import {gcAll} from ${JSON.stringify(module)};const r=await gcAll({dryRun:true,includeUnrecorded:true,legacy:true},${JSON.stringify(primary)});process.stdout.write(JSON.stringify(r));`,
       ],
       primary,
-      baseEnv({ XDG_CONFIG_HOME: configHome }),
+      { ...allEnv, XDG_CONFIG_HOME: configHome },
     );
     expect(result.code, result.err).toBe(0);
     const parsed = jsonOf(
@@ -1976,12 +1989,21 @@ describe("gc integration branches", () => {
         value: z.object({
           lines: z.array(z.string()),
           failed: z.array(z.string()),
+          repositories: z.array(
+            z.object({ root: z.string(), sources: z.array(z.string()) }),
+          ),
         }),
       }),
     ).safeParse(result.out);
     expect(parsed.success, result.out).toBe(true);
     if (!parsed.success) return;
     expect(parsed.data.value.failed).toEqual([]);
+    expect(
+      parsed.data.value.repositories.find((r) => r.root === pending)?.sources,
+    ).toEqual(["L2"]);
+    expect(
+      parsed.data.value.repositories.find((r) => r.root === primary)?.sources,
+    ).toEqual(["L2", "state"]);
     expect(parsed.data.value.lines).toHaveLength(3);
     const counts = jsonOf(
       z.object({
@@ -2282,3 +2304,102 @@ function stateTestEnv(): NodeJS.ProcessEnv {
   delete env.AGX_NEXT_STATE_DIR;
   return env;
 }
+
+describe("AGX-GC-DISCOVER-REPOS-1025", () => {
+  test("state and all records discover no-L2 repositories; unreachable roots stay intact", async () => {
+    const stateRepo = await repo('trunk = "main"\nkeep = ["ws_protected"]\n');
+    const recordRepo = await repo('trunk = "main"\n');
+    const missingRepo = await repo('trunk = "main"\n');
+    const env = baseEnv({
+      AGX_STATE_DIR: join(scratch, "discover-state"),
+      XDG_CONFIG_HOME: join(scratch, "discover-config"),
+    });
+    setRecords([]);
+    expect((await ws(["add", "protected"], stateRepo, env)).code).toBe(0);
+    expect((await ws(["add", "missing"], missingRepo, env)).code).toBe(0);
+    // Historical workspace, created before the new creation index exists.
+    expect(
+      (
+        await ws(
+          ["add", "historic"],
+          recordRepo,
+          baseEnv({ AGX_STATE_DIR: join(scratch, "old-state") }),
+        )
+      ).code,
+    ).toBe(0);
+    setRecords([
+      {
+        id: "old-record",
+        state: "ended",
+        cwd: recordRepo,
+        workspace: wsDir(recordRepo, "historic"),
+      },
+    ]);
+    const args = ["gc", "--all", "--dry-run", "--include-unrecorded", "--json"];
+    const dry = await ws(args, stateRepo, env);
+    expect(dry.code, dry.err).toBe(0);
+    const schema = jsonOf(
+      z.object({
+        repositories: z.array(
+          z.object({
+            root: z.string(),
+            sources: z.array(z.string()),
+            status: z.string(),
+            counts: z.object({ total: z.number() }),
+          }),
+        ),
+        counts: z.object({ total: z.number() }),
+        discovery: z.object({
+          state: z.number(),
+          record: z.number(),
+          L2: z.number(),
+          note: z.string(),
+        }),
+        rows: z.array(z.array(z.string())),
+      }),
+    );
+    const checked = schema.safeParse(dry.out);
+    expect(checked.success, dry.out).toBe(true);
+    if (!checked.success) return;
+    const parsed = checked.data;
+    expect(parsed.repositories).toHaveLength(3);
+    expect(parsed.discovery).toMatchObject({ state: 2, record: 1, L2: 0 });
+    expect(parsed.discovery.note).toContain("unindexed historical");
+    expect(parsed.counts.total).toBe(3);
+    expect(
+      parsed.repositories.find((r) => r.root === recordRepo)?.sources,
+    ).toEqual(["record"]);
+    expect(
+      parsed.rows.some(
+        (r) => r[0] === wsDir(stateRepo, "protected") && r[2] === "kept",
+      ),
+    ).toBe(true);
+    expect(
+      parsed.rows.some((r) => r[0] === wsDir(recordRepo, "historic")),
+    ).toBe(true);
+    rmSync(missingRepo, { recursive: true, force: true });
+    const missing = await ws(args, stateRepo, env);
+    expect(missing.code).toBe(1);
+    const missingParsed = schema.safeParse(missing.out);
+    expect(missingParsed.success, missing.out).toBe(true);
+    if (!missingParsed.success) return;
+    const unreachable = missingParsed.data.repositories.find(
+      (r) => r.root === missingRepo,
+    );
+    expect(unreachable).toMatchObject({
+      status: "unreachable",
+      sources: ["state"],
+      counts: { total: 0 },
+    });
+    expect(existsSync(wsDir(missingRepo, "missing"))).toBe(true);
+    const real = await ws(
+      ["gc", "--all", "--include-unrecorded", "--json"],
+      stateRepo,
+      env,
+    );
+    expect(real.code).toBe(1);
+    expect(existsSync(wsDir(stateRepo, "protected"))).toBe(true);
+    expect(existsSync(wsDir(missingRepo, "missing"))).toBe(true);
+    setRecords([]);
+  });
+});
