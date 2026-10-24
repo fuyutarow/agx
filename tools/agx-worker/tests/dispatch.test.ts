@@ -154,7 +154,7 @@ function fixture() {
     'if [ "$json" = "yes" ]; then printf \'{"workspace":"%s"}\\n\' "$workspace"; else printf \'%s\\n\' "$workspace"; fi',
   ]);
   shim("jj", [
-    'case " $* " in *" workspace list "*) printf "%s\\n" "default" "recorded"; exit 0 ;; esac',
+    'case " $* " in *" workspace list "*) printf \'"%s"\\n\' "${FAKE_REGISTERED_WORKSPACE:-$FAKE_REPO}"; exit 0 ;; esac',
     'case " $* " in *"--name recorded"*) printf "%s\\n" "${FAKE_REGISTERED_WORKSPACE:-$FAKE_REPO}"; exit 0 ;; esac',
     'case " $* " in *" log "*) printf "%s\\n" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; exit 0 ;; esac',
     'case "$PWD" in',
@@ -258,6 +258,46 @@ function priorRun(
   f.env.FAKE_REGISTERED_WORKSPACE = workspace;
   return workspace;
 }
+
+test("continuation ignores a deleted registered sibling but refuses its own missing workspace", async () => {
+  const f = fixture();
+  // Keep systemd and the worker fake, but exercise the actual jj registry.
+  rmSync(join(f.root, "bin", "jj"));
+  rmSync(join(f.repo, ".jj"), { recursive: true });
+  const jj = (...args: string[]) => {
+    const result = Bun.spawnSync(["jj", ...args], {
+      cwd: f.repo,
+      env: f.env,
+      timeout: 5000,
+    });
+    expect(result.exitCode, result.stderr.toString()).toBe(0);
+    return result.stdout.toString();
+  };
+  jj("git", "init", ".");
+  const workspace = join(`${f.repo}.ws`, "ws_recorded");
+  const sibling = join(f.root, "deleted-sibling");
+  mkdirSync(`${f.repo}.ws`);
+  jj("workspace", "add", "--name", "z-recorded", workspace);
+  jj("workspace", "add", "--name", "a-deleted", sibling);
+  priorRun(f, workspace);
+  rmSync(sibling, { recursive: true });
+  expect(
+    jj("--ignore-working-copy", "workspace", "list", "-T", 'name ++ "\\n"'),
+  ).toContain("a-deleted");
+  const resumed = await invoke(f, "--continue", "prior-run");
+  expect(resumed.exitCode, resumed.stderr).toBe(0);
+  expect(await Bun.file(f.unitArgs).text()).toContain(`--cd\n${workspace}\n`);
+  expect(await Bun.file(f.wsArgs).exists()).toBe(false);
+
+  priorRun(f, workspace);
+  rmSync(workspace, { recursive: true });
+  rmSync(f.unitArgs);
+  const missing = await invoke(f, "--continue", "prior-run");
+  expect(missing.exitCode, missing.stderr).toBe(2);
+  expect(missing.stderr).toContain(workspace);
+  expect(missing.stdout).toBe("");
+  expect(await Bun.file(f.unitArgs).exists()).toBe(false);
+});
 
 test.each(["foo-bar", "foo-bar-2", "another-ticket"])(
   "continuation keeps recorded workspace %s without creating one",

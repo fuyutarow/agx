@@ -267,7 +267,14 @@ async function registeredWorkspace(
   const listed = await invokeReadonly(
     jj === null
       ? ["git", "--no-optional-locks", "worktree", "list", "--porcelain"]
-      : ["jj", ...JJ_READ_ARGS, "workspace", "list", "-T", 'name ++ "\\n"'],
+      : [
+          "jj",
+          ...JJ_READ_ARGS,
+          "workspace",
+          "list",
+          "-T",
+          'json(self.root()) ++ "\\n"',
+        ],
     repo,
     env,
   );
@@ -282,25 +289,18 @@ async function registeredWorkspace(
     };
   for (const line of listed.out.trim().split("\n")) {
     if (line === "" || (jj === null && !line.startsWith("worktree "))) continue;
-    const root =
+    // Registry paths are lexical data: do not canonicalize unrelated workspaces.
+    const decoded =
       jj === null
-        ? { code: 0, out: line.slice("worktree ".length), err: "" }
-        : await invokeReadonly(
-            ["jj", ...JJ_READ_ARGS, "workspace", "root", "--name", line],
-            repo,
-            env,
-          );
-    if (root.code !== 0)
-      return {
-        ok: false,
-        reason:
-          root.err.trim() === ""
-            ? "cannot resolve registered workspace"
-            : root.err.trim(),
-        code: root.code,
-      };
-    if (root.out.trim() === "") continue;
-    const path = resolve(repo, root.out.trim());
+        ? { success: true as const, data: line.slice("worktree ".length) }
+        : jsonOf(z.string().nullable()).safeParse(line);
+    if (!decoded.success)
+      return { ok: false, reason: "invalid workspace registry path" };
+    const recorded = decoded.data;
+    if (recorded === null) continue;
+    if (recorded === "") continue;
+    const path = resolve(repo, recorded);
+    if (path !== resolve(workspace) && path !== physical.value) continue;
     if ((await realpath(path).catch(() => null)) === physical.value)
       return { ok: true };
   }
