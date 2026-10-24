@@ -60,9 +60,11 @@ export async function fixtureRun(
     await appendFile(join(cwd, "calls"), JSON.stringify(args) + "\n");
     return {
       ...success,
-      stdout: JSON.stringify([
-        { url: "https://github.com/fuyutarow/agx/actions/runs/123" },
-      ]),
+      stdout: JSON.stringify(
+        process.env.RELEASE_TEST_NO_RUN === "1"
+          ? []
+          : [{ url: "https://github.com/fuyutarow/agx/actions/runs/123" }],
+      ),
     };
   }
   const fakeGh =

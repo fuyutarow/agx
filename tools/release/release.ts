@@ -479,20 +479,14 @@ export async function publish(
       `refs/tags/${libraryTag}:refs/tags/${libraryTag}`,
     ],
   ];
-  const workflowUrl = `https://github.com/fuyutarow/agx/actions/workflows/release.yml?query=branch%3A${tag}`;
+  let workflowUrl = `https://github.com/fuyutarow/agx/actions/workflows/release.yml?query=branch%3A${tag}`;
+  const recovery: string[] = [];
   for (const command of yes ? commands : []) {
     const result = await runner(command, root);
     if (result.exit !== 0)
       return err(`Release stopped at ${commandFailure(command, result)}`);
   }
   if (yes) {
-    const installed = await machineSwap(
-      info.value.version,
-      machine,
-      root,
-      runner,
-    );
-    if (installed.isErr()) return installed;
     const inspectedRuns = await fromPromise(
       runner(
         [
@@ -518,12 +512,25 @@ export async function publish(
     const parsed = jsonOf(z.array(z.object({ url: z.url() }))).safeParse(
       runs.stdout,
     );
-    if (runs.exit === 0 && parsed.success && parsed.data[0] !== undefined)
-      return ok({
-        commands: commands.map((command) => shellCommand(command)),
-        workflowUrl: parsed.data[0].url,
-        dryRun: false,
-      });
+    if (runs.exit === 0 && parsed.success && parsed.data[0] !== undefined) {
+      workflowUrl = parsed.data[0].url;
+    } else {
+      recovery.push(
+        "No workflow run found after the tag push. If no run appears, dispatch the existing tags without deleting or moving them:",
+        ...[tag, libraryTag].map(
+          (releaseTag) =>
+            `gh workflow run release.yml --ref alpha -f tag=${releaseTag}`,
+        ),
+      );
+      process.stdout.write(`${workflowUrl}\n${recovery.join("\n")}\n`);
+    }
+    const installed = await machineSwap(
+      info.value.version,
+      machine,
+      root,
+      runner,
+    );
+    if (installed.isErr()) return installed;
   }
   return ok({
     commands: commands.map((command) => shellCommand(command)),

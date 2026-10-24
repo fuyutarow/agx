@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { writeChangeset } from "../changeset/changeset.ts";
 import { applyChangesets } from "../changeset/apply.ts";
 import { jsonOf, z } from "../zod.ts";
+import { attempt } from "../shared/src/attempt.ts";
 import {
   build as productionBuild,
   changelogSection,
@@ -937,16 +938,86 @@ test("CI refuses mismatched tags before building", async () => {
   expect(await Bun.file(join(f.root, "calls")).exists()).toBe(false);
 });
 
-test("workflow triggers both release tags and delegates builds to Bun", async () => {
-  const workflow = await Bun.file(
+test("workflow dispatch checks out the input tag and preserves tag push builds", async () => {
+  const source = await Bun.file(
     join(repository, ".github/workflows/release.yml"),
   ).text();
-  expect(workflow).toContain("'v[0-9]*'");
-  expect(workflow).toContain("'usehooks-v[0-9]*'");
-  expect(workflow).toContain('bun tools/release/ci.ts "$RELEASE_TAG"');
-  expect(workflow).toContain("fetch-depth: 0");
-  expect(workflow).toContain("contents: write");
+  const yaml = await attempt((): unknown => Bun.YAML.parse(source));
+  expect(yaml.ok).toBe(true);
+  if (!yaml.ok) return;
+  const parsed = z
+    .object({
+      on: z.object({
+        push: z.object({ tags: z.array(z.string()) }),
+        workflow_dispatch: z.object({
+          inputs: z
+            .object({
+              tag: z.object({
+                required: z.literal(true),
+                type: z.literal("string"),
+              }),
+            })
+            .strict(),
+        }),
+      }),
+      permissions: z.object({ contents: z.literal("write") }),
+      concurrency: z.object({ group: z.string() }),
+      jobs: z.object({
+        release: z.object({
+          steps: z.array(
+            z.object({
+              uses: z.string().optional(),
+              run: z.string().optional(),
+              with: z.record(z.string(), z.unknown()).optional(),
+              env: z.record(z.string(), z.string()).optional(),
+            }),
+          ),
+        }),
+      }),
+    })
+    .safeParse(yaml.value);
+  expect(parsed.success).toBe(true);
+  if (!parsed.success) return;
+  const workflow = parsed.data;
+  expect(workflow.on.push.tags).toEqual(["v[0-9]*", "usehooks-v[0-9]*"]);
+  const checkout = workflow.jobs.release.steps.find(
+    (step) => step.uses === "actions/checkout@v4",
+  );
+  const tagRef =
+    "${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}";
+  expect(checkout?.with?.ref).toBe(tagRef);
+  expect(checkout?.with?.["fetch-depth"]).toBe(0);
+  expect(workflow.concurrency.group).toBe(`release-${tagRef}`);
+  const buildStep = workflow.jobs.release.steps.find(
+    (step) => step.run === 'bun tools/release/ci.ts "$RELEASE_TAG"',
+  );
+  expect(buildStep?.env?.RELEASE_TAG).toBe(
+    "${{ inputs.tag || github.ref_name }}",
+  );
 });
+
+for (const mode of ["success", "machine-missing"]) {
+  test(`publish prints manual dispatch recovery before asset wait (${mode})`, async () => {
+    const f = await suiteFixture();
+    const result = await preview(f, ["--yes", "--wait-seconds", "0"], {
+      RELEASE_TEST_GH_MODE: mode,
+      RELEASE_TEST_NO_RUN: "1",
+    });
+    expect(result.exit, result.stderr).toBe(mode === "success" ? 0 : 1);
+    for (const tag of ["v2.3.4", "usehooks-v2.3.4"])
+      expect(result.stdout).toContain(
+        `gh workflow run release.yml --ref alpha -f tag=${tag}`,
+      );
+    const calls = (await Bun.file(join(f.root, "calls")).text())
+      .trim()
+      .split("\n");
+    expect(
+      calls.findIndex((line) => line.startsWith('["run","list"')),
+    ).toBeLessThan(
+      calls.findIndex((line) => line.startsWith('["release","view"')),
+    );
+  });
+}
 
 for (const tag of ["v2.3.4", "usehooks-v2.3.4"]) {
   test(`CI tag ${tag} builds only its exact asset list`, async () => {

@@ -97,6 +97,20 @@ the same build and asset-naming code as `release:build`. The suite tag run
 cross-compiles all four supported platforms; the usehooks tag run builds the
 library and its declarations. Missing archives fail the run.
 
+If no workflow run appears after the tag push, manually dispatch the existing
+tags from alpha:
+
+```sh
+gh workflow run release.yml --ref alpha -f tag=v<version>
+gh workflow run release.yml --ref alpha -f tag=usehooks-v<version>
+```
+
+The required `tag` input selects the exact tag to check out and passes that tag
+to the same CI release entry point. This recovery never deletes or moves tags.
+`release:publish` prints these commands when it cannot find a workflow run,
+before waiting for assets. Dispatch only tags without a run or existing release;
+use draft recovery below for a run that already created a release.
+
 In CI, the library is published
 at `usehooks-v<version>` with `--latest=false`; the suite release at
 `v<version>` contains only the four platform archives and becomes latest.

@@ -25,6 +25,13 @@ a tag that differs from the suite manifest. Each run builds and verifies the
 assets for its own tag. Missing archives or incomplete uploads fail the run
 before that release is published.
 
+The workflow also accepts a manual dispatch with one required string input,
+`tag` (`v<suite>` or `usehooks-v<suite>`). It checks out exactly that tag and
+passes it to the same CI entry point. When no run appears after a push,
+`release:publish` prints `gh workflow run release.yml --ref alpha -f tag=v<suite>`
+and the equivalent library command before waiting for assets. Recovery leaves
+existing tags unchanged.
+
 ## Machine completion
 
 Declare agx exactly once, in the user-global mise configuration, as
