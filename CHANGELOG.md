@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.10.0 — 2026-10-25
+
+- Refuse tickets without declared write scope or acceptance basis before model routing and record ticket hashes
+
 ## 1.9.1 — 2026-10-25
 
 - Bound release asset probes by the CI wait deadline and identify timed out commands
