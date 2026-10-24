@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.7.3 — 2026-10-25
+
+- Continue recorded workspaces without resolving deleted sibling workspaces.
+
 ## 1.7.2 — 2026-10-25
 
 - Resolve worker message senders from recorded run state even when the sandbox cannot see the owner process.
