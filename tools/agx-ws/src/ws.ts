@@ -268,7 +268,7 @@ const gcCommand = command(
         JSON.stringify({
           rows,
           counts: done.value.counts,
-          complete: done.value.failed.length === 0,
+          complete: done.value.complete,
         }) + "\n",
       );
     } else

@@ -212,7 +212,7 @@ const child = Bun.spawn([${JSON.stringify(realRip)}, ...process.argv.slice(2)], 
 });
 
 test("WS-GC-LOCK-SCOPE: changed working copy and run verdicts are re-checked while locked", async () => {
-  for (const change of ["file", "run"]) {
+  for (const change of ["file", "untracked", "run"] as const) {
     const f = await fixture(["changed"]);
     const gate = join(f.root, "rechecked");
     const initial = join(f.root, "initial-classification");
@@ -243,7 +243,7 @@ process.stdout.write(JSON.stringify(recheck ? ${JSON.stringify(row)} : []));`,
 const args = process.argv.slice(2);
 if (args.includes("status") && args.includes("--ignore-working-copy")) await Bun.write(${JSON.stringify(initial)}, "first classification seen");
 if (args.includes("root") && args.includes("ws_changed") && await Bun.file(${JSON.stringify(initial)}).exists() && await Bun.file(${JSON.stringify(join(f.lock, "owner.json"))}).exists()) {
-  await Bun.write(${JSON.stringify(join(f.dir("changed"), "pending.txt"))}, "keep this work\\n");
+  await Bun.write(${JSON.stringify(join(f.dir("changed"), change === "file" ? "a.txt" : "pending.txt"))}, "keep this work\\n");
   await Bun.write(${JSON.stringify(gate)}, "under lock");
 }
 ${delegateJj}`,
@@ -252,9 +252,12 @@ ${delegateJj}`,
     const collected = await f.command(["gc", "--include-unrecorded"]);
     expect(collected.code, collected.err).toBe(0);
     expect(await Bun.file(gate).text()).toBe("under lock");
-    expect(collected.out).toContain(
-      change === "file" ? "unlanded" : "live or continuing run new-run",
-    );
+    const reason = {
+      file: "unlanded",
+      untracked: "untracked content: 1 files (pending.txt)",
+      run: "live or continuing run new-run",
+    };
+    expect(collected.out).toContain(reason[change]);
     expect(collected.out).not.toContain("\tcollected\t");
     expect(await Bun.file(join(f.dir("changed"), "a.txt")).exists()).toBe(true);
     expect(

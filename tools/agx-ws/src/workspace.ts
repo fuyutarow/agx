@@ -72,13 +72,30 @@ export type Repo = {
   parent: string;
   wsRoot: string;
 };
-export type Config = { ready: string[]; trunk: string; keep: string[] };
+export type Config = z.infer<typeof ConfigSchema>;
 
 export const CONFIG_FILE = ".ws.toml";
 const ConfigSchema = z.strictObject({
   ready: z.array(z.string().min(1)).default([]),
   trunk: z.string().min(1).default("trunk()"),
   keep: z.array(z.string().min(1)).default([]),
+  regenerable: z
+    .array(
+      z
+        .string()
+        .min(1)
+        .refine(
+          (path) =>
+            !path.startsWith("/") &&
+            !path.includes("\\") &&
+            path
+              .replace(/\/$/u, "")
+              .split("/")
+              .every((part) => part !== "" && part !== "." && part !== ".."),
+          "expected a literal repository-relative path without . or .. components",
+        ),
+    )
+    .default([]),
 });
 // Lookup accepts historical names so refresh/rm still work after the creation rule changes.
 const LEGACY_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]*$/u;
@@ -187,7 +204,7 @@ async function missingCommittedConfig(
   );
   if (!files.ok) return files;
   return files.value.trim() === ""
-    ? good({ ready: [], trunk: "trunk()", keep: [] })
+    ? good({ ready: [], trunk: "trunk()", keep: [], regenerable: [] })
     : failure;
 }
 
@@ -1773,6 +1790,14 @@ async function classify(
     return verdict("keep", `live or continuing run ${live.id} (${live.state})`);
   const blocked = runRemovalReason(ws.dir, records);
   if (blocked !== undefined) return verdict("keep", blocked);
+  const inventory = await untrackedContent(ws.dir, cfg.regenerable);
+  if (!inventory.ok)
+    return verdict("unknown", `untracked inventory failed: ${msg(inventory)}`);
+  if (inventory.value.count > 0)
+    return verdict(
+      "keep",
+      `untracked content: ${inventory.value.count} files (${inventory.value.paths.join(", ")})`,
+    );
   const land = landState(ws);
   if (land !== undefined)
     return (await landBusy(land))
@@ -1910,7 +1935,82 @@ type GcResult = {
   lines: string[];
   failed: string[];
   counts: ReturnType<typeof gcCounts>;
+  complete: boolean;
 };
+
+/** Inventory disk entries against the saved snapshot; never follow directory symlinks. */
+export async function untrackedContent(
+  dir: string,
+  regenerable: string[],
+  timeoutMs = 10_000,
+): Promise<Attempt<{ count: number; paths: string[] }>> {
+  const tracked = await runStep(
+    [
+      "jj",
+      "--no-pager",
+      "--color=never",
+      "--ignore-working-copy",
+      "file",
+      "list",
+      "-T",
+      'path ++ "\\0"',
+    ],
+    dir,
+    { timeoutMs },
+  );
+  if (!tracked.ok) return tracked;
+  if (tracked.value.code !== 0)
+    return bad(`jj file list failed: ${tracked.value.err.trim()}`);
+  const files = new Set(
+    tracked.value.out.toString().split("\0").filter(Boolean),
+  );
+  const roots = regenerable.map((path) => path.replace(/\/$/u, ""));
+  const deadline = performance.now() + timeoutMs;
+  let expired = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let count = 0;
+  const paths: string[] = [];
+  const pending = [""];
+  const timedOut = () => expired || performance.now() >= deadline;
+  const visit = async (parent: string): Promise<Attempt<void>> => {
+    const entries = await attempt(() =>
+      readdir(join(dir, parent), { withFileTypes: true }),
+    );
+    if (!entries.ok) return entries;
+    for (const entry of entries.value) {
+      if (timedOut()) return bad("inventory timed out");
+      const path = parent === "" ? entry.name : `${parent}/${entry.name}`;
+      if (entry.name === ".jj" || entry.name === ".git") continue;
+      if (roots.some((root) => path === root || path.startsWith(`${root}/`)))
+        continue;
+      if (entry.name === "node_modules" && entry.isDirectory()) continue;
+      if (entry.isDirectory()) pending.push(path);
+      if (entry.isDirectory() || files.has(path)) continue;
+      count++;
+      if (paths.length < 5) paths.push(path);
+    }
+    return good(undefined);
+  };
+  const walk = async (): Promise<
+    Attempt<{ count: number; paths: string[] }>
+  > => {
+    while (pending.length > 0) {
+      if (timedOut()) return bad("inventory timed out");
+      const result = await visit(pending.pop() ?? "");
+      if (!result.ok) return result;
+    }
+    return good({ count, paths });
+  };
+  const timeout = new Promise<Attempt<never>>((resolveTimeout) => {
+    timer = setTimeout(() => {
+      expired = true;
+      resolveTimeout(bad("inventory timed out"));
+    }, timeoutMs);
+  });
+  const result = await Promise.race([walk(), timeout]);
+  clearTimeout(timer);
+  return result;
+}
 
 /** TSV columns: path, kind, verdict, change id, age, reason. Legacy deletion is opt-in. */
 export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
@@ -2052,6 +2152,9 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
       lines,
       failed,
       counts: gcCounts(lines),
+      complete:
+        failed.length === 0 &&
+        !lines.some((line) => line.split("\t")[2] === "unknown"),
     };
     if (failed.length === 0) await publishVerdicts(repo.backing, result);
     return good(result);
@@ -2249,7 +2352,14 @@ export async function gcAll(
     lines.push(...done.value.lines);
     failed.push(...done.value.failed);
   }
-  const result = { lines, failed, counts: gcCounts(lines) };
+  const result = {
+    lines,
+    failed,
+    counts: gcCounts(lines),
+    complete:
+      failed.length === 0 &&
+      !lines.some((line) => line.split("\t")[2] === "unknown"),
+  };
   if (failed.length === 0) await publishVerdicts(undefined, result, seen);
   return good(result);
 }
@@ -2323,7 +2433,9 @@ async function publishVerdicts(
         tsv: lines.join("\n"),
         counts: gcCounts(lines),
         capturedAt: Math.min(...entries.map((entry) => entry.capturedAt)),
-        complete: true,
+        complete:
+          result.complete &&
+          !lines.some((line) => line.split("\t")[2] === "unknown"),
       }),
       { mode: 0o600 },
     );

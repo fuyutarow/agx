@@ -21,7 +21,7 @@ import { tmpdir, hostname } from "node:os";
 import { join } from "node:path";
 import { mkdir, chmod, unlink, lstat, symlink } from "node:fs/promises";
 import { jsonOf, z } from "../../shared/src/zod.ts";
-import { rootFileFileset } from "../src/workspace.ts";
+import { rootFileFileset, untrackedContent } from "../src/workspace.ts";
 
 setDefaultTimeout(60_000);
 const WS = join(import.meta.dir, "../src/ws.ts");
@@ -113,6 +113,90 @@ const pathExists = (dir: string): Promise<boolean> =>
     () => true,
     () => false,
   );
+
+describe("AGX-GC-UNTRACKED-KEEP-1024", () => {
+  test("counts every entry, samples five paths and refuses expired inventories", async () => {
+    const path = await repo('trunk = "main"\n');
+    for (let index = 0; index < 7; index++)
+      await Bun.write(join(path, `.state/plan-${index}.json`), "live\n");
+    await symlink("missing-target", join(path, "live-link"));
+    const result = await untrackedContent(path, []);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.count).toBe(8);
+    expect(result.value.paths).toHaveLength(5);
+    expect((await untrackedContent(path, [], 0)).ok).toBe(false);
+  });
+
+  for (const [artifact, declaration, kept] of [
+    [".state/plan.json", "", true],
+    ["loose.txt", "", true],
+    ["nested/node_modules/pkg/index.js", "", false],
+    ["cache/build.bin", 'regenerable = ["cache/"]\n', false],
+    ["cache-other/live.json", 'regenerable = ["cache"]\n', true],
+  ] as const) {
+    test(`${artifact}: dry and real GC preserve only non-regenerable content`, async () => {
+      const path = await repo(`trunk = "main"\n${declaration}`);
+      setRecords([]);
+      expect((await ws(["add", "inventory"], path)).code).toBe(0);
+      const dir = wsDir(path, "inventory");
+      // Ignore the artifact without creating a tracked diff in the workspace.
+      await Bun.write(
+        join(dir, ".gitignore"),
+        artifact === "loose.txt"
+          ? "# keep loose.txt untracked\n"
+          : `${artifact.split("/")[0]}\n`,
+      );
+      await jj(["commit", "-m", "ignore"], dir);
+      await jj(["bookmark", "set", "main", "-r", "@-"], dir);
+      await Bun.write(join(dir, artifact), "live artifact\n");
+      for (const dry of [true, false]) {
+        const result = await ws(
+          ["gc", "--include-unrecorded", ...(dry ? ["--dry-run"] : [])],
+          path,
+        );
+        expect(result.code, result.err).toBe(0);
+        if (kept) {
+          expect(result.out).toContain("\tkeep\t");
+          expect(result.out).toContain(
+            `untracked content: 1 files (${artifact})`,
+          );
+        } else
+          expect(result.out).toContain(dry ? "\tempty\t" : "\tcollected\t");
+      }
+      expect(existsSync(dir)).toBe(kept);
+    });
+  }
+
+  test("inventory failure is unknown with incomplete coverage and no removal", async () => {
+    const path = await repo('trunk = "main"\n');
+    setRecords([]);
+    expect((await ws(["add", "inventory-error"], path)).code).toBe(0);
+    const realJj = Bun.which("jj");
+    const errorBin = join(scratch, "inventory-error-bin");
+    mkdirSync(errorBin);
+    const fake = join(errorBin, "jj");
+    await Bun.write(
+      fake,
+      `#!/usr/bin/env bun\nconst args = process.argv.slice(2); if (args.includes("list") && args.includes("file")) { process.stderr.write("inventory unavailable"); process.exit(1); } const child = Bun.spawn([${JSON.stringify(realJj)}, ...args], { stdin: "ignore", stdout: "inherit", stderr: "inherit" }); process.exitCode = await child.exited;\n`,
+    );
+    chmodSync(fake, 0o755);
+    const result = await ws(
+      ["gc", "--include-unrecorded", "--json"],
+      path,
+      baseEnv({ PATH: `${errorBin}:${bin}:${process.env.PATH}` }),
+    );
+    expect(result.code, result.err).toBe(0);
+    expect(result.out).toContain('"unknown"');
+    expect(result.out).toContain('"complete":false');
+    expect(result.out).toContain("inventory unavailable");
+    expect(existsSync(wsDir(path, "inventory-error"))).toBe(true);
+    const cache = jsonOf(z.object({ complete: z.boolean() })).safeParse(
+      await Bun.file(join(home, "state/agx/workspace-verdicts.json")).text(),
+    );
+    expect(cache.success && cache.data.complete).toBe(false);
+  });
+});
 
 describe("WS-CONFIG-ONE-SOURCE-1023", () => {
   for (const source of [
@@ -1132,7 +1216,7 @@ describe("WS-GC-JJ-LIST", () => {
     ).toMatchObject({
       success: true,
       data: {
-        counts: { total: 6, unlanded: 2, collectable: 3, legacy: 5 },
+        counts: { total: 6, unlanded: 1, collectable: 3, legacy: 5 },
         complete: true,
       },
     });
@@ -1145,9 +1229,11 @@ describe("WS-GC-JJ-LIST", () => {
       [dirs.empty]: ["legacy", "empty"],
       [dirs.landed]: ["legacy", "landed"],
       [dirs.unlanded]: ["legacy", "unlanded"],
-      [dirs.stale]: ["legacy", "unlanded"],
+      [dirs.stale]: ["legacy", "keep"],
       [dirs.precious]: ["legacy", "kept"],
     });
+    expect(dry.out).toContain("untracked content: 1 files (stale.txt)");
+    // The old disk file is outside the restored snapshot. Keep it before stale repair.
     // Inventory is read-only and must leave repair to an explicit mutation.
     expect((await jj(["status"], dirs.stale)).err).toContain(
       "working copy is stale",
@@ -1790,6 +1876,8 @@ describe("gc integration branches", () => {
       ).code,
     ).toBe(0);
     await Bun.write(join(dir, "temporary.txt"), "land staging residue\n");
+    // This test exercises the land lock; the staging residue must be restorable.
+    expect((await jj(["status"], dir)).code).toBe(0);
     setRecords([]);
     const dry = await ws(["gc", "--dry-run", "--legacy"], path);
     expect(dry.code, dry.err).toBe(0);

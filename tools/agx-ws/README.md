@@ -55,7 +55,7 @@ agx ws gc  [--dry-run] [--include-unrecorded] [--legacy] [--abandoned] [--json] 
 - **gc** — one line per registered candidate: `path <TAB> kind <TAB> verdict <TAB> change id <TAB> age <TAB> reason`.
   `--dry-run` removes no workspace and checks the same initial preconditions as a real run. Inventory and initial
   classification use saved jj snapshots without locking, snapshotting or repairing stale
-  workspaces. Unsnapshotted edits can change a dry-run verdict; collection always snapshots and
+  workspaces. Untracked and ignored disk files are checked even in a dry run. Unsnapshotted tracked edits can change a dry-run verdict; collection always snapshots and
   re-checks the selected workspace under the lock before removal.
 
 ## gc: what is collected
@@ -76,7 +76,8 @@ Missing or foreign workspace directories are kept. Ordinary collection requires:
    unjudged leaves keep the workspace. Rejected leaves do not require acceptance.
    Acceptance permits collection when the current workspace content has landed; run-end commit
    reachability is not required after squash or rebase integration.
-4. **Nothing unlanded.** Ordinary GC compares the current workspace working-copy commit chain against
+4. **No irreplaceable disk content.** Before any removable verdict (including abandoned and land-temporary checkouts), GC compares a filesystem walk with jj's saved tracked-file inventory. It excludes `.jj`/`.git` metadata and regenerable paths. Any remaining untracked or ignored file keeps the workspace with `untracked content: N files (path, ...)`, naming up to five paths. The count includes symlinks and other non-directory entries; directory symlinks are never followed. Inventory read errors or timeouts yield `unknown`, prevent removal and make JSON/cache coverage `complete: false`. The jj listing and filesystem walk each have a 10-second deadline. The same guard runs again under the removal lock for every layout and collection mode.
+5. **Nothing unlanded.** Ordinary GC compares the current workspace working-copy commit chain against
    trunk content, including changesets consumed by a release and matching historical release
    snapshots. Recorded `end_commit` values do not retain obsolete content superseded by a
    continuation in the same workspace. Differing paths are named in the keep reason; failed
@@ -120,7 +121,10 @@ working `.ws.toml`; deleting the working file selects the committed fallback.
 ready = ["mise trust -q", "bun install --frozen-lockfile"]   # sh -c, in order, in the new workspace
 trunk = "alpha"                                              # revset that defines "landed"
 keep = ["ws_reference"]                                      # workspace names or paths to preserve
+regenerable = [".cache/", "build/generated"]                    # optional literal paths whose disk content may be discarded
 ```
+
+GC always treats real directories named `node_modules` at any depth as regenerable, matching readiness dependency installation. The optional `regenerable` list adds literal repository-relative file or directory paths (a trailing slash is optional); a directory entry includes its descendants. No glob expansion occurs. Absolute paths, empty components, backslashes, `.` and `..` components are rejected. An absent list adds no exceptions. Policy comes from the backing checkout under the same resolution and lock rules above; a candidate cannot declare its own content disposable.
 
 Unknown keys are an error. This remains the active workspace policy; it is not retired by the shared ticket configuration reader.
 
