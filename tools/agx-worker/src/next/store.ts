@@ -29,7 +29,12 @@ import { globsOverlap } from "../ticket.ts";
 import { exitWithError } from "./exit.ts";
 import { Outcome, deriveOutcome } from "./outcome.ts";
 import { lossEvidence, Lease, StopSignal, Evidence } from "./lease.ts";
-import { RunSchema, type FoldedRun, type ListedRun } from "./run-state.ts";
+import {
+  LegacyIdentity,
+  RunSchema,
+  type FoldedRun,
+  type ListedRun,
+} from "./run-state.ts";
 export type { ListedRun } from "./run-state.ts";
 import { VerifyResult } from "./verify.ts";
 import { runningSummary, listingRows } from "./listing.ts";
@@ -41,6 +46,7 @@ const PickAuditSchema = z.object({
   source: z.string(),
   probabilities: z.record(z.string(), z.number()).nullable(),
   usage_snapshot: z.unknown(),
+  usage_id: z.string().optional(),
 });
 export type PickAudit = z.output<typeof PickAuditSchema>;
 
@@ -79,6 +85,7 @@ const EventSchema = z.discriminatedUnion("kind", [
     lease: Lease.optional(),
     pick_audit: PickAuditSchema.optional(),
     legacy_key: z.string().optional(),
+    legacy: LegacyIdentity.optional(),
   }),
   z.looseObject({
     kind: z.literal("progress"),
@@ -325,6 +332,7 @@ function importLegacyRun(
       continues: null,
       pid: 0,
       legacy_key: startedKey,
+      legacy: { run_id: runId, source: "legacy-v1" },
     });
     knownKeys.add(startedKey);
     imported = 1;
@@ -364,13 +372,13 @@ async function readLegacyFile(
       continue;
     }
     const legacy = parsed.data;
-    const kind = stringOf(legacy.kind);
+    const kind = legacy.type === "judged" ? "judged" : stringOf(legacy.kind);
     const runId = stringOf(legacy.run_id);
     if (kind === "run" && runId !== undefined) {
       runsImported += importLegacyRun(legacy, runId, knownKeys);
       continue;
     }
-    const importable = ["acceptance", "interim", "landed"];
+    const importable = ["acceptance", "interim", "landed", "judged"];
     if (
       kind === undefined ||
       runId === undefined ||
@@ -379,7 +387,35 @@ async function readLegacyFile(
       ignoredRows += 1;
       continue;
     }
-    pending.push({ row: legacy, key: legacyKeyFor(kind, runId, legacy) });
+    const timestamp = z.iso.datetime({ offset: true }).safeParse(legacy.at);
+    const validDecision =
+      kind !== "judged" ||
+      legacy.decision === "accept" ||
+      legacy.decision === "reject" ||
+      legacy.decision === "landed";
+    if (
+      kind !== "interim" &&
+      (!timestamp.success ||
+        !validDecision ||
+        (kind === "acceptance" && typeof legacy.accept !== "boolean"))
+    ) {
+      malformedLines += 1;
+      continue;
+    }
+    const key =
+      kind === "judged"
+        ? `judged:${createHash("sha256")
+            .update(
+              JSON.stringify([
+                runId,
+                legacy.at,
+                legacy.decision,
+                legacy.note ?? legacy.reason ?? "",
+              ]),
+            )
+            .digest("hex")}`
+        : legacyKeyFor(kind, runId, legacy);
+    pending.push({ row: { ...legacy, kind }, key });
   }
   return {
     pending,
@@ -415,6 +451,7 @@ function importLegacyEvent(
   if (kind === "acceptance")
     decision = row.accept === true ? "accept" : "reject";
   if (kind === "landed") decision = "accept";
+  if (kind === "judged") decision = stringOf(row.decision);
   if (decision === undefined) return undefined;
   const note = stringOf(row.note) ?? stringOf(row.reason) ?? "";
   append({ kind: "judged", id, at, decision, note, legacy_key: key });
@@ -429,7 +466,8 @@ export async function importLegacyRecords(): Promise<LegacyImportResult> {
         .filter(
           (name) =>
             name === "runs.jsonl" ||
-            /^runs-\d{4}-\d{2}-\d{2}\.jsonl$/u.test(name),
+            name === "lifecycle.jsonl" ||
+            /^(runs|lifecycle)-\d{4}-\d{2}-\d{2}\.jsonl$/u.test(name),
         )
         .toSorted()
     : [];
@@ -451,6 +489,10 @@ export async function importLegacyRecords(): Promise<LegacyImportResult> {
 
   for (const { row, key } of pending) {
     if (knownKeys.has(key)) continue;
+    if (!knownKeys.has(`run:${stringOf(row.run_id) ?? ""}`)) {
+      ignoredRows += 1;
+      continue;
+    }
     const imported = importLegacyEvent(row, key);
     if (imported === "progress") progressImported += 1;
     if (imported === "judged") judgmentsImported += 1;
@@ -519,6 +561,11 @@ function foldInto(runs: Map<string, FoldedRun>, input: NextEvent[]): void {
     if (event.kind === "started")
       runs.set(event.id, {
         id: event.id,
+        legacy:
+          event.legacy ??
+          (event.legacy_key?.startsWith("run:") === true
+            ? { run_id: event.legacy_key.slice(4), source: "legacy-v1" }
+            : undefined),
         started_at: event.at,
         ended_at: null,
         ticket: event.ticket,
@@ -580,8 +627,26 @@ function foldInto(runs: Map<string, FoldedRun>, input: NextEvent[]): void {
     }
     if (event.kind !== "judged") continue;
     const decision = event.decision === "landed" ? "accept" : event.decision;
-    if (decision === "accept" || decision === "reject")
-      run.judgment = { decision, note: event.note };
+    if (decision !== "accept" && decision !== "reject") continue;
+    const previous = run.judgment;
+    const compared =
+      previous === null ? 1 : Temporal.Instant.compare(event.at, previous.at);
+    if (compared < 0) continue;
+    if (
+      compared === 0 &&
+      event.legacy_key !== undefined &&
+      (previous?.legacy_key === undefined ||
+        event.legacy_key <= previous.legacy_key)
+    )
+      continue;
+    run.judgment = {
+      decision,
+      note: event.note,
+      at: event.at,
+      ...(event.legacy_key === undefined
+        ? {}
+        : { legacy_key: event.legacy_key }),
+    };
   }
 }
 

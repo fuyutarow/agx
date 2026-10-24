@@ -8,7 +8,7 @@ import {
   publishCurrentRuns,
 } from "../../agx-worker/src/next/store.ts";
 
-// agx-status reads only what agx-worker publishes; the pre-publication full-replay status
+// agx-status reads only what agx-worker publishes; the independent full-replay status
 // (tests/oracle/status-full-replay.ts) must answer the same JSON for the same state.
 const cliPath = join(import.meta.dir, "../src/status.ts");
 const oraclePath = join(import.meta.dir, "oracle/status-full-replay.ts");
@@ -64,6 +64,10 @@ const judged = (id: string, ago: number, decision: string): Line => ({
   at: at(ago),
   decision,
   note: "",
+});
+const imported = (line: Line, key: string): Line => ({
+  ...line,
+  legacy_key: key,
 });
 
 const output = z.looseObject({
@@ -144,6 +148,7 @@ async function generated() {
     else if (roll < 0.5)
       lines.push(judged(id, Math.max(0, endedAgo - 5 * minute), "reject"));
     else if (roll < 0.55) {
+      // The acceptance is appended last but occurred first: C3 keeps the newer rejection.
       lines.push(
         judged(id, Math.max(0, endedAgo - 2 * minute), "reject"),
         judged(id, Math.max(0, endedAgo - 1 * minute), "accept"),
@@ -332,4 +337,82 @@ test("a snapshot without ended-run facts reports them unpublished", async () => 
     land: 0,
     why: "judgment facts unpublished; agx worker doctor",
   });
+});
+
+test.each([
+  {
+    name: "newer rejection",
+    land: 0,
+    history: [
+      judged("time-reject", minute, "reject"),
+      judged("time-reject", hour, "accept"),
+    ],
+  },
+  {
+    name: "newer acceptance",
+    land: 1,
+    history: [
+      judged("time-accept", minute, "accept"),
+      judged("time-accept", hour, "reject"),
+    ],
+  },
+  {
+    name: "current beats later imported tie",
+    land: 0,
+    history: [
+      judged("current-wins", minute, "reject"),
+      imported(judged("current-wins", minute, "accept"), "z"),
+    ],
+  },
+  {
+    name: "greater imported key wins tie",
+    land: 1,
+    history: [
+      imported(judged("key-wins", minute, "accept"), "z"),
+      imported(judged("key-wins", minute, "reject"), "a"),
+    ],
+  },
+  {
+    name: "later current event wins tie",
+    land: 0,
+    history: [
+      judged("log-wins", minute, "accept"),
+      judged("log-wins", minute, "reject"),
+    ],
+  },
+  {
+    name: "current beats earlier imported tie",
+    land: 1,
+    history: [
+      imported(judged("current-last", minute, "reject"), "z"),
+      judged("current-last", minute, "accept"),
+    ],
+  },
+])("C3 oracle and published facts: $name", async ({ history, land }) => {
+  const { dir, repo } = await generated();
+  const workspace = join(`${repo}.ws`, "ws_here");
+  const id = String(history[0]?.id);
+  const lines = [
+    started(id, 3 * hour, workspace, "sA"),
+    ended(id, 2 * hour),
+  ].concat(history);
+  await writeFile(
+    join(dir, "records.jsonl"),
+    `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`,
+  );
+  await publishCurrentRuns(dir);
+  await flushRunPublications();
+  for (const cli of [oraclePath, cliPath]) {
+    const result = await status(cli, dir, repo);
+    expect(result.exitCode).toBe(0);
+    const parsed = jsonOf(output).safeParse(result.stdout);
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) continue;
+    expect(parsed.data.judgments).toEqual({
+      by_session: {},
+      repository: 0,
+      land,
+      why: null,
+    });
+  }
 });

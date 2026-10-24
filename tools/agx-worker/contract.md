@@ -2,16 +2,17 @@
 
 `agx-worker` owns worker runs. Its package bin points to `src/next/cli.ts`. The suite also accepts `agx worker`.
 
-| Command                                                                                 | Purpose                                                                                                                               |
-| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `agx worker run TICKET [--cd TREE] [--sandbox MODE] [--continue RUN_ID] [--session ID]` | Route a ticket to a roster worker, run it, and append run records.                                                                    |
-| `agx worker check TICKET [--cd TREE]`                                                   | Validate a ticket and its premises without starting a worker.                                                                         |
-| `agx worker ls [SELECTOR] [--workspace PATH] [--json]`                                  | List runs and judgments; SELECTOR is a run id, unique run-id prefix, or exact ticket name. Ticket selections put the newest run last. |
-| `agx worker judge RUN_ID accept\|reject [--note TEXT]`                                  | Append an acceptance or rejection judgment.                                                                                           |
-| `agx worker stats [--import-legacy]`                                                    | Report run counts; optionally import legacy run records.                                                                              |
-| `agx worker dispatch TICKET [--ws SLUG] [--unit NAME] [--continue RUN_ID]`              | Obtain a workspace through `agx ws`, or reuse a continuation's recorded workspace, and start a durable worker unit.                   |
-| `agx worker roster TICKET`                                                              | Print one selected roster row. `roster --json` prints the full validated roster and routing objective.                                |
-| `agx worker doctor`                                                                     | Diagnose worker records as tool/object/finding/remedy JSON Lines.                                                                     |
+| Command                                                                                        | Purpose                                                                                                                               |
+| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `agx worker run TICKET [--cd TREE] [--sandbox MODE] [--continue RUN_ID] [--session ID]`        | Route a ticket to a roster worker, run it, and append run records.                                                                    |
+| `agx worker check TICKET [--cd TREE]`                                                          | Validate a ticket and its premises without starting a worker.                                                                         |
+| `agx worker ls [SELECTOR] [--workspace PATH] [--json]`                                         | List runs and judgments; SELECTOR is a run id, unique run-id prefix, or exact ticket name. Ticket selections put the newest run last. |
+| `agx worker judge RUN_ID accept\|reject [--note TEXT]`                                         | Append an acceptance or rejection judgment.                                                                                           |
+| `agx worker stats [--import-legacy\|--routing\|--usage jev] [--window DURATION] [--host NAME]` | Report run counts, import legacy records, routing statistics, or Jev token usage.                                                     |
+| `agx worker probe --vendor codex --sandbox MODE --cd PATH --timeout-ms N --json`               | Run a bounded vendor diagnostic without a ticket or run record.                                                                       |
+| `agx worker dispatch TICKET [--ws SLUG] [--unit NAME] [--continue RUN_ID]`                     | Obtain a workspace through `agx ws`, or reuse a continuation's recorded workspace, and start a durable worker unit.                   |
+| `agx worker roster TICKET`                                                                     | Print one selected roster row. `roster --json` prints the full validated roster and routing objective.                                |
+| `agx worker doctor`                                                                            | Diagnose worker records as tool/object/finding/remedy JSON Lines.                                                                     |
 
 The top-level `objective` field in `roster --json` is the routing objective text used to select workers; the per-ticket `roster TICKET` output remains one selected row.
 
@@ -41,6 +42,64 @@ no migration. `--import-legacy` retains its explicit run-record import behavior;
 it neither migrates landing state nor proves its migration. Consumers need no
 private path or file-format knowledge. This field follows the worker CLI's package
 version and compatibility policy; further object fields may be added compatibly.
+
+## Legacy judgments
+
+For shell and machine consumers, `agx worker stats --import-legacy` is the explicit
+owner mutation that imports history. It emits one JSON object on stdout, including
+`legacy_import`. Plain `stats` and `ls --json` never import or modify state.
+`agx worker ls --json --all` exposes the canonical imported runs and judgments;
+consumers need no journal reader. These additive fields follow the worker package
+version; consumers must tolerate additional JSON fields.
+
+The importer reads `<state>/legacy-v1/runs.jsonl`, `lifecycle.jsonl`, and dated
+`runs-YYYY-MM-DD.jsonl` and `lifecycle-YYYY-MM-DD.jsonl` archives. It never changes
+these source files. Run rows (`kind=run`) establish run identity. Acceptance rows
+(`kind=acceptance`, boolean `accept`), landing rows (`kind=landed`), and lifecycle
+rows (`type=judged`, `decision=accept|reject|landed`) become judgment events.
+`landed` means `accept`. Existing `kind=judged` rows are also accepted. Interim
+rows retain their progress import behavior; grades and other lifecycle types are
+ignored. Judgments require an ISO 8601 `at` with UTC or an explicit offset.
+
+Every non-null listing `judgment` contains `decision`, `note`, and `at`, including
+current judgments and history imported before this extension. The latest instant
+wins across all sources, regardless of archive date, file order, import time, or
+canonical log position. Equal instants use these rules:
+
+- A current judgment wins over an imported judgment.
+- Between imported judgments, the lexicographically greater `legacy_key` wins.
+  This stable owner-generated key is included in imported listing judgments;
+  consumers compare the resulting judgment rather than reconstructing keys.
+- Between current judgments, the later canonical log event wins.
+
+Imported runs expose `legacy: {run_id, source: "legacy-v1"}` alongside canonical
+`id`, `workspace`, `ticket`, and start/end timestamps. Original run IDs share one
+namespace across legacy files; the canonical ID is `legacy-` plus the first 24
+hexadecimal characters of SHA-256 of the original UTF-8 run ID. Re-import and
+archive relocation preserve this mapping. Current runs omit `legacy`.
+
+`legacy_import.runs_imported` counts newly imported run identities;
+`judgments_imported` and `progress_imported` count newly appended events.
+Repeated rows with the same event identity, including copies in multiple archives,
+append once. Re-importing unchanged history returns zero for these three counters
+and leaves `runs` and `judgments` unchanged. The top-level `judgments` counts all
+stored judgment events, including superseded ones, rather than judged runs.
+`malformed_lines` counts invalid JSON/non-object lines and recognized judgments
+with an invalid timestamp or decision. `ignored_rows` counts unsupported rows,
+rows without a usable kind/run ID, and events without an imported run. Both scan
+counters recur on re-import. An orphan event can import after its run appears.
+
+Successful scans exit 0, including scans with malformed/ignored source rows;
+these counters expose partial source coverage. Usage/state migration refusals
+exit 2; a corrupt canonical log exits 1 with a stderr diagnostic. Import writes
+are append-only and may be partial if interrupted; retry resumes using stable
+event keys. The legacy landing refusal described above still applies before import.
+
+Real CLI fixtures: `tests/next/legacy-judgments.test.ts` covers archive chronology,
+late discovery, equal-time ties, source duplication, identity, timestamps, counts,
+malformed rows, and read-only listings/stats.
+
+## Tickets and dispatch
 
 Tickets are caller-owned files. `agx worker run` accepts positional ticket paths and optionally a working
 tree and sandbox mode. A continuation uses the previous run ID and resumes its vendor session,
@@ -439,3 +498,254 @@ refusals still apply before host inspection. Neither host command writes run sta
 Acceptance fixtures in `tests/host.test.ts` invoke the real `agx worker host` route
 with isolated config and state directories, covering all three check statuses,
 permissions, retired input, symlinks, competing creates and unchanged existing files.
+
+## Statistics window parameter
+
+`--window DURATION` is shared by `stats --routing` and `stats --usage jev`; it is
+invalid with plain `stats` or `--import-legacy`. The default is `24h` for routing
+statistics and `7d` for Jev usage. Its grammar is a positive decimal integer followed
+by `m`, `h` or `d`; units mean exactly 60, 3600 or 86400 seconds. Unsafe durations
+and windows beginning before the Unix epoch are rejected.
+
+## Routing statistics (schema 1)
+
+`agx worker stats --routing --window 24h [--host NAME]` emits one JSON object and
+newline, identically on terminals and pipes. Direct `agx-worker stats` is equivalent.
+This read-only projection does not import history or start workers. Plain `stats`
+retains its existing output. `--routing` cannot combine with `--import-legacy`;
+`--host` requires `--routing`. No positional arguments are accepted.
+
+`observation.start` and `observation.end` are UTC instants; the interval is
+`[start,end)`, with end sampled once at collection start. `duration_ms` is the
+duration, and `window` retains the input spelling. `host` is an exact, case-sensitive name and defaults to the local
+OS hostname. Blank host names are rejected. Selecting another host filters the
+same owner journal; it does not query another machine or combine state stores.
+
+Schema 1 fields:
+
+| Field                               | Meaning                                                                                       |
+| ----------------------------------- | --------------------------------------------------------------------------------------------- |
+| `schema`                            | Public response version, currently 1.                                                         |
+| `observation`                       | `start`, `end`, `window`, `duration_ms`, and `interval`.                                      |
+| `host`                              | Selected routing host name.                                                                   |
+| `jev.pick_count`, `jev.denominator` | Equal counts of recorded selections with source Jev, matching host and bounds.                |
+| `jev.codex_pick_count`              | Subset of those selections whose selected route was Codex.                                    |
+| `jev.codex_share`                   | Codex count divided by denominator, a fraction in [0,1]; null when denominator is zero.       |
+| `fallback_count`                    | Recorded non-Jev selections in the same host and interval, excluded from the Jev denominator. |
+| `routes.codex`, `routes.claude`     | Current local route assessment described below; unrelated to historical pick success.         |
+| `coverage`                          | Explicit limits on the observed counts, described below.                                      |
+
+One count means one completed routing selection. The owner now captures every
+Jev or fallback selection at selection time, with host, timestamp, row, route and
+source, before a worker starts. `roster TICKET` selections and retries count too;
+explicit row choices and continuations that do not route do not count. Failed
+routing attempts without a selected row do not count. Selections are retained
+independently of run completion; run events are never added to these counts, so
+audit copies cannot double count. The owner's event storage is private: consumers
+must discover and read these metrics through this command, not through file paths.
+
+Each route exposes `state` (`unknown` or `unavailable`), `configured` (boolean or
+null), `executable` (`present`, `absent` or `unknown`), `sandbox` (`unknown`),
+`reason`, and `subscription` (assessment object or null). For the local host,
+configured means at least one effective roster row exists and the route filter
+permits it. Executable presence is a PATH lookup of `codex` or `claude`; no binary
+is executed. A known disabled route, missing binary, or exhausted subscription
+with policy `stop` makes the state unavailable. Otherwise state stays unknown:
+executable presence cannot establish execution or sandbox capability. No task's
+capability tags or sandbox are assumed. For another host these checks and
+subscription are unknown/null; local facts are never attributed to that host.
+
+The subscription object reuses routing's `available`, `exhausted`, `usage_status`,
+`preference`, `windows` and optional `source_reason` assessment. `available` is
+subscription policy permission, not executable or sandbox capability. Missing or
+invalid subscription observations are unknown and neutral, not failure. Future
+measurements, measurements older than 15 minutes, and expired reset times are
+stale and neutral. Window objects expose used percentage, reset epoch seconds,
+window seconds, elapsed fraction, pace and status. Unknown/stale windows have null
+elapsed fraction and pace. Fresh exhausted windows can veto a route only under
+its configured `stop` policy. `continue` preserves subscription permission.
+
+`coverage.status` is currently always `partial`, `history_complete` is false and
+`legacy` is `unknown`: pre-journal picks have no reliable complete host history.
+Zero observed picks do not prove zero activity. `journal_present` distinguishes
+missing owner history from a present journal. `first_recorded_at` is the earliest
+retained event across all hosts, or null; it does not establish uninterrupted
+coverage. `trailing_partial_record` reports an unfinished last record, excluded
+from counts. `unknown` lists further limits, including journal deletion/retention
+and unprobed execution/sandbox capability. `subscription_max_age_ms` is 900000.
+No legacy history is imported, inferred from row names, or represented as complete.
+
+Exit 0 means the projection was collected, including empty/partial history,
+unknown subscriptions or unavailable routes. Invalid combinations, windows and
+blank host names exit 2 with a stderr diagnostic and no report. Missing journals
+are reported as unknown coverage; unreadable journals, malformed complete records
+or invalid local roster configuration fail collection with exit 2 and stderr.
+Framework parsing errors (such as unknown flags) exit 1; existing state migration
+refusals exit 2. An incomplete last journal line is reported in coverage rather
+than silently treated as a complete observation.
+
+Schema 1 field meanings and null semantics are public. Additive fields and new
+status values are compatible; consumers must tolerate them. Changing existing
+field meanings or removing fields requires a breaking release and a new schema.
+Acceptance tests in `tests/next/routing-stats.test.ts` exercise real `agx worker`
+JSON, isolated owner history and selection capture, out-of-window/future/other-host
+fixtures, fallback denominators, unknown/stale/exhausted subscriptions, empty
+windows, invalid input and corrupt/incomplete history. Window parsing lives in
+one reusable stats helper for additional projections.
+
+## Vendor probe (JSON schema 1)
+
+`agx worker probe --vendor codex --sandbox workspace-write --cd PATH --timeout-ms N --json`
+runs a fixed diagnostic on the host where the CLI is invoked. Callers can invoke it
+through SSH; agx does not own SSH transport. Human operators, scripts and agents
+consume the same single JSON object followed by a newline on stdout. It requires
+all five flags, accepts no positionals or stdin, and offers `probe --help`.
+`--sandbox` accepts `none`, `read-only` or `workspace-write`; N is an integer from
+1 through 300000 milliseconds. Unknown flags and missing flag values follow the
+parser's stderr/exit 1 behavior. Invalid values, missing required flags, extra
+positionals and invalid directories return a `refused` report with exit 2.
+
+The probe starts Codex directly with `exec --json --skip-git-repo-check`, the
+selected sandbox, the canonical target directory and `approval_policy="never"`.
+It supplies a fixed prompt asking for exactly one shell command,
+`printf 'AGX_PROBE_OK\n'`, followed by the exact reply `AGX_PROBE_OK`, without
+reading or changing files. There is no caller prompt, ticket, roster selection,
+continuation, worker launch wrapper, reservation or run record. The probe neither
+creates nor reads agx run records. The ordinary worker state-migration gate runs
+before flag parsing: a retired state variable or unmigrated directory emits a
+diagnostic on stderr and exits 2 without a JSON report or vendor launch. This
+path inspection does not create state. Codex may
+use its own configuration, credentials and session storage. The diagnostic prompt
+requests no target writes; this is an execution probe, not a filesystem isolation
+proof or a vendor configuration audit.
+
+Sandbox selection uses the same host-declaration resolver and validator as worker
+launch. Invalid or unreadable declarations refuse before spawn. A valid declaration
+sets `sandbox_effective` to `danger-full-access` and supplies its
+`unsandboxed_reason`; otherwise the requested mode is used (`none` maps to
+`danger-full-access`). No failure triggers a sandbox retry or downgrade.
+`sandbox_effective` reports the launch argument, not an independently measured
+kernel boundary. It remains null when no process was started. The resolved
+executable is `AGX_CODEX_BIN` when set, otherwise `codex` found on PATH; the override
+also supports fake executables in acceptance tests.
+
+| Field                                    | Meaning                                                                               |
+| ---------------------------------------- | ------------------------------------------------------------------------------------- |
+| `schema`, `vendor`                       | `1`, `"codex"`                                                                        |
+| `sandbox_requested`, `sandbox_effective` | Validated requested mode and actual launch mode; null when not validated/started      |
+| `unsandboxed_reason`                     | Host-declaration explanation, or null                                                 |
+| `executable`, `cwd`                      | Resolved executable and canonical target directory, or null before resolution         |
+| `captured_at`, `ended_at`                | UTC observation and report completion timestamps                                      |
+| `started_at`, `start_ms`                 | Successful process spawn timestamp and elapsed milliseconds, or null                  |
+| `startup_at`, `startup_ms`               | First `thread.started` acknowledgement and elapsed milliseconds, or null              |
+| `result_at`, `result_ms`                 | Observed `turn.completed` and elapsed milliseconds, or null                           |
+| `elapsed_ms`, `timeout_ms`               | Total observation duration and validated execution deadline (null if input invalid)   |
+| `timed_out`                              | Execution deadline fired, including after result output but before process exit/drain |
+| `exit_code`, `signal`                    | Observed vendor process exit code and termination signal, nullable                    |
+| `outcome`, `reason`                      | Classified outcome below and explanatory text                                         |
+| `stderr`                                 | First 4096 decoded characters of vendor stderr; never mixed into stdout               |
+
+Timestamps use UTC ISO 8601; durations use a monotonic clock relative to
+`captured_at`. Spawn is not startup acknowledgement; startup acknowledgement alone
+does not establish that a sandbox command ran. A result timestamp alone does not
+establish success. A successful observation requires `thread.started`, a completed
+command with exit 0 and marker output, the exact marker reply, `turn.completed`,
+and a process exit of 0 before the deadline, without error events or invalid output.
+
+| `outcome`        | CLI exit | Meaning                                                              |
+| ---------------- | -------- | -------------------------------------------------------------------- |
+| `success`        | 0        | Fixed diagnostic completed with all evidence above                   |
+| `timeout`        | 1        | Execution deadline exceeded; takes precedence over result output     |
+| `failed`         | 1        | Vendor error event, nonzero exit, signal or stream failure           |
+| `invalid_output` | 1        | Missing required evidence, malformed JSONL or excessive output       |
+| `refused`        | 2        | Invalid invocation, directory or host declaration; no vendor started |
+| `unavailable`    | 2        | Executable missing or process could not start                        |
+
+The execution deadline bounds startup, command/result waiting and output draining
+together. Maximum silent execution is N milliseconds plus process termination and
+local scheduling overhead. Both output streams drain concurrently with a 1 MiB
+byte bound per stream. Output overflow kills the process and fails. On supported
+POSIX hosts, the probe owns a separate process group and sends SIGKILL to it on
+timeout, overflow and normal parent exit, preventing lingering descendants from
+holding the pipes open. No temporary probe files need cleanup. Retrying starts a
+new diagnostic; it never resumes or registers a run.
+
+Schema 1 field meanings, null semantics and outcome/exit mappings are public.
+Consumers must tolerate added fields and treat unrecognized outcomes as non-success.
+Changing existing meanings requires a breaking release. No private file is a probe
+API. `tests/next/probe.test.ts` invokes the real umbrella CLI with only fake vendor
+executables and isolated state, checking success, timeout before startup and after
+result, process-group cleanup, malformed/missing/excessive output, unavailable
+executables and valid/invalid host declarations.
+
+## Jev usage JSON, version 1
+
+Shell, CI and agent consumers use `agx worker stats --usage jev --window 7d`.
+JSON is the default and only output mode for this projection. The window follows
+the shared [statistics window parameter](#statistics-window-parameter).
+`--usage` is exclusive with `--routing`, `--host`, `--import-legacy`, and positional
+arguments. No stdin is consumed.
+
+The read-only command emits one JSON object and newline on stdout, with `schema: 1`,
+`usage: "jev"`, `window`, `from`, `to`, `captured_at`, and `interval: "[from,to)"`.
+`from` and `to` bound the trailing window at collection start; `captured_at` is the
+completion time. There is no network request or worker launch. It reads owner state
+through the ordinary `AGX_STATE_DIR`/XDG resolver; callers must not discover or parse
+the private journals themselves. Repeating the command observes a new window.
+
+- `input_tokens` and `output_tokens` sum **retained observed evidence** when all
+  observed records have usage and there are no unknown timestamps or partial tails.
+  Otherwise both are `null`. Empty evidence also returns `null`, never an inferred zero.
+  Explicit recorded zero tokens remain numeric zero.
+- `known_input_tokens` and `known_output_tokens` always give the known subtotal, or
+  `null` if there are no records with valid usage. They exclude missing usage rather
+  than treating it as zero. Usage requires both nonnegative safe-integer
+  `usage.input_tokens` and `usage.output_tokens`; partial, invalid or absent usage
+  counts as unknown.
+- `pricing` supplies USD `input_per_mtok`, `output_per_mtok`, `source`, `as_of`,
+  `observed_at`, and `basis`. These are the effective roster catalog rates at
+  observation (catalog `[jev]` overrides policy prices), with the catalog date as
+  `as_of`. They are configuration evidence, not a verified provider bill.
+  Missing prices are `null`. `known_tokens_at_effective_price_usd` reprices the
+  known subtotal at these named rates; `estimated_cost_usd` uses the same formula
+  only when observed evidence is complete. Both are `null` without usage or rates.
+  Neither claims historical billing cost. Each newly captured call also preserves
+  its then-effective prices privately for provenance.
+- `completeness` is `"partial"` and `coverage.history_complete` is `false`: agx
+  cannot certify deleted or unretained history. Even numeric totals describe only
+  retained observations. `coverage.observed_records_complete` separately describes
+  the inspected records. `coverage` includes call/known-record counts, legacy
+  known-record count, journal presence, `first_capture_at` (earliest retained call),
+  partial-tail status and an explicit reason. `first_capture_at` is not proof that
+  the window before it was idle. Freshness is evaluated from `to`/`captured_at`;
+  there is no cached-result TTL.
+- `unknown.usage` counts missing captured-call usage plus historical runs lacking
+  usage evidence; `historical_runs` and `captured_calls` split that count.
+  `unknown.time` counts run records whose timestamps cannot establish window
+  membership, separately from in-window counts. `unknown.historical_pricing`
+  counts legacy records with known tokens but no preserved call-time price.
+  Unknown counters describe observed evidence, not an upper bound on lost history.
+
+New routing attempts capture usage after the Jev request, including failed requests,
+HTTP errors and fallback selections, even if no worker starts. The count unit is
+one captured routing attempt, not a worker execution. A run links to its capture
+without recounting the call. Pre-capture started runs have unknown usage; historical
+manual/routed eligibility cannot always be distinguished, so unmatched runs are
+conservatively unknown. Retained legacy run journals (including dated rotations in
+both the state root and `legacy-v1`) contribute response usage when available,
+attributed to their `started_at`; current calls use response capture time.
+Legacy run IDs deduplicate rotations and matching imported started records.
+Runs outside `[from,to)` do not contribute tokens or missing-usage counts.
+
+Exit 0 means a projection was collected, including explicitly partial results.
+Invalid flag combinations/windows, unreadable journals, invalid complete JSON lines,
+invalid capture records, or invalid effective configuration exit 2 with a diagnostic
+on stderr and no JSON. Cleye parser failures (for example unknown flags) retain its
+exit 1 behavior. An incomplete final journal line is excluded and disclosed, rather
+than reported as a complete observation. No import, rewrite, cache publication or
+migration occurs. JSON consumers must tolerate additive fields; incompatible meaning
+or field changes require another schema version.
+
+`tests/next/jev-usage.test.ts` exercises the real suite CLI with isolated state and
+a local Jev HTTP fixture, including successful capture, fallbacks, missing historical
+usage, legacy deduplication, invalid input, partial writes and out-of-window records.

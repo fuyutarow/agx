@@ -9,6 +9,9 @@ import { flushRunPublications, stateDir } from "./store.ts";
 import { doctor } from "./doctor.ts";
 import { roster } from "./public.ts";
 import { host } from "./host.ts";
+import { jevUsageStats } from "./jev-usage.ts";
+import { routingStats } from "./routing-stats.ts";
+import { probe } from "./probe.ts";
 import packageJson from "../../package.json" with { type: "json" };
 
 const cliArgv = () => process.argv.slice(2);
@@ -61,7 +64,40 @@ async function main(): Promise<void> {
   let exit = 2;
   const commandName = rawArgs[0];
   const commandArgs = rawArgs.slice(1);
-  if (commandName === "host") {
+  if (commandName === "probe") {
+    const parsed = cli(
+      {
+        name: "agx worker probe",
+        parameters: [],
+        strictFlags: true,
+        ignoreArgv: rejectPrototypeFlag,
+        help: {
+          description:
+            "Run a bounded fixed Codex diagnostic without a ticket or run records.",
+        },
+        flags: {
+          vendor: { type: String, description: "codex" },
+          sandbox: {
+            type: String,
+            description: "none | read-only | workspace-write",
+          },
+          cd: { type: String, description: "existing target directory" },
+          timeoutMs: {
+            type: Number,
+            description: "total execution deadline, 1..300000 ms",
+          },
+          json: {
+            type: Boolean,
+            description: "emit the schema 1 probe report",
+          },
+        },
+      },
+      undefined,
+      commandArgs,
+    );
+    process.exitCode = await probe(parsed.flags, parsed._.length);
+    return;
+  } else if (commandName === "host") {
     exit = host(commandArgs);
   } else if (commandName === "dispatch") {
     const { dispatchMain } = await import("../dispatch.ts");
@@ -248,6 +284,23 @@ async function main(): Promise<void> {
             type: Boolean,
             description: "import legacy agx JSONL records",
           },
+          usage: {
+            type: String,
+            description: "emit versioned Jev token usage JSON (--usage jev)",
+          },
+          routing: {
+            type: Boolean,
+            description: "emit versioned routing statistics JSON",
+          },
+          window: {
+            type: String,
+            description:
+              "trailing window: positive integer with m, h or d (routing 24h; usage 7d)",
+          },
+          host: {
+            type: String,
+            description: "exact routing host name (default local hostname)",
+          },
         },
         strictFlags: true,
         ignoreArgv: rejectPrototypeFlag,
@@ -255,7 +308,31 @@ async function main(): Promise<void> {
       undefined,
       commandArgs,
     );
-    exit = await stats(parsed.flags satisfies Flags);
+    if (
+      parsed._.length > 0 ||
+      (parsed.flags.routing === true && parsed.flags.importLegacy === true) ||
+      (parsed.flags.usage !== undefined &&
+        (parsed.flags.usage !== "jev" ||
+          parsed.flags.routing === true ||
+          parsed.flags.importLegacy === true ||
+          parsed.flags.host !== undefined)) ||
+      (parsed.flags.routing !== true && parsed.flags.host !== undefined) ||
+      (parsed.flags.routing !== true &&
+        parsed.flags.usage === undefined &&
+        parsed.flags.window !== undefined)
+    ) {
+      process.stderr.write(
+        "agx worker stats: --window requires --routing or --usage jev; --host requires --routing; usage, routing and import-legacy are exclusive; no positional arguments\n",
+      );
+      exit = 2;
+    } else if (parsed.flags.usage === "jev") {
+      exit = await jevUsageStats(parsed.flags.window ?? "7d");
+    } else if (parsed.flags.routing === true) {
+      exit = await routingStats(
+        parsed.flags.window ?? "24h",
+        parsed.flags.host,
+      );
+    } else exit = await stats(parsed.flags satisfies Flags);
   } else if (commandName === "doctor") {
     if (Object.hasOwn(process.env, "AGX_DOCTOR_QUIET")) {
       process.stderr.write(

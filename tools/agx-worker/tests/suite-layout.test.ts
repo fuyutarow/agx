@@ -29,5 +29,6 @@ test("the CLI exposes the run, doctor, and process interface commands", () => {
     "doctor",
     "roster",
     "host",
+    "probe",
   ]);
 });

@@ -4,8 +4,14 @@ import { Lease, Evidence, StopSignal } from "./lease.ts";
 import { VerifyResult } from "./verify.ts";
 import { Sandbox, SandboxSource } from "./sandbox.ts";
 
+export const LegacyIdentity = z.object({
+  run_id: z.string(),
+  source: z.literal("legacy-v1"),
+});
+
 export const RunSchema = z.object({
   id: z.string(),
+  legacy: LegacyIdentity.optional(),
   started_at: z.string(),
   ended_at: z.string().nullable(),
   ticket: z.string(),
@@ -25,7 +31,14 @@ export const RunSchema = z.object({
   cwd: z.string(),
   workspace: z.string(),
   writes: z.array(z.string()),
-  judgment: z.object({ decision: z.string(), note: z.string() }).nullable(),
+  judgment: z
+    .object({
+      decision: z.string(),
+      note: z.string(),
+      at: z.string(),
+      legacy_key: z.string().optional(),
+    })
+    .nullable(),
   report_path: z.string().nullable(),
   verify: z.array(VerifyResult),
   last_progress_path: z.string().nullable(),

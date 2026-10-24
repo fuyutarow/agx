@@ -15,6 +15,8 @@ import { exitWithError } from "./exit.ts";
 import { readRouteUsage } from "./usage.ts";
 import { foldedRuns, setPendingPickAudit } from "./store.ts";
 import { CAPACITY_COOLDOWN_MS, capacityRows } from "./capacity.ts";
+import { recordJevUsage } from "./jev-usage.ts";
+import { recordRoutingPick } from "./routing-events.ts";
 
 const Reply = z.looseObject({
   answers: z.record(
@@ -123,6 +125,7 @@ export async function route(
   };
   if (roster.auto.jev.api === "typesafe") request.model = roster.auto.jev.model;
   const post = await postJev(endpoint.value, request, roster.auto.timeout_ms);
+  const usageId = recordJevUsage(post, roster);
   const fallback =
     candidates.find((row) => row.id === roster.default) ?? candidates[0]!;
   const recordPick = (
@@ -130,10 +133,12 @@ export async function route(
     source: string,
     probabilities: Record<string, number> | undefined,
   ): Choice => {
+    recordRoutingPick(row, source);
     setPendingPickAudit({
       source,
       probabilities: probabilities ?? null,
       usage_snapshot: usage,
+      usage_id: usageId,
     });
     return row;
   };

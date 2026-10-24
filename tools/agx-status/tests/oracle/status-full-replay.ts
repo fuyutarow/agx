@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
-// Test-only oracle: the pre-SEP-STATUS-PUBLISH full-replay agx-status (reads records.jsonl). Never shipped.
+// Test-only full-replay oracle (reads records.jsonl). Never shipped.
+// Preserve independent replay while following the worker contract's judgment ordering (C3).
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { stat } from "node:fs/promises";
@@ -82,13 +83,18 @@ const workspaceFile = z.object({
     .optional(),
 });
 const doctorFile = findings.extend({ complete: z.literal(true) });
+const judgment = z.object({
+  decision: z.string(),
+  at: z.string(),
+  legacy_key: z.string().optional(),
+});
 const runRow = z.object({
   id: z.string(),
   state: z.enum(["running", "ended"]),
   dispatcher_session: z.string().nullable(),
   workspace: z.string().optional(),
   ended_at: z.string().optional(),
-  judgment: z.object({ decision: z.string() }).nullable(),
+  judgment: judgment.nullable(),
 });
 const event = z.discriminatedUnion("kind", [
   z.object({
@@ -102,7 +108,7 @@ const event = z.discriminatedUnion("kind", [
     id: z.string(),
     at: z.string().optional(),
   }),
-  z.object({ kind: z.literal("judged"), id: z.string(), decision: z.string() }),
+  judgment.extend({ kind: z.literal("judged"), id: z.string() }),
 ]);
 type Run = z.output<typeof runRow>;
 
@@ -134,7 +140,20 @@ async function readActions(
       run.state = "ended";
       run.ended_at = item.at;
     }
-    if (item.kind === "judged") run.judgment = { decision: item.decision };
+    if (item.kind !== "judged") continue;
+    const decision = item.decision === "landed" ? "accept" : item.decision;
+    if (decision !== "accept" && decision !== "reject") continue;
+    const previous = run.judgment;
+    const order =
+      previous === null ? 1 : Temporal.Instant.compare(item.at, previous.at);
+    // Latest instant wins. At a tie, current beats imported, imported keys sort
+    // lexically, and current events retain canonical log order.
+    const winsTie =
+      item.legacy_key === undefined ||
+      (previous?.legacy_key !== undefined &&
+        item.legacy_key > previous.legacy_key);
+    if (order > 0 || (order === 0 && winsTie))
+      run.judgment = { ...item, decision };
   }
   const workspaceRows = verdicts.map((line) => line.split("\t"));
   const members = new Set(workspaceRows.map((row) => row[0]));
