@@ -7,6 +7,7 @@ import {
   symlinkSync,
   writeFileSync,
   realpathSync,
+  chmodSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -41,6 +42,22 @@ test("diagnostics normalize run-specific paths; only workspace additions count",
     "src/a.ts(2,3): error TS2322: y",
   ]);
   expect(addedDiagnostics(workspace, base)).toEqual([]);
+});
+
+test("diagnostics count all 14 colored errors but no launcher failure as an error", () => {
+  const output = Array.from(
+    { length: 14 },
+    (_, index) =>
+      `\u001B[96mC:\\consumer\\broken.ts\u001B[0m:${index + 1}:14 - \u001B[91merror\u001B[0m\u001B[90m TS2322: \u001B[0mType 'string' is not assignable to type 'number'.`,
+  ).join("\n");
+  const counted = diagnostics(output, [["C:/consumer", "<consumer>"]]);
+  expect(counted).toHaveLength(14);
+  expect(counted[0]).toBe(
+    "<consumer>/broken.ts:1:14 - error TS2322: Type 'string' is not assignable to type 'number'.",
+  );
+  expect(
+    diagnostics("/usr/bin/env: node: No such file or directory\n", []),
+  ).toEqual([]);
 });
 
 function fixture() {
@@ -93,7 +110,7 @@ function fixture() {
       `  const config = Bun.JSONC.parse(readFileSync(project + "/tsconfig.json", "utf8"));\n` +
       `  process.stdout.write(JSON.stringify({ compilerOptions: config.compilerOptions ?? {} }));\n` +
       `} else {\n` +
-      `  const result = Bun.spawnSync(["bun", "check", "--project", project], { stdout: "inherit", stderr: "inherit" });\n` +
+      `  const result = Bun.spawnSync([process.execPath, "check", "--no-pretty", "--project", project], { stdout: "inherit", stderr: "inherit" });\n` +
       `  process.exitCode = result.exitCode;\n` +
       `}\n`,
   );
@@ -115,7 +132,7 @@ function fixture() {
     hooks: ".agents/hooks",
     link_task: "link:agx-usehooks",
     link_path: "node_modules/agx-usehooks",
-    command: ["bun", adapter, "--noEmit", "-p", "{root}"],
+    command: [process.execPath, adapter, "--noEmit", "-p", "{root}"],
   };
   return {
     root,
@@ -163,6 +180,49 @@ test("a consumer broken on alpha is PRE-EXISTING; an added consumer error FAILs 
   );
   expect(realpathSync(f.link)).toBe(realpathSync(f.installed));
 }, 120_000);
+
+for (const failing of ["base", "workspace", "both"]) {
+  test(`a node launcher unavailable on ${failing} FAILs instead of claiming PRE-EXISTING`, async () => {
+    const f = fixture();
+    const bin = join(f.root, "empty-bin");
+    mkdirSync(bin);
+    const launcher = join(f.root, "tsc");
+    writeFileSync(launcher, "#!/usr/bin/env node\n");
+    chmodSync(launcher, 0o755);
+    const adapter = join(f.root, "missing-node-adapter.ts");
+    writeFileSync(
+      adapter,
+      `const args = Bun.argv.slice(2);\n` +
+        `if (args.includes("--showConfig")) {\n` +
+        `  process.stdout.write('{"compilerOptions":{}}');\n` +
+        `} else {\n` +
+        `  const project = args[args.indexOf("-p") + 1];\n` +
+        `  const side = project.includes("/base/") ? "base" : "workspace";\n` +
+        `  if (${JSON.stringify(failing)} === "both" || side === ${JSON.stringify(failing)}) {\n` +
+        `    const result = Bun.spawnSync([${JSON.stringify(launcher)}], { env: { ...process.env, PATH: ${JSON.stringify(bin)} }, stdout: "inherit", stderr: "inherit" });\n` +
+        `    process.exitCode = result.exitCode;\n` +
+        `  }\n` +
+        `}\n`,
+    );
+    const lines: string[] = [];
+    expect(
+      await checkConsumer(
+        {
+          ...f.consumer,
+          command: [process.execPath, adapter, "--noEmit", "-p", "{root}"],
+        },
+        f.alpha,
+        f.alpha,
+        (text) => void lines.push(text),
+      ),
+    ).toBe(1);
+    const report = lines.join("");
+    expect(report).toContain("FAIL fixture:");
+    expect(report).toContain("typecheck failed without a diagnostic");
+    expect(report).toContain("node");
+    expect(report).not.toContain("PRE-EXISTING");
+  });
+}
 
 test("an untouched agx-usehooks tree is SKIP; a missing consumer is SKIP", async () => {
   const f = fixture();

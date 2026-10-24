@@ -2,6 +2,7 @@
 // The gate depends only on the tree being integrated: each consumer is typechecked against the
 // base revision's agx-usehooks and against the workspace's, and only diagnostics the workspace
 // adds fail. A consumer already broken on the base is PRE-EXISTING, never a land failure.
+// A compiler failure without diagnostics cannot establish this comparison and fails the check.
 import { stat, mkdtemp, mkdir, rm, symlink } from "node:fs/promises";
 import { stripVTControlCharacters } from "node:util";
 import { homedir, tmpdir } from "node:os";
@@ -141,8 +142,7 @@ export async function usehooksChanged(
   );
 }
 
-// A run that failed without a located diagnostic (compiler crash, timeout) counts as one
-// diagnostic, so it is pre-existing only when the base run failed the same way.
+// A failed run without diagnostics, or a timeout, cannot establish a comparison.
 const silent = (run: {
   timedOut: boolean;
   exit: number;
@@ -288,18 +288,31 @@ export async function checkConsumer(
     return 0;
   }
   const { before, after } = checked.value;
-  const added = addedDiagnostics(before.diagnostics, after.diagnostics);
-  const crashed = silent(after) && !silent(before);
   const summary = `workspace ${workspace}; base ${base}; tsc exit ${before.exit} -> ${after.exit}${after.timedOut ? " (timeout)" : ""}`;
-  if (added.length > 0 || crashed) {
+  const inconclusive = (
+    [
+      ["base", before],
+      ["workspace", after],
+    ] as const
+  ).filter(([, run]) => silent(run));
+  if (inconclusive.length > 0) {
+    for (const [side, run] of inconclusive) {
+      write(
+        `FAIL ${consumer.name}: ${side} typecheck ${run.timedOut ? "timed out" : "failed without a diagnostic"} (exit ${run.exit}); comparison inconclusive; ${summary}\n`,
+      );
+      write(run.output);
+    }
+    return 1;
+  }
+  const added = addedDiagnostics(before.diagnostics, after.diagnostics);
+  if (added.length > 0) {
     for (const line of added) write(`${line}\n`);
-    if (crashed) write(after.output);
     write(
-      `FAIL ${consumer.name}: ${added.length} diagnostic(s) added by the workspace${crashed ? "; typecheck failed without a diagnostic" : ""}; ${summary}\n`,
+      `FAIL ${consumer.name}: ${added.length} diagnostic(s) added by the workspace; ${summary}\n`,
     );
     return 1;
   }
-  if (after.diagnostics.length > 0 || silent(after)) {
+  if (after.diagnostics.length > 0) {
     write(
       `PRE-EXISTING ${consumer.name}: ${after.diagnostics.length} error(s) present with the base too; none added; ${summary}\n`,
     );
