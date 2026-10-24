@@ -993,7 +993,7 @@ describe("agx ws gc", () => {
     ]);
   });
 
-  test("an unlanded run-end commit keeps a workspace whose working copy now looks clean", async () => {
+  test("an obsolete run-end commit does not retain a workspace with no current content", async () => {
     const path = await repo('trunk = "main"\n');
     await ws(["add", "ended"], path);
     const dir = wsDir(path, "ended");
@@ -1006,8 +1006,8 @@ describe("agx ws gc", () => {
     setRecords([rec(path, "ended", { end_commit: end })]);
     const r = await ws(["gc"], path);
     expect(r.code).toBe(0);
-    expect(r.out).toContain("unlanded");
-    expect(existsSync(dir)).toBe(true);
+    expect(r.out).toContain(`${dir}\tws\tcollected\t`);
+    expect(existsSync(dir)).toBe(false);
   });
 
   test("unrecorded workspaces are reported, collected only with --include-unrecorded and no diff", async () => {
@@ -1324,6 +1324,82 @@ describe("gc integration branches", () => {
     expect(pending.code, pending.err).toBe(0);
     expect(pending.out).toContain(`${dir}\tlegacy\tunlanded\t`);
   });
+
+  for (const integration of ["squash", "rebase", "continuation"]) {
+    test(`AGX-WS-GC-KEEP-BY-DIFF-1024: accepted ${integration} and real paths`, async () => {
+      const path = await repo('trunk = "main"\n');
+      setRecords([]);
+      expect((await ws(["add", "integrated"], path)).code).toBe(0);
+      const dir = wsDir(path, "integrated");
+      const files = [
+        " leading space.txt",
+        "trailing space ",
+        "日本語 [draft].txt",
+      ];
+      for (const file of files) await Bun.write(join(dir, file), "accepted\n");
+      const end = (
+        await jj(["log", "--no-graph", "-r", "@", "-T", "commit_id"], dir)
+      ).out.trim();
+      if (integration === "squash") {
+        expect(
+          (await jj(["squash", "--from", end, "--into", "@"], path)).code,
+        ).toBe(0);
+        expect(
+          (await jj(["bookmark", "set", "main", "-r", "@"], path)).code,
+        ).toBe(0);
+        expect((await jj(["workspace", "update-stale"], dir)).code).toBe(0);
+        expect((await jj(["new", "main"], dir)).code).toBe(0);
+      } else {
+        for (const file of files)
+          await Bun.write(join(path, file), "accepted\n");
+        expect(
+          (await jj(["commit", "-m", "independent integrated copy"], path))
+            .code,
+        ).toBe(0);
+        expect(
+          (await jj(["bookmark", "set", "main", "-r", "@-"], path)).code,
+        ).toBe(0);
+        if (integration === "rebase")
+          expect(
+            (await jj(["rebase", "-s", "@", "-d", "main"], dir)).code,
+          ).toBe(0);
+        else expect((await jj(["new", "main"], dir)).code).toBe(0);
+      }
+      setRecords([
+        {
+          ...recFor(dir),
+          id: "old",
+          judgment: { decision: "accept" },
+          end_commit: end,
+        },
+        {
+          ...recFor(dir),
+          id: "continued",
+          continues: "old",
+          judgment: { decision: "accept" },
+        },
+      ]);
+      const dry = await ws(["gc", "--dry-run"], path);
+      expect(dry.code, dry.err).toBe(0);
+      expect(dry.out).toContain(`${dir}\tws\tempty\t`);
+      // An unsnapshotted real diff must be caught by the locked collection pass.
+      await Bun.write(join(dir, files[1]!), "still unlanded\n");
+      const kept = await ws(["gc"], path);
+      expect(kept.code, kept.err).toBe(0);
+      expect(kept.out).toContain(`${dir}\tws\tunlanded\t`);
+      expect(kept.out).toContain(files[1]!);
+      expect(await Bun.file(join(dir, files[1]!)).text()).toBe(
+        "still unlanded\n",
+      );
+      await Bun.write(join(dir, files[1]!), "accepted\n");
+      expect((await jj(["status"], dir)).code).toBe(0);
+      const collected = await ws(["gc"], path);
+      expect(collected.code, collected.err).toBe(0);
+      expect(collected.out).toContain(`${dir}\tws\tcollected\t`);
+      expect(existsSync(dir)).toBe(false);
+      setRecords([]);
+    });
+  }
 
   test("WS-GC-IMMUTABLE: collects without abandoning an immutable workspace commit", async () => {
     const path = await repo('trunk = "main"\n');
@@ -1881,12 +1957,11 @@ describe("SEP-WS-FORGET-UNJUDGED-1023", () => {
         ).out.trim();
         let commit = main;
         if (state === "accepted-pending") {
-          // Recorded run work remains unlanded even when the current checkout is clean.
+          // Accepted content in the current working-copy chain must survive.
           await Bun.write(join(dir, "pending.txt"), "unlanded\n");
           commit = (
             await jj(["log", "--no-graph", "-r", "@", "-T", "commit_id"], dir)
           ).out.trim();
-          expect((await jj(["new", "main"], dir)).code).toBe(0);
         }
         let decision: string | undefined;
         if (state.startsWith("accepted")) decision = "accept";
@@ -1917,7 +1992,7 @@ describe("SEP-WS-FORGET-UNJUDGED-1023", () => {
           await jj(["--ignore-working-copy", "workspace", "list"], path)
         ).out;
         expect(names.includes("ws_guarded:")).toBe(!allowed);
-        let reason = "not reachable";
+        let reason = "unlanded";
         if (state === "unjudged") reason = "unjudged";
         if (state === "running") reason = "live or continuing";
         if (!allowed) expect(result.out + result.err).toContain(reason);
@@ -1982,7 +2057,7 @@ describe("SEP-WS-FORGET-UNJUDGED-1023", () => {
     setRecords([]);
   });
 
-  test("accepted inventory without end_commit requires actual ancestry, not equal content", async () => {
+  test("accepted inventory without end_commit permits an empty child of trunk", async () => {
     const path = await repo('trunk = "main"\n');
     setRecords([]);
     expect((await ws(["add", "ancestry"], path)).code).toBe(0);
@@ -1995,10 +2070,6 @@ describe("SEP-WS-FORGET-UNJUDGED-1023", () => {
         judgment: { decision: "accept" },
       },
     ]);
-    const refused = await ws(["rm", "ancestry"], path);
-    expect(refused.err).toContain("not reachable");
-    expect(existsSync(dir)).toBe(true);
-    expect((await jj(["edit", "main"], dir)).code).toBe(0);
     const removed = await ws(["rm", "ancestry"], path);
     expect(removed.code, removed.err).toBe(0);
     expect(existsSync(dir)).toBe(false);

@@ -702,12 +702,10 @@ const RunRecord = z.looseObject({
 export type RunRecord = z.output<typeof RunRecord>;
 
 /** Fail closed before effects; content equality and elapsed time are not judgments. */
-async function runRemovalReason(
-  repo: Repo,
+function runRemovalReason(
   dir: string,
   records: RunRecord[],
-  forgottenCommit?: string,
-): Promise<string | undefined> {
+): string | undefined {
   const lineage = lineageOf(records, realOr(dir));
   const live = lineage.find((r) => !TERMINAL_STATES.has(r.state));
   if (live !== undefined)
@@ -730,45 +728,6 @@ async function runRemovalReason(
     const decision = run.judgment?.decision;
     if (decision === "reject") continue;
     if (decision !== "accept") return `run ${run.id} is unjudged; keep`;
-    // Current worker inventories omit end_commit. In that case require the actual
-    // workspace commit to be reachable; never substitute content equality for ancestry.
-    let tip =
-      forgottenCommit === undefined
-        ? await jjOut(
-            ["log", "--no-graph", "-r", "@", "-T", "commit_id"],
-            dir,
-            true,
-          )
-        : good(forgottenCommit);
-    if (
-      run.end_commit !== undefined &&
-      run.end_commit !== null &&
-      run.end_commit !== ""
-    )
-      tip = good(run.end_commit);
-    if (!tip.ok)
-      return `cannot read accepted run ${run.id} change: ${msg(tip)}`;
-    const commit = tip.value.trim();
-    if (!/^[0-9a-f]{40,64}$/u.test(commit))
-      return `accepted run ${run.id} has an invalid run-end commit; keep`;
-    const cfg = await readConfig(repo);
-    if (!cfg.ok) return msg(cfg);
-    const landed = await jjOut(
-      [
-        "log",
-        "--no-graph",
-        "-r",
-        `(${commit}) & ::(${cfg.value.trunk})`,
-        "-T",
-        "commit_id",
-      ],
-      repo.backing,
-      true,
-    );
-    if (!landed.ok)
-      return `cannot establish landing for ${run.id}: ${msg(landed)}`;
-    if (landed.value.trim() !== commit)
-      return `accepted run ${run.id} is not reachable from ${cfg.value.trunk}; keep`;
   }
   return undefined;
 }
@@ -780,13 +739,36 @@ async function removalGuard(
 ): Promise<Attempt<void>> {
   const records = await agxRecords(repo.backing);
   if (!records.ok) return records;
-  const reason = await runRemovalReason(
-    repo,
-    dir,
-    records.value,
-    forgottenCommit,
-  );
-  return reason === undefined ? good(undefined) : bad(reason);
+  const reason = runRemovalReason(dir, records.value);
+  if (reason !== undefined) return bad(reason);
+  if (
+    !lineageOf(records.value, realOr(dir)).some(
+      (r) => r.judgment?.decision === "accept",
+    )
+  )
+    return good(undefined);
+  const cfg = await readConfig(repo);
+  if (!cfg.ok) return cfg;
+  const trunk = await trunkCommit(repo, cfg.value);
+  if (!trunk.ok) return trunk;
+  if (trunk.value === null)
+    return bad("cannot judge accepted work without trunk");
+  const tip =
+    forgottenCommit === undefined
+      ? await jjOut(
+          ["log", "--no-graph", "-r", "@", "-T", "commit_id"],
+          dir,
+          true,
+        )
+      : good(forgottenCommit);
+  if (!tip.ok) return tip;
+  const work = await outstanding(repo, tip.value.trim(), trunk.value);
+  if (!work.ok) return work;
+  return work.value.differing.length === 0
+    ? good(undefined)
+    : bad(
+        `accepted work has unlanded paths: ${work.value.differing.join(", ")}; land or reject it first`,
+      );
 }
 
 async function agxRecords(cwd: string): Promise<Attempt<RunRecord[]>> {
@@ -1579,7 +1561,7 @@ async function compareContent(
     true,
   );
   if (!summary.ok) return summary;
-  const entries = summary.value.trimEnd().split("\n").filter(Boolean);
+  const entries = summary.value.split("\n").filter(Boolean);
   // Rename displays and unknown formats fall back to the individual tree comparison.
   const delta = entries.every((line) => /^[AMD] /u.test(line))
     ? new Set(entries.map((line) => line.slice(2)))
@@ -1712,7 +1694,7 @@ export async function outstanding(
     true,
   );
   if (!paths.ok) return paths;
-  const changed = paths.value.trim().split("\n").filter(Boolean);
+  const changed = paths.value.split("\n").filter(Boolean);
   const current = await compareContent(repo, tip, trunk, base, changed);
   if (
     !current.ok ||
@@ -1789,7 +1771,7 @@ async function classify(
   const live = lineage.find((r) => !TERMINAL_STATES.has(r.state));
   if (live !== undefined)
     return verdict("keep", `live or continuing run ${live.id} (${live.state})`);
-  const blocked = await runRemovalReason(repo, ws.dir, records);
+  const blocked = runRemovalReason(ws.dir, records);
   if (blocked !== undefined) return verdict("keep", blocked);
   const land = landState(ws);
   if (land !== undefined)
@@ -1882,14 +1864,9 @@ async function classify(
     true,
   );
   if (!tip.ok) return verdict("keep", msg(tip));
-  const tips = [
-    tip.value.trim(),
-    ...lineage.flatMap((r) =>
-      r.end_commit === undefined || r.end_commit === null || r.end_commit === ""
-        ? []
-        : [r.end_commit],
-    ),
-  ];
+  // The current working-copy chain owns content. Recorded commits can be obsolete
+  // after squash/rebase integration or a continuation in this same workspace.
+  const tips = [tip.value.trim()];
   const consumed = new Set<string>();
   const releases = new Set<string>();
   for (const candidate of new Set(tips)) {

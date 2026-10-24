@@ -72,13 +72,16 @@ Missing or foreign workspace directories are kept. Ordinary collection requires:
 2. **No live pid.** On Linux no process may have its cwd inside the directory (`/proc/*/cwd`); other
    platforms rely on agx state alone.
 3. **Run judgment permits removal.** Continuations supersede their parents. Latest leaf runs
-   are selected by timestamps; missing/invalid dates retain all leaves. Cycles, unjudged leaves,
-   or accepted leaves whose end commit is not reachable from configured trunk keep the workspace.
-   Rejected leaves do not require acceptance. When `end_commit` is absent, the actual workspace
-   commit must be reachable for an accepted run; content equality alone is insufficient.
-4. **Nothing unlanded.** Ordinary GC compares the workspace tip and recorded end commits against
+   are selected by timestamps; missing/invalid dates retain all leaves. Cycles and
+   unjudged leaves keep the workspace. Rejected leaves do not require acceptance.
+   Acceptance permits collection when the current workspace content has landed; run-end commit
+   reachability is not required after squash or rebase integration.
+4. **Nothing unlanded.** Ordinary GC compares the current workspace working-copy commit chain against
    trunk content, including changesets consumed by a release and matching historical release
-   snapshots. Differing paths or failed comparisons keep the workspace. `rm` instead uses
+   snapshots. Recorded `end_commit` values do not retain obsolete content superseded by a
+   continuation in the same workspace. Differing paths are named in the keep reason; failed
+   comparisons also keep the workspace. Accepted work with a real unlanded diff must be landed
+   or explicitly rejected before collection. `rm` instead uses
    nonempty ancestry outside configured trunk. Collection refreshes stale workspaces and
    snapshots/rechecks under the lock immediately before removal.
 
@@ -150,8 +153,8 @@ without moving data. `AGX_NEXT_STATE_DIR` is retired. Workspace discovery reject
 ## Interface with agx-worker
 
 `agx ws gc` needs from each `agx worker ls --json` record: `id`, `state`, `workspace`, `cwd`, `continues`, and
-optionally `end_commit` (the commit id of the run's working copy when the run ended). agx-worker does
-not record `end_commit` yet; until it does, the live `@` check alone judges landing. The agx-worker
+optionally `end_commit` (the commit id of the run's working copy when the run ended). Landing is
+judged from the current `@` chain even when a historical `end_commit` is present. The agx-worker
 scope row for workspaces should read: "agx-worker consumes a tree via `--cd`; creating, readying and
 collecting trees is `agx ws` (`tools/agx-ws`)".
 

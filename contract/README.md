@@ -10,7 +10,9 @@ The following contracts now exist:
   schema 1, `AGX_CONFIG`/XDG discovery, catalog selection, precedence, effective roster JSON,
   compatibility, refusal rules, retired declarations and implementation limits.
 - [Workspace lifecycle](../tools/agx-ws/README.md): creation, readiness, refresh, removal,
-  collection, locks and workspace policy.
+  collection, locks and workspace policy. GC judges the current working-copy chain by unlanded
+  content and reports differing paths; obsolete run-end commit reachability does not prevent
+  collection after squash, rebase or a superseding continuation.
 - [Ticket lifecycle](../tools/agx-ticket/README.md): issuance, derived states, landing and collection.
 - [Worker contract](../tools/agx-worker/contract.md): worker execution and records.
 - [Compiled runtime paths](../tools/shared/compiled-runtime.md): shipped data and runtime inputs.
