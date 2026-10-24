@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.7.2 — 2026-10-25
+
+- Resolve worker message senders from recorded run state even when the sandbox cannot see the owner process.
+
 ## 1.7.1 — 2026-10-25
 
 - Export the worker run ID so messages can resolve the recorded vendor session.
