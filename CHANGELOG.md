@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.0 — 2026-10-25
+
+- Build and upload release archives in GitHub Actions; local publication only pushes alpha and release tags
+- Complete releases by waiting for all platform assets, installing globally, and verifying every machine consumer
+- Fix worker stop ownership checks for dispatched and continued systemd unit children; report ended runs as not running.
+
 ## 1.6.4 — 2026-10-25
 
 - Make blinded Jev option prose readable
