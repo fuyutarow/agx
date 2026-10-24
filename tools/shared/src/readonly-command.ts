@@ -1,8 +1,7 @@
 // A deadline may kill the helper before exec, or its already restricted target.
 // In neither case can a shared-store writer have started. JJ_READ_ARGS alone
 // cannot establish this property: jj's backend can import refs during a read.
-// @ts-expect-error Bun's text loader returns file contents, not TypeScript exports.
-import readonlySource from "./readonly-exec.ts" with { type: "text" };
+import readonlySource from "./readonly-exec.txt" with { type: "text" };
 
 export const READONLY_JOB_ENV = "AGX_READONLY_COMMAND_JOB";
 

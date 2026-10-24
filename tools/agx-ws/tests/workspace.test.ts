@@ -1367,10 +1367,8 @@ describe("gc integration branches", () => {
 
   test("gc judges percent and quoted paths after an independent landing", async () => {
     const path = await repo('trunk = "main"\n');
-    const names = [
-      ".dx/verdicts/20261019_x%2Emd.jsonl",
-      'space and "quote".txt',
-    ];
+    const firstName = ".dx/verdicts/20261019_x%2Emd.jsonl";
+    const names = [firstName, 'space and "quote".txt'];
     for (const name of names)
       await Bun.write(join(path, name), "a\nb\nc\nd\ne\nf\ng\n");
     expect((await jj(["commit", "-m", "literal path base"], path)).code).toBe(
@@ -1404,7 +1402,7 @@ describe("gc integration branches", () => {
     const landed = await ws(["gc", "--dry-run", "--legacy"], path);
     expect(landed.code, landed.err).toBe(0);
     expect(landed.out).toContain(`${dir}\tlegacy\tlanded\t`);
-    await Bun.write(join(dir, names[0]!), "a\nB\nc\nD\ne\nf\ng\n");
+    await Bun.write(join(dir, firstName), "a\nB\nc\nD\ne\nf\ng\n");
     expect((await jj(["status"], dir)).code).toBe(0);
     const pending = await ws(["gc", "--dry-run", "--legacy"], path);
     expect(pending.code, pending.err).toBe(0);
@@ -1417,11 +1415,8 @@ describe("gc integration branches", () => {
       setRecords([]);
       expect((await ws(["add", "integrated"], path)).code).toBe(0);
       const dir = wsDir(path, "integrated");
-      const files = [
-        " leading space.txt",
-        "trailing space ",
-        "日本語 [draft].txt",
-      ];
+      const changedFile = "trailing space ";
+      const files = [" leading space.txt", changedFile, "日本語 [draft].txt"];
       for (const file of files) await Bun.write(join(dir, file), "accepted\n");
       const end = (
         await jj(["log", "--no-graph", "-r", "@", "-T", "commit_id"], dir)
@@ -1469,15 +1464,15 @@ describe("gc integration branches", () => {
       expect(dry.code, dry.err).toBe(0);
       expect(dry.out).toContain(`${dir}\tws\tempty\t`);
       // An unsnapshotted real diff must be caught by the locked collection pass.
-      await Bun.write(join(dir, files[1]!), "still unlanded\n");
+      await Bun.write(join(dir, changedFile), "still unlanded\n");
       const kept = await ws(["gc"], path);
       expect(kept.code, kept.err).toBe(0);
       expect(kept.out).toContain(`${dir}\tws\tunlanded\t`);
-      expect(kept.out).toContain(files[1]!);
-      expect(await Bun.file(join(dir, files[1]!)).text()).toBe(
+      expect(kept.out).toContain(changedFile);
+      expect(await Bun.file(join(dir, changedFile)).text()).toBe(
         "still unlanded\n",
       );
-      await Bun.write(join(dir, files[1]!), "accepted\n");
+      await Bun.write(join(dir, changedFile), "accepted\n");
       expect((await jj(["status"], dir)).code).toBe(0);
       const collected = await ws(["gc"], path);
       expect(collected.code, collected.err).toBe(0);

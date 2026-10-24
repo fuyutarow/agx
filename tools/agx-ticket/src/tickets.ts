@@ -125,7 +125,11 @@ export async function create(options: {
   for (const pair of options.set) {
     const match = /^([A-Za-z_]\w*)=(.*)$/su.exec(pair);
     if (match === null) return bad(`invalid --set '${pair}': expected k=v`);
-    values.set(match[1]!, match[2]!);
+    const key = match[1];
+    const value = match[2];
+    if (key === undefined || value === undefined)
+      return bad(`invalid --set '${pair}': expected k=v`);
+    values.set(key, value);
   }
   const template =
     options.from === undefined
@@ -296,7 +300,9 @@ async function ticketName(path: string): Promise<string> {
   const text = await readFile(path, "utf8");
   const front = /^\+\+\+\r?\n([\s\S]*?)\r?\n\+\+\+/u.exec(text);
   if (front === null) return basename(path, ".md");
-  const raw = await attempt(() => Bun.TOML.parse(front[1]!));
+  const source = front[1];
+  if (source === undefined) return basename(path, ".md");
+  const raw = await attempt(() => Bun.TOML.parse(source));
   if (!raw.ok) return basename(path, ".md");
   const name = z
     .object({ name: z.string().min(1).optional() })
@@ -432,7 +438,9 @@ const isTicketFile = async (path: string): Promise<boolean> => {
   const text = await readFile(path, "utf8").catch(() => "");
   const front = /^\+\+\+\r?\n([\s\S]*?)\r?\n\+\+\+/u.exec(text);
   if (front === null) return false;
-  const parsed = await attempt(() => Bun.TOML.parse(front[1]!));
+  const source = front[1];
+  if (source === undefined) return false;
+  const parsed = await attempt(() => Bun.TOML.parse(source));
   if (!parsed.ok) return false;
   return z
     .object({

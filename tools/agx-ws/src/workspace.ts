@@ -1442,7 +1442,11 @@ function patchesByFile(diff: string): Map<string, string> {
     diff
       .split(/^diff --git /mu)
       .filter(Boolean)
-      .map((block) => [block.split("\n", 1)[0]!, `diff --git ${block}`]),
+      .map((block) => {
+        const header = block.split("\n", 1).at(0);
+        if (header === undefined) return ["", `diff --git ${block}`];
+        return [header, `diff --git ${block}`];
+      }),
   );
 }
 
