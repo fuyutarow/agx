@@ -184,13 +184,17 @@ describe("agx-worker run", () => {
         ]);
         expect(run.verify[2]).not.toHaveProperty("source");
         expect(report.verify).toEqual(run.verify);
-        expect(readFileSync(run.verify[0]!.log_path, "utf8")).toBe(
+        const alwaysResult = run.verify[0];
+        if (alwaysResult === undefined)
+          expect.unreachable("always verification result is missing");
+        expect(readFileSync(alwaysResult.log_path, "utf8")).toBe(
           "always-log\n",
         );
       }
-      expect(readFileSync(run.verify.at(-1)!.log_path, "utf8")).toBe(
-        "ticket-log\n",
-      );
+      const lastResult = run.verify.at(-1);
+      if (lastResult === undefined)
+        expect.unreachable("last verification result is missing");
+      expect(readFileSync(lastResult.log_path, "utf8")).toBe("ticket-log\n");
     },
     30_000,
   );

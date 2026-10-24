@@ -243,7 +243,10 @@ async function ticketSlug(path: string): Promise<Attempt<string>> {
   const front = /^\+\+\+\r?\n([\s\S]*?)\r?\n\+\+\+/u.exec(source.value);
   if (front === null)
     return { ok: false, error: "ticket starts with +++ front matter" };
-  const parsedToml = await attempt(() => Bun.TOML.parse(front[1]!));
+  const frontMatter = front[1];
+  if (frontMatter === undefined)
+    return { ok: false, error: "ticket starts with +++ front matter" };
+  const parsedToml = await attempt(() => Bun.TOML.parse(frontMatter));
   if (!parsedToml.ok) return { ok: false, error: parsedToml.error };
   const metadata: unknown = parsedToml.value;
   const parsed = z

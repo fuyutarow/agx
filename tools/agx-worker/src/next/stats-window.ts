@@ -10,7 +10,10 @@ export function statsWindow(
     h: 3_600_000,
     d: 86_400_000,
   };
-  const duration = Number(matched[1]) * (units[matched[2]!] ?? 0);
+  const amount = matched[1];
+  const unit = matched[2];
+  if (amount === undefined || unit === undefined) return null;
+  const duration = Number(amount) * (units[unit] ?? 0);
   if (!Number.isSafeInteger(duration) || duration > endMs) return null;
   return { startMs: endMs - duration, endMs, durationMs: duration };
 }

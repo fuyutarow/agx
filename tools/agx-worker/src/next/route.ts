@@ -116,7 +116,14 @@ export function blindCriterion(text: string, rows: readonly Choice[]): string {
       "another model",
     );
   }
-  const families = [...new Set(rows.map((row) => row.id.split("-")[0]!))];
+  const families = [
+    ...new Set(
+      rows.flatMap((row) => {
+        const family = row.id.split("-")[0];
+        return family === undefined ? [] : [family];
+      }),
+    ),
+  ];
   for (const family of families) {
     const name = `\\b${escape(family)}(?:\\s+\\d+(?:[.-]\\d+)*)?\\b`;
     result = result
@@ -230,9 +237,10 @@ export async function route(
       ).length;
       const minutes = history
         .flatMap((run) => {
-          if (run.ended_at === null) return [];
+          const endedAt = run.ended_at;
+          if (endedAt === null) return [];
           const duration = fromThrowable(() =>
-            Temporal.Instant.from(run.ended_at!)
+            Temporal.Instant.from(endedAt)
               .since(Temporal.Instant.from(run.started_at))
               .total({ unit: "minutes" }),
           )();
@@ -244,12 +252,10 @@ export async function route(
         })
         .toSorted((a, b) => a - b);
       const middle = Math.floor(minutes.length / 2);
+      const upper = minutes[middle];
+      const lower = minutes[Math.floor((minutes.length - 1) / 2)];
       const median =
-        minutes.length === 0
-          ? null
-          : (minutes[middle]! +
-              minutes[Math.floor((minutes.length - 1) / 2)]!) /
-            2;
+        upper === undefined || lower === undefined ? null : (upper + lower) / 2;
       const share =
         judged.length < 5 ? null : Math.round((100 * accepted) / judged.length);
       const medianMinutes = median === null ? null : Number(median.toFixed(1));
@@ -272,16 +278,17 @@ export async function route(
       ];
     }),
   );
-  const criteria: Record<string, string> = Object.fromEntries([
-    ...candidates.map((row, index): [string, string] => [
-      `model_${index}`,
-      `${blindCriterion(criterionFor(roster, row), loaded.catalogRows)} ${measuredEvidence[`model_${index}`]!.text}`,
-    ]),
-    ...Object.entries(returns).map(([reason, value]): [string, string] => [
-      reason,
-      value.criterion,
-    ]),
-  ]);
+  const criteria: Record<string, string> = {};
+  for (const [index, row] of candidates.entries()) {
+    const key = `model_${index}`;
+    const evidence = measuredEvidence[key];
+    if (evidence === undefined)
+      return exitWithError(`missing measured evidence for ${key}`, 2);
+    criteria[key] =
+      `${blindCriterion(criterionFor(roster, row), loaded.catalogRows)} ${evidence.text}`;
+  }
+  for (const [reason, value] of Object.entries(returns))
+    criteria[reason] = value.criterion;
   const request: Record<string, unknown> = {
     state: {
       task: brief.slice(0, Math.min(roster.auto.max_task_chars, 2400)),
@@ -328,7 +335,8 @@ export async function route(
   const post = await postJev(endpoint.value, request, roster.auto.timeout_ms);
   const usageId = recordJevUsage(post, roster);
   const fallback =
-    candidates.find((row) => row.id === roster.default) ?? candidates[0]!;
+    candidates.find((row) => row.id === roster.default) ?? candidates[0];
+  if (fallback === undefined) return exitWithError("no routing candidates", 2);
   let rawAnswer: unknown = null;
   const audit = (
     source: string,

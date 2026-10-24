@@ -167,7 +167,12 @@ function startServer(choice: string, probabilities?: Record<string, number>) {
               criteria: Object.fromEntries(
                 Object.entries(wireIds).map(([row, id]) => [
                   row,
-                  criteria[id]!,
+                  (() => {
+                    const criterion = criteria[id];
+                    if (criterion === undefined)
+                      expect.unreachable(`missing criterion for ${id}`);
+                    return criterion;
+                  })(),
                 ]),
               ),
             },
@@ -693,12 +698,16 @@ describe("capability constrained routing", () => {
 
     const started = appendStarted(selected.id);
     expect(started?.kind).toBe("started");
+    const sonnetId = server.wireIds()["sonnet-high"];
+    const lunaId = server.wireIds()["luna-high"];
+    if (sonnetId === undefined || lunaId === undefined)
+      expect.unreachable("fixture wire IDs are missing");
     if (started?.kind === "started")
       expect(started.pick_audit).toMatchObject({
         source: "jev",
         probabilities: {
-          [server.wireIds()["sonnet-high"]!]: 1,
-          [server.wireIds()["luna-high"]!]: 0,
+          [sonnetId]: 1,
+          [lunaId]: 0,
         },
       });
   });
@@ -884,7 +893,8 @@ test("one raw Choice blinds the entire injected payload and preserves every crit
   for (const row of roster.choice) {
     expect(injected.toLowerCase()).not.toContain(row.id.toLowerCase());
     expect(injected.toLowerCase()).not.toContain(row.model.toLowerCase());
-    const family = row.id.split("-")[0]!;
+    const family = row.id.split("-")[0];
+    if (family === undefined) expect.unreachable(`row ${row.id} has no family`);
     expect(injected).not.toMatch(new RegExp(`\\b${family}\\b`, "iu"));
     for (const version of row.model.match(/\d+(?:[.-]\d+)+/gu) ?? [])
       expect(injected).not.toMatch(
@@ -916,10 +926,13 @@ test("one raw Choice blinds the entire injected payload and preserves every crit
   expect(server.calls()).toBe(1);
   const started = appendStarted(selected.id);
   expect(started?.kind).toBe("started");
+  const solMediumId = server.wireIds()["sol-medium"];
+  if (solMediumId === undefined)
+    expect.unreachable("sol-medium fixture wire ID is missing");
   if (started?.kind === "started")
     expect(started.pick_audit).toMatchObject({
-      answer: { choice: server.wireIds()["sol-medium"] },
-      probabilities: { [server.wireIds()["sol-medium"]!]: 1 },
+      answer: { choice: solMediumId },
+      probabilities: { [solMediumId]: 1 },
       anonymization_map: Object.fromEntries(
         ordered.map((row, i) => [`model_${i}`, row.id]),
       ),
@@ -1158,7 +1171,10 @@ test("local record evidence follows each blinded option and survives the pick au
   }); // Running records have no wall time.
   const server = startServer("luna-high");
   const selected = await route("local evidence fixture");
-  const criteria = server.request()!.questions.worker.criteria;
+  const request = server.request();
+  if (request === undefined)
+    expect.unreachable("route request was not captured");
+  const criteria = request.questions.worker.criteria;
   expect(criteria["luna-high"]).toEndWith(
     "agx measured: 84% of 25 judged runs accepted, median 5.1 min.",
   );
@@ -1170,22 +1186,24 @@ test("local record evidence follows each blinded option and survives the pick au
   );
   const loaded = await loadRoster();
   if (!loaded.ok) return;
-  for (const text of Object.values(
-    server.rawRequest()!.questions.worker.criteria,
-  )) {
+  const rawRequest = server.rawRequest();
+  if (rawRequest === undefined)
+    expect.unreachable("raw route request was not captured");
+  for (const text of Object.values(rawRequest.questions.worker.criteria)) {
     for (const row of loaded.value.choice) expect(text).not.toContain(row.id);
   }
-  expect(server.request()!.questions.worker.instructions).toContain(
+  expect(request.questions.worker.instructions).toContain(
     "accepted results per hour and per dollar",
   );
-  expect(server.request()!.questions.worker.instructions).toContain(
+  expect(request.questions.worker.instructions).toContain(
     "outranks published benchmarks",
   );
   const picked = appendStarted(selected.id);
   if (picked?.kind !== "started") return;
-  expect(
-    picked.pick_audit?.measured_evidence?.[server.wireIds()["luna-high"]!],
-  ).toEqual({
+  const lunaId = server.wireIds()["luna-high"];
+  if (lunaId === undefined)
+    expect.unreachable("luna-high fixture wire ID is missing");
+  expect(picked.pick_audit?.measured_evidence?.[lunaId]).toEqual({
     judged_runs: 25,
     accepted_runs: 21,
     accepted_percent: 84,

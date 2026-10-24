@@ -51,25 +51,36 @@ test("repeatable evidence appends exactly one opaque judgment with byte digests 
   ];
   const paths = contents.map((_, i) => join(root, `evidence-${i}.txt`));
   await Promise.all(paths.map((p, i) => writeFile(p, contents[i] ?? "")));
+  const firstPath = paths[0];
+  const secondPath = paths[1];
+  if (firstPath === undefined || secondPath === undefined)
+    expect.unreachable("evidence fixture paths are missing");
   const result = await judge([
     "accept",
     "--evidence",
-    paths[0]!,
+    firstPath,
     "--evidence",
-    paths[1]!,
+    secondPath,
   ]);
   expect(result.exit).toBe(0);
   const lines = (await readFile(records, "utf8")).trimEnd().split("\n");
   expect(lines).toHaveLength(3);
-  const event = judgment(lines[2]!);
+  const judgmentLine = lines[2];
+  if (judgmentLine === undefined)
+    expect.unreachable("judgment event is missing");
+  const event = judgment(judgmentLine);
   expect(event.decision).toBe("accept");
-  expect(event.evidence).toEqual(
-    paths.map((path, i) => ({
+  const evidence = paths.map((path, i) => {
+    const content = contents[i];
+    if (content === undefined)
+      expect.unreachable(`evidence fixture ${i} is missing`);
+    return {
       path,
-      sha256: createHash("sha256").update(contents[i]!).digest("hex"),
-      content: contents[i]!,
-    })),
-  );
+      sha256: createHash("sha256").update(content).digest("hex"),
+      content,
+    };
+  });
+  expect(event.evidence).toEqual(evidence);
 });
 test("missing evidence appends no partial judgment", async () => {
   await writeFile(records, base);
@@ -86,9 +97,12 @@ test("missing evidence appends no partial judgment", async () => {
 test("judging without evidence retains existing behavior", async () => {
   await writeFile(records, base);
   expect((await judge(["reject", "--note", "manual"])).exit).toBe(0);
-  const event = judgment(
-    (await readFile(records, "utf8")).trimEnd().split("\n")[2]!,
-  );
+  const judgmentLine = (await readFile(records, "utf8"))
+    .trimEnd()
+    .split("\n")[2];
+  if (judgmentLine === undefined)
+    expect.unreachable("judgment event is missing");
+  const event = judgment(judgmentLine);
   expect(event.note).toBe("manual");
   expect(event.evidence).toBeUndefined();
 });

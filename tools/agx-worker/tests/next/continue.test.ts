@@ -278,7 +278,9 @@ test.each([false, true])(
     }
     // A newly recorded run can be continued from its started event without its receipt.
     expect(inheritedId).toBeDefined();
-    rmSync(join(f.state, "runs", inheritedId!, `${inheritedId}.json`));
+    if (inheritedId === undefined)
+      expect.unreachable("continued run ID was not recorded");
+    rmSync(join(f.state, "runs", inheritedId, `${inheritedId}.json`));
     const chained = f.resume(inheritedId, {}, entry, compiled, []);
     expect(chained.exitCode, chained.stderr.toString()).toBe(0);
     const parsedChain = schema.safeParse(chained.stdout.toString().trim());
@@ -549,7 +551,9 @@ if (process.argv[2] === "--internal-codex") {
     const verification = results.findLast((event) => event.kind === "ended")
       ?.verify?.[0];
     expect(verification?.exit).toBe(0);
-    expect(await Bun.file(verification!.log_path).text()).toContain(
+    if (verification === undefined)
+      expect.unreachable("verification result is missing");
+    expect(await Bun.file(verification.log_path).text()).toContain(
       "dispatcher xmsg",
     );
   },

@@ -482,10 +482,14 @@ export async function run(flags: Flags): Promise<number> {
 
   started = true;
 
+  const ownCommand = selfCommand();
+  const ownExecutable = ownCommand[0];
+  if (ownExecutable === undefined)
+    return fatal("worker executable unavailable: current command is empty");
   const workerPath =
     process.env.AGX_WORKER_BIN ??
     process.env.AGX_WORKER_COMMAND ??
-    selfCommand()[0]!;
+    ownExecutable;
   const workerArgs = (): string[] => {
     if (process.env.AGX_WORKER_BIN !== undefined)
       return [
@@ -576,8 +580,8 @@ export async function run(flags: Flags): Promise<number> {
       ? selfCommand()
       : [workerCommand ?? workerPath];
   const execution = {
-    executable_path: selfCommand()[0]!,
-    executable_argv: selfCommand(),
+    executable_path: ownExecutable,
+    executable_argv: ownCommand,
     path_source:
       process.env.AGX_WORKER_PATH_SOURCE === "dispatcher"
         ? "PATH from dispatcher"

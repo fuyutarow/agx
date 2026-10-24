@@ -14,7 +14,10 @@ export function resolveRunId<Row extends RunIdRow>(
   const candidates = rows
     .filter((row) => row.id.startsWith(selector))
     .toSorted((left, right) => left.id.localeCompare(right.id));
-  if (candidates.length === 1) return { kind: "resolved", row: candidates[0]! };
+  if (candidates.length === 1) {
+    const row = candidates[0];
+    if (row !== undefined) return { kind: "resolved", row };
+  }
   const ids = (candidates.length > 0 ? candidates : rows)
     .map((row) => row.id)
     .toSorted();

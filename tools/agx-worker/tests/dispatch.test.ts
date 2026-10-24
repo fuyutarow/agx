@@ -493,8 +493,10 @@ test("workspace and unit overrides are honored even when they differ from the ti
   );
   expect(parsed.success).toBe(true);
   if (!parsed.success) return;
+  const runId = result.stdout.trim().split(" ")[0];
+  if (runId === undefined) expect.unreachable("dispatch output has no run ID");
   expect(parsed.data[0]).toMatchObject({
-    id: result.stdout.trim().split(" ")[0]!,
+    id: runId,
     ticket: "foo-bar",
     workspace,
     cwd: workspace,
@@ -564,11 +566,11 @@ test("dispatch resolves the ticket repository from an unrelated caller cwd", asy
   f.env.FAKE_CALLER_CWD = f.root;
   const result = await invoke(f);
   expect(result.exitCode, result.stderr).toBe(0);
-  expect(result.stdout.trim().split(" ")[0]!).not.toBe("");
+  const runId = result.stdout.trim().split(" ")[0];
+  if (runId === undefined) expect.unreachable("dispatch output has no run ID");
+  expect(runId).not.toBe("");
   expect(await Bun.file(f.wsArgs).text()).toContain(`--repo\n${f.repo}\n`);
-  expect(await Bun.file(f.records).text()).toContain(
-    result.stdout.trim().split(" ")[0]!,
-  );
+  expect(await Bun.file(f.records).text()).toContain(runId);
 });
 
 test("dispatch uses machine output when readiness prints the reported install chatter and stray quote", async () => {
@@ -576,11 +578,11 @@ test("dispatch uses machine output when readiness prints the reported install ch
   f.env.FAKE_WS_CHATTER = "yes";
   const result = await invoke(f);
   expect(result.exitCode, result.stderr).toBe(0);
-  expect(result.stdout.trim().split(" ")[0]!).not.toBe("");
+  const runId = result.stdout.trim().split(" ")[0];
+  if (runId === undefined) expect.unreachable("dispatch output has no run ID");
+  expect(runId).not.toBe("");
   expect(await Bun.file(f.wsArgs).text()).toContain("--json\n");
-  expect(await Bun.file(f.records).text()).toContain(
-    result.stdout.trim().split(" ")[0]!,
-  );
+  expect(await Bun.file(f.records).text()).toContain(runId);
   expect(await Bun.file(f.unitArgs).text()).toContain(
     `${f.repo}.ws/ws_foo-bar\n`,
   );
@@ -659,14 +661,21 @@ test.each([false, true])(
     if (relative) f.env.DISPATCH_ROSTER_PATH = "explicit roster.toml";
     const result = await invoke(f, "--ws", "roster", "--unit", "agt_roster");
     expect(result.exitCode, result.stderr).toBe(0);
-    expect(await observation(f.env.FAKE_CHILD_ROSTER!)).toEqual({
+    const childRoster = f.env.FAKE_CHILD_ROSTER;
+    const preflightRoster = f.env.FAKE_PREFLIGHT_ROSTER;
+    if (childRoster === undefined || preflightRoster === undefined)
+      expect.unreachable("roster fixture paths are missing");
+    const runId = result.stdout.trim().split(" ")[0];
+    if (runId === undefined)
+      expect.unreachable("dispatch output has no run ID");
+    expect(await observation(childRoster)).toEqual({
       path,
       selected: "fixture-high",
       claude: "fixture-claude",
       codex: "fixture-codex",
     });
-    expect(await observation(f.env.FAKE_PREFLIGHT_ROSTER!)).toEqual(
-      await observation(f.env.FAKE_CHILD_ROSTER!),
+    expect(await observation(preflightRoster)).toEqual(
+      await observation(childRoster),
     );
     const parsedBinding = jsonOf(DispatchBindingSchema).safeParse(
       await Bun.file(f.bindingFile).text(),
@@ -675,7 +684,7 @@ test.each([false, true])(
     if (!parsedBinding.success) return;
     const binding = parsedBinding.data;
     expect(binding).toMatchObject({
-      id: result.stdout.trim().split(" ")[0]!,
+      id: runId,
       workspace: join(f.repo + ".ws", "ws_roster"),
       unit: "agt_roster",
       ticket: "foo-bar",
@@ -695,11 +704,15 @@ test("absent roster override keeps the normal loader default", async () => {
   const { loadRoster } = await import("../../../agents/models/roster.ts");
   const normal = await loadRoster();
   expect(normal.ok).toBe(true);
-  if (normal.ok)
-    expect(await observation(f.env.FAKE_CHILD_ROSTER!)).toMatchObject({
+  if (normal.ok) {
+    const childRoster = f.env.FAKE_CHILD_ROSTER;
+    if (childRoster === undefined)
+      expect.unreachable("child roster fixture path is missing");
+    expect(await observation(childRoster)).toMatchObject({
       path: null,
       selected: normal.value.default,
     });
+  }
   expect(await Bun.file(f.unitArgs).text()).not.toContain(
     "DISPATCH_ROSTER_PATH",
   );
@@ -872,7 +885,9 @@ test.each([
       f.ticket,
       `+++\nschema = 2\nname = "foo-bar"\noutcome = "fixture"\npremises = ${missingPremise ? '["file:main-only"]' : "[]"}\n[proposition]\nid = "P1"\nclaim = "fixture"\nrefuted_by = "fixture"\n+++\n`,
     );
-    const state = f.env.AGX_STATE_DIR!;
+    const state = f.env.AGX_STATE_DIR;
+    if (state === undefined)
+      expect.unreachable("state fixture path is missing");
     mkdirSync(state, { recursive: true });
     writeFileSync(
       join(state, "records.jsonl"),
@@ -1155,11 +1170,14 @@ test.each([false, true])(
   async (compiled) => {
     const f = fixture();
     priorRun(f, join(`${f.repo}.ws`, "ws_foo-bar"));
-    mkdirSync(join(f.env.AGX_STATE_DIR!, "runs", "prior-run"), {
+    const state = f.env.AGX_STATE_DIR;
+    if (state === undefined)
+      expect.unreachable("state fixture path is missing");
+    mkdirSync(join(state, "runs", "prior-run"), {
       recursive: true,
     });
     writeFileSync(
-      join(f.env.AGX_STATE_DIR!, "runs", "prior-run", "prior-run.json"),
+      join(state, "runs", "prior-run", "prior-run.json"),
       JSON.stringify({ sandbox: "none" }),
     );
     let command = [process.execPath, f.entry];

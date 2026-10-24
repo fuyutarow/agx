@@ -108,10 +108,14 @@ async function main(): Promise<void> {
       undefined,
       commandArgs,
     );
+    const runId = parsed._.at(0);
     if (parsed._.length !== 1) {
       process.stderr.write("agx worker stop: expected one run ID\n");
       exit = 2;
-    } else exit = await stopRun(parsed._[0]!);
+    } else if (runId === undefined) {
+      process.stderr.write("agx worker stop: expected one run ID\n");
+      exit = 2;
+    } else exit = await stopRun(runId);
   } else if (commandName === "host") {
     const { host } = await import("./host.ts");
     exit = host(commandArgs);

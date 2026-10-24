@@ -21,7 +21,8 @@ const refuse = (message: string, exit = 2) => {
 export async function stopRun(selector: string): Promise<number> {
   const resolved = resolveRunId(await foldedRuns(), selector);
   if (resolved.kind === "error") return refuse(resolved.error);
-  const run = (await listingProgress([resolved.row]))[0]!;
+  const run = (await listingProgress([resolved.row]))[0];
+  if (run === undefined) return refuse(`unknown run '${resolved.row.id}'`);
   const lock = await acquireWorkspaceLock(`agx-stop:${run.id}`);
   if (!lock.ok) return refuse(`stop already in progress for ${run.id}`);
   await using _cleanup = { [Symbol.asyncDispose]: lock.release };

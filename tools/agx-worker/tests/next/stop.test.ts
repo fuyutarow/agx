@@ -248,7 +248,8 @@ for (const unit of [null, "agt_stop-fixture", "agt_stop-fixture-c2"]) {
       return parsed.success && parsed.data.id !== "previous"
         ? [parsed.data]
         : [];
-    })[0]!;
+    })[0];
+    if (start === undefined) expect.unreachable("started record is missing");
     const progressDir = join(f.state, "runs", start.id);
     await Bun.write(
       join(progressDir, "worker-progress.jsonl"),

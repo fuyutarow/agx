@@ -206,9 +206,12 @@ test("real ls JSON projects cumulative counts, source precedence, unknowns and s
     "vendor-ended",
   );
   const selected = parseRows(invoke(root, state, "current"));
-  expect(selected).toEqual([current!]);
+  if (current === undefined) expect.unreachable("fixture has no current run");
+  expect(selected).toEqual([current]);
   const waited = parseRows(invoke(root, state, "ended", "--wait"));
-  expect(waited).toEqual([rows.find((row) => row.id === "ended")!]);
+  const ended = rows.find((row) => row.id === "ended");
+  if (ended === undefined) expect.unreachable("fixture has no ended run");
+  expect(waited).toEqual([ended]);
   const summary = jsonOf(z.object({ runs: z.array(rowSchema) })).safeParse(
     invoke(root, state, "--summary", "--workspace", root),
   );
