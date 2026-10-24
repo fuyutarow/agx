@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.8.0 — 2026-10-25
+
+- Discover gc --all repositories from workspace creation history and all run records alongside optional L2 policy; report sources, counts and unreachable roots.
+- Retain replayable routing decision audits and report per-row picks, probability margins, and TB4 exclusions
+
 ## 1.7.3 — 2026-10-25
 
 - Continue recorded workspaces without resolving deleted sibling workspaces.
