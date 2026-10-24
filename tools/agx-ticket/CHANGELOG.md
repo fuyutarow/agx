@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.4 — 2026-10-24
+
+- Move package metadata to @agx and configure an additional doctor repository with AGX_ADDITIONAL_REPO.
+
 ## 2.0.3 — 2026-10-24
 
 - Report repository configuration errors as doctor findings and continue inspecting other repositories.

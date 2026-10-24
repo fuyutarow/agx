@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.5 — 2026-10-24
+
+- Fail inconclusive consumer checks when either compiler run times out or exits without diagnostics.
+
 ## 1.0.4 — 2026-10-23
 
 - Keep consumer Node type versions by declaring @types/node as an optional peer instead of a runtime dependency.

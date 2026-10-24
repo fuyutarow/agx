@@ -1,5 +1,13 @@
 # Changelog
 
+## 10.1.0 — 2026-10-24
+
+- Add public host check JSON and exclusive host declaration provisioning using the Codex launch validator.
+- Declare known vendor session addresses for worker messaging and clear inherited sender declarations.
+- Expose nullable cumulative progress, observation metadata and active vendor identity in worker ls JSON while preserving interim progress paths.
+- Expose read-only legacy landing presence and refusal in worker stats JSON.
+- Move package metadata to @agx and make the Homebrew prefix file configurable with AGX_BREW_PREFIX_FILE.
+
 ## 10.0.5 — 2026-10-23
 
 - Resolve worker continuation prefixes before workspace lookup

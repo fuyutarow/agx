@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.0 — 2026-10-24
+
+- Expose the agx doctor aggregate in status JSON
+- Move package metadata to the @agx scope.
+
 ## 1.0.1 — 2026-10-23
 
 - Align package documentation and compatibility checks with standalone installation.

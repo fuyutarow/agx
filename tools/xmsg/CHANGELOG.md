@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.3 — 2026-10-24
+
+- Move package metadata to the @agx scope.
+- Preserve explicit sender declarations in message envelopes and name Claude relay sessions.
+
 ## 0.4.2 — 2026-10-23
 
 - Make agx msg canonical and ship xmsg as a hard-link alias

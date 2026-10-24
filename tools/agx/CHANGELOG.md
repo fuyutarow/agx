@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.0 — 2026-10-24
+
+- Update suite member agx-status to 1.1.0.
+- Add bounded aggregate doctor JSON with atomic owner snapshots
+- Move suite package metadata to the @agx scope.
+- Update suite member xmsg to 0.4.3.
+- Update suite member agx-ws to 1.0.3.
+- Update suite member jex to 0.3.2.
+- Update suite member agx-worker to 10.1.0.
+- Update suite member agx-ticket to 2.0.4.
+- Update suite member agx-usehooks to 1.0.5.
+
 ## 1.3.2 — 2026-10-24
 
 - Update suite member agx-ticket to 2.0.3.
