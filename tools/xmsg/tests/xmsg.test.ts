@@ -213,6 +213,7 @@ async function run(
       route?: string | undefined;
       session: string | null;
       progress?: string;
+      pid?: number;
     };
     transcript?: string | undefined;
     registry?: ReadonlyArray<{
@@ -241,7 +242,7 @@ async function run(
         route: options.runRecord.route,
         dispatcher_session: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         vendor_session: options.runRecord.session,
-        pid: process.pid,
+        pid: options.runRecord.pid ?? process.pid,
       }) + "\n",
     );
     if (options.runRecord.progress !== undefined)
@@ -1517,6 +1518,30 @@ test("fresh Codex sender uses its recorded live progress session", async () => {
   expect(r.exit).toBe(0);
   expect(r.argv.at(-1)).toBe(envelope(message, `codex:${uuidA}`));
 });
+
+test.each([uuidA, undefined])(
+  "sandbox-invisible owner uses only the named run's recorded progress session: %s",
+  async (progress) => {
+    const r = await run({
+      kind: "codex",
+      args: sendArgs(`codex:${uuidB}`),
+      runRecord: {
+        route: "codex",
+        session: null,
+        ...(progress === undefined ? {} : { progress }),
+        pid: 0,
+      },
+      env: { AGX_RUN_ID: "worker-run", CODEX_THREAD_ID: uuidB },
+    });
+    expect(r.exit).toBe(0);
+    expect(r.argv.at(-1)).toBe(
+      envelope(
+        message,
+        progress === undefined ? undefined : `codex:${progress}`,
+      ),
+    );
+  },
+);
 
 test.each([
   { route: "codex", session: null, id: "worker-run" },

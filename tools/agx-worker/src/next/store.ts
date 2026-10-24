@@ -763,6 +763,16 @@ export async function foldedRuns(root = stateDir()) {
   return readFoldedRuns(root);
 }
 
+/** Recorded identity must not depend on the caller's visibility of the owner's PID. */
+export function recordedRun(id: string, root = stateDir()) {
+  const runs = new Map<string, FoldedRun>();
+  foldInto(
+    runs,
+    events(root).filter((event) => event.id === id),
+  );
+  return runs.get(id);
+}
+
 /** Decode legacy records before applying listing visibility; preserve raw failures. */
 export async function listingHistory(workspace?: string, root = stateDir()) {
   const malformed: Record<string, unknown>[] = [];

@@ -1,13 +1,15 @@
-import { foldedRuns } from "./store.ts";
+import { recordedRun } from "./store.ts";
 import { listingProgress } from "./listing-progress.ts";
 
-/** Resolve only the named run through the same read-only projection as worker ls. */
+/** Resolve the named run's identity without projecting sandbox-visible liveness. */
 export async function runMessageSender(
   id: string,
 ): Promise<string | undefined> {
-  const run = (await foldedRuns()).find((candidate) => candidate.id === id);
+  const run = recordedRun(id);
   if (run === undefined) return undefined;
-  const [current] = await listingProgress([run]);
+  const [current] = await listingProgress([
+    { ...run, lease: run.lease ?? { pid: run.pid, start: null, unit: null } },
+  ]);
   if (
     typeof current?.vendor_session !== "string" ||
     (current.route !== "codex" && current.route !== "claude")

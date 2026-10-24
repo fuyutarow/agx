@@ -52,7 +52,12 @@ async function readProgress(path: string) {
 }
 
 /** CLI projection only: private progress paths are not a consumer file API. */
-export async function listingProgress(rows: ListedRun[], root = stateDir()) {
+export async function listingProgress<
+  T extends Pick<
+    ListedRun,
+    "id" | "state" | "vendor_session" | "lease" | "cwd"
+  >,
+>(rows: T[], root = stateDir()) {
   const [runs, active] = await Promise.all([
     entries(join(root, "runs")),
     entries(join(root, "active")),
@@ -86,7 +91,7 @@ export async function listingProgress(rows: ListedRun[], root = stateDir()) {
         if (
           marker.success &&
           marker.data.run_id === row.id &&
-          marker.data.pid === row.lease.pid &&
+          marker.data.pid === row.lease?.pid &&
           marker.data.cwd === row.cwd
         )
           vendorSession = marker.data.worker_session ?? vendorSession;
