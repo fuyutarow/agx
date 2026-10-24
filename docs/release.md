@@ -81,15 +81,27 @@ public declarations. Per-member builds remain available for development.
 ## Publish
 
 Publishing accepts only `suite`. A member argument exits 2 with a pointer to the
-suite command. Publishing defaults to dry-run and refuses a dirty tree, a branch
-other than alpha, an existing suite tag, or missing version changelog entries.
+suite command. Publishing defaults to dry-run and refuses a dirty tree, HEAD
+that differs from local alpha, either existing release tag, or missing version
+changelog entries. A detached HEAD at alpha is accepted.
 
-The preview builds all four suite archives plus the library and prints exact
-shell-quoted commands for two Git tags and two releases. The library is published
-first at `usehooks-v<version>` with `--latest=false`; the suite release at
+The preview performs no builds or uploads. It prints exact shell-quoted
+commands to create both Git tags and atomically push alpha plus those tags.
+An alpha commit ahead of origin is accepted; HEAD must match local alpha.
+The command prints the matching workflow run URL when available, or a
+tag-filtered workflow page while GitHub queues the runs.
+
+`.github/workflows/release.yml` triggers on both tag patterns. Its Ubuntu runner
+uses Bun 1.4.3 and the existing `tools/release/ci.ts` entry point, which calls
+the same build and asset-naming code as `release:build`. The suite tag run
+cross-compiles all four supported platforms; the usehooks tag run builds the
+library and its declarations. Missing archives fail the run.
+
+In CI, the library is published
+at `usehooks-v<version>` with `--latest=false`; the suite release at
 `v<version>` contains only the four platform archives and becomes latest.
-Publishing refuses `--target` so a partial suite cannot be published.
-It creates an empty draft, uploads each asset separately, inspects the assets
+Local publication refuses `--target` so a partial suite cannot be published.
+CI creates an empty draft, uploads each asset separately, inspects the assets
 with `gh release view --json assets`, and publishes with `--draft=false --latest`
 only after every expected asset is `uploaded` with the local file's byte size.
 The release targets the inspected HEAD. Existing member tags are retained.
@@ -97,9 +109,11 @@ Release notes include suite changelog sections added since the previous reachabl
 suite tag. The first suite release includes the current section. Unreadable
 previous suite history refuses publication.
 
-Only `mise run release:publish -- suite --yes` executes the plan. Review the
+Only `mise run release:publish -- suite --yes` executes the local push plan.
+No local archives, compiler cache, or upload bandwidth are required. CI then
+creates the GitHub releases and uploads the assets. Review the
 preview in the canonical repository first. `--yes` and `--dry-run` conflict.
-Each asset upload has at most three attempts, with `--clobber` on retries and a
+In CI, each asset upload has at most three attempts, with `--clobber` on retries and a
 ten-minute timeout per attempt. Other commands have a two-minute timeout.
 An upload or verification failure leaves the release as a draft and exits 2.
 The refusal names the failing asset, includes captured stderr and stdout (or an
@@ -124,6 +138,8 @@ equals its local file's byte size. Only after those checks, publish the draft:
 gh release edit v<version> --draft=false --latest
 ```
 
+Use the failed CI run logs and runner artifacts when recovering a draft;
+rebuild the exact tag in a separate recovery workspace if needed.
 Do not re-create the release or rerun `release:publish` to recover a failed
 upload: local tags may already exist. If creation or final publication fails,
 inspect the remote release state before using the recovery commands.
@@ -166,3 +182,34 @@ For a release without pair-specific compatibility evidence, use an entry such as
 Replace the state-compatibility placeholder with concrete reviewed facts before
 publishing. A version number or unchanged schema number alone is not evidence of
 concurrent writer compatibility.
+
+## Complete the release on this machine
+
+Declare agx only once, user-globally, as latest with no lock:
+
+```toml
+[tools]
+"github:fuyutarow/agx" = "latest"
+```
+
+Repositories must not declare agx in `mise.toml` or `mise.lock`. Remove obsolete
+repository declarations through their normal review process; the release step
+never edits consumer directories.
+
+`mise run release:publish -- suite --yes --verify-in /path/to/consumer` now waits
+for all four platform assets on the published suite release, installs the exact
+suite version using the user-global configuration, and checks home plus every
+repeatable `--verify-in DIR` using `mise exec -C DIR -- agx -V`.
+A release is complete only after this step passes. Each distinct directory gets
+one `OK DIR: agx <suite>` line. A stale pin, unexpected output, install failure,
+or expired asset wait fails with exit 1 and names the step and directory.
+
+After a release published separately, or to retry only machine completion:
+
+```sh
+mise run release:machine -- --verify-in /path/to/consumer --verify-in /another/repo
+```
+
+The asset wait defaults to 900 seconds with 5-second polling; override with
+`--wait-seconds N --poll-seconds N`. Global installation runs from home, without
+changing the global `latest` declaration or creating a repository lock.

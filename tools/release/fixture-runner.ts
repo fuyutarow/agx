@@ -25,6 +25,46 @@ export async function fixtureRun(
   timeout = 10_000,
 ) {
   const [binary, ...args] = cmd;
+  if (binary === "mise" && process.env.RELEASE_TEST_GH_MODE !== undefined) {
+    const child = Bun.spawn(
+      [process.execPath, join(import.meta.dir, "fake-mise.ts"), ...args],
+      {
+        cwd,
+        env: process.env,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout,
+      },
+    );
+    const [exit, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    return { exit, stdout, stderr };
+  }
+  if (
+    binary === "git" &&
+    args[0] === "push" &&
+    !realGit &&
+    process.env.RELEASE_TEST_GH_MODE !== undefined
+  ) {
+    await appendFile(join(cwd, "calls"), JSON.stringify(args) + "\n");
+    return success;
+  }
+  if (
+    binary === "gh" &&
+    args[0] === "run" &&
+    process.env.RELEASE_TEST_GH_MODE !== undefined
+  ) {
+    await appendFile(join(cwd, "calls"), JSON.stringify(args) + "\n");
+    return {
+      ...success,
+      stdout: JSON.stringify([
+        { url: "https://github.com/fuyutarow/agx/actions/runs/123" },
+      ]),
+    };
+  }
   const fakeGh =
     binary === "gh" && process.env.RELEASE_TEST_GH_MODE !== undefined;
   // Publish tests exercise planning and preconditions. The dedicated library test

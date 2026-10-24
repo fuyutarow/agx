@@ -1,6 +1,7 @@
+import { homedir } from "node:os";
 import { mkdir, rm, copyFile, link, stat } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
-import { err, ok } from "neverthrow";
+import { err, ok, fromPromise } from "neverthrow";
 import { jsonOf, z } from "../zod.ts";
 
 export const repository = resolve(import.meta.dir, "../..");
@@ -419,6 +420,7 @@ export async function publish(
   target?: string,
   root = repository,
   runner: CommandRunner = run,
+  machine: MachineOptions = {},
 ) {
   if (pkg !== "suite") return err("Use release:publish -- suite");
   const info = await packageInfo("agx", root);
@@ -462,29 +464,95 @@ export async function publish(
     return err(
       `Publish requires HEAD ${headCommit} to match refs/heads/alpha ${alphaCommit}`,
     );
-  const remoteAlpha = await runner(
-    ["git", "show-ref", "--verify", "--quiet", "refs/remotes/origin/alpha"],
-    root,
-  );
-  if (remoteAlpha.exit !== 0 && remoteAlpha.exit !== 1)
-    return err(
-      `Cannot inspect refs/remotes/origin/alpha: ${remoteAlpha.stderr}`,
-    );
-  if (remoteAlpha.exit === 0) {
-    const remote = await runner(
-      ["git", "rev-parse", "--verify", "refs/remotes/origin/alpha"],
-      root,
-    );
-    if (remote.exit !== 0)
-      return err(`Cannot resolve refs/remotes/origin/alpha: ${remote.stderr}`);
-    const remoteCommit = remote.stdout.trim();
-    if (alphaCommit !== remoteCommit)
-      return err(
-        `Publish requires refs/heads/alpha ${alphaCommit} to match refs/remotes/origin/alpha ${remoteCommit}`,
-      );
+  const section = await suiteNotes(root);
+  if (section.isErr()) return section;
+  const commands = [
+    ["git", "tag", tag, headCommit],
+    ["git", "tag", libraryTag, headCommit],
+    [
+      "git",
+      "push",
+      "--atomic",
+      "origin",
+      "refs/heads/alpha:refs/heads/alpha",
+      `refs/tags/${tag}:refs/tags/${tag}`,
+      `refs/tags/${libraryTag}:refs/tags/${libraryTag}`,
+    ],
+  ];
+  const workflowUrl = `https://github.com/fuyutarow/agx/actions/workflows/release.yml?query=branch%3A${tag}`;
+  for (const command of yes ? commands : []) {
+    const result = await runner(command, root);
+    if (result.exit !== 0)
+      return err(`Release stopped at ${commandFailure(command, result)}`);
   }
+  if (yes) {
+    const installed = await machineSwap(
+      info.value.version,
+      machine,
+      root,
+      runner,
+    );
+    if (installed.isErr()) return installed;
+    const inspectedRuns = await fromPromise(
+      runner(
+        [
+          "gh",
+          "run",
+          "list",
+          "--workflow",
+          "release.yml",
+          "--commit",
+          headCommit,
+          "--json",
+          "url",
+          "--limit",
+          "1",
+        ],
+        root,
+      ),
+      () => "Workflow run is not available yet",
+    );
+    const runs = inspectedRuns.isOk()
+      ? inspectedRuns.value
+      : { exit: 1, stdout: "" };
+    const parsed = jsonOf(z.array(z.object({ url: z.url() }))).safeParse(
+      runs.stdout,
+    );
+    if (runs.exit === 0 && parsed.success && parsed.data[0] !== undefined)
+      return ok({
+        commands: commands.map((command) => shellCommand(command)),
+        workflowUrl: parsed.data[0].url,
+        dryRun: false,
+      });
+  }
+  return ok({
+    commands: commands.map((command) => shellCommand(command)),
+    workflowUrl,
+    dryRun: !yes,
+  });
+}
+
+/** Runner-side release: uses the same builders and upload verification as before. */
+export async function publishCI(
+  releaseTag?: string,
+  root = repository,
+  runner: CommandRunner = run,
+) {
+  const info = await packageInfo("agx", root);
+  if (info.isErr()) return info;
+  const tag = info.value.tag;
+  const libraryTag = `usehooks-v${info.value.version}`;
+  if (
+    releaseTag !== undefined &&
+    releaseTag !== tag &&
+    releaseTag !== libraryTag
+  )
+    return err(`Tag does not match suite version: ${releaseTag}`);
+  const head = await runner(["git", "rev-parse", "HEAD"], root);
+  if (head.exit !== 0) return err("Cannot resolve HEAD");
+  const headCommit = head.stdout.trim();
   const previous = await runner(
-    ["git", "describe", "--tags", "--match", "v[0-9]*", "--abbrev=0", "HEAD"],
+    ["git", "describe", "--tags", "--match", "v[0-9]*", "--abbrev=0", "HEAD^"],
     root,
   );
   if (previous.exit !== 0 && previous.exit !== 128)
@@ -496,12 +564,15 @@ export async function publish(
   );
   if (section.isErr()) return section;
   const suiteAssets: { archive: string; sha256: string }[] = [];
-  for (const compileTarget of suiteTargets) {
+  for (const compileTarget of releaseTag === libraryTag ? [] : suiteTargets) {
     const built = await build("suite", compileTarget, root, runner);
     if (built.isErr()) return built;
     suiteAssets.push(...built.value.assets);
   }
-  const library = await build("agx-usehooks", undefined, root, runner);
+  const library =
+    releaseTag === tag
+      ? ok({ assets: [] })
+      : await build("agx-usehooks", undefined, root, runner);
   if (library.isErr()) return library;
   const notes = join(root, "dist/suite/release-notes.md");
   await Bun.write(notes, section.value);
@@ -509,14 +580,16 @@ export async function publish(
   for (const release of [
     { tag: libraryTag, assets: library.value.assets, latest: false },
     { tag, assets: suiteAssets, latest: true },
-  ]) {
+  ].filter(
+    (candidate) => releaseTag === undefined || candidate.tag === releaseTag,
+  )) {
     const published = await publishAssets(
       release.tag,
       release.assets,
       release.latest,
       notes,
       headCommit,
-      yes,
+      true,
       root,
       runner,
     );
@@ -528,7 +601,7 @@ export async function publish(
     sha256: suiteAssets[0]?.sha256 ?? "",
     assets: [...suiteAssets, ...library.value.assets],
     commands,
-    dryRun: !yes,
+    dryRun: false,
   });
 }
 
@@ -579,7 +652,7 @@ async function publishAssets(
     "--draft=false",
     latest ? "--latest" : "--latest=false",
   ];
-  const tags = [["git", "tag", tag]];
+  const tags: string[][] = [];
   const commands = [
     ...tags,
     create,
@@ -639,4 +712,112 @@ async function publishAssets(
       `Release finalization failed for ${tag}. Assets verified; inspect the release state before recovery.\n${commandFailure(edit, published)}\n${recovery}`,
     );
   return ok(commands.map((command) => shellCommand(command)));
+}
+
+export type MachineOptions = {
+  verifyIn?: string[] | undefined;
+  waitSeconds?: number | undefined;
+  pollSeconds?: number | undefined;
+};
+
+/** Read-only consumer probes; installation runs outside repository configuration. */
+export async function machineSwap(
+  version: string,
+  options: MachineOptions = {},
+  root = repository,
+  runner: CommandRunner = run,
+) {
+  const home = homedir();
+  const execute: CommandRunner = (cmd, cwd) =>
+    fromPromise(
+      Promise.resolve().then(() => runner(cmd, cwd)),
+      (error: unknown) =>
+        error instanceof Error ? error.message : String(error),
+    ).match(
+      (value) => value,
+      (stderr) => ({ exit: 1, stdout: "", stderr }),
+    );
+  const waitSeconds = options.waitSeconds ?? 900;
+  const pollSeconds = options.pollSeconds ?? 5;
+  if (
+    !Number.isFinite(waitSeconds) ||
+    waitSeconds < 0 ||
+    !Number.isFinite(pollSeconds) ||
+    pollSeconds <= 0
+  )
+    return err(`asset-wait in ${root}: invalid wait or poll interval`);
+  const expected = suiteTargets.map((target) =>
+    suiteArchiveName(version, target)._unsafeUnwrap(),
+  );
+  const deadline = performance.now() + waitSeconds * 1000;
+  let detail = "release unavailable";
+  while (true) {
+    const view = await execute(
+      [
+        "gh",
+        "release",
+        "view",
+        `v${version}`,
+        "--repo",
+        "fuyutarow/agx",
+        "--json",
+        "assets,isDraft",
+      ],
+      root,
+    );
+    const parsed = jsonOf(
+      releaseAssetsSchema.extend({ isDraft: z.boolean() }),
+    ).safeParse(view.stdout);
+    if (view.exit === 0 && parsed.success) {
+      const missing = expected.filter((name) => {
+        const matches = parsed.data.assets.filter(
+          (asset) => asset.name === name,
+        );
+        return (
+          matches.length !== 1 ||
+          matches[0]?.state !== "uploaded" ||
+          (matches[0]?.size ?? 0) <= 0
+        );
+      });
+      const ready = !parsed.data.isDraft && missing.length === 0;
+      detail = ready
+        ? "ready"
+        : `draft=${parsed.data.isDraft}; missing or incomplete: ${missing.join(", ")}`;
+    } else detail = `${view.stderr} ${view.stdout}`.trim();
+    if (detail === "ready") break;
+    if (performance.now() >= deadline)
+      return err(`asset-wait in ${root}: v${version}: ${detail}`);
+    await Bun.sleep(
+      Math.min(pollSeconds * 1000, Math.max(0, deadline - performance.now())),
+    );
+  }
+  const install = await execute(
+    ["mise", "install", `github:fuyutarow/agx@${version}`],
+    home,
+  );
+  if (install.exit !== 0)
+    return err(`install in ${home}: ${install.stderr}${install.stdout}`);
+  const directories = [
+    ...new Set([
+      home,
+      ...(options.verifyIn ?? []).map((dir) => resolve(root, dir)),
+    ]),
+  ];
+  for (const dir of directories) {
+    const checked = await execute(
+      ["mise", "exec", "-C", dir, "--", "agx", "-V"],
+      home,
+    );
+    if (
+      checked.exit !== 0 ||
+      checked.stderr !== "" ||
+      (checked.stdout !== `agx ${version}\n` &&
+        checked.stdout !== `agx ${version}`)
+    )
+      return err(
+        `verify in ${dir}: expected agx ${version}; exit ${checked.exit}; stdout=${JSON.stringify(checked.stdout)} stderr=${JSON.stringify(checked.stderr)}`,
+      );
+    process.stdout.write(`OK ${dir}: agx ${version}\n`);
+  }
+  return ok(undefined);
 }

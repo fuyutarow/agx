@@ -10,6 +10,11 @@ linux-x64, linux-arm64, darwin-x64, and darwin-arm64. Local library linking is d
 [agx-usehooks](tools/agx-usehooks/README.md). Acceptance, landing, and host hook
 deployment belong to the consumer repository.
 
+Releases are prepared with `mise run release:version`, committed on alpha, then
+started with `mise run release:publish -- suite --yes`. The local command pushes
+alpha and both tags once and prints the workflow URL. GitHub Actions builds and
+uploads the four platform archives and the usehooks package.
+
 ## Agent skill
 
 Install the suite-wide skill with the open skills CLI:

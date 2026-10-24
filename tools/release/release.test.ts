@@ -1,5 +1,13 @@
 import { afterEach, expect, test } from "bun:test";
-import { cp, mkdir, mkdtemp, rm, symlink, stat } from "node:fs/promises";
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  rm,
+  symlink,
+  stat,
+  readdir,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { writeChangeset } from "../changeset/changeset.ts";
@@ -16,6 +24,7 @@ import {
   suiteArchiveName,
   repository,
   run as productionRun,
+  publishCI,
 } from "./release.ts";
 
 import { fixtureRun, fixtureRun as run } from "./fixture-runner.ts";
@@ -62,10 +71,13 @@ async function fixture(pkg = "agx-status") {
   await mkdir(join(root, "tools/release"), { recursive: true });
   for (const file of [
     "build.ts",
+    "ci.ts",
     "publish.ts",
     "release.ts",
     "fixture-runner.ts",
     "fake-gh.ts",
+    "fake-mise.ts",
+    "machine.ts",
   ])
     await Bun.write(
       join(
@@ -81,7 +93,8 @@ async function fixture(pkg = "agx-status") {
 import * as release from "./implementation.ts";
 import { fixtureRun } from "./fixture-runner.ts";
 export const build = (pkg, target) => release.build(pkg, target, ${JSON.stringify(root)}, fixtureRun);
-export const publish = (pkg, yes, target) => release.publish(pkg, yes, target, ${JSON.stringify(root)}, fixtureRun);
+export const publish = (pkg, yes, target, _root, _runner, machine) => release.publish(pkg, yes, target, ${JSON.stringify(root)}, fixtureRun, machine);
+export const publishCI = (tag) => release.publishCI(tag === "suite" ? undefined : tag, ${JSON.stringify(root)}, fixtureRun);
 `,
   );
   await symlink(join(repository, "tools/zod.ts"), join(root, "tools/zod.ts"));
@@ -98,7 +111,12 @@ async function preview(
   const child = Bun.spawn(
     [
       process.execPath,
-      join(f.root, "tools/release/publish.ts"),
+      join(
+        f.root,
+        env.RELEASE_TEST_CI === "1"
+          ? "tools/release/ci.ts"
+          : "tools/release/publish.ts",
+      ),
       f.pkg,
       ...args,
     ],
@@ -120,6 +138,15 @@ async function preview(
     new Response(child.stderr).text(),
   ]);
   return { exit, stdout, stderr };
+}
+
+async function previewCI(
+  f: Awaited<ReturnType<typeof fixture>>,
+  env: Record<string, string>,
+) {
+  // Keep the old publisher CLI as a test-only envelope for the runner-side function.
+  const result = await preview(f, [], { ...env, RELEASE_TEST_CI: "1" });
+  return result;
 }
 
 async function git(f: Awaited<ReturnType<typeof fixture>>, args: string[]) {
@@ -259,7 +286,7 @@ test("unknown packages exit 2 without producing an archive", async () => {
   }
 });
 
-test("publish defaults to dry-run and includes all sections since previous suite tag", async () => {
+test("publish defaults to dry-run without building or uploading", async () => {
   const f = await suiteFixture();
   for (const pkg of packages) {
     const path = join(f.root, "tools", pkg, "CHANGELOG.md");
@@ -275,24 +302,15 @@ test("publish defaults to dry-run and includes all sections since previous suite
   const result = await preview(f, [], { RELEASE_TEST_PREVIOUS: "1" });
   expect(result.exit).toBe(0);
   expect(result.stdout).toContain("DRY RUN");
-  expect(result.stdout.match(/'gh' 'release' 'create'/gu)).toHaveLength(2);
-  expect(result.stdout).toContain("agx-usehooks-2.3.4.tgz");
-  if (process.env.AGX_RELEASE_PLAN_RECEIPT !== undefined)
-    await Bun.write(process.env.AGX_RELEASE_PLAN_RECEIPT, result.stdout);
-  expect(result.stdout).not.toContain("agx-status@");
-  expect(result.stdout).toContain("'gh' 'release' 'create' 'v2.3.4'");
-  expect(result.stdout).toContain(
-    "'--target' '0123456789012345678901234567890123456789'",
-  );
+  expect(result.stdout).toContain("'git' 'push' '--atomic'");
+  expect(result.stdout).toContain("refs/tags/v2.3.4:refs/tags/v2.3.4");
   const calls = await Bun.file(join(f.root, "calls")).text();
   expect(calls).not.toContain('["tag"');
   expect(calls).not.toContain('["release"');
-  const notes = await Bun.file(
-    join(f.root, "dist/suite/release-notes.md"),
-  ).text();
-  expect(notes).toContain("This version only");
-  expect(notes).toContain("Earlier version");
-  expect(notes).not.toContain("Oldest version");
+  expect(calls).not.toContain("--compile");
+  expect(
+    await Bun.file(join(f.root, "dist/suite/release-notes.md")).exists(),
+  ).toBe(false);
 });
 
 test("publish reads precisely the dated section produced by release:version", async () => {
@@ -315,14 +333,11 @@ test("publish reads precisely the dated section produced by release:version", as
   expect(result.exit).toBe(0);
   expect(result.stdout).toContain("'git' 'tag' 'v2.4.0'");
   expect(
-    await Bun.file(join(f.root, "dist/suite/release-notes.md")).text(),
-  ).toContain("## 2.4.0 — 2026-10-23\n\n- New release entry.\n");
-  expect(
     await Bun.file(join(f.dir, ".changes/new-release-entry.md")).exists(),
   ).toBe(false);
 });
 
-test("publish accepts detached alpha and refuses a different HEAD or an ahead alpha", async () => {
+test("publish accepts detached alpha and an ahead alpha but refuses a different HEAD", async () => {
   const f = await gitSuiteFixture();
   await git(f, ["checkout", "--detach", f.alpha]);
   const hostileHome = await mkdtemp(join(tmpdir(), "release-hostile-home-"));
@@ -351,11 +366,7 @@ test("publish accepts detached alpha and refuses a different HEAD or an ahead al
   await git(f, ["update-ref", "refs/heads/alpha", other]);
   await git(f, ["checkout", "--detach", other]);
   const aheadOfOrigin = await preview(f, ["--dry-run"], realGit);
-  expect(aheadOfOrigin.exit).toBe(2);
-  expect(aheadOfOrigin.stderr).toContain(`refs/heads/alpha ${other}`);
-  expect(aheadOfOrigin.stderr).toContain(
-    `refs/remotes/origin/alpha ${f.alpha}`,
-  );
+  expect(aheadOfOrigin.exit, aheadOfOrigin.stderr).toBe(0);
 });
 
 test("explicit dry-run refuses dirty copies, existing tags and missing version entries", async () => {
@@ -385,7 +396,7 @@ test("execution requires --yes; conflicting flags and excess arguments refuse", 
   expect(result.exit).toBe(2);
   expect(result.stderr).toContain("Release stopped");
   expect(await Bun.file(join(f.root, "calls")).text()).toContain(
-    '["tag","usehooks-v2.3.4"]',
+    '["tag","v2.3.4",',
   );
 });
 
@@ -412,7 +423,7 @@ async function ghState(root: string, library = false) {
 for (const mode of ["success", "retry"]) {
   test(`publish creates an empty draft, checks separate uploads and publishes (${mode})`, async () => {
     const f = await suiteFixture();
-    const result = await preview(f, ["--yes"], { RELEASE_TEST_GH_MODE: mode });
+    const result = await previewCI(f, { RELEASE_TEST_GH_MODE: mode });
     expect(result.exit, result.stderr).toBe(0);
     expect(result.stdout).toStartWith("PUBLISHED\n");
     const state = await ghState(f.root);
@@ -461,7 +472,7 @@ for (const mode of ["success", "retry"]) {
 for (const mode of ["failure", "silent"]) {
   test(`persistent upload failure names asset and preserves a recoverable draft (${mode})`, async () => {
     const f = await suiteFixture();
-    const result = await preview(f, ["--yes"], { RELEASE_TEST_GH_MODE: mode });
+    const result = await previewCI(f, { RELEASE_TEST_GH_MODE: mode });
     const name = "agx-2.3.4-linux-x64.tar.gz";
     expect(result.exit).toBe(2);
     expect(result.stdout).not.toContain("PUBLISHED");
@@ -540,7 +551,7 @@ for (const mode of ["failure", "silent"]) {
 for (const mode of ["missing", "wrong-size", "starter", "malformed"]) {
   test(`asset verification refuses publication (${mode})`, async () => {
     const f = await suiteFixture();
-    const result = await preview(f, ["--yes"], { RELEASE_TEST_GH_MODE: mode });
+    const result = await previewCI(f, { RELEASE_TEST_GH_MODE: mode });
     expect(result.exit).toBe(2);
     expect(result.stderr).toContain("agx-usehooks-2.3.4.tgz");
     expect(result.stderr).toContain(
@@ -889,3 +900,174 @@ test("suite publishing rejects a partial target before building", async () => {
   expect(result.stderr).toContain("all supported platforms");
   expect(await Bun.file(join(f.root, "calls")).exists()).toBe(false);
 });
+
+test("local publication pushes once and never builds or uploads", async () => {
+  const f = await suiteFixture();
+  const result = await preview(f, ["--yes"], {
+    RELEASE_TEST_GH_MODE: "success",
+  });
+  expect(result.exit, result.stderr).toBe(0);
+  expect(result.stdout).toContain(
+    "https://github.com/fuyutarow/agx/actions/runs/123",
+  );
+  const calls = (await Bun.file(join(f.root, "calls")).text())
+    .trim()
+    .split("\n");
+  expect(calls.filter((line) => line.startsWith('["push"'))).toEqual([
+    JSON.stringify([
+      "push",
+      "--atomic",
+      "origin",
+      "refs/heads/alpha:refs/heads/alpha",
+      "refs/tags/v2.3.4:refs/tags/v2.3.4",
+      "refs/tags/usehooks-v2.3.4:refs/tags/usehooks-v2.3.4",
+    ]),
+  ]);
+  expect(calls.join("\n")).not.toContain("--compile");
+  expect(calls.join("\n")).toContain('["release","view"');
+  expect(
+    await Bun.file(join(f.root, "dist/agx-2.3.4-linux-x64.tar.gz")).exists(),
+  ).toBe(false);
+});
+
+test("CI refuses mismatched tags before building", async () => {
+  const f = await suiteFixture();
+  const result = await publishCI("v9.9.9", f.root, run);
+  expect(result.isErr()).toBe(true);
+  expect(await Bun.file(join(f.root, "calls")).exists()).toBe(false);
+});
+
+test("workflow triggers both release tags and delegates builds to Bun", async () => {
+  const workflow = await Bun.file(
+    join(repository, ".github/workflows/release.yml"),
+  ).text();
+  expect(workflow).toContain("'v[0-9]*'");
+  expect(workflow).toContain("'usehooks-v[0-9]*'");
+  expect(workflow).toContain('bun tools/release/ci.ts "$RELEASE_TAG"');
+  expect(workflow).toContain("fetch-depth: 0");
+  expect(workflow).toContain("contents: write");
+});
+
+for (const tag of ["v2.3.4", "usehooks-v2.3.4"]) {
+  test(`CI tag ${tag} builds only its exact asset list`, async () => {
+    const f = await suiteFixture();
+    const result = await previewCI(
+      { ...f, pkg: tag },
+      { RELEASE_TEST_GH_MODE: "success" },
+    );
+    expect(result.exit, result.stderr).toBe(0);
+    const library = tag.startsWith("usehooks-");
+    const state = await ghState(f.root, library);
+    expect(state.assets.map((asset) => asset.name).toSorted()).toEqual(
+      library
+        ? ["agx-usehooks-2.3.4.tgz"]
+        : suiteTargets
+            .map((target) => suiteArchiveName("2.3.4", target)._unsafeUnwrap())
+            .toSorted(),
+    );
+    const calls = await Bun.file(join(f.root, "calls")).text();
+    expect(calls.match(/\["release","create"/gu)).toHaveLength(1);
+    expect(calls).not.toContain('["tag"');
+  });
+}
+
+test("CI suite release fails if any platform upload is missing", async () => {
+  const f = await suiteFixture();
+  const result = await previewCI(
+    { ...f, pkg: "v2.3.4" },
+    { RELEASE_TEST_GH_MODE: "missing" },
+  );
+  expect(result.exit).toBe(2);
+  expect(result.stderr).toContain("agx-2.3.4-linux-x64.tar.gz");
+  expect(result.stderr).toContain("Asset verification failed");
+  expect((await ghState(f.root)).draft).toBe(true);
+  expect(await Bun.file(join(f.root, "calls")).text()).not.toContain(
+    '["release","edit"',
+  );
+});
+
+for (const mode of [
+  "success",
+  "machine-delayed",
+  "machine-missing",
+  "stale",
+  "install-failure",
+]) {
+  test(`machine completion: ${mode}`, async () => {
+    const f = await suiteFixture();
+    const consumer = join(f.root, "consumer with spaces");
+    await mkdir(consumer);
+    await Bun.write(
+      join(consumer, "mise.toml"),
+      '[tools]\n"github:fuyutarow/agx" = "old"\n',
+    );
+    await Bun.write(join(consumer, "mise.lock"), "sentinel lock\n");
+    const before = await readdir(consumer, { recursive: true });
+    const content = await Promise.all(
+      before.map((name) => Bun.file(join(consumer, name)).text()),
+    );
+    const log = join(f.root, "mise-calls");
+    const result = await preview(
+      f,
+      [
+        "--yes",
+        "--verify-in",
+        consumer,
+        "--verify-in",
+        consumer,
+        "--wait-seconds",
+        mode === "machine-delayed" ? "1" : "0",
+        "--poll-seconds",
+        "0.01",
+      ],
+      {
+        RELEASE_TEST_GH_MODE: mode.startsWith("machine-") ? mode : "success",
+        RELEASE_TEST_MISE_LOG: log,
+        RELEASE_TEST_STALE_DIR: mode === "stale" ? consumer : "",
+        RELEASE_TEST_INSTALL_FAIL: mode === "install-failure" ? "1" : "0",
+      },
+    );
+    expect(await readdir(consumer, { recursive: true })).toEqual(before);
+    expect(
+      await Promise.all(
+        before.map((name) => Bun.file(join(consumer, name)).text()),
+      ),
+    ).toEqual(content);
+    if (mode === "machine-missing") {
+      expect(result.exit).toBe(1);
+      expect(result.stderr).toContain("asset-wait in");
+      expect(result.stderr).toContain("agx-2.3.4-linux-x64.tar.gz");
+      expect(await Bun.file(log).exists()).toBe(false);
+    } else {
+      const calls = await Bun.file(log).text();
+      const parsed = jsonOf(
+        z.object({ args: z.array(z.string()), cwd: z.string() }),
+      ).safeParse(calls.trim().split("\n")[0]);
+      expect(parsed.success).toBe(true);
+      const first = parsed.success ? parsed.data : { args: [], cwd: "invalid" };
+      expect(first.args).toEqual(["install", "github:fuyutarow/agx@2.3.4"]);
+      const home = first.cwd;
+      expect(home).not.toBe(f.root);
+      if (mode === "stale") {
+        expect(result.exit).toBe(1);
+        expect(result.stderr).toContain(`verify in ${consumer}`);
+        expect(result.stderr).toContain("agx 2.3.3");
+      } else if (mode === "install-failure") {
+        expect(result.exit).toBe(1);
+        expect(result.stderr).toContain(`install in ${home}`);
+        expect(calls).not.toContain('"exec"');
+      } else {
+        expect(result.exit, result.stderr).toBe(0);
+        expect(result.stdout).toContain(`OK ${home}: agx 2.3.4`);
+        expect(result.stdout.split(`OK ${consumer}: agx 2.3.4`)).toHaveLength(
+          2,
+        );
+        expect(calls.trim().split("\n")).toHaveLength(3);
+        expect(
+          mode !== "machine-delayed" ||
+            (await Bun.file(join(f.root, "polled")).exists()),
+        ).toBe(true);
+      }
+    }
+  });
+}

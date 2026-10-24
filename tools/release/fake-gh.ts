@@ -65,6 +65,31 @@ if (args[1] === "create") {
     process.stderr.write(`HTTP 502: upload failed for ${name}\n`);
   if (fails) process.exitCode = 1;
 } else if (args[1] === "view") {
+  if (args.includes("assets,isDraft")) {
+    const names = [
+      "linux-x64",
+      "linux-arm64",
+      "darwin-x64",
+      "darwin-arm64",
+    ].map((platform) => `agx-2.3.4-${platform}.tar.gz`);
+    process.stdout.write(
+      JSON.stringify({
+        isDraft: false,
+        assets: (mode === "machine-missing" ||
+        (mode === "machine-delayed" &&
+          !(await Bun.file(join(process.cwd(), "polled")).exists()))
+          ? names.slice(1)
+          : names
+        ).map((name) => ({ name, state: "uploaded", size: 1 })),
+      }),
+    );
+    await Promise.all(
+      mode === "machine-delayed"
+        ? [Bun.write(join(process.cwd(), "polled"), "yes")]
+        : [],
+    );
+    process.exit(0);
+  }
   if (!args.includes("--json") || !args.includes("assets"))
     refuse("Expected asset inspection");
   const assets = state.assets.map((asset) => ({ ...asset }));
