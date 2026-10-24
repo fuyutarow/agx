@@ -50,7 +50,7 @@ export type Graded = Readonly<{
 }>;
 
 export const ROUTING_OBJECTIVE =
-  "Objective: get an accepted, useful result for this ticket fast and cheaply within subscription limits. Logic tree: A. Capability sufficiency (hard): satisfy required capability tags, task size, and long terminal/agentic work; use the brief and measured capabilities to assess sufficiency. B. Expected time to an accepted return: weigh likely success, latency, and rework; choose sufficient effort. C. Cost and subscription health: weigh 7-day windows most; 5-hour windows are secondary information. Keep the intended bias toward the codex route. Pace = used fraction minus elapsed fraction; negative means quota may expire unused. Stale or unknown usage is neutral. agx supplies the objective and evidence; Jev decides.";
+  "Objective: get an accepted, useful result for this ticket fast and cheaply within subscription limits. Logic tree: A. Capability sufficiency (hard): satisfy required capability tags, task size, and long terminal/agentic work; use the brief and measured capabilities to assess sufficiency. B. Expected time to an accepted return: weigh likely success, latency, and rework; choose a sufficient setting. C. Cost and subscription health: weigh 7-day windows most; 5-hour windows are secondary information. Keep the intended bias toward the codex route. Pace = used fraction minus elapsed fraction; negative means quota may expire unused. Stale or unknown usage is neutral. agx supplies the objective and evidence; Jev decides.";
 
 /** What Jev reads about one row: its route, measured capability, and relative price. */
 export function criterionFor(r: Roster, c: Choice): string {

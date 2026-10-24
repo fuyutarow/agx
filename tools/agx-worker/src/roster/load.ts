@@ -135,7 +135,11 @@ const RosterSchema = z
 export type Roster = z.output<typeof RosterSchema>;
 
 export type RosterLoad =
-  | { readonly ok: true; readonly value: Roster }
+  | {
+      readonly ok: true;
+      readonly value: Roster;
+      readonly catalogRows: readonly Choice[];
+    }
   | { readonly ok: false; readonly error: string };
 
 export type LoadRosterOptions = Readonly<{
@@ -236,7 +240,7 @@ export async function loadRoster(
     const generationError = generationExclusivityError(rosterResult.data);
     if (generationError !== undefined)
       return { ok: false, error: generationError };
-    return { ok: true, value: rosterResult.data };
+    return { ok: true, value: rosterResult.data, catalogRows: catalog.choice };
   }).then(
     (result) => result,
     (error: unknown): RosterLoad => ({

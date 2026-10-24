@@ -6,6 +6,8 @@ import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { exitWithError } from "./exit.ts";
 import { fromThrowable } from "neverthrow";
 
+import { PickAuditSchema, type PickAudit } from "./store.ts";
+
 const RoutingEvent = z.object({
   schema: z.literal(1),
   at: z.iso.datetime({ offset: true }),
@@ -13,6 +15,15 @@ const RoutingEvent = z.object({
   row: z.string(),
   route: z.enum(["claude", "codex"]),
   source: z.string(),
+});
+const RoutingRefusal = z.object({
+  schema: z.literal(1),
+  at: z.iso.datetime({ offset: true }),
+  host: z.string().min(1),
+  ticket: z.string(),
+  reason: z.enum(["split", "uncheckable", "contradiction", "missing_input"]),
+  probability: z.number().nullable(),
+  pick_audit: PickAuditSchema.optional(),
 });
 
 /** Private owner journal: capture selections even when no worker is subsequently started. */
@@ -41,6 +52,36 @@ export function recordRoutingPick(
     {
       mode: 0o600,
     },
+  );
+}
+
+/** Record a Jev return before any worker starts. */
+export function recordRoutingRefusal(input: {
+  ticket: string;
+  reason: "split" | "uncheckable" | "contradiction" | "missing_input";
+  probability?: number;
+  pick_audit?: PickAudit;
+}): void {
+  const root = stateDir();
+  mkdirSync(root, { recursive: true });
+  const event = RoutingRefusal.safeParse({
+    schema: 1,
+    at: Temporal.Now.instant().toString(),
+    host: hostname(),
+    ticket: input.ticket,
+    reason: input.reason,
+    probability: input.probability ?? null,
+    pick_audit: input.pick_audit,
+  });
+  if (!event.success)
+    return exitWithError(
+      `agx: invalid routing refusal: ${event.error.message}\n`,
+      2,
+    );
+  appendFileSync(
+    join(root, "routing-refusals.jsonl"),
+    `${JSON.stringify(event.data)}\n`,
+    { mode: 0o600 },
   );
 }
 

@@ -5,9 +5,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { writeUsageSnapshot } from "./usage-snapshot.fixture.ts";
-import { ROUTING_OBJECTIVE } from "../../src/roster/index.ts";
+import {
+  loadRoster,
+  criterionFor,
+  ROUTING_OBJECTIVE,
+} from "../../src/roster/index.ts";
 import { readRouteUsage } from "../../src/next/usage.ts";
-import { route } from "../../src/next/route.ts";
+import { blindCriterion, route } from "../../src/next/route.ts";
 import {
   append,
   events,
@@ -128,16 +132,65 @@ function installUsage(
 
 function startServer(choice: string, probabilities?: Record<string, number>) {
   let requestBody: z.output<typeof RoutingRequest> | undefined;
+  let wireBody: z.output<typeof RoutingRequest> | undefined;
+  let rawBody: string | undefined;
+  let calls = 0;
+  let wireIds: Record<string, string> = {};
   const server = Bun.serve({
     port: 0,
     fetch: async (request) => {
-      const parsed = jsonOf(RoutingRequest).safeParse(await request.text());
-      if (parsed.success) requestBody = parsed.data;
+      rawBody = await request.text();
+      const parsed = jsonOf(RoutingRequest).safeParse(rawBody);
+      calls++;
+      if (parsed.success) {
+        wireBody = parsed.data;
+        const loaded = await loadRoster();
+        if (!loaded.ok) return new Response(loaded.error, { status: 500 });
+        const roster = loaded.value;
+        const criteria = parsed.data.questions.worker.criteria;
+        wireIds = Object.fromEntries(
+          Object.entries(criteria).flatMap(([id, value]) => {
+            const matchedRow = roster.choice.find(
+              (row) =>
+                blindCriterion(criterionFor(roster, row), roster.choice) ===
+                value,
+            );
+            return matchedRow === undefined ? [] : [[matchedRow.id, id]];
+          }),
+        );
+        // Legacy assertions address rows through this fixture-only decoded view.
+        requestBody = {
+          ...parsed.data,
+          questions: {
+            worker: {
+              ...parsed.data.questions.worker,
+              criteria: Object.fromEntries(
+                Object.entries(wireIds).map(([row, id]) => [
+                  row,
+                  criteria[id]!,
+                ]),
+              ),
+            },
+          },
+        };
+      }
+      const wireChoice = wireIds[choice] ?? choice;
+      const wireProbabilities =
+        probabilities === undefined
+          ? undefined
+          : Object.fromEntries(
+              Object.entries(probabilities).map(([id, value]) => [
+                wireIds[id] ?? id,
+                value,
+              ]),
+            );
       return Response.json({
         answers: {
           worker: {
-            choice,
-            ...(probabilities === undefined ? {} : { probabilities }),
+            choice: wireChoice,
+            ...(wireProbabilities === undefined
+              ? {}
+              : { probabilities: wireProbabilities }),
           },
         },
       });
@@ -145,7 +198,14 @@ function startServer(choice: string, probabilities?: Record<string, number>) {
   });
   servers.push(server);
   process.env.JEV_URL = `http://127.0.0.1:${server.port}/choice`;
-  return { server, request: () => requestBody };
+  return {
+    server,
+    request: () => requestBody,
+    rawRequest: () => wireBody,
+    rawBody: () => rawBody,
+    calls: () => calls,
+    wireIds: () => wireIds,
+  };
 }
 
 function appendStarted(row: string) {
@@ -271,7 +331,12 @@ describe("capability constrained routing", () => {
         "--eval",
         `import { route } from ${JSON.stringify(new URL("../../src/next/route.ts", import.meta.url).pathname)}; await route("capability probe", ["long-tool-loop"], 600, [], { catalogPath: ${JSON.stringify(join(root, "catalog.toml"))} });`,
       ],
-      { env: process.env, stdout: "pipe", stderr: "pipe", timeout: 5000 },
+      {
+        env: { ...process.env, TYPESAFE_API_KEY: "routing-fixture-secret" },
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 5000,
+      },
     );
     const [exit, stderr] = await Promise.all([
       child.exited,
@@ -309,7 +374,12 @@ describe("capability constrained routing", () => {
           "--cd",
           root,
         ],
-        { env: process.env, stdout: "pipe", stderr: "pipe", timeout: 5000 },
+        {
+          env: { ...process.env, TYPESAFE_API_KEY: "routing-fixture-secret" },
+          stdout: "pipe",
+          stderr: "pipe",
+          timeout: 5000,
+        },
       );
       const [exit, stdout, stderr] = await Promise.all([
         child.exited,
@@ -626,7 +696,10 @@ describe("capability constrained routing", () => {
     if (started?.kind === "started")
       expect(started.pick_audit).toMatchObject({
         source: "jev",
-        probabilities: { "sonnet-high": 1, "luna-high": 0 },
+        probabilities: {
+          [server.wireIds()["sonnet-high"]!]: 1,
+          [server.wireIds()["luna-high"]!]: 0,
+        },
       });
   });
 
@@ -762,7 +835,12 @@ test("combined candidate rejects mixed Sol generations before Jev, even outside 
       "--eval",
       `import {route} from ${JSON.stringify(new URL("../../src/next/route.ts", import.meta.url).pathname)}; await route("mixed candidate", [], 600, [], { catalogPath: ${JSON.stringify(join(root, "catalog.toml"))} });`,
     ],
-    { env: process.env, stdout: "pipe", stderr: "pipe", timeout: 5000 },
+    {
+      env: { ...process.env, TYPESAFE_API_KEY: "routing-fixture-secret" },
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 5000,
+    },
   );
   const [exit, stdout, stderr] = await Promise.all([
     child.exited,
@@ -779,4 +857,173 @@ test("combined candidate rejects mixed Sol generations before Jev, even outside 
   expect(stderr).toContain("gpt-6.0-sol");
   expect(stderr).toContain("gpt-6.1-sol");
   expect(server.request()).toBeUndefined();
+});
+
+test("one raw Choice blinds the entire injected payload and preserves every criterion in order", async () => {
+  await isolateState();
+  const loaded = await loadRoster();
+  expect(loaded.ok).toBe(true);
+  if (!loaded.ok) return;
+  const roster = loaded.value;
+  const server = startServer("sol-medium", { "sol-medium": 1 });
+  const task = "User task mentions sol-medium and high effort verbatim";
+  const selected = await route(task, ["sol-high", "xhigh"]);
+  const request = server.rawRequest();
+  expect(request).toBeDefined();
+  if (request === undefined) return;
+  expect(request.state.task).toBe(task);
+  const rawBody = server.rawBody();
+  expect(rawBody).toBeDefined();
+  if (rawBody === undefined) return;
+  // Scan the exact HTTP body; only the user task value is exempt.
+  const injected = rawBody.replace(
+    JSON.stringify(task),
+    JSON.stringify("[user task omitted]"),
+  );
+  expect(injected).not.toContain("anonymization_map");
+  for (const row of roster.choice) {
+    expect(injected.toLowerCase()).not.toContain(row.id.toLowerCase());
+    expect(injected.toLowerCase()).not.toContain(row.model.toLowerCase());
+    const family = row.id.split("-")[0]!;
+    expect(injected).not.toMatch(new RegExp(`\\b${family}\\b`, "iu"));
+    for (const version of row.model.match(/\d+(?:[.-]\d+)+/gu) ?? [])
+      expect(injected).not.toMatch(
+        new RegExp(
+          `(?<![\\d.])${version.replaceAll(".", "\\.")}(?![\\d.])`,
+          "u",
+        ),
+      );
+  }
+  expect(injected).not.toMatch(/\b(low|medium|high|xhigh|max|effort)\b/iu);
+  expect(Object.keys(request.questions)).toEqual(["worker"]);
+  const ordered = roster.choice.toSorted(
+    (a, b) =>
+      ["low", "medium", "high", "xhigh", "max"].indexOf(a.effort) -
+      ["low", "medium", "high", "xhigh", "max"].indexOf(b.effort),
+  );
+  expect(Object.keys(request.questions.worker.criteria)).toEqual([
+    ...ordered.map((_, i) => `model_${i}`),
+    "split",
+    "uncheckable",
+    "contradiction",
+    "missing_input",
+  ]);
+  ordered.forEach((row, i) => {
+    expect(request.questions.worker.criteria[`model_${i}`]).toBe(
+      blindCriterion(criterionFor(roster, row), roster.choice),
+    );
+  });
+  expect(server.calls()).toBe(1);
+  const started = appendStarted(selected.id);
+  expect(started?.kind).toBe("started");
+  if (started?.kind === "started")
+    expect(started.pick_audit).toMatchObject({
+      answer: { choice: server.wireIds()["sol-medium"] },
+      probabilities: { [server.wireIds()["sol-medium"]!]: 1 },
+      anonymization_map: Object.fromEntries(
+        ordered.map((row, i) => [`model_${i}`, row.id]),
+      ),
+    });
+});
+
+for (const reason of [
+  "split",
+  "uncheckable",
+  "contradiction",
+  "missing_input",
+]) {
+  test(`return ${reason} exits 2, records the answer and never reaches worker startup`, async () => {
+    const { root } = await isolateState();
+    const server = startServer(reason, { [reason]: 1, model_0: 0 });
+    const child = Bun.spawn(
+      [
+        process.execPath,
+        "--eval",
+        `import {route} from ${JSON.stringify(new URL("../../src/next/route.ts", import.meta.url).pathname)}; await route("return fixture"); await Bun.write(${JSON.stringify(join(root, "worker-started"))}, "started");`,
+      ],
+      {
+        env: { ...process.env, TYPESAFE_API_KEY: "routing-fixture-secret" },
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 5000,
+      },
+    );
+    const [exit, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    expect(exit).toBe(2);
+    expect(stdout).toBe("");
+    expect(stderr).toContain(`ticket returned: ${reason}`);
+    expect(stderr).toContain("Fix:");
+    expect(await Bun.file(join(root, "worker-started")).exists()).toBe(false);
+    expect(server.calls()).toBe(1);
+    const parsedRecord = jsonOf(
+      z.object({
+        reason: z.string(),
+        pick_audit: z.object({
+          answer: z.object({ choice: z.string() }),
+          probabilities: z.record(z.string(), z.number()),
+          anonymization_map: z.record(z.string(), z.string()),
+        }),
+      }),
+    ).safeParse(
+      await readFile(join(root, "state", "routing-refusals.jsonl"), "utf8"),
+    );
+    expect(parsedRecord.success).toBe(true);
+    if (!parsedRecord.success) return;
+    const record = parsedRecord.data;
+    expect(record.reason).toBe(reason);
+    expect(record.pick_audit.answer.choice).toBe(reason);
+    expect(record.pick_audit.probabilities[reason]).toBe(1);
+    expect(record.pick_audit.anonymization_map.model_0).toBeDefined();
+  });
+}
+
+test("missing worker answer uses the default and records the missing-answer fallback", async () => {
+  await isolateState();
+  const server = startServer("unused");
+  server.server.reload({ fetch: () => Response.json({ answers: {} }) });
+  const picked = await route("missing answer fixture");
+  expect(picked.id).toBe("luna-high");
+  const started = appendStarted(picked.id);
+  if (started?.kind === "started")
+    expect(started.pick_audit).toMatchObject({
+      source: "fallback-missing-answer",
+      answer: null,
+    });
+});
+
+test("blinding retains grammatical comparisons and compound meanings", async () => {
+  await isolateState();
+  const loaded = await loadRoster();
+  expect(loaded.ok).toBe(true);
+  if (!loaded.ok) return;
+  const rows = loaded.value.choice;
+  expect(
+    blindCriterion(
+      "low-cost contained reasoning when luna-low's capability is insufficient",
+      rows,
+    ),
+  ).toBe(
+    "inexpensive contained reasoning when another model's capability is insufficient",
+  );
+  expect(blindCriterion("strong low-effort coding or reasoning", rows)).toBe(
+    "strong coding or reasoning at a modest setting",
+  );
+  expect(
+    blindCriterion(
+      "deep sol reasoning for tasks beyond lower-effort sol",
+      rows,
+    ),
+  ).toBe(
+    "deep model reasoning for tasks beyond another model at a less intensive setting",
+  );
+  expect(blindCriterion("where Sol 6.1 low is insufficient", rows)).toBe(
+    "where another model at its lowest setting is insufficient",
+  );
+  expect(
+    blindCriterion("AA 50, TB4 51.5%, SciCode 55.8%. Price $2/$10", rows),
+  ).toBe("AA 50, TB4 51.5%, SciCode 55.8%. Price $2/$10");
 });

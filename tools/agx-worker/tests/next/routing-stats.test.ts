@@ -244,8 +244,21 @@ test("real roster CLI selections are persisted before any worker starts", async 
   const { root, env } = fixture();
   const server = Bun.serve({
     port: 0,
-    fetch: () =>
-      Response.json({ answers: { worker: { choice: "luna-high" } } }),
+    fetch: async (request) => {
+      const parsed = jsonOf(
+        z.object({
+          questions: z.object({
+            worker: z.object({ criteria: z.record(z.string(), z.string()) }),
+          }),
+        }),
+      ).safeParse(await request.text());
+      const choice = parsed.success
+        ? Object.entries(parsed.data.questions.worker.criteria).find(
+            ([, text]) => text.includes("AA 33,"),
+          )?.[0]
+        : undefined;
+      return Response.json({ answers: { worker: { choice } } });
+    },
   });
   await using _cleanup = { [Symbol.asyncDispose]: () => server.stop(true) };
   {

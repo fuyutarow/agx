@@ -908,3 +908,17 @@ with that outcome, including historical runs, excluding currently running runs.
 Fixtures: `tests/dispatch.test.ts` covers both receipt formats and custom workspace;
 `tests/next/outcome.test.ts` runs a real worker past its 60-second ticket deadline,
 checks persisted/listed timeout, refusal/capacity distinction, and stats counts.
+
+## Blinded routing Choice
+
+Routing sends one Choice containing the same eligible rows in their existing order,
+with IDs `model_0` through `model_n`, followed by `split`, `uncheckable`,
+`contradiction`, and `missing_input`. Row criteria retain published scores, prices,
+and use-for meaning, replacing model identities, family versions, and effort words
+with neutral grammatical wording. Routing has no capability levels or return
+threshold: a chosen return option returns the ticket.
+The user task text is retained. The four returns describe observable conditions
+and exclusions; choosing one prints its reason and fix to stderr, records a refusal,
+and exits 2 before worker startup. Model IDs are mapped back locally. The pick audit
+retains the anonymization map, answer, and complete probability distribution.
+Invalid or missing answers retain the eligible default-row fallback and its reason.

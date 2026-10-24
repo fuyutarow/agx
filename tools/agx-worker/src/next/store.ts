@@ -42,11 +42,15 @@ import { runHealth } from "./health.ts";
 import { ticketContext } from "./ticket-home.ts";
 import { Sandbox, SandboxSource } from "./sandbox.ts";
 
-const PickAuditSchema = z.object({
+export const PickAuditSchema = z.object({
   source: z.string(),
+  anonymization_map: z.record(z.string(), z.string()).optional(),
+  answer: z.unknown().optional(),
   probabilities: z.record(z.string(), z.number()).nullable(),
   usage_snapshot: z.unknown(),
   usage_id: z.string().optional(),
+  candidates: z.array(z.string()).optional(),
+  chosen_row: z.string().optional(),
 });
 export type PickAudit = z.output<typeof PickAuditSchema>;
 

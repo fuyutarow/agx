@@ -2,12 +2,12 @@ import { randomUUID } from "node:crypto";
 import { jevEndpoint, postJev } from "../../../shared/src/jev-client.ts";
 import { sampleRow } from "../selection.ts";
 import {
-  criterionFor,
   exhaustionPolicy,
   loadRoster,
   routeFilterLabel,
   ROUTING_OBJECTIVE,
   type Choice,
+  criterionFor,
   type LoadRosterOptions,
 } from "../roster/index.ts";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
@@ -16,18 +16,134 @@ import { readRouteUsage } from "./usage.ts";
 import { foldedRuns, setPendingPickAudit } from "./store.ts";
 import { CAPACITY_COOLDOWN_MS, capacityRows } from "./capacity.ts";
 import { recordJevUsage } from "./jev-usage.ts";
-import { recordRoutingPick } from "./routing-events.ts";
+import { recordRoutingPick, recordRoutingRefusal } from "./routing-events.ts";
 
 const Reply = z.looseObject({
   answers: z.record(
     z.string(),
     z.looseObject({
       choice: z.string(),
+      reason_code: z.string().optional(),
       confidence: z.number().optional(),
       probabilities: z.record(z.string(), z.number()).optional(),
     }),
   ),
 });
+
+const ReturnReason = z.enum([
+  "split",
+  "uncheckable",
+  "contradiction",
+  "missing_input",
+]);
+const returns = {
+  split: {
+    criterion:
+      "The ticket states independent outcomes that require separate workers or disjoint write scopes. Do not use for dependent steps toward one outcome.",
+    fix: "Split the ticket into one independently verifiable outcome per ticket.",
+  },
+  uncheckable: {
+    criterion:
+      "The ticket supplies no observable acceptance or refutation condition for its outcome. Do not use merely because verification is difficult.",
+    fix: "Supply an observable acceptance or refutation condition.",
+  },
+  contradiction: {
+    criterion:
+      "Two explicit requirements cannot both be satisfied. Do not use for ambiguity or a difficult trade-off.",
+    fix: "Resolve the conflicting requirements in the ticket.",
+  },
+  missing_input: {
+    criterion:
+      "A required input, access, or decision is absent and cannot be obtained within the authorized scope. Do not use when the worker can retrieve it within scope.",
+    fix: "Provide the missing input, access, or decision, or authorize its retrieval.",
+  },
+};
+
+const escape = (value: string) =>
+  value.replaceAll(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+
+const neutralSettings: Record<string, string> = {
+  low: "lowest",
+  medium: "moderate",
+  high: "intensive",
+  xhigh: "very intensive",
+  max: "maximum",
+};
+
+/** Blind identities with neutral prose; measured numbers and prices remain intact. */
+export function blindCriterion(text: string, rows: readonly Choice[]): string {
+  let result = text;
+  // Handle grammatical compounds before replacing individual identity words.
+  result = result
+    .replaceAll(/\blow-cost\b/giu, "inexpensive")
+    .replaceAll(
+      /\bhigh-capability low-effort work\b/giu,
+      "capable work at a modest setting",
+    )
+    .replaceAll(
+      /\bhigh-capability low-effort reasoning\b/giu,
+      "capable reasoning at a modest setting",
+    )
+    .replaceAll(
+      /\bstrong low-effort coding or reasoning\b/giu,
+      "strong coding or reasoning at a modest setting",
+    )
+    .replaceAll(
+      /\blow-effort (reasoning|design judgment)\b/giu,
+      "$1 at a modest setting",
+    )
+    .replaceAll(
+      /\bat high reasoning effort\b/giu,
+      "at an intensive reasoning setting",
+    )
+    .replaceAll(/\blower-effort\b/giu, "less intensive");
+  for (const row of rows) {
+    result = result.replaceAll(
+      new RegExp(escape(row.id), "giu"),
+      "another model",
+    );
+    result = result.replaceAll(
+      new RegExp(escape(row.model), "giu"),
+      "another model",
+    );
+  }
+  const families = [...new Set(rows.map((row) => row.id.split("-")[0]!))];
+  for (const family of families) {
+    const name = `\\b${escape(family)}(?:\\s+\\d+(?:[.-]\\d+)*)?\\b`;
+    result = result
+      .replaceAll(
+        new RegExp(`${name} (low|medium|high|xhigh|max)\\b`, "giu"),
+        (_match, setting: string) =>
+          `another model at its ${neutralSettings[setting.toLowerCase()] ?? "different"} setting`,
+      )
+      .replaceAll(
+        new RegExp(`\\b(deepest|maximum|strongest) ${name}`, "giu"),
+        "$1 model",
+      )
+      .replaceAll(
+        new RegExp(`\\bdeep ${name} reasoning`, "giu"),
+        "deep model reasoning",
+      )
+      .replaceAll(
+        new RegExp(`\\bmost demanding ${name} tasks`, "giu"),
+        "most demanding tasks for another model",
+      )
+      .replaceAll(new RegExp(name, "giu"), "another model");
+  }
+  return result
+    .replaceAll(
+      "less intensive another model",
+      "another model at a less intensive setting",
+    )
+    .replaceAll(/\blow-effort\b/giu, "modest-setting")
+    .replaceAll(/\bhigh-difficulty\b/giu, "difficult")
+    .replaceAll(/\blow\b/giu, "modest")
+    .replaceAll(/\bmedium\b/giu, "moderate")
+    .replaceAll(/\bhigh\b/giu, "intensive")
+    .replaceAll(/\bxhigh\b/giu, "very intensive")
+    .replaceAll(/\bmax\b/giu, "maximum")
+    .replaceAll(/\beffort\b/giu, "setting");
+}
 
 export async function route(
   brief: string,
@@ -82,9 +198,19 @@ export async function route(
         : "agx: all capability-eligible routes are at their subscription limit\n",
       2,
     );
-  const criteria = Object.fromEntries(
-    candidates.map((row) => [row.id, criterionFor(roster, row)]),
+  const anonymizationMap = Object.fromEntries(
+    candidates.map((row, index) => [`model_${index}`, row.id]),
   );
+  const criteria: Record<string, string> = Object.fromEntries([
+    ...candidates.map((row, index): [string, string] => [
+      `model_${index}`,
+      blindCriterion(criterionFor(roster, row), loaded.catalogRows),
+    ]),
+    ...Object.entries(returns).map(([reason, value]): [string, string] => [
+      reason,
+      value.criterion,
+    ]),
+  ]);
   const request: Record<string, unknown> = {
     state: {
       task: brief.slice(0, Math.min(roster.auto.max_task_chars, 2400)),
@@ -113,7 +239,11 @@ export async function route(
       },
       ...(capabilities.length === 0
         ? {}
-        : { required_capabilities: [...capabilities] }),
+        : {
+            required_capabilities: capabilities.map((tag) =>
+              blindCriterion(tag, loaded.catalogRows),
+            ),
+          }),
     },
     questions: {
       worker: {
@@ -128,6 +258,18 @@ export async function route(
   const usageId = recordJevUsage(post, roster);
   const fallback =
     candidates.find((row) => row.id === roster.default) ?? candidates[0]!;
+  let rawAnswer: unknown = null;
+  const audit = (
+    source: string,
+    probabilities: Record<string, number> | undefined,
+  ) => ({
+    source,
+    probabilities: probabilities ?? null,
+    answer: rawAnswer,
+    anonymization_map: anonymizationMap,
+    usage_snapshot: usage,
+    usage_id: usageId,
+  });
   const recordPick = (
     row: Choice,
     source: string,
@@ -135,10 +277,8 @@ export async function route(
   ): Choice => {
     recordRoutingPick(row, source);
     setPendingPickAudit({
-      source,
-      probabilities: probabilities ?? null,
-      usage_snapshot: usage,
-      usage_id: usageId,
+      ...audit(source, probabilities),
+      chosen_row: row.id,
     });
     return row;
   };
@@ -150,28 +290,53 @@ export async function route(
   if (!decoded.success)
     return recordPick(fallback, "fallback-invalid-response", undefined);
   const answer = decoded.data.answers.worker;
+  rawAnswer = answer ?? null;
   const selected = answer?.choice;
   const probabilities = answer?.probabilities;
-  const sampled =
-    probabilities === undefined
-      ? undefined
-      : sampleRow(probabilities, roster.auto.pick_temperature, randomUUID());
-  if (sampled !== undefined && candidates.some((row) => row.id === sampled.row))
+  const reason = ReturnReason.safeParse(selected);
+  if (reason.success) {
+    recordRoutingRefusal({
+      ticket: brief,
+      reason: reason.data,
+      ...(probabilities?.[reason.data] === undefined
+        ? {}
+        : { probability: probabilities[reason.data] }),
+      pick_audit: audit("jev-return", probabilities),
+    });
+    return exitWithError(
+      `agx: ticket returned: ${reason.data}: ${returns[reason.data].criterion} Fix: ${returns[reason.data].fix}\n`,
+      2,
+    );
+  }
+  const selectedRow = candidates.find(
+    (row) => row.id === anonymizationMap[selected ?? ""],
+  );
+  if (selectedRow === undefined)
     return recordPick(
-      candidates.find((row) => row.id === sampled.row) ?? fallback,
-      "jev",
+      fallback,
+      answer === undefined
+        ? "fallback-missing-answer"
+        : "fallback-ineligible-choice",
       probabilities,
     );
-  if (selected !== undefined) {
-    const selectedRow = candidates.find((row) => row.id === selected);
-    if (selectedRow !== undefined)
-      return recordPick(selectedRow, "jev", probabilities);
-  }
-  return recordPick(
-    fallback,
-    answer === undefined
-      ? "fallback-missing-answer"
-      : "fallback-ineligible-choice",
-    probabilities,
+  const modelProbabilities =
+    probabilities === undefined
+      ? undefined
+      : Object.fromEntries(
+          Object.entries(probabilities).filter(([id]) =>
+            Object.hasOwn(anonymizationMap, id),
+          ),
+        );
+  const sampled =
+    modelProbabilities === undefined
+      ? undefined
+      : sampleRow(
+          modelProbabilities,
+          roster.auto.pick_temperature,
+          randomUUID(),
+        );
+  const sampledRow = candidates.find(
+    (row) => row.id === anonymizationMap[sampled?.row ?? ""],
   );
+  return recordPick(sampledRow ?? selectedRow, "jev", probabilities);
 }

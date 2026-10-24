@@ -105,7 +105,11 @@ test("ended fixtures retain measured outcomes while routing omits ungraded raw h
       );
     expect(captured?.state.history).toBeUndefined();
     // Local grades are audit data; only the roster's published evidence enters routing.
-    expect(captured?.questions.worker.criteria["luna-high"]).toBe(
+    expect(
+      Object.values(captured?.questions.worker.criteria ?? {}).find((value) =>
+        value.includes("AA 33,"),
+      ),
+    ).toBe(
       "Route codex. the default worker: clear-spec code and text, fixes, tests. Published benchmark snapshot (Artificial Analysis, 2026-10-08): AA 33, TB4 4.5% (long terminal/agentic), SciCode 50.3%. Price $0.10/$0.50 per 1M tokens in/out = 1x the cheapest row.",
     );
     expected.push(outcome);
