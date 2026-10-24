@@ -1,5 +1,15 @@
 import { afterAll, expect, setDefaultTimeout, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, rm, stat } from "node:fs/promises";
+import { chmodSync } from "node:fs";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readlink,
+  rm,
+  stat,
+} from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { jsonOf, z } from "../../shared/src/zod.ts";
@@ -88,6 +98,82 @@ async function waitFor(file: string) {
 }
 
 const delegateJj = `const child = Bun.spawn([${JSON.stringify(realJj)}, ...args], {stdout:"inherit",stderr:"inherit"}); process.exitCode = await child.exited;`;
+
+// Include contents and metadata, so even a rewritten identical cache is a mutation.
+async function snapshot(root: string): Promise<unknown[]> {
+  const rows: unknown[] = [];
+  for (const name of (await readdir(root)).toSorted()) {
+    const path = join(root, name);
+    const info = await lstat(path);
+    let content: unknown;
+    if (info.isDirectory()) content = await snapshot(path);
+    else if (info.isSymbolicLink()) content = await readlink(path);
+    else content = Bun.hash(await Bun.file(path).arrayBuffer()).toString();
+    rows.push([
+      name,
+      info.mode,
+      info.size,
+      info.mtimeMs,
+      info.ctimeMs,
+      content,
+    ]);
+  }
+  return rows;
+}
+
+for (const existingState of [false, true])
+  test(`AGX-GC-DRYRUN-READONLY-PARENT-1025: single and all with ${existingState ? "existing" : "missing"} state`, async () => {
+    const f = await fixture(["readonly"]);
+    // Freeze only the human age column; real jj reads still determine every verdict.
+    await f.shim(
+      "jj",
+      `
+const args = process.argv.slice(2).map(arg => arg.replaceAll('target.committer().timestamp().ago()', '"fixture age"').replaceAll('committer.timestamp().ago()', '"fixture age"'));
+${delegateJj}`,
+    );
+    const state = join(f.root, "state/agx");
+    if (existingState) {
+      await Bun.write(
+        join(state, "workspace-index.jsonl"),
+        JSON.stringify({ root: f.repo, workspace: f.dir("readonly") }) + "\n",
+      );
+      await Bun.write(
+        join(state, "workspace-verdicts.json"),
+        '{"sentinel":"unchanged"}\n',
+      );
+    }
+    await Bun.write(
+      join(f.root, "config/agx/repos/fixture.toml"),
+      `schema = 1\nroot = ${JSON.stringify(f.repo)}\n`,
+    );
+    const args = ["gc", "--dry-run", "--include-unrecorded", "--json"];
+    const before = await snapshot(f.root);
+    const writable = [];
+    for (const scope of [["--repo", f.repo], ["--all"]]) {
+      const result = await f.command([...args, ...scope]);
+      expect(result.code, result.err).toBe(0);
+      expect(result.out).toContain("empty");
+      writable.push(result);
+      expect(await snapshot(f.root)).toEqual(before);
+    }
+    const protectedDirs = [f.root, `${f.repo}.ws`, join(f.root, "config")];
+    if (existingState) protectedDirs.push(state);
+    for (const dir of protectedDirs) await chmod(dir, 0o555);
+    await (async () => {
+      const readonlyBefore = await snapshot(f.root);
+      for (const [index, scope] of [["--repo", f.repo], ["--all"]].entries()) {
+        const result = await f.command([...args, ...scope]);
+        expect(result.code, result.err).toBe(0);
+        const expected = writable[index];
+        expect(expected).toBeDefined();
+        if (expected === undefined) return;
+        expect(result).toEqual(expected);
+        expect(await snapshot(f.root)).toEqual(readonlyBefore);
+      }
+    })().finally(() => {
+      for (const dir of protectedDirs) chmodSync(dir, 0o755);
+    });
+  });
 
 test("WS-GC-LOCK-SCOPE: dry runs neither acquire a held lock nor snapshot dirty files", async () => {
   const f = await fixture(["dirty"]);

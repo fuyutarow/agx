@@ -292,16 +292,18 @@ async function bury(
 }
 
 /** Preconditions common to every verb: checked before any work, each failure names its repair. */
-function common(repo: Repo): Attempt<void> {
+function common(repo: Repo, readonly = false): Attempt<void> {
   if (Bun.which("jj") === null)
     return bad("jj is not on PATH: mise run install:tools");
-  const writable = fromThrowable(() => {
-    accessSync(repo.parent, constants.W_OK);
-  })();
-  if (writable.isErr())
-    return bad(
-      `${repo.parent} is not writable: the store lock and ${repo.name}.ws live there`,
-    );
+  if (!readonly) {
+    const writable = fromThrowable(() => {
+      accessSync(repo.parent, constants.W_OK);
+    })();
+    if (writable.isErr())
+      return bad(
+        `${repo.parent} is not writable: the store lock and ${repo.name}.ws live there`,
+      );
+  }
   const locks = refLocks({
     root: repo.backing,
     repo: join(repo.backing, ".jj", "repo"),
@@ -2123,7 +2125,7 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
   const resolved = resolveRepo(options.repo);
   if (!resolved.ok) return resolved;
   const repo = resolved.value;
-  const pre = common(repo);
+  const pre = common(repo, options.dryRun);
   if (!pre.ok) return pre;
   const graveyard = await checkGraveyard();
   if (!graveyard.ok) return graveyard;
@@ -2262,7 +2264,8 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
         failed.length === 0 &&
         !lines.some((line) => line.split("\t")[2] === "unknown"),
     };
-    if (failed.length === 0) await publishVerdicts(repo.backing, result);
+    if (!options.dryRun && failed.length === 0)
+      await publishVerdicts(repo.backing, result);
     return good(result);
   };
   return run();
@@ -2513,7 +2516,8 @@ export async function gcAll(
       failed.length === 0 &&
       !lines.some((line) => line.split("\t")[2] === "unknown"),
   };
-  if (failed.length === 0) await publishVerdicts(undefined, result, seen);
+  if (!options.dryRun && failed.length === 0)
+    await publishVerdicts(undefined, result, seen);
   return good(result);
 }
 

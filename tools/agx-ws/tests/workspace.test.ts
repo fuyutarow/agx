@@ -824,7 +824,7 @@ describe("agx ws add", () => {
     expect((await jj(["workspace", "list"], path)).out).toContain("ws_alpha");
   });
 
-  test("add leaves verdict publication to explicit gc outside the repository and workspace directory", async () => {
+  test("add and dry-run leave verdict publication to real gc outside the repository and workspace directory", async () => {
     const path = await repo('trunk = "main"\n');
     const state = join(scratch, "explicit-verdict-state");
     const env = baseEnv({ AGX_STATE_DIR: state });
@@ -839,6 +839,9 @@ describe("agx ws add", () => {
     expect(await Bun.file(verdictPath).exists()).toBe(false);
     const observed = await ws(["gc", "--dry-run"], path, env);
     expect(observed.code, observed.err).toBe(0);
+    expect(await Bun.file(verdictPath).exists()).toBe(false);
+    const collected = await ws(["gc"], path, env);
+    expect(collected.code, collected.err).toBe(0);
     expect(await Bun.file(verdictPath).exists()).toBe(true);
     const observation = jsonOf(
       z.object({ fleetComplete: z.boolean() }),
