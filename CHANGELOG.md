@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.6.3 — 2026-10-25
+
+- Blind model and effort identities in the single routing Choice; audit anonymous picks and refuse returned tickets before worker startup.
+
 ## 1.6.2 — 2026-10-24
 
 - Keep workspaces containing non-regenerable untracked or ignored files and fail closed when inventory is unavailable.
