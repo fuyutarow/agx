@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.5.0 — 2026-10-24
+
+- Unify every command and release under the suite version with one changeset and changelog path
+- Publish a 60-second polling cadence and retained doctor refresh errors in status JSON
+- Limit doctor to the registered L2 repository set
+- Allow on-demand consumer verification with --all and document Bun-only TypeScript execution
+- Add bounded worker probe JSON diagnostics with explicit sandbox and timeout outcomes
+- Add public host and window routing statistics with explicit unknown coverage and nullable Codex share.
+- Add public Jev usage window statistics with explicit historical gaps and pricing provenance
+- Import legacy lifecycle judgments with timestamp ordering, stable identity, and idempotent CLI projections.
+- Allow 60-second doctor members by default and report deadline kills with tool, budget and signal
+- Bound doctor refreshes across pollers and retain last-good findings with stale and error fields
+
 ## 1.4.0 — 2026-10-24
 
 - Update suite member agx-status to 1.1.0.
