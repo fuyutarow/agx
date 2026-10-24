@@ -55,12 +55,13 @@ export function verificationEnvironment(
     );
   }
   const prefixFile =
-    home === undefined
+    source.AGX_BREW_PREFIX_FILE ??
+    (home === undefined
       ? undefined
       : join(
           source.XDG_CONFIG_HOME ?? join(home, ".config"),
-          "dotfiles/brew-prefix",
-        );
+          "agx/brew-prefix",
+        ));
   if (prefixFile !== undefined && existsSync(prefixFile)) {
     const prefix = readFileSync(prefixFile, "utf8").trim();
     if (prefix !== "") paths.push(join(prefix, "bin"), join(prefix, "sbin"));

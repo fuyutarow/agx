@@ -6,7 +6,7 @@
 //   <system tmp>/agx-test-run-ns-<namespace>-<owner pid>-XXXXXX/
 //     p<pid>-XXXXXX/                                        one per test process = its TMPDIR
 //
-// The first process of a run creates the parent and publishes it in DOTFILES_TEST_RUN_DIR; a nested
+// The first process of a run creates the parent and publishes it in AGX_TEST_RUN_DIR; a nested
 // `bun test` inherits the variable and adds its own child under the same parent. The end of the
 // run (a preload-level afterAll: bun 1.4 never emits `exit` from `bun test`, measured 2026-10-15),
 // process exit, and INT/TERM/HUP where the runtime delivers them remove the process's own
@@ -42,7 +42,7 @@ const namespace =
     : "host";
 export const RUN_PREFIX = `agx-test-run-ns-${namespace}-`;
 const ANY_RUN = /^agx-test-run-(?:ns-[a-z0-9]+-)?\d+-/u;
-export const RUN_DIR_ENV = "DOTFILES_TEST_RUN_DIR";
+export const RUN_DIR_ENV = "AGX_TEST_RUN_DIR";
 const STALE_MS = 12 * 60 * 60 * 1000;
 const SIGNALS = { SIGHUP: 1, SIGINT: 2, SIGTERM: 15 } as const;
 

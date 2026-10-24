@@ -955,8 +955,8 @@ function adoptionSlug(repo: Repo, dir: string): string {
   for (const prefix of [
     `${repo.name}-arm-`,
     `${repo.name}-ws-`,
-    "dotfiles-arm-",
-  ]) {
+    process.env.AGX_WS_LEGACY_PREFIX ?? "",
+  ].filter((candidate) => candidate.length > 0)) {
     if (name.startsWith(prefix)) {
       name = name.slice(prefix.length);
       break;
@@ -1201,7 +1201,9 @@ async function orphanLines(
         entry.isDirectory() &&
         (entry.name.startsWith(`${repo.name}-arm-`) ||
           entry.name.startsWith(`${repo.name}-ws-`) ||
-          (entry.name.startsWith("dotfiles-arm-") &&
+          (process.env.AGX_WS_LEGACY_PREFIX !== undefined &&
+            process.env.AGX_WS_LEGACY_PREFIX.length > 0 &&
+            entry.name.startsWith(process.env.AGX_WS_LEGACY_PREFIX) &&
             (() => {
               const owner = jjWorkspace(join(repo.parent, entry.name));
               return owner.ok && owner.value.backingRoot === repo.backing;

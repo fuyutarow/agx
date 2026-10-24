@@ -66,11 +66,14 @@ async function send(
   message = `from: ${sender}${destination}\n\n${message}`;
   // Known even if the child times out before its first frame.
   const relaySessionId = kind === "claude" ? crypto.randomUUID() : undefined;
+  const relaySender = sender === unknownSender ? "unknown" : sender;
   const args =
     kind === "codex"
       ? ["queue", "--thread", id, "--message", message]
       : [
           "--print",
+          "--name",
+          `agx msg relay from ${relaySender}`,
           "--session-id",
           relaySessionId ?? "",
           "--model",
@@ -190,7 +193,7 @@ async function main(): Promise<number> {
         from: {
           type: String,
           description:
-            "Declared sender: codex:<full-UUID> or claude:<full-UUID>; no inherited environment inference",
+            "Authoritative envelope sender: codex:<full-UUID> or claude:<full-UUID>; overrides explicit AGX_MSG_FROM declaration",
         },
         relay: {
           type: String,
@@ -209,7 +212,7 @@ async function main(): Promise<number> {
       },
       help: {
         description:
-          "List recipients with agx msg list [--json], send once with agx msg send, or inspect a Claude relay with agx msg status --relay <session-UUID>. List exits 0 complete, 3 incomplete. Send/status exit: 0 accepted, 1 rejected, 2 usage, 3 unreachable, 4 acceptance unknown.",
+          "List recipients with agx msg list [--json], send once with agx msg send, or inspect a Claude relay with agx msg status --relay <session-UUID>. Sender: --from > AGX_MSG_FROM > unknown; never infer native session variables. The envelope from: line is caller attribution, not authentication. Claude from-name is relay transport, named agx msg relay from <sender or unknown>. List exits 0 complete, 3 incomplete. Send/status exit: 0 accepted, 1 rejected, 2 usage, 3 unreachable, 4 acceptance unknown.",
       },
     }),
   );
@@ -279,13 +282,12 @@ async function main(): Promise<number> {
     );
     return 2;
   }
+  const declaration = args.flags.from ?? process.env.AGX_MSG_FROM;
   const sender =
-    args.flags.from === undefined
-      ? unknownSender
-      : explicitSender(args.flags.from);
+    declaration === undefined ? unknownSender : explicitSender(declaration);
   if (sender === undefined) {
     process.stderr.write(
-      "agx msg: invalid --from; use codex:<full-session-UUID> or claude:<full-session-UUID> (no prefixes or names)\n",
+      `agx msg: invalid ${args.flags.from === undefined ? "AGX_MSG_FROM" : "--from"}; use codex:<full-session-UUID> or claude:<full-session-UUID> (no prefixes or names)\n`,
     );
     return 2;
   }

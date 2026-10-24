@@ -10,7 +10,7 @@ Raw output, including snippets and pre-edit matches: `/tmp/agx-suite-callers.jso
 
 The previously inventoried external DX caller declared `["agx", "jev"]`; that external repository is outside this checkout. This repository no longer provides either Jev command; use `jex`.
 
-## Before rename: $HOME/dotfiles.ws/ws_agx-suite-thin
+## Before rename: $HOME/consumer.ws/ws_agx-suite-thin
 
 - `README.md:108,141,149,150,154,183,214,215,219,222`
 - `tools/spec/agx-ticket.md:4,11,67,69,90,101,107`
@@ -164,7 +164,7 @@ The previously inventoried external DX caller declared `["agx", "jev"]`; that ex
 - `tools/statusline/tests/fixtures/codex-rollout-run-activity.jsonl:1`
 - `scripts/agx-accept.ts:158,167,172,182`
 
-## After rename search: $HOME/dotfiles.ws/ws_agx-suite-thin
+## After rename search: $HOME/consumer.ws/ws_agx-suite-thin
 
 - `README.md:108,141,149,150,154,183,214,215,219,222`
 - `tools/disk-reclaim/tests/targets/d-tmpfs.test.ts:71`
@@ -298,7 +298,7 @@ The previously inventoried external DX caller declared `["agx", "jev"]`; that ex
 - `scripts/tests/agx-doctor.test.ts:147,160,177,409,564,695,702`
 - `tools/agx-worker/tests/next/ls-selector.test.ts:107`
 
-## After rename search: $HOME/dotfiles
+## After rename search: $HOME/consumer
 
 - `README.md:108,141,149,150,154,183,214,215,219,222`
 - `CLAUDE.md:49,117,118`
@@ -517,9 +517,9 @@ No matching callers or mentions (search exit 1).
 - `records/20261015_example-learner-issue-structure-morning.md:11,49`
 - `records/20261015_example-app-issue-structure-postmortem.md:50`
 - `records/20261016_example-learner-branch-repairs-not-on-main-line.md:12`
-- `records/20261013_dotfiles-cli-devx-retro.md:80,82,83`
-- `records/20261018_dotfiles-night-issue-structure.md:55,56,100,118`
-- `records/20261016_dotfiles-land-lane-and-acceptance-noise.md:20,74,77,87,88,110`
+- `records/20261013_consumer-cli-devx-retro.md:80,82,83`
+- `records/20261018_consumer-night-issue-structure.md:55,56,100,118`
+- `records/20261016_consumer-land-lane-and-acceptance-noise.md:20,74,77,87,88,110`
 - `records/20261014_example-learner-concept-split-retro.md:71`
 - `records/20261016_example-learner-devx-and-concept-consolidation.md:12,28,108,109,110,111,112`
 - `records/20261016_example-learner-critical-path-blindness.md:91`
@@ -535,14 +535,14 @@ No matching callers or mentions (search exit 1).
 - `records/20261011_example-learner-coord-postmortem2610-1114e1block.md:28`
 - `records/20261015_dispatch-hearing.md:22,42,72,78,81,119,140,149`
 - `records/20261015_afternoon-coordination-retro.md:28,110`
-- `records/20261017_dotfiles-progress-blockers-frustration.md:10,11,47,56,102`
+- `records/20261017_consumer-progress-blockers-frustration.md:10,11,47,56,102`
 - `records/20261014_example-learner-brief-devx-retro.md:57,59`
 - `records/20261014_example-learner-evening-retro.md:45`
 - `records/20261015_dispatch-architecture.md:24,25,26,27,28,29,40,41,42,43,44,56,57,58,59,78,81,82,85,96,109,167,168,169,170,172,209,283,286,290,293,296`
 - `records/20261016_frustration-review-5-and-devx.md:111,132`
 - `records/20261016_review-notes-schema-and-review-gate-frustration.md:85`
 - `records/20261016_example-app-layering-and-usecase-gap-frustration-review.md:45`
-- `records/20261017_dotfiles-statusline-heavy-render-frustration.md:4,28,35,50,52,84,107,110`
+- `records/20261017_consumer-statusline-heavy-render-frustration.md:4,28,35,50,52,84,107,110`
 - `records/20261014_coordination-blockers-retro.md:21,29,35,76,80,88`
 - `records/20261017_dx-design-frustration-review.md:74`
 - `records/20261016_housekeeping-blocks-work-retro.md:18,78`
@@ -846,7 +846,7 @@ No matching callers or mentions (search exit 1).
 
 Query `["']agx["']` catches arrays split across lines and variable assignments. These references include bin declarations and availability checks; they are candidates, not all executable calls. Raw snippets: `/tmp/agx-suite-argv-callers.json`.
 
-### $HOME/dotfiles.ws/ws_agx-suite-thin
+### $HOME/consumer.ws/ws_agx-suite-thin
 
 - `package.json:24`
 - `scripts/tests/doctor.test.ts:81,93,104`
@@ -894,7 +894,7 @@ Query `["']agx["']` catches arrays split across lines and variable assignments. 
 - `tools/shared/tests/dispatch-state.test.ts:63,65`
 - `tools/agx-worker/src/next/store.ts:240`
 
-### $HOME/dotfiles
+### $HOME/consumer
 
 - `package.json:24`
 - `scripts/agx-accept.ts:150`

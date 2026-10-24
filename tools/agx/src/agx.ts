@@ -6,14 +6,22 @@ import {
   resolveSuiteTool,
 } from "../../shared/src/path-dispatch.ts";
 
+import { doctor } from "./doctor.ts";
+
 const argv = process.argv.slice(2);
-const tools = ["worker", "ticket", "ws", "status", "msg"];
+const tools = ["worker", "ticket", "ws", "status", "msg", "doctor"];
 
 async function help(): Promise<void> {
   process.stdout.write(
     `agx ${cliPackage.version}\n\nUSAGE: agx <tool> [args...]\n\nTOOLS:\n`,
   );
   for (const tool of tools) {
+    if (tool === "doctor") {
+      process.stdout.write(
+        "  doctor  Refresh and publish aggregate doctor findings\n",
+      );
+      continue;
+    }
     const child = Bun.spawn([await resolveSuiteTool(`agx-${tool}`), "--help"], {
       stdin: "ignore",
       stdout: "pipe",
@@ -52,9 +60,13 @@ async function main(): Promise<void> {
   }
   if (!tools.includes(first)) {
     process.stderr.write(
-      `agx: unknown tool '${first}'; expected worker, ticket, ws, status, msg\n`,
+      `agx: unknown tool '${first}'; expected worker, ticket, ws, status, msg, doctor\n`,
     );
     process.exitCode = 2;
+    return;
+  }
+  if (first === "doctor") {
+    await doctor(remaining);
     return;
   }
   process.exitCode = await forwardPath(

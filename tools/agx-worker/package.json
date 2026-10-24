@@ -1,6 +1,6 @@
 {
   "version": "10.0.5",
-  "name": "@dotfiles/agx-worker",
+  "name": "@agx/agx-worker",
   "private": true,
   "type": "module",
   "bin": {

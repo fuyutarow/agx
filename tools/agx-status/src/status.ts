@@ -6,6 +6,11 @@ import pkg from "../package.json" with { type: "json" };
 
 import { stateDir, checkState } from "./state-dir.ts";
 
+import {
+  DoctorAggregate,
+  doctorAggregatePath,
+} from "../../shared/src/doctor-aggregate.ts";
+
 await checkState();
 
 const workspaceCounts = z.object({
@@ -277,6 +282,23 @@ async function readStatus(env: NodeJS.ProcessEnv, cwd: string) {
       captured_at: snap.findings.capturedAt,
       stale: snap.findings.stale,
     };
+  }
+  const aggregateText = await Bun.file(doctorAggregatePath(env))
+    .text()
+    .catch((error: unknown) => {
+      const reason = z.object({ code: z.string() }).safeParse(error);
+      return reason.success && reason.data.code === "ENOENT" ? undefined : null;
+    });
+  if (aggregateText !== undefined) {
+    const aggregate = jsonOf(DoctorAggregate).safeParse(aggregateText);
+    statusFindings = aggregate.success
+      ? {
+          ...aggregate.data,
+          stale:
+            !aggregate.data.complete ||
+            aggregate.data.captured_at < Math.max(...times),
+        }
+      : null;
   }
   return {
     schema: 1,

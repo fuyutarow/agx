@@ -123,6 +123,7 @@ type ParsedStdout = Readonly<{
 }>;
 
 export async function runClaude(config: RunConfig): Promise<RunResult> {
+  const session = config.resume ?? crypto.randomUUID();
   const args = [
     "-p",
     config.prompt,
@@ -139,8 +140,10 @@ export async function runClaude(config: RunConfig): Promise<RunResult> {
   ];
 
   if (config.resume !== undefined) args.push("--resume", config.resume);
-  else if (config.persistSession !== true)
-    args.push("--no-session-persistence");
+  else {
+    args.push("--session-id", session);
+    if (config.persistSession !== true) args.push("--no-session-persistence");
+  }
 
   if (config.safeMode) args.push("--safe-mode");
   if (config.bare) args.push("--bare");
@@ -177,7 +180,7 @@ export async function runClaude(config: RunConfig): Promise<RunResult> {
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
-    env: workerEnvironment(),
+    env: workerEnvironment(process.env, { backend: "claude", session }),
     signal: signal,
     killSignal: "SIGTERM",
   });

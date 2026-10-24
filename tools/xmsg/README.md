@@ -132,7 +132,39 @@ The first line is sender metadata; Claude UUID destinations add a second header,
 deduplicates caller text as existing headers. Claude receipt correlation checks
 the exact composed envelope plus body.
 
-Without `--from`, the first line is `from: unknown (caller identity unavailable or inherited; use --from backend:<full-session-id>)`. Sends still work for existing callers, with truthful missing attribution. No environment-only identity is currently proven reliable: `CODEX_THREAD_ID`, `CODEX_SESSION_ID` and Claude session variables may be inherited or forwarded for parent ownership. Even agreeing values do not establish caller provenance. No cwd, inventory, transcript, latest session, name or lookup order determines the sender. Explicit attribution takes precedence over this untrusted environment; no extra discovery or native calls occur for sender selection.
+Sender selection is `--from` first, then the explicit `AGX_MSG_FROM` declaration,
+then unknown. Both declarations accept the same full addresses and UUID
+canonicalization. An invalid selected declaration (including an empty value) exits
+2 before discovery or transport; a valid `--from` overrides even an invalid
+`AGX_MSG_FROM`. List and status ignore `AGX_MSG_FROM`.
+
+Without either declaration, the first line is `from: unknown (caller identity unavailable or inherited; use --from backend:<full-session-id>)`.
+Sends still work with truthful missing attribution. `CODEX_THREAD_ID`,
+`CODEX_SESSION_ID`, `CLAUDE_CODE_SESSION_ID` and other native session variables
+are never consulted: they may belong to a parent, even when they agree. No cwd,
+inventory, transcript, latest session, name or lookup order determines the sender.
+No extra discovery or native calls occur for sender selection.
+
+The envelope's first `from:` line is the authoritative **declared reply address**,
+not authenticated identity. The receiving Claude harness's visible from-name
+identifies a separate one-shot relay session, not the original sender. The relay
+uses `claude --print --name 'agx msg relay from <declared sender or unknown>'`.
+Its title repeats the declaration for visibility; its own session UUID is only
+transport and recovery metadata. Installed `claude --help` (2026-10-24) describes
+`-n, --name <name>` as setting a display name with no print-mode restriction.
+The envelope remains authoritative if the receiving harness displays another name.
+
+agx-worker clears any parent's `AGX_MSG_FROM` before launching a vendor process.
+For fresh Claude workers it assigns `--session-id` before spawn and sets
+`AGX_MSG_FROM=claude:<that-full-UUID>` in that process's environment. Resumed
+Claude and Codex workers receive a declaration only for a full UUID explicitly
+passed to resume. Native-name resumes have no declaration. Fresh Codex thread
+IDs are unavailable before spawn, so agx-worker leaves the declaration unset.
+The generated worker brief instructs the worker to use
+`--from codex:<full-thread-UUID>` from the current thread ID reported by the vendor;
+if no ID is supplied, leave sender unknown. Never use the dispatcher address or
+guess an ID. `AGX_MSG_FROM` is an explicit assertion, not a provenance check;
+callers launching another agent must clear or replace their own declaration.
 
 ## Discover recipients
 

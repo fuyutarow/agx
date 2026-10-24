@@ -8,6 +8,7 @@ import { exitWithError } from "./exit.ts";
 import { flushRunPublications, stateDir } from "./store.ts";
 import { doctor } from "./doctor.ts";
 import { roster } from "./public.ts";
+import { host } from "./host.ts";
 import packageJson from "../../package.json" with { type: "json" };
 
 const cliArgv = () => process.argv.slice(2);
@@ -60,7 +61,9 @@ async function main(): Promise<void> {
   let exit = 2;
   const commandName = rawArgs[0];
   const commandArgs = rawArgs.slice(1);
-  if (commandName === "dispatch") {
+  if (commandName === "host") {
+    exit = host(commandArgs);
+  } else if (commandName === "dispatch") {
     const { dispatchMain } = await import("../dispatch.ts");
     await dispatchMain(commandArgs);
     return;

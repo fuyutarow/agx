@@ -2,6 +2,8 @@
 // agx validates writes here through its re-export and statusline/hooks use its reader schema.
 // Outside the repo by design: briefs and picks may be private. Zero-dep beyond the repo's zod bundle.
 import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { lstat, readdir } from "node:fs/promises";
+import { fromPromise } from "neverthrow";
 import { homedir } from "node:os";
 import { exitWithError } from "./next/exit.ts";
 import { dirname, join, resolve } from "node:path";
@@ -56,6 +58,55 @@ export function stateDir(env: NodeJS.ProcessEnv = process.env): string {
     );
   }
   return root;
+}
+
+type LegacyLandStatus = {
+  present: boolean | null;
+  status: "present" | "absent" | "refused";
+  reason: string;
+};
+
+const legacyLandRefusal = (cause: unknown): LegacyLandStatus => {
+  const error = z.object({ code: z.string() }).safeParse(cause);
+  return {
+    present: null,
+    status: "refused",
+    reason: `cannot inspect state directory: ${error.success ? error.data.code : "unknown error"}`,
+  };
+};
+
+/** Presence only: never read journals, create state, or infer migration completion. */
+export async function legacyLandStatus(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<LegacyLandStatus> {
+  const root = stateDir(env);
+  const rootEntry = await fromPromise(lstat(root), (error) => error);
+  if (rootEntry.isErr()) {
+    const missing = z
+      .object({ code: z.literal("ENOENT") })
+      .safeParse(rootEntry.error);
+    if (!missing.success) return legacyLandRefusal(rootEntry.error);
+    return {
+      present: false,
+      status: "absent",
+      reason: "state directory does not exist",
+    };
+  }
+  // Listing distinguishes unreadable state from an absent land entry. A dangling
+  // state symlink or a non-directory state path also refuses inspection.
+  const entries = await fromPromise(readdir(root), (error) => error);
+  if (entries.isErr()) return legacyLandRefusal(entries.error);
+  if (entries.value.includes("land"))
+    return {
+      present: true,
+      status: "present",
+      reason: "legacy land entry exists; owner migration evidence is required",
+    };
+  return {
+    present: false,
+    status: "absent",
+    reason: "legacy land entry does not exist",
+  };
 }
 
 /** Every brief's full original text (ticket included), once per content: `briefs/<sha256>.md`. The

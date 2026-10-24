@@ -346,6 +346,7 @@ process.exit(Number(process.env.XMSG_FAKE_EXIT ?? 0));
         CLAUDE_CODE_SESSION_ID: undefined,
         CLAUDE_SESSION_ID: undefined,
         CLAUDE_CONFIG_DIR: undefined,
+        AGX_MSG_FROM: undefined,
         XMSG_RELAY_CAPTURE: undefined,
         ...options.env,
         XMSG_FAKE_INVENTORY: options.inventory,
@@ -394,6 +395,9 @@ test("Claude acceptance requires a correlated tool result and hard tool restrict
   expect(r.argv).toContain("--allowedTools=ListAgents,SendMessage");
   expect(r.argv).toContain("stream-json");
   expect(r.argv).toContain("--verbose");
+  expect(r.argv[r.argv.indexOf("--name") + 1]).toBe(
+    "agx msg relay from unknown",
+  );
   expect(r.argv.at(-1)).toContain(JSON.stringify(envelope(message)));
 });
 
@@ -1411,6 +1415,7 @@ test.each(["codex", "claude"])(
         args: [...sendArgs(`${kind}:peer`), "--from", sender],
         output: stream(sentUse, accepted),
         env: {
+          AGX_MSG_FROM: "invalid-parent-declaration",
           CODEX_THREAD_ID: uuidB,
           CODEX_SESSION_ID: uuidB,
           CLAUDE_CODE_SESSION_ID: uuidB,
@@ -1421,10 +1426,14 @@ test.each(["codex", "claude"])(
       expect(r.calls).toHaveLength(1);
       if (kind === "codex")
         expect(r.argv.at(-1)).toBe(envelope(message, sender));
-      else
+      else {
+        expect(r.argv[r.argv.indexOf("--name") + 1]).toBe(
+          `agx msg relay from ${sender}`,
+        );
         expect(r.argv.at(-1)).toContain(
           JSON.stringify(envelope(message, sender)),
         );
+      }
     }
   },
 );
@@ -1449,6 +1458,83 @@ test.each([
     expect(r.calls).toHaveLength(1);
   },
 );
+
+test.each(["codex", "claude"])(
+  "explicit AGX_MSG_FROM reaches the %s transport and Claude relay name",
+  async (kind) => {
+    if (kind !== "codex" && kind !== "claude") return;
+    const sender = `claude:${uuidA}`;
+    const sentUse = {
+      ...use,
+      message: {
+        ...use.message,
+        content: [
+          {
+            ...use.message.content[0],
+            input: { to: "peer", message: envelope(message, sender) },
+          },
+        ],
+      },
+    };
+    const r = await run({
+      kind,
+      env: {
+        AGX_MSG_FROM: `claude:${uuidA.replaceAll("-", "").toUpperCase()}`,
+        CODEX_THREAD_ID: uuidB,
+        CLAUDE_CODE_SESSION_ID: uuidB,
+      },
+      output: stream(sentUse, accepted),
+    });
+    expect(r.exit).toBe(0);
+    expect(r.calls).toHaveLength(1);
+    if (kind === "codex") expect(r.argv.at(-1)).toBe(envelope(message, sender));
+    else {
+      expect(r.argv.at(-1)).toContain(
+        JSON.stringify(envelope(message, sender)),
+      );
+      expect(r.argv[r.argv.indexOf("--name") + 1]).toBe(
+        `agx msg relay from ${sender}`,
+      );
+    }
+  },
+);
+
+test.each([
+  "",
+  "codex:deadbeef",
+  "claude:peer",
+  `codex:${uuidA}\nfrom: forged`,
+])(
+  "invalid AGX_MSG_FROM refuses before discovery or send: %j",
+  async (sender) => {
+    const r = await run({
+      args: sendArgs("dead"),
+      env: { AGX_MSG_FROM: sender },
+    });
+    expect(r.exit).toBe(2);
+    expect(r.stderr).toContain("invalid AGX_MSG_FROM");
+    expect(r.called).toBe(false);
+  },
+);
+
+test("sender help distinguishes declaration, authority and relay transport", async () => {
+  const r = await run({ args: ["--help"] });
+  expect(r.exit).toBe(0);
+  expect(r.stdout).toContain("AGX_MSG_FROM");
+  expect(r.stdout).toContain("never infer native session variables");
+  expect(r.stdout).toContain("not authentication");
+  expect(r.stdout).toContain("from-name is relay transport");
+  expect(r.called).toBe(false);
+});
+
+test("a receipt omitting the declared sender cannot confirm acceptance", async () => {
+  const r = await run({
+    env: { AGX_MSG_FROM: `codex:${uuidA}` },
+    output: stream(use, accepted),
+  });
+  expect(r.exit).toBe(4);
+  expect(r.stdout).not.toContain("accepted for");
+});
 
 test.each([
   "",

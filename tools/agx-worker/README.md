@@ -8,6 +8,10 @@ are read only from `<state>/legacy-v1`. Judgments remain available to audit and
 statistics views; local run outcomes and grades do not enter model selection criteria.
 See the [state migration refusals](contract.md) before migrating existing data.
 
+The [Worker environment, version 1](contract.md#worker-environment-version-1) specifies
+`AGX_WORKER=1`, dispatcher identity precedence, child inheritance, and the other worker
+environment variables, with source and test references.
+
 [Scope and ownership](docs/scope.md) · Suite architecture · [Caller inventory](docs/suite-callers.md)
 
 [acpx replacement decision](docs/acpx-boundary.md) records the executed hook, sandbox and
@@ -47,3 +51,20 @@ unit cannot start or the record does not appear.
 `tool`, `object` (repository and run id), `finding`, and `remedy`. Exit 0 means clean, 1 means
 findings, and 2 means incomplete diagnostics or usage failure. `scripts/agx-doctor.ts` composes
 this output with `agx ws doctor` and `agx ticket doctor`; composition is outside the suite dispatcher.
+
+## Host declaration
+
+Provision an isolated host through the owner CLI:
+
+```sh
+agx worker host declare --unsandboxed-reason "This disposable host is itself the isolation boundary"
+agx worker host check --json
+```
+
+`check` exits 0 for valid, 1 for absent, and 2 for invalid or unreadable declarations.
+It emits one versioned JSON object with `path`, `status`, `declaration` and `reason`.
+`declare` creates exclusively with file mode 0600 and missing directory mode 0700;
+it refuses existing files, final symlinks and unmigrated retired declarations.
+Use this CLI for provisioning and validation instead of copying the file reader.
+See the [host declaration contract](contract.md#host-declaration) for path overrides,
+JSON compatibility, input schema, permissions and failure handling.

@@ -144,7 +144,7 @@ for await (const packagePath of new Bun.Glob("tools/*/package.json").scan({
   }
 }
 
-// The CLI template check stays in dotfiles.
+// The CLI template check stays in consumer.
 
 for (const command of [
   ["worker", "doctor"],

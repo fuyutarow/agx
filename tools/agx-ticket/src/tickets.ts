@@ -447,7 +447,11 @@ const isTicketFile = async (path: string): Promise<boolean> => {
 export async function doctor(): Promise<Attempt<string[]>> {
   const override = process.env.AGX_REPOS_ROOT;
   const workspaceHome = override ?? join(homedir(), "Workspace");
-  const repos = override === undefined ? [join(homedir(), "dotfiles")] : [];
+  const extra = process.env.AGX_ADDITIONAL_REPO;
+  const repos =
+    override === undefined && extra !== undefined && extra !== ""
+      ? [resolve(extra)]
+      : [];
   const workspaceEntries = await readdir(workspaceHome, {
     withFileTypes: true,
   }).catch(() => []);

@@ -1,0 +1,20 @@
+schema = 1
+
+[route]
+allow = ["codex"]
+default = "luna-high"
+exclude = ["luna-low"]
+max_task_chars = 6000
+timeout_ms = 20000
+no_egress = []
+pick_temperature = 0.5
+
+[route.jev]
+api = "typesafe"
+url = "https://fixture.invalid/never-called"
+model = "fixture"
+
+[claude_run]
+max_budget_usd = 2.0
+max_turns = 60
+reason = "Isolated public roster pricing contract fixture."

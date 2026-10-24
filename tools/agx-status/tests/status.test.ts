@@ -1,12 +1,17 @@
-import { expect, test } from "bun:test";
-import { mkdir, readdir, utimes, writeFile } from "node:fs/promises";
+import { afterAll, expect, test } from "bun:test";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  rm,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { jsonOf, z } from "../../shared/src/zod.ts";
 
-const fixtureRoot = join(
-  import.meta.dir,
-  "../../../.agent-state/sep-state-dir-merge-1023/fixtures/status",
-);
+const fixtureRoot = await mkdtemp(join(stateTmpdir(), "agx-status-"));
+afterAll(() => rm(fixtureRoot, { recursive: true, force: true }));
 const repo = join(fixtureRoot, "repo");
 const cliPath = join(import.meta.dir, "../src/status.ts");
 const counts = { total: 3, unlanded: 1, collectable: 0, legacy: 0 };

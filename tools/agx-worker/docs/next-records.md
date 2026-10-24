@@ -13,7 +13,7 @@ uses `agx worker run TICKET.md --continue PREVIOUS_RUN_ID`.
 `agx worker run` records `dispatcher_session` from `--session ID`, then `AGX_DISPATCHER_SESSION`,
 `CLAUDE_CODE_SESSION_ID`, or `CODEX_SESSION_ID`; missing session context is recorded as `null`
 with a `WARN` line.
-verify should include `mise run gate:land` for a change that will land in dotfiles.
+verify should include `mise run gate:land` for a change that will land in consumer.
 
 Human `agx worker ls` shows runs newest first, limited to the last 30 by default; `agx worker ls --all` shows
 the full list. `agx worker ls --json` remains complete and preserves append/fold order when no selector
@@ -196,3 +196,11 @@ Each finding includes its one-line action:
 | `collectable`             | Run the printed `agx ws gc --include-unrecorded --repo REPO`.              |
 | `unlanded-72h`            | Enter the printed workspace and run `mise run land`.                       |
 | `stale`                   | Run the printed `agx ws refresh NAME --repo REPO`.                         |
+
+## Verification command paths
+
+Outside dispatcher-provided environments, verification adds the user's local,
+Cargo and Bun command directories. It reads an optional Homebrew installation
+prefix from `${XDG_CONFIG_HOME:-$HOME/.config}/agx/brew-prefix` and adds its `bin`
+and `sbin` directories. Set `AGX_BREW_PREFIX_FILE` to keep using a prefix file at
+another location. Dispatcher-provided command paths remain authoritative.

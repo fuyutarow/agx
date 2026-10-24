@@ -165,3 +165,9 @@ Lock-scope fixtures must show that slow classification does not hold up foregrou
 entire GC pass, and that changed removal inputs are checked again under the store lock. Waits over
 five seconds must identify the holder's command, pid, host, start time and elapsed seconds.
 The old assertion that no state file is written is superseded by explicit verdict publication.
+
+Legacy workspace adoption strips `<repository>-arm-` and `<repository>-ws-`
+from directory names. Set `AGX_WS_LEGACY_PREFIX` to an additional literal prefix
+(including its trailing separator) to adopt a consumer's older layout. Orphan
+inventory includes that prefix only when jj confirms the workspace belongs to the
+selected backing repository. Unset or empty means no additional prefix.

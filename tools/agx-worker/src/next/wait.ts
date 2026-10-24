@@ -2,6 +2,7 @@ import { watch, type FSWatcher } from "node:fs";
 import { join } from "node:path";
 import { fromThrowable } from "neverthrow";
 import { recordCursor, recordPath, stateDir, type ListedRun } from "./store.ts";
+import { listingProgress } from "./listing-progress.ts";
 
 type Row = ListedRun;
 export type WaitFlags = Readonly<{
@@ -154,7 +155,7 @@ export async function waitRun(flags: WaitFlags): Promise<number> {
       if (firstDone !== undefined) {
         process.stdout.write(
           flags.json
-            ? `${JSON.stringify([firstDone])}\n`
+            ? `${JSON.stringify(await listingProgress([firstDone]))}\n`
             : `${line(firstDone)}\n`,
         );
         return 0;

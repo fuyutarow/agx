@@ -2,8 +2,11 @@
 
 The following contracts now exist:
 
-- [Configuration](config.md): repository `agx.toml`, machine-local overrides, user policy,
-  catalog selection, precedence, retired declarations and implementation limits.
+- [Doctor aggregation](doctor.md): bounded refresh, JSON, exit codes and owner snapshots.
+- [Configuration](config.md): repository `agx.toml`, machine-local overrides, user policy and
+  the public operator;
+  schema 1, `AGX_CONFIG`/XDG discovery, catalog selection, precedence, effective roster JSON,
+  compatibility, refusal rules, retired declarations and implementation limits.
 - [Workspace lifecycle](../tools/agx-ws/README.md): creation, readiness, refresh, removal,
   collection, locks and workspace policy.
 - [Ticket lifecycle](../tools/agx-ticket/README.md): issuance, derived states, landing and collection.

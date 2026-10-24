@@ -1,4 +1,12 @@
-import { existsSync, readFileSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fromThrowable } from "neverthrow";
@@ -32,31 +40,56 @@ export function codexHostDeclarationPath(): string {
   );
 }
 
+function fileError(error: unknown) {
+  const parsed = z.object({ code: z.string() }).safeParse(error);
+  return {
+    code: parsed.success ? parsed.data.code : undefined,
+    reason: errorMessage(error),
+  };
+}
+
+function retiredHostPath(path: string): string | undefined {
+  const directory = dirname(path);
+  return basename(directory) === "agx"
+    ? join(dirname(directory), "codex-run", "host.toml")
+    : undefined;
+}
+
+function missingHostDeclaration(path: string): CodexHostDeclarationResult {
+  const legacyPath = retiredHostPath(path);
+  if (legacyPath === undefined) return { kind: "absent" };
+  const legacy = fromThrowable(() => lstatSync(legacyPath), fileError)();
+  if (legacy.isOk())
+    return {
+      kind: "invalid",
+      reason: `legacy host declaration found; run: mv "${legacyPath}" "${path}"`,
+    };
+  return legacy.error.code === "ENOENT"
+    ? { kind: "absent" }
+    : { kind: "invalid", reason: legacy.error.reason };
+}
+
 /** Parse the one agx host declaration schema. */
 export function readCodexHostDeclaration(
   path: string,
 ): CodexHostDeclarationResult {
+  const metadata = fromThrowable(() => lstatSync(path), fileError)();
+  if (metadata.isErr()) {
+    if (metadata.error.code !== "ENOENT")
+      return { kind: "invalid", reason: metadata.error.reason };
+    return missingHostDeclaration(path);
+  }
+  if (!metadata.value.isFile())
+    return {
+      kind: "invalid",
+      reason: `${path} must be a regular file, not a symlink or directory`,
+    };
   const hostText = fromThrowable(
     () => readFileSync(path, "utf8"),
     (error) => errorMessage(error),
   )();
   if (hostText.isErr()) {
-    const hostDirectory = dirname(path);
-    const legacyPath = join(
-      dirname(hostDirectory),
-      ["codex", "-run"].join(""),
-      "host.toml",
-    );
-    if (
-      basename(hostDirectory) === "agx" &&
-      !existsSync(path) &&
-      existsSync(legacyPath)
-    )
-      return {
-        kind: "invalid",
-        reason: `legacy host declaration found; run: mv "${legacyPath}" "${path}"`,
-      };
-    return { kind: "absent" };
+    return { kind: "invalid", reason: hostText.error };
   }
 
   const toml = fromThrowable(
@@ -76,4 +109,51 @@ export function readCodexHostDeclaration(
     kind: "valid",
     declaration: { unsandboxedReason: parsed.data.unsandboxed_reason },
   };
+}
+
+/** Exclusive owner writer; never truncates an existing file or follows a final symlink. */
+export function declareCodexHost(
+  path: string,
+  reason: string,
+): CodexHostDeclarationResult {
+  const parsed = HostDeclaration.safeParse({
+    schema: 1,
+    unsandboxed_reason: reason,
+  });
+  if (!parsed.success)
+    return {
+      kind: "invalid",
+      reason: "--unsandboxed-reason must contain non-whitespace text",
+    };
+  const existing = readCodexHostDeclaration(path);
+  if (existing.kind !== "absent")
+    return {
+      kind: "invalid",
+      reason:
+        existing.kind === "invalid"
+          ? existing.reason
+          : `${path} already exists; declaration was not changed`,
+    };
+  const written = fromThrowable(() => {
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    const fd = openSync(
+      path,
+      constants.O_WRONLY |
+        constants.O_CREAT |
+        constants.O_EXCL |
+        constants.O_NOFOLLOW,
+      0o600,
+    );
+    using _file = {
+      [Symbol.dispose]: () => {
+        closeSync(fd);
+      },
+    };
+    writeFileSync(
+      fd,
+      `schema = 1\nunsandboxed_reason = ${JSON.stringify(parsed.data.unsandboxed_reason)}\n`,
+    );
+  }, errorMessage)();
+  if (written.isErr()) return { kind: "invalid", reason: written.error };
+  return readCodexHostDeclaration(path);
 }

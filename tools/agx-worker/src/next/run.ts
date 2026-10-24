@@ -6,6 +6,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { InspectionUnavailable } from "../../../shared/src/agx-config.ts";
 import { selfCommand } from "../self-command.ts";
+import { legacyLandStatus } from "../state.ts";
 import { verifyLine } from "../ticket.ts";
 import { parseReport, parseReturn, withReportInstruction } from "../report.ts";
 import { type NextTicket } from "./ticket.ts";
@@ -128,6 +129,7 @@ const renderPromise = (
           : [`${key}: ${JSON.stringify(ticket[key])}`],
       ),
       'If this work needs a tool release changeset, create it with `mise run changeset -- <tool> <patch|minor|major> "<entry>"`; do not hand-write a `.changes` file.',
+      "For agx msg sender attribution, --from overrides AGX_MSG_FROM. agx-worker declares AGX_MSG_FROM only when it knows this vendor process's full session UUID before spawn. For a fresh Codex thread, pass --from codex:<full-thread-UUID> using the current thread ID reported by the vendor. Never guess from inherited native session variables, dispatcher identity, inventory, cwd or the latest session. If the vendor has not supplied your ID, leave sender unknown. The envelope's from: line is the declared reply address; Claude's visible from-name identifies the relay transport.",
       "",
       prose.trim(),
     ].join("\n"),
@@ -559,6 +561,7 @@ export async function run(flags: Flags): Promise<number> {
           ? {}
           : { BUN_BE_BUN: "1" }),
         AGX_INTERIM_REPORTS_FILE: interimPath,
+        AGX_CODEX_PROGRESS_FILE: join(runDir, "worker-progress.jsonl"),
       },
       timeout: (ticket.timeout_s ?? 600) * 1000,
     },
@@ -783,6 +786,7 @@ const selectedRuns = (
 
 export { runningSummary } from "./listing.ts";
 import { runningSummary, listingRows } from "./listing.ts";
+import { listingProgress } from "./listing-progress.ts";
 
 export async function list(flags: Flags): Promise<number> {
   const workspacePath = value(flags, "workspace");
@@ -876,10 +880,11 @@ export async function list(flags: Flags): Promise<number> {
     .join("\n");
   if (asJson) {
     const selected = selector === undefined ? rows : visible;
-    let payload: unknown = listingRows(selected);
+    const projected = await listingProgress(selected);
+    let payload: unknown = listingRows(projected);
     if (flags.summary === true) {
       payload = {
-        runs: listingRows(selected),
+        runs: listingRows(projected),
         summary: runningSummary(selected),
       };
     }
@@ -933,12 +938,18 @@ export async function judgeRun(flags: {
 }
 
 export async function stats(flags: Flags): Promise<number> {
+  const legacyLand = await legacyLandStatus();
+  if (legacyLand.status === "refused") {
+    process.stdout.write(`${JSON.stringify({ legacy_land: legacyLand })}\n`);
+    return 2;
+  }
   const importFlag =
     flags.importLegacy === true || value(flags, "import-legacy") === "true";
   const legacyImport = importFlag ? await importLegacyRecords() : undefined;
   const all = events();
   const runs = await foldedRuns();
   const report = {
+    legacy_land: legacyLand,
     runs: runs.length,
     running: runs.filter((entry) => entry.state === "running").length,
     ended: runs.filter((entry) => entry.state === "ended").length,

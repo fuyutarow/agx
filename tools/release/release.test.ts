@@ -34,7 +34,11 @@ async function fixture(pkg = "agx-status") {
   await mkdir(join(dir, "src"), { recursive: true });
   await Bun.write(
     join(dir, "package.json"),
-    JSON.stringify({ version: "2.3.4", bin: { [pkg]: "src/main.ts" } }),
+    JSON.stringify({
+      name: `@agx/${pkg}`,
+      version: "2.3.4",
+      bin: { [pkg]: "src/main.ts" },
+    }),
   );
   await Bun.write(
     join(dir, "src/main.ts"),

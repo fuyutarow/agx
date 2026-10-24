@@ -135,8 +135,8 @@ function dependencyName(value: unknown): string | undefined {
 // --- C-A RUNTIME-DECLARED / C-B BODY-IS-DECLARATION (added 2026-07-25) -----------------
 // Both come from one measured failure. `[tools]` pinning had been routed OUT of this skill
 // as "model-native"; the consequence, censused across three repos on 2026-07-25, was that
-// EVERY one of them invoked a runtime from a task body while declaring none of it — dotfiles
-// and beateater had no [tools] section at all, example-project declared julia only. `mise run` then
+// EVERY one of them invoked a runtime from a task body while declaring none of it — two
+// consumers had no [tools] section at all; the third declared julia only. `mise run` then
 // depends on whatever the machine happens to have, which is the exact opposite of what mise
 // is for. The task graph's soundness is NOT separable from the runtime declaration: a body
 // that says `bun x` is only correct if [tools] says bun.

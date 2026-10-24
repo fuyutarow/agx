@@ -7,4 +7,5 @@ export const COMMAND_NAMES = [
   "stats",
   "doctor",
   "roster",
+  "host",
 ] as const;

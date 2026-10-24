@@ -88,7 +88,6 @@ test.each([
   "judge",
   "stats",
   "roster",
-  "doctor",
   "jev",
   "unknown",
   "constructor",
@@ -101,7 +100,7 @@ test.each([
   expect(result.code).toBe(2);
   expect(result.stdout).toBe("");
   expect(result.stderr).toBe(
-    `agx: unknown tool '${verb}'; expected worker, ticket, ws, status, msg\n`,
+    `agx: unknown tool '${verb}'; expected worker, ticket, ws, status, msg, doctor\n`,
   );
 });
 test("suite owns its version and takes descriptions from PATH tools", async () => {

@@ -391,12 +391,13 @@ describe("agx-worker run", () => {
     const interimMessage = `\`\`\`agx-return\n${interim}\n\`\`\``;
     writeFileSync(
       worker,
-      `import { appendFileSync } from "node:fs";\nconst resumeIndex = process.argv.indexOf("--resume");\nconst vendorSession = resumeIndex < 0 ? "vendor-1" : "continued-" + String(process.argv[resumeIndex + 1]);\nif (process.env.AGX_LATE_FIXTURE === "1") await Bun.sleep(1400);\nelse appendFileSync(process.env.AGX_INTERIM_REPORTS_FILE, JSON.stringify({ last_message: ${JSON.stringify(interimMessage)} }) + "\\n");\nprocess.stdout.write(JSON.stringify({ exit: 0, report: { summary: "fake done", changes: [], checks: [], for_coordinator: [], open: [] }, vendor_session: vendorSession }) + "\\n");\n`,
+      `import { appendFileSync } from "node:fs";\nconst resumeIndex = process.argv.indexOf("--resume");\nconst vendorSession = resumeIndex < 0 ? "vendor-1" : "continued-" + String(process.argv[resumeIndex + 1]);\nawait Bun.write(process.env.AGX_CODEX_PROGRESS_FILE, JSON.stringify({ schema: 1, at: "2026-10-24T00:00:00Z", last: "fixture activity", commands: 4, files: 2, session: vendorSession }));\nif (process.env.AGX_LATE_FIXTURE === "1") await Bun.sleep(1400);\nelse appendFileSync(process.env.AGX_INTERIM_REPORTS_FILE, JSON.stringify({ last_message: ${JSON.stringify(interimMessage)} }) + "\\n");\nprocess.stdout.write(JSON.stringify({ exit: 0, report: { summary: "fake done", changes: [], checks: [], for_coordinator: [], open: [] }, vendor_session: vendorSession }) + "\\n");\n`,
     );
 
     const workerEnv = {
       ...process.env,
       AGX_STATE_DIR: state,
+      XDG_STATE_HOME: join(root, "xdg-state"),
       AGX_TMP_ROOT: join(root, "agx-tmp"),
       JEV_URL: `http://127.0.0.1:${jevPort}/choice`,
       AGX_WORKER_BIN: worker,
@@ -464,6 +465,16 @@ describe("agx-worker run", () => {
     const started = lines[0];
     const ended = lines.at(-1);
     if (started === undefined || ended === undefined) return;
+    if (started.id === undefined) return;
+    const brief = readFileSync(
+      join(state, "runs", started.id, "brief.md"),
+      "utf8",
+    );
+    expect(brief).toContain("--from overrides AGX_MSG_FROM");
+    expect(brief).toContain("current thread ID reported by the vendor");
+    expect(brief).toContain(
+      "If the vendor has not supplied your ID, leave sender unknown",
+    );
     if (started.at === undefined || ended.at === undefined) return;
     expect(lines.map((line) => line.kind)).toEqual([
       "started",
@@ -479,6 +490,37 @@ describe("agx-worker run", () => {
     expect(started.dispatcher_session).toBe("flag-session");
     expect(started.continues).toBeNull();
     if (started.id === undefined) return;
+
+    const progressListing = Bun.spawnSync(
+      [
+        process.execPath,
+        "tools/agx-worker/src/next/cli.ts",
+        "ls",
+        started.id,
+        "--json",
+      ],
+      { env: workerEnv, timeout: 10_000 },
+    );
+    expect(progressListing.exitCode, progressListing.stderr.toString()).toBe(0);
+    const progressRows = jsonOf(
+      z.array(
+        z.looseObject({
+          progress: z.looseObject({ commands: z.number(), files: z.number() }),
+          last_progress_path: z.string(),
+          progress_source: z.string(),
+        }),
+      ),
+    ).safeParse(progressListing.stdout.toString());
+    expect(progressRows.success).toBe(true);
+    if (!progressRows.success) return;
+    expect(progressRows.data[0]?.progress).toMatchObject({
+      commands: 4,
+      files: 2,
+    });
+    expect(progressRows.data[0]?.progress_source).toBe("run");
+    expect(progressRows.data[0]?.last_progress_path).toEndWith(
+      "last-progress.json",
+    );
 
     const lateBinding = {
       ...binding,
@@ -750,6 +792,10 @@ describe("agx-worker run", () => {
         "id",
         "judgment",
         "last_progress_path",
+        "progress",
+        "progress_source",
+        "progress_status",
+        "progress_fresh_at",
         "lease",
         "report_path",
         "returned",

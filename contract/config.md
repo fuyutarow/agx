@@ -130,6 +130,115 @@ or `DISPATCH_ROSTER_PATH` through `tools/shared/src/dispatch-pricing.ts`. That v
 currently rejected by the routing loader. Price reporting therefore remains a second reader.
 Shell-command model-floor enforcement belongs to the invoking host, not this routing policy.
 
+## Public roster pricing projection
+
+`agx worker roster --json` without a ticket is the public JSON surface for the current
+effective roster and pricing. It writes one JSON object to stdout and exits 0 on success.
+A policy or catalog load failure exits 1 with a diagnostic on stderr and no successful
+JSON; invoking roster without a ticket or `--json` exits 2. Do not interpret failed
+output as an empty roster. The response has `schema: 1`, catalog `as_of` (a date, not a
+live price timestamp), `default`, `auto`, `claude_run`, `sources`, `choice`, and `objective`.
+`auto` is the effective projection, not the operator TOML shape. Omitted optional route
+settings remain omitted in JSON; Jev prices come from the shipped catalog. No worker or
+Jev request is launched by this inspection.
+
+Each `choice` row exposes these pricing fields:
+
+| Field             | JSON type               | Meaning                                                         |
+| ----------------- | ----------------------- | --------------------------------------------------------------- |
+| `id`              | string                  | Choice identifier used to join a worker row to this projection. |
+| `route`           | `"codex"` or `"claude"` | Execution route.                                                |
+| `price_in`        | number, optional        | USD per million uncached input tokens.                          |
+| `price_cached_in` | number, optional        | USD per million cached input tokens.                            |
+| `price_out`       | number, optional        | USD per million output tokens.                                  |
+
+An absent price key means unknown, never zero. JSON omits missing prices rather than
+emitting null or a default. A numeric zero is an explicit catalog value. The current
+validator accepts numeric row prices without enforcing nonnegativity. Consumers must
+preserve unknown cost for any token category whose required price is missing; they
+must not substitute the uncached input price for a missing cached input price.
+
+The operator's `route.allow` projects to `auto.routes`; when omitted, both routes are
+allowed. It does not remove choices from other routes, so presence in `choice` does not
+establish automatic routing eligibility. The output does not contain an `exclude` list.
+The projection applies `route.exclude` by removing those IDs from `choice`; other routing
+constraints still apply when selecting a worker.
+
+This is a current effective projection, not a historical price catalog. Retired or
+removed IDs are not retained as tombstones or aliases. If a historical run's ID is
+absent, its price and estimated cost are unknown through this surface; do not map it
+to a similarly named replacement or assume zero. Current prices also do not certify
+the price charged for an earlier run. Consumers should use this CLI instead of
+discovering or parsing private catalog files. Additive fields may be ignored;
+breaking changes follow the major-version contract in [Consumer contracts](README.md).
+
+`tools/agx-worker/tests/next/roster-pricing.test.ts` runs the source CLI with a fixture
+policy and isolated state. It checks exported prices, an omitted cached-input price,
+route allowance, exclusions, and retired-ID absence against actual JSON output.
+
+### Operator input contract (schema 1)
+
+The user policy above is the public operator input, owned and read by agx. It is distinct
+from the repository-root `agx.toml`. Consumers should inspect effective values through
+`agx worker roster --json` without a ticket; they should not copy the reader's schema.
+The following is the complete accepted operator key set, including nested keys
+(`tools/agx-worker/src/roster/load.ts:52–83`). All entries are required unless marked optional.
+
+| Key                         | Accepted value and current meaning                                                                                                                                                                                                           |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schema`                    | Integer `1` only.                                                                                                                                                                                                                            |
+| `route.allow`               | Optional nonempty array of `codex` or `claude`; duplicates are accepted.                                                                                                                                                                     |
+| `route.default`             | String naming an existing, non-excluded codex catalog row. Routing fallback prefers it only when eligible; otherwise it uses the first eligible candidate.                                                                                   |
+| `route.exclude`             | Optional string array, default `[]`; every ID must exist.                                                                                                                                                                                    |
+| `route.on_window_exhausted` | Optional table with optional `codex` and `claude` keys, each `continue` or `stop`. Omitted vendors default to `continue`; `stop` makes an exhausted route unavailable. This is a subscription-window policy, not a worker concurrency limit. |
+| `route.max_task_chars`      | Positive integer; bounds the task excerpt sent for selection. Current routing additionally caps that excerpt at 2400 JavaScript string units. It does not limit the worker brief.                                                            |
+| `route.timeout_ms`          | Positive integer; Jev request timeout in milliseconds, not the worker run timeout.                                                                                                                                                           |
+| `route.no_egress`           | Required string array, including empty strings if supplied. Preserved as `auto.no_egress`; the current routing path does not enforce an egress restriction from it.                                                                          |
+| `route.pick_temperature`    | Number from 0 through 5 inclusive; used to sample returned choice probabilities.                                                                                                                                                             |
+| `route.jev.api`             | `typesafe` or `reseller`; selects the endpoint shape.                                                                                                                                                                                        |
+| `route.jev.url`             | URL string accepted by the validator. Roster inspection does not prove endpoint reachability or acceptance by the later request client.                                                                                                      |
+| `route.jev.model`           | Required nonempty string for `typesafe`; rejected for `reseller`. Whitespace is not trimmed.                                                                                                                                                 |
+| `claude_run.max_budget_usd` | Number greater than zero; Claude run budget in USD.                                                                                                                                                                                          |
+| `claude_run.max_turns`      | Positive integer; Claude run turn limit.                                                                                                                                                                                                     |
+| `claude_run.reason`         | String of at least 20 characters; whitespace is not trimmed or checked for substantive justification.                                                                                                                                        |
+
+Tables `route`, `route.jev` and `claude_run` are required. Strict validation applies at every
+table level. In particular, output-only `auto`, `choice`, `sources`, `as_of`, Jev price keys
+and `max_codex_workers` are not operator inputs. Neither route arrays nor reason strings
+receive additional uniqueness or nonblank validation. Implementation locators for routing
+meaning are `tools/agx-worker/src/next/route.ts:43–145`,
+`tools/agx-worker/src/next/usage.ts:108–147` and
+`tools/agx-worker/src/roster/index.ts:10`.
+
+### Discovery, compatibility and refusal
+
+Discovery selects exactly one file; it does not merge user policies or search upward from
+the workspace. A nonempty `AGX_CONFIG` wins over `XDG_CONFIG_HOME`; an empty value is treated
+as unset. With no nonempty override, use `<XDG_CONFIG_HOME>/agx/agx.toml`, or
+`<homedir>/.config/agx/agx.toml` when XDG is empty or unset. Values are not trimmed, expanded
+as shell expressions, or required to be absolute; a relative explicit path is read relative
+to the CLI working directory. This selection is implemented in
+`tools/agx-worker/src/roster/load.ts:146–155`. The example file is a deployment starting
+point, never a fallback for an absent selected file.
+
+The catalog is coupled to the installed agx version, so accepted policy IDs can change
+when that version changes.
+
+Unreadable or missing policy, malformed TOML, unknown keys, missing required keys,
+unsupported schema, unknown default/excluded IDs, an excluded or non-codex default,
+and invalid composed catalog/generation data refuse the read. The diagnostic is flattened
+to one line; its exact text is not a parsing interface. See
+`tools/agx-worker/src/roster/load.ts:158–257` and
+`tools/agx-worker/src/next/public.ts:30–42`. Invocation errors are separate from this
+configuration failure path.
+
+Schema 1 is the current accepted format, not a promise that arbitrary older agx versions
+accept every schema-1 key. Pin the agx version and validate deployed policy with the roster
+command on upgrade. Breaking public contract changes require a major release; automatic
+migration, old-schema acceptance, JSON Schema publication and a configuration-error exit 2
+are not current guarantees. The retained requirements below describe future policy, not
+additional behavior that consumers may assume today.
+
 ## Retained design requirements
 
 These requirements preserve the intended configuration design. They are not promises of

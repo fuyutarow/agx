@@ -146,3 +146,8 @@ otherwise `~/.local/state/agx`. The legacy ledger is read-only at `<state dir>/l
 Startup rejects `AGX_NEXT_STATE_DIR` and a pending sibling `agx-next` migration with exit 2
 and migration guidance; it never moves data automatically. Retired `AGX_DOCTOR_HOME` and
 `AGX_DOCTOR_WORKSPACE` are rejected in favor of `AGX_REPOS_ROOT`.
+
+Doctor scans repositories under `~/Workspace`. Set `AGX_ADDITIONAL_REPO` to an
+additional repository path outside that directory. Set `AGX_REPOS_ROOT` to replace
+both defaults with the repositories under that root; it suppresses the additional
+repository too. Unset or empty `AGX_ADDITIONAL_REPO` adds no repository.

@@ -1,6 +1,6 @@
 {
   "version": "1.0.2",
-  "name": "@dotfiles/agx-ws",
+  "name": "@agx/agx-ws",
   "private": true,
   "type": "module",
   "bin": {

@@ -18,7 +18,10 @@ async function fixture(version = "1.3.0") {
   for (const pkg of ["agx", "agx-worker", "agx-usehooks"])
     await Bun.write(
       join(root, "tools", pkg, "package.json"),
-      JSON.stringify({ version: pkg === "agx" ? version : "1.0.0" }),
+      JSON.stringify({
+        name: `@agx/${pkg}`,
+        version: pkg === "agx" ? version : "1.0.0",
+      }),
     );
   await Bun.write(
     join(root, "tools/agx/CHANGELOG.md"),

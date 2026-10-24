@@ -8,11 +8,11 @@ export const ownFreshMarker = {
   kind: "token",
   labels: [],
   pid: 480,
-  label: "Repo: dotfiles, package tools/agx (alpha is agx 2.4.0). You ",
+  label: "Repo: consumer, package tools/agx (alpha is agx 2.4.0). You ",
   choice: "luna-xhigh",
   pick_source: "override",
   started_at: "2026-10-10T01:08:12.278084Z",
-  cwd: "/fixture/dotfiles-arm-runv2",
+  cwd: "/fixture/consumer-arm-runv2",
   dispatcher_session: fixtureSession,
   ticket: {
     writes: [
@@ -31,11 +31,11 @@ export const ownResumedMarker = {
   kind: "token",
   labels: [],
   pid: 64584,
-  label: "resume: Repo: dotfiles. Read CLAUDE.md INV-6 first: the mise shim di",
+  label: "resume: Repo: consumer. Read CLAUDE.md INV-6 first: the mise shim di",
   choice: "luna-xhigh",
   pick_source: "resume",
   started_at: "2026-10-10T01:35:03.372806Z",
-  cwd: "/fixture/dotfiles-arm-hosts-1010",
+  cwd: "/fixture/consumer-arm-hosts-1010",
   dispatcher_session: fixtureSession,
   ticket: { writes: ["scripts/**", "zsh/**", "mise.toml", "tools/coredev/**"] },
 };
@@ -83,7 +83,7 @@ export const malformedMarker = {
   choice: "luna-xhigh",
   pick_source: "fixture",
   started_at: "2026-10-10T01:35:03.372806Z",
-  cwd: "/fixture/dotfiles",
+  cwd: "/fixture/consumer",
 };
 
 export const unreadableMarker = {
@@ -97,10 +97,10 @@ export const deadOwnMarker = {
   run_id: "2026-10-09T12-31-31.115639Z-97420",
   display_id: "agt_deploy_hosts",
   pid: 2_147_483_647,
-  label: "Repo: dotfiles.",
+  label: "Repo: consumer.",
   choice: "sol-high",
   pick_source: "override",
   started_at: "2026-10-09T12:31:32.232298Z",
-  cwd: "/fixture/dotfiles-arm-hosts",
+  cwd: "/fixture/consumer-arm-hosts",
   ticket: { writes: ["scripts/**", "zsh/**", "mise.toml", "tools/coredev/**"] },
 };

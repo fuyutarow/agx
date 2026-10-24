@@ -1,4 +1,4 @@
-# rumdl — Markdown linter/formatter config for the dotfiles repo.
+# rumdl — Markdown linter/formatter config for agx.
 #
 # Stance (ported from the example-project repo): a STRUCTURAL-INTEGRITY gate, not a
 # cosmetic-style enforcer. Keep only the rules that catch render-breaking or

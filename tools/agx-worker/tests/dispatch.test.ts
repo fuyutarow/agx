@@ -147,7 +147,7 @@ function fixture() {
     'workspace="$(dirname "$repo")/$(basename "$repo").ws/ws_$slug"',
     'mkdir -p "$workspace/.jj"',
     'if [ "$FAKE_WS_CHATTER" = "yes" ]; then',
-    '  chatter="30 packages installed …\n$HOME/dotfiles.ws/ws_fleet-line-real\'"',
+    '  chatter="30 packages installed …\n$HOME/consumer.ws/ws_fleet-line-real\'"',
     '  if [ "$json" = "yes" ]; then printf "%s\\n" "$chatter" >&2; else printf "%s\\n" "$chatter"; exit 0; fi',
     "fi",
     'if [ "$FAKE_WS_INVALID" = "yes" ]; then echo "invalid workspace response"; exit 0; fi',

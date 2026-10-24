@@ -1,7 +1,8 @@
 # agx
 
-A suite dispatcher for five tools:
+A suite dispatcher with an aggregate doctor:
 
+- `agx doctor --json` → refresh and atomically persist the aggregate inside agx
 - `agx worker ARGS` → `agx-worker ARGS`
 - `agx ticket ARGS` → `agx-ticket ARGS`
 - `agx ws ARGS` → `agx-ws ARGS`
@@ -16,8 +17,8 @@ Compiled `agx` first uses executable tools in its own installation directory, th
 falls back to PATH. Running from source under Bun uses PATH only.
 `agx -h` takes each tool’s one-line description from its help using the same lookup.
 
-Only `worker`, `ticket`, `ws`, `status`, and `msg` are accepted as tools. An unknown tool exits 2
-with one stderr line naming the five accepted tools and no stdout output.
+Only `worker`, `ticket`, `ws`, `status`, `msg`, and `doctor` are accepted as tools. An unknown tool exits 2
+with one stderr line naming the accepted tools and no stdout output.
 
 See [worker interfaces](../agx-worker/README.md) for worker commands.
 
@@ -25,3 +26,5 @@ The suite forwards the environment unchanged. Its owner tools use non-empty
 `AGX_STATE_DIR`, then `$XDG_STATE_HOME/agx`, then `~/.local/state/agx`.
 The legacy ledger is read-only at `<state dir>/legacy-v1/`. Owner tools refuse
 retired state configuration with exit 2 before running a command.
+
+See the [doctor contract](../../contract/doctor.md) for JSON, deadlines, exits and persistence.

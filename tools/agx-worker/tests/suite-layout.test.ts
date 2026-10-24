@@ -9,7 +9,7 @@ test("the run package exposes only the agx-worker bin", () => {
     "tools/agx-worker/src/next/cli.ts",
   );
   expect(Object.keys(rootPackage.bin)).not.toContain("agx-run");
-  expect(packageJson.name).toBe("@dotfiles/agx-worker");
+  expect(packageJson.name).toBe("@agx/agx-worker");
   expect(packageJson.version).toMatch(
     /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u,
   );
@@ -28,5 +28,6 @@ test("the CLI exposes the run, doctor, and process interface commands", () => {
     "stats",
     "doctor",
     "roster",
+    "host",
   ]);
 });

@@ -8,3 +8,5 @@ Startup refuses retired state configuration with exit 2 and migration guidance.
 It never moves data automatically.
 
 See tools architecture.
+
+`agx status --json` reads the aggregate published by `agx doctor --json`; it does not refresh doctors. See the [doctor contract](../../contract/doctor.md) for completeness, freshness and legacy fallback.

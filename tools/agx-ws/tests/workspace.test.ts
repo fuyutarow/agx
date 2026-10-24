@@ -221,7 +221,7 @@ describe("agx ws adopt", () => {
     for (const [old, slug] of [
       ["proj-arm-foo_bar", "foo-bar"],
       ["proj-ws-run_name-deadbeef", "run-name-deadbeef"],
-      ["dotfiles-arm-impl_learner", "impl-learner"],
+      ["consumer-arm-impl_learner", "impl-learner"],
       ["proj.ws/ws_proj-arm-foo", "foo"],
     ]) {
       const dir = join(path, "..", old ?? "");
@@ -235,7 +235,11 @@ describe("agx ws adopt", () => {
         ["log", "--no-graph", "-r", "@", "-T", "change_id"],
         dir,
       );
-      const moved = await ws(["adopt", dir], path);
+      const moved = await ws(
+        ["adopt", dir],
+        path,
+        baseEnv({ AGX_WS_LEGACY_PREFIX: "consumer-arm-" }),
+      );
       expect(moved.code, moved.err + moved.out).toBe(0);
       const target = wsDir(path, slug ?? "");
       expect(
@@ -357,7 +361,7 @@ process.exitCode = stage === "add" && args.includes("add") && code === 0 ? 1 : c
     const changed = join(parent, "proj-arm-changed");
     const plain = join(parent, "proj-arm-plain");
     const nested = join(parent, "proj-ws", "orphan");
-    const crossNamed = join(parent, "dotfiles-arm-impl_learner");
+    const crossNamed = join(parent, "consumer-arm-impl_learner");
     for (const [name, dir] of [
       ["equal", equal],
       ["changed", changed],
@@ -392,7 +396,11 @@ process.exitCode = stage === "add" && args.includes("add") && code === 0 ? 1 : c
         path,
       );
     const before = await op();
-    const dry = await ws(["adopt", "--all", "--repo", path, "--dry-run"], path);
+    const dry = await ws(
+      ["adopt", "--all", "--repo", path, "--dry-run"],
+      path,
+      baseEnv({ AGX_WS_LEGACY_PREFIX: "consumer-arm-" }),
+    );
     expect(dry.code, dry.err).toBe(0);
     expect(dry.out.split("\n").filter(Boolean)).toHaveLength(5);
     expect(dry.out).toContain(
@@ -556,7 +564,7 @@ process.exitCode = stage === "add" && args.includes("add") && code === 0 ? 1 : c
 describe("agx ws add", () => {
   test("JSON output stays machine readable through install chatter and reuse", async () => {
     const chatter =
-      "30 packages installed …\n$HOME/dotfiles.ws/ws_fleet-line-real'\n";
+      "30 packages installed …\n$HOME/consumer.ws/ws_fleet-line-real'\n";
     const command = `printf '%s' '${chatter.replaceAll("'", "'\\''")}'`;
     const path = await repo(`ready = [${JSON.stringify(command)}]\n`);
     const created = await ws(["add", "fleet-line-real", "--json"], path);

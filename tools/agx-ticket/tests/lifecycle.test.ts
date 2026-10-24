@@ -384,7 +384,7 @@ test("a workspace already removed by ws retains ticket state but cannot authoriz
 test("repository override scans only its root and unset preserves both default locations", async () => {
   const f = await fixture();
   const defaults = [
-    join(f.home, "dotfiles"),
+    join(f.home, "Workspace/extra"),
     join(f.home, "Workspace/default"),
   ];
   for (const path of defaults) {

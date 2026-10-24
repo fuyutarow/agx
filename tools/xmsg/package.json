@@ -1,5 +1,5 @@
 {
-  "name": "@dotfiles/xmsg",
+  "name": "@agx/xmsg",
   "version": "0.4.2",
   "private": true,
   "type": "module",
