@@ -63,8 +63,14 @@ const Ticket = z
 
 export type NextTicket = z.output<typeof Ticket>;
 export type ParsedNextTicket =
-  | { success: true; ticket: NextTicket; prose: string; warnings: string[] }
-  | { success: false; reason: string; reasons?: string[] };
+  | {
+      success: true;
+      ticket: NextTicket;
+      prose: string;
+      warnings: string[];
+      intake?: string[];
+    }
+  | { success: false; reason: string; reasons?: string[]; intake?: string[] };
 
 const parseToml = fromThrowable(
   (text: string): unknown => Bun.TOML.parse(text),
@@ -97,6 +103,17 @@ export function parseNextTicket(
       success: false,
       reason: fields.error.issues[0]?.message ?? "invalid ticket fields",
     };
+  const intake: string[] = [];
+  if (!Object.hasOwn(fields.data, "writes"))
+    intake.push(
+      'remand writes: "writes" is missing. Fix: declare writes = ["relative/path/**"] or writes = [] for read-only work',
+    );
+  const commands = z.array(oneLine).safeParse(fields.data.verify);
+  const oracle = oneLine.safeParse(rowOf(fields.data.proposition)?.refuted_by);
+  if (!(commands.success && commands.data.length > 0) && !oracle.success)
+    intake.push(
+      'remand acceptance: "verify" and "proposition.refuted_by" declare no acceptance basis. Fix: add a verify command or declare a human review criterion, evidence or diff oracle in proposition.refuted_by, tied to outcome',
+    );
   const checked = Ticket.safeParse(fields.data);
   if (!checked.success) {
     const examples: Record<string, string> = {
@@ -131,7 +148,7 @@ export function parseNextTicket(
             ],
       ),
     );
-    return { success: false, reason: reasons.join("; "), reasons };
+    return { success: false, reason: reasons.join("; "), reasons, intake };
   }
 
   if (!collectWrites) {
@@ -179,5 +196,6 @@ export function parseNextTicket(
     ticket: checked.data,
     prose,
     warnings: [...warnings],
+    intake,
   };
 }

@@ -1,4 +1,5 @@
 import { fromPromise, fromThrowable } from "neverthrow";
+import { createHash, randomUUID } from "node:crypto";
 import { sandboxNeeds } from "./sandbox-needs.ts";
 import { readFile } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
@@ -12,7 +13,13 @@ import {
 } from "../roster/index.ts";
 import { parseNextTicket, writeGlob } from "./ticket.ts";
 import { ticketContext, ticketPlacement } from "./ticket-home.ts";
-import { foldedRuns, runningWorkspaceRun } from "./store.ts";
+import {
+  append,
+  now,
+  stateDir,
+  foldedRuns,
+  runningWorkspaceRun,
+} from "./store.ts";
 import { verificationEnvironment } from "./verify.ts";
 import { pinContinuation } from "./continue.ts";
 import { readRouteUsage } from "./usage.ts";
@@ -104,12 +111,32 @@ export async function preflight(
   const parsed =
     bytes === null ? undefined : parseNextTicket(bytes.toString("utf8"), true);
   const ticket = parsed?.success === true ? parsed.ticket : undefined;
+  failures.push(...(parsed?.intake ?? []));
   if (bytes === null)
     add(`no such ticket: ${path}`, "supply a readable ticket path");
   for (const reason of parsed?.success === false
     ? (parsed.reasons ?? [parsed.reason])
     : [])
-    add(`invalid ticket: ${reason}`, "correct the ticket front matter");
+    add(
+      `remand schema: "ticket" invalid ticket: ${reason}. Fix: correct the ticket front matter`,
+      "correct the ticket front matter",
+    );
+  // Ticket-only intake must not be masked by an unavailable host inspection.
+  if ((parsed?.intake?.length ?? 0) > 0)
+    return {
+      temporary: undefined,
+      failures,
+      ticket,
+      bytes,
+      prose: parsed?.success === true ? parsed.prose : "",
+      ctx: undefined,
+      premise_commits: [],
+      sandbox: Sandbox.enum["workspace-write"],
+      sandbox_source: SandboxSource.enum["built-in default"],
+      binding: undefined,
+      pinned: undefined,
+      loaded: { ok: false as const, error: "ticket intake refused" },
+    };
   if (parsed?.success === true && parsed.warnings.length > 0)
     process.stderr.write(
       `WARN ignored legacy ticket fields: ${parsed.warnings.join(", ")}\n`,
@@ -460,4 +487,31 @@ export function printPreflightFailures(
       `${line.replaceAll(/[\r\n]+/gu, "; ")}; check=launch-premises expected=satisfied observed=refused\n`,
     );
   return 2;
+}
+
+/** Durable mechanical refusal; never creates a run or routing request. */
+export function recordRefusal(
+  path: string,
+  cwd: string,
+  bytes: Uint8Array | null,
+  failures: (string | AgxConfigError)[],
+  env = process.env,
+): void {
+  append(
+    {
+      kind: "refusal",
+      id: randomUUID(),
+      at: now(),
+      ticket_path: resolve(path),
+      cwd,
+      ticket_sha256:
+        bytes === null
+          ? null
+          : createHash("sha256").update(bytes).digest("hex"),
+      violations: failures.map((failure) =>
+        failure instanceof AgxConfigError ? failure.message : failure,
+      ),
+    },
+    stateDir(env),
+  );
 }

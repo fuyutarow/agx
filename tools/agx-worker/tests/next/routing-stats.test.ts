@@ -265,7 +265,7 @@ test("real roster CLI selections are persisted before any worker starts", async 
     const ticket = join(root, "ticket.md");
     writeFileSync(
       ticket,
-      '+++\nschema = 2\noutcome = "fixture"\n[proposition]\nid = "P"\nclaim = "fixture"\nrefuted_by = "failure"\n+++\nFixture selection.\n',
+      '+++\nschema = 2\nwrites = []\noutcome = "fixture"\n[proposition]\nid = "P"\nclaim = "fixture"\nrefuted_by = "failure"\n+++\nFixture selection.\n',
     );
     const child = Bun.spawn([...args, "roster", ticket], {
       env: { ...env, JEV_URL: `http://127.0.0.1:${server.port}` },

@@ -362,7 +362,7 @@ describe("capability constrained routing", () => {
     const ticket = join(root, "ticket.md");
     await writeFile(
       ticket,
-      '+++\nschema = 2\noutcome = "check routes"\n[proposition]\nid = "ROUTES"\nclaim = "filter is visible"\nrefuted_by = "filter missing"\n+++\nCheck routes.\n',
+      '+++\nschema = 2\nwrites = []\noutcome = "check routes"\n[proposition]\nid = "ROUTES"\nclaim = "filter is visible"\nrefuted_by = "filter missing"\n+++\nCheck routes.\n',
     );
     const path = join(root, "roster.toml");
     const original = await readFile(path, "utf8");

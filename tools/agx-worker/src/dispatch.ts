@@ -1,3 +1,4 @@
+import { recordRefusal, printPreflightFailures } from "./next/preflight.ts";
 import { randomUUID } from "node:crypto";
 import { lstat, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
@@ -339,6 +340,27 @@ export async function dispatch(options: {
       : { DISPATCH_ROSTER_PATH: resolve(cwd, rosterPath) }),
   };
   const ticketPath = resolve(cwd, options.ticketPath);
+  const intakeBytes = await readFile(ticketPath).catch(() => null);
+  const intakeTicket =
+    intakeBytes === null
+      ? undefined
+      : parseNextTicket(intakeBytes.toString("utf8"), true);
+  if (
+    (intakeTicket?.intake?.length ?? 0) > 0 ||
+    intakeTicket?.success === false
+  ) {
+    const failures = [
+      ...(intakeTicket?.intake ?? []),
+      ...(intakeTicket?.success === false
+        ? (intakeTicket.reasons ?? [intakeTicket.reason]).map(
+            (reason) =>
+              `remand schema: "ticket" ${reason}. Fix: correct the ticket front matter`,
+          )
+        : []),
+    ];
+    recordRefusal(ticketPath, cwd, intakeBytes, failures, env);
+    return printPreflightFailures(failures);
+  }
   const ticket = await ticketSlug(ticketPath);
   if (!ticket.ok) {
     process.stderr.write(

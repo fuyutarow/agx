@@ -40,6 +40,7 @@ import {
   earlyQuitRows,
   preflight,
   printPreflightFailures,
+  recordRefusal,
 } from "./preflight.ts";
 import { createRunTemp } from "../temp.ts";
 import { exitWithError } from "./exit.ts";
@@ -238,12 +239,22 @@ export async function check(flags: Flags): Promise<number> {
   const inspected = await preflight(path, cwd, flags);
   if (inspected.temporary !== undefined)
     return fatal(inspected.temporary.message, 75);
-  if (inspected.failures.length > 0)
+  if (inspected.failures.length > 0) {
+    recordRefusal(path, cwd, inspected.bytes, inspected.failures);
+    if (flags.json === true)
+      process.stdout.write(
+        `${JSON.stringify({ ok: false, violations: inspected.failures.map(String) })}\n`,
+      );
     return printPreflightFailures(inspected.failures);
+  }
   const { ticket, loaded } = inspected;
   if (ticket === undefined || !loaded.ok)
     return fatal("preflight did not resolve ticket and roster");
   await overlapWarnings(ticket.writes, inspected.ctx?.root ?? cwd);
+  if (flags.json === true) {
+    process.stdout.write(`${JSON.stringify({ ok: true, violations: [] })}\n`);
+    return 0;
+  }
   process.stdout.write(
     `OK ticket=${ticket.name ?? basename(path, ".md")} cwd=${cwd} ${routeFilterLabel(loaded.value.auto)}\n`,
   );
@@ -290,8 +301,10 @@ export async function run(flags: Flags): Promise<number> {
   }
   if (inspected.temporary !== undefined)
     return fatal(inspected.temporary.message, 75);
-  if (inspected.failures.length > 0)
+  if (inspected.failures.length > 0) {
+    recordRefusal(path, cwd, inspected.bytes, inspected.failures);
     return printPreflightFailures(inspected.failures);
+  }
   const {
     ticket,
     prose,

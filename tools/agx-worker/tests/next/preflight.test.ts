@@ -1,3 +1,4 @@
+import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { afterEach, expect, test } from "bun:test";
 import {
   chmod,
@@ -213,7 +214,13 @@ test("check and run report writes, home, mise, live workspace and premises toget
       .filter((line) => line.startsWith("agx:"));
     expect(failures.length).toBeGreaterThanOrEqual(7);
     expect(failures.every((line) => line.includes("repair:"))).toBe(true);
-    expect(await readFile(log, "utf8")).toBe(records);
+    const updated = await readFile(log, "utf8");
+    expect(updated.startsWith(records)).toBe(true);
+    expect(
+      jsonOf(z.object({ kind: z.literal("refusal") })).safeParse(
+        updated.trim().split("\n").at(-1) ?? "null",
+      ).success,
+    ).toBe(true);
     expect(await readFile(ticket, "utf8")).toBe(original);
     expect(await readdir(state)).not.toContain("runs");
   }
@@ -321,7 +328,7 @@ test("check and run preserve operational environment failure as exit 75 without 
   const ticket = join(root, "ticket.md");
   await writeFile(
     ticket,
-    '+++\nschema = 2\nname = "temporary"\noutcome = "fixture"\n[proposition]\nid = "TEMP"\nclaim = "fixture"\nrefuted_by = "fixture"\n+++\n',
+    '+++\nschema = 2\nwrites = []\nname = "temporary"\noutcome = "fixture"\n[proposition]\nid = "TEMP"\nclaim = "fixture"\nrefuted_by = "fixture"\n+++\n',
   );
   const bin = join(root, "bin");
   const state = join(root, "state");

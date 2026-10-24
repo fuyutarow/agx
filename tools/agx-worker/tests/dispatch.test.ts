@@ -59,7 +59,7 @@ function fixture() {
   const ticket = join(tickets, "foo-bar.md");
   writeFileSync(
     ticket,
-    `+++\nschema = 2\nname = "foo-bar"\noutcome = "fixture"\n[proposition]\nid = "P1"\nclaim = "fixture"\nrefuted_by = "fixture"\n+++\n`,
+    `+++\nschema = 2\nwrites = []\nname = "foo-bar"\noutcome = "fixture"\n[proposition]\nid = "P1"\nclaim = "fixture"\nrefuted_by = "fixture"\n+++\n`,
   );
   const records = join(root, "records.json");
   const unitArgs = join(root, "unit-args.txt");
@@ -883,7 +883,7 @@ test.each([
     writeFileSync(join(f.root, "bin/jj"), `#!/bin/sh\nexec '${jj}' "$@"\n`);
     writeFileSync(
       f.ticket,
-      `+++\nschema = 2\nname = "foo-bar"\noutcome = "fixture"\npremises = ${missingPremise ? '["file:main-only"]' : "[]"}\n[proposition]\nid = "P1"\nclaim = "fixture"\nrefuted_by = "fixture"\n+++\n`,
+      `+++\nschema = 2\nwrites = []\nname = "foo-bar"\noutcome = "fixture"\npremises = ${missingPremise ? '["file:main-only"]' : "[]"}\n[proposition]\nid = "P1"\nclaim = "fixture"\nrefuted_by = "fixture"\n+++\n`,
     );
     const state = f.env.AGX_STATE_DIR;
     if (state === undefined)
@@ -1209,7 +1209,7 @@ test.each([false, true])(
     ]) {
       // The fake service replaces its listing, so restore the prior row for each dispatch.
       priorRun(f, join(`${f.repo}.ws`, "ws_foo-bar"));
-      const ticket = `+++\nschema = 2\nname = "foo-bar"\noutcome = "fixture"\n${item.ticket === undefined ? "" : `sandbox = "${item.ticket}"\n`}[proposition]\nid = "P1"\nclaim = "fixture"\nrefuted_by = "fixture"\n+++\n`;
+      const ticket = `+++\nschema = 2\nwrites = []\nname = "foo-bar"\noutcome = "fixture"\n${item.ticket === undefined ? "" : `sandbox = "${item.ticket}"\n`}[proposition]\nid = "P1"\nclaim = "fixture"\nrefuted_by = "fixture"\n+++\n`;
       writeFileSync(f.ticket, ticket);
       const child = Bun.spawn(
         [

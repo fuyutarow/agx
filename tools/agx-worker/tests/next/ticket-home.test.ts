@@ -38,7 +38,7 @@ afterEach(async () => {
 });
 const CLI = resolve("tools/agx-worker/src/next/cli.ts");
 const text = (extra = "") =>
-  `+++\nschema = 2\nname = "home"\noutcome = "recover ticket"\n${extra}\n[proposition]\nid = "HOME"\nclaim = "ticket is recoverable"\nrefuted_by = "bytes differ"\n+++\n原本\r\n`;
+  `+++\nschema = 2\nwrites = []\nname = "home"\noutcome = "recover ticket"\n${extra}\n[proposition]\nid = "HOME"\nclaim = "ticket is recoverable"\nrefuted_by = "bytes differ"\n+++\n原本\r\n`;
 
 test("new dispatch refuses nonconforming names with agx ticket new repair, without artifacts", async () => {
   const f = await fixture();
@@ -64,7 +64,7 @@ test("new dispatch refuses nonconforming names with agx ticket new repair, witho
   expect(checked.out).toContain("ticket=arena-g3 ");
   expect(
     await Bun.file(join(f.env.AGX_STATE_DIR, "records.jsonl")).exists(),
-  ).toBe(false);
+  ).toBe(true);
 }, 30000);
 
 test.each([
@@ -231,7 +231,7 @@ test.each([
     expect(await readdir(join(root, ".jj/repo/op_heads"))).toEqual(before);
     expect(
       await Bun.file(join(env.AGX_STATE_DIR, "records.jsonl")).exists(),
-    ).toBe(false);
+    ).toBe(!accepted);
     if (secondary && home === "absolute") {
       await writeFile(
         env.AGX_WORKER_BIN,
@@ -396,7 +396,7 @@ test("check refuses an undeclared /tmp ticket with refused, declared home and ag
   expect(result.err).toContain("agx ticket new");
   expect(
     await Bun.file(join(f.env.AGX_STATE_DIR, "records.jsonl")).exists(),
-  ).toBe(false);
+  ).toBe(true);
 }, 30000);
 
 test("check accepts an absolute home declared on the repository trunk", async () => {
@@ -622,7 +622,7 @@ test("base_rev mismatch names both ids before routing, artifacts or launch", asy
   expect(result.err).toContain(head.trim());
   expect(
     await Bun.file(join(f.env.AGX_STATE_DIR, "records.jsonl")).exists(),
-  ).toBe(false);
+  ).toBe(true);
 }, 30000);
 
 test("conflicting replacement declarations refuse before launch", async () => {
@@ -641,7 +641,7 @@ test("conflicting replacement declarations refuse before launch", async () => {
   expect(mixed.err).toContain("mutually exclusive");
   expect(
     await Bun.file(join(f.env.AGX_STATE_DIR, "records.jsonl")).exists(),
-  ).toBe(false);
+  ).toBe(true);
 }, 30000);
 
 test("run preserves exact original bytes and hash, base and premise commits, replacement and continuation", async () => {
@@ -779,7 +779,9 @@ test("run preserves exact original bytes and hash, base and premise commits, rep
 }, 30000);
 
 test("missing proposition names the table, all keys and a one-line example", () => {
-  const parsed = parseNextTicket('+++\nschema = 2\noutcome = "x"\n+++\n');
+  const parsed = parseNextTicket(
+    '+++\nschema = 2\nwrites = []\noutcome = "x"\n+++\n',
+  );
   expect(parsed.success).toBe(false);
   if (parsed.success) return;
   for (const part of ["[proposition]", "id", "claim", "refuted_by", "example:"])
@@ -836,11 +838,11 @@ test("worker CLI check and run exit 2 for retired configuration before artifacts
     expect(result.exit, result.err).toBe(2);
     expect(result.out).toBe("");
     expect(result.err.trim()).toBe(
-      `${f.root}/.agx.toml is retired; rename it: mv .agx.toml agx.toml (machine-local absolute paths go in $XDG_CONFIG_HOME/agx/repos/<name>.toml (default ~/.config/agx/repos/<name>.toml) with root = ${JSON.stringify(f.root)})`,
+      `${f.root}/.agx.toml is retired; rename it: mv .agx.toml agx.toml (machine-local absolute paths go in $XDG_CONFIG_HOME/agx/repos/<name>.toml (default ~/.config/agx/repos/<name>.toml) with root = ${JSON.stringify(f.root)}); check=launch-premises expected=satisfied observed=refused`,
     );
     expect(result.err.trim().split("\n")).toHaveLength(1);
     expect(
       await Bun.file(join(f.env.AGX_STATE_DIR, "records.jsonl")).exists(),
-    ).toBe(false);
+    ).toBe(true);
   }
 });

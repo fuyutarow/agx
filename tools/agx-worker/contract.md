@@ -985,3 +985,27 @@ spawning the worker. It adds that directory to the worker sandbox's writable
 paths and names it in the brief. Workers write results, logs and measurements
 there, alongside runner-owned `report.json`; workspace paths hold source changes.
 A continuation receives its own run directory, not its parent's directory.
+
+## Model-free ticket intake
+
+Before routing or worker startup, check, run and continuation enforce two intake
+rules. Dispatch applies the same parsed-ticket rules before workspace creation
+and runs the shared preflight before starting its unit. Per-ticket roster selection
+also enforces intake before Jev.
+
+- `writes`: the `writes` key must be declared. `writes = []` explicitly authorizes
+  read-only work and is valid; omission does not declare a scope.
+- `acceptance`: declare a nonempty `verify` command array or an acceptance oracle
+  in `proposition.refuted_by`, tied to `outcome`. Human review criteria, evidence
+  and diff oracles are valid. No command is required for such review work. The
+  existing proposition fields express this; no additional review field is needed.
+
+Violations remain mechanical refusals, exit 2, with one stderr line per violation:
+`agx: remand RULE: "FIELD" REASON. Fix: REPAIR`. Existing schema, premise,
+resource and timeout constraints remain enforced. Ordinary `check --json` emits
+`{ "ok": false, "violations": ["..."] }`, or `ok: true` and an empty array.
+
+Each refused preflight appends a `kind: "refusal"` event to `records.jsonl` with
+its own ID, timestamp, cwd, absolute `ticket_path`, `ticket_sha256` and violation
+strings. Hashes cover the exact ticket bytes; an unreadable ticket has a null hash.
+Refusal events are audit records and do not become runs or affect run counts.

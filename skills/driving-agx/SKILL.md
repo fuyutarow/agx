@@ -200,3 +200,12 @@ exports and allows in the sandbox. Keep workspace paths for source changes. GC
 can promptly reclaim fully rejected workspaces after landing and preservation
 checks; legacy workspace results must have identical copies under the matching
 run directory's `results/<workspace-relative-path>`.
+
+## Mechanical intake refusals
+
+Declare `writes` explicitly; `writes = []` is valid for read-only work. Declare
+verify commands or a human review criterion, evidence or diff oracle in
+`proposition.refuted_by`, tied to `outcome`. Missing scope or acceptance refuses
+before routing/startup (exit 2), never warns and proceeds. The stderr lines name
+rule, quoted field and fix; a refusal event preserves the ticket hash. Use ordinary
+`agx worker check TICKET --json` to list violations, then repair the ticket.

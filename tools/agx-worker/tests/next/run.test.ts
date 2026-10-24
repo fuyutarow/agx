@@ -275,7 +275,10 @@ describe("agx-worker run", () => {
     expect(result.stderr.toString()).toContain(lock);
     expect(result.stderr.toString()).toContain("age=");
     expect(result.stderr.toString()).toContain("rip <path>");
-    expect(existsSync(join(state, "records.jsonl"))).toBe(false);
+    expect(existsSync(join(state, "records.jsonl"))).toBe(true);
+    expect(readFileSync(join(state, "records.jsonl"), "utf8")).toContain(
+      '"kind":"refusal"',
+    );
   });
 
   test("a sub-two-minute zero-change exit without RETURN fails its lineage", async () => {

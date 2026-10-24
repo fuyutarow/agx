@@ -186,6 +186,10 @@ async function main(): Promise<void> {
         name: "agx-worker check",
         parameters: ["<ticket>"],
         flags: {
+          json: {
+            type: Boolean,
+            description: "emit intake and preflight violations as JSON",
+          },
           cd: {
             type: String,
             description:
@@ -210,6 +214,7 @@ async function main(): Promise<void> {
     const { check } = await import("./run.ts");
     exit = await check({
       ticket: parsed._[0],
+      json: parsed.flags.json,
       cd: parsed.flags.cd,
       sandbox: parsed.flags.sandbox,
       continue: parsed.flags.continue,

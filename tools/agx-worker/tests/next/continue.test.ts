@@ -442,7 +442,8 @@ describe("agx worker run --continue pins the prior row", () => {
       const lines = result.stderr.toString().trim().split("\n");
       expect(lines).toHaveLength(1);
       for (const candidate of candidates) expect(lines[0]).toContain(candidate);
-      expect(f.events()).toHaveLength(before);
+      expect(f.events()).toHaveLength(before + 1);
+      expect(f.events().at(-1)?.kind).toBe("refusal");
     }
   });
 
@@ -472,7 +473,8 @@ describe("agx worker run --continue pins the prior row", () => {
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain("bare-run");
     expect(lines[0]).toContain("agx worker run");
-    expect(f.events()).toHaveLength(before);
+    expect(f.events()).toHaveLength(before + 1);
+    expect(f.events().at(-1)?.kind).toBe("refusal");
     expect(existsSync(join(f.state, "runs"))).toBe(false);
   });
 
@@ -482,7 +484,8 @@ describe("agx worker run --continue pins the prior row", () => {
     const result = f.resume("ghost-run");
     expect(result.exitCode).toBe(2);
     expect(result.stderr.toString().trim().split("\n")).toHaveLength(1);
-    expect(f.events()).toHaveLength(before);
+    expect(f.events()).toHaveLength(before + 1);
+    expect(f.events().at(-1)?.kind).toBe("refusal");
   });
 
   test("the ticket file is re-read on continue", async () => {

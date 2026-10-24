@@ -92,6 +92,16 @@ export function setPendingPickAudit(audit: PickAudit): void {
 }
 
 const EventSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("refusal"),
+    legacy_key: z.string().optional(),
+    id: z.string(),
+    at: z.string(),
+    ticket_path: z.string(),
+    ticket_sha256: z.string().nullable(),
+    cwd: z.string(),
+    violations: z.array(z.string()),
+  }),
   z.looseObject({
     kind: z.literal("started"),
     id: z.string(),
