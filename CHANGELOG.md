@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.8.1 — 2026-10-25
+
+- Preserve complete preflight diagnostics and cover immediate ticket edits before repeated continuation dispatch.
+
 ## 1.8.0 — 2026-10-25
 
 - Discover gc --all repositories from workspace creation history and all run records alongside optional L2 policy; report sources, counts and unreachable roots.
