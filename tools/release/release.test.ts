@@ -18,7 +18,7 @@ import {
   run as productionRun,
 } from "./release.ts";
 
-import { fixtureRun as run } from "./fixture-runner.ts";
+import { fixtureRun, fixtureRun as run } from "./fixture-runner.ts";
 
 const build = (pkg: string, target: string | undefined, root: string) =>
   productionBuild(pkg, target, root, run);
@@ -616,106 +616,118 @@ async function libraryFixture() {
   return f;
 }
 
-test("library tarball installs offline, imports and supplies checked public declarations", async () => {
-  const f = await libraryFixture();
-  const result = await build(f.pkg, undefined, f.root);
-  expect(result.isOk()).toBe(true);
-  if (result.isErr()) return;
-  expect(result.value.archive).toEndWith("agx-usehooks-2.3.4.tgz");
-  expect(result.value.sha256).toMatch(/^[a-f\d]{64}$/u);
-  const listing = await run(["tar", "-tzf", result.value.archive], f.root);
-  expect(listing.exit).toBe(0);
-  const files = listing.stdout.trim().split("\n");
-  for (const file of [
-    "package.json",
-    "index.js",
-    "README.md",
-    "CHANGELOG.md",
-    "types/tools/agx-usehooks/src/index.d.ts",
-    "types/agents/hooks/vendor/deps.d.ts",
-  ])
-    expect(files).toContain(`package/${file}`);
-  expect(
-    files.every((file) =>
-      /^package\/(?:package\.json|index\.js|README\.md|CHANGELOG\.md|types\/.+\.d\.ts)$/u.test(
-        file,
-      ),
-    ),
-  ).toBe(true);
-  expect(listing.stdout).not.toMatch(/(?:tests|\.changes)\//u);
-  const packed = await run(
-    ["tar", "-xOzf", result.value.archive, "package/package.json"],
-    f.root,
-  );
-  expect(packed.exit, packed.stderr).toBe(0);
-  const manifest = jsonOf(
-    z.object({
-      dependencies: z.record(z.string(), z.string()),
-      peerDependencies: z.record(z.string(), z.string()),
-      peerDependenciesMeta: z.record(
-        z.string(),
-        z.object({ optional: z.boolean() }),
-      ),
-    }),
-  ).safeParse(packed.stdout);
-  expect(manifest.success, packed.stdout).toBe(true);
-  if (!manifest.success) return;
-  expect(
-    Object.keys(manifest.data.dependencies).filter(
-      (name) => name.startsWith("@types/") || name === "typescript",
-    ),
-  ).toEqual([]);
-  expect(manifest.data.dependencies.neverthrow).toBe("8.2.0");
-  expect(manifest.data.dependencies.zod).toBe("4.6.5");
-  expect(manifest.data.peerDependencies["@types/node"]).toBe("*");
-  expect(manifest.data.peerDependenciesMeta["@types/node"]).toEqual({
-    optional: true,
-  });
-  const consumer = await mkdtemp(join(tmpdir(), "library-consumer-"));
-  roots.push(consumer);
-  await Bun.write(
-    join(consumer, "package.json"),
-    JSON.stringify({
-      name: "consumer",
-      type: "module",
-      private: true,
-      devDependencies: { "@types/node": "22.20.2" },
-    }),
-  );
-  // Lock an older major BEFORE adding the tarball, preferring the caller's cache
-  // and falling back to the registry when a package is missing.
-  const baseline = await run(
-    [process.execPath, "install", "--prefer-offline"],
-    consumer,
-  );
-  expect(baseline.exit, baseline.stdout + baseline.stderr).toBe(0);
-  expect(await Bun.file(join(consumer, "bun.lock")).exists()).toBe(true);
-  const nodeVersion = async () => {
-    const parsed = jsonOf(z.object({ version: z.string() })).safeParse(
-      await Bun.file(
-        join(consumer, "node_modules/@types/node/package.json"),
-      ).text(),
+// Two compiler runs plus bundle, pack, two tar reads, two installs and import.
+// Budget each real command separately; leave time for fixture I/O and cleanup.
+const libraryCommandTimeout = 60_000;
+const libraryTestTimeout = 9 * libraryCommandTimeout + 10_000;
+
+test(
+  "library tarball installs offline, imports and supplies checked public declarations",
+  async () => {
+    const libraryRun = (cmd: string[], cwd: string) =>
+      fixtureRun(cmd, cwd, false, libraryCommandTimeout);
+    const f = await libraryFixture();
+    const result = await productionBuild(f.pkg, undefined, f.root, libraryRun);
+    expect(result.isOk(), result.isErr() ? result.error : "").toBe(true);
+    if (result.isErr()) return;
+    expect(result.value.archive).toEndWith("agx-usehooks-2.3.4.tgz");
+    expect(result.value.sha256).toMatch(/^[a-f\d]{64}$/u);
+    const listing = await libraryRun(
+      ["tar", "-tzf", result.value.archive],
+      f.root,
     );
-    expect(parsed.success).toBe(true);
-    return parsed.success ? parsed.data.version : undefined;
-  };
-  const before = await nodeVersion();
-  expect(before).toBe("22.20.2");
-  const installed = await run(
-    [process.execPath, "add", "--prefer-offline", result.value.archive],
-    consumer,
-  );
-  expect(installed.exit, installed.stderr).toBe(0);
-  expect(await nodeVersion()).toBe(before);
-  const lockfile = await Bun.file(join(consumer, "bun.lock")).text();
-  expect(lockfile).toContain("@types/node@22.20.2");
-  // A nested newer copy would also defeat the consumer's ownership of Node types.
-  expect(lockfile.match(/@types\/node@\d+\.[\d.]+/gu)).toEqual([
-    "@types/node@22.20.2",
-  ]);
-  await Bun.write(
-    join(consumer, "consumer.ts"),
-    `
+    expect(listing.exit).toBe(0);
+    const files = listing.stdout.trim().split("\n");
+    for (const file of [
+      "package.json",
+      "index.js",
+      "README.md",
+      "CHANGELOG.md",
+      "types/tools/agx-usehooks/src/index.d.ts",
+      "types/agents/hooks/vendor/deps.d.ts",
+    ])
+      expect(files).toContain(`package/${file}`);
+    expect(
+      files.every((file) =>
+        /^package\/(?:package\.json|index\.js|README\.md|CHANGELOG\.md|types\/.+\.d\.ts)$/u.test(
+          file,
+        ),
+      ),
+    ).toBe(true);
+    expect(listing.stdout).not.toMatch(/(?:tests|\.changes)\//u);
+    const packed = await libraryRun(
+      ["tar", "-xOzf", result.value.archive, "package/package.json"],
+      f.root,
+    );
+    expect(packed.exit, packed.stderr).toBe(0);
+    const manifest = jsonOf(
+      z.object({
+        dependencies: z.record(z.string(), z.string()),
+        peerDependencies: z.record(z.string(), z.string()),
+        peerDependenciesMeta: z.record(
+          z.string(),
+          z.object({ optional: z.boolean() }),
+        ),
+      }),
+    ).safeParse(packed.stdout);
+    expect(manifest.success, packed.stdout).toBe(true);
+    if (!manifest.success) return;
+    expect(
+      Object.keys(manifest.data.dependencies).filter(
+        (name) => name.startsWith("@types/") || name === "typescript",
+      ),
+    ).toEqual([]);
+    expect(manifest.data.dependencies.neverthrow).toBe("8.2.0");
+    expect(manifest.data.dependencies.zod).toBe("4.6.5");
+    expect(manifest.data.peerDependencies["@types/node"]).toBe("*");
+    expect(manifest.data.peerDependenciesMeta["@types/node"]).toEqual({
+      optional: true,
+    });
+    const consumer = await mkdtemp(join(tmpdir(), "library-consumer-"));
+    roots.push(consumer);
+    await Bun.write(
+      join(consumer, "package.json"),
+      JSON.stringify({
+        name: "consumer",
+        type: "module",
+        private: true,
+        devDependencies: { "@types/node": "22.20.2" },
+      }),
+    );
+    // Lock an older major BEFORE adding the tarball. Both installs must use
+    // cached packages only: registry access must never turn this check green.
+    const baseline = await libraryRun(
+      [process.execPath, "install", "--offline"],
+      consumer,
+    );
+    expect(baseline.exit, baseline.stdout + baseline.stderr).toBe(0);
+    expect(await Bun.file(join(consumer, "bun.lock")).exists()).toBe(true);
+    const nodeVersion = async () => {
+      const parsed = jsonOf(z.object({ version: z.string() })).safeParse(
+        await Bun.file(
+          join(consumer, "node_modules/@types/node/package.json"),
+        ).text(),
+      );
+      expect(parsed.success).toBe(true);
+      return parsed.success ? parsed.data.version : undefined;
+    };
+    const before = await nodeVersion();
+    expect(before).toBe("22.20.2");
+    const installed = await libraryRun(
+      [process.execPath, "add", "--offline", result.value.archive],
+      consumer,
+    );
+    expect(installed.exit, installed.stderr).toBe(0);
+    expect(await nodeVersion()).toBe(before);
+    const lockfile = await Bun.file(join(consumer, "bun.lock")).text();
+    expect(lockfile).toContain("@types/node@22.20.2");
+    // A nested newer copy would also defeat the consumer's ownership of Node types.
+    expect(lockfile.match(/@types\/node@\d+\.[\d.]+/gu)).toEqual([
+      "@types/node@22.20.2",
+    ]);
+    await Bun.write(
+      join(consumer, "consumer.ts"),
+      `
 import { onPrompt, runningRuns, RunSchema, type HookContext, type Run } from "agx-usehooks";
 const ctx: HookContext = { cwd: "/tmp", repoRoot: "/tmp", payload: {} };
 const runs: Run[] = await runningRuns(ctx, { stateDirs: [] });
@@ -724,32 +736,37 @@ const invalid: Run = { id: "fixture", lane: "test", row: 123 };
 void invalid;
 if (runs.length !== 0 || typeof onPrompt !== "function" || !RunSchema.safeParse({ id: "fixture", lane: "test", row: "fixture" }).success) throw new Error("public API failed");
 `,
-  );
-  const imported = await run([process.execPath, "consumer.ts"], consumer);
-  expect(imported).toEqual({ exit: 0, stdout: "", stderr: "" });
-  const typed = await run(
-    [
-      process.execPath,
-      "x",
-      "--bun",
-      "--offline",
-      "--package",
-      "typescript@6.0.3",
-      "tsc",
-      "--noEmit",
-      "--strict",
-      "--module",
-      "esnext",
-      "--moduleResolution",
-      "bundler",
-      "--target",
-      "esnext",
-      "consumer.ts",
-    ],
-    consumer,
-  );
-  expect(typed.exit, typed.stdout + typed.stderr).toBe(0);
-}, 30_000);
+    );
+    const imported = await libraryRun(
+      [process.execPath, "consumer.ts"],
+      consumer,
+    );
+    expect(imported).toEqual({ exit: 0, stdout: "", stderr: "" });
+    const typed = await libraryRun(
+      [
+        process.execPath,
+        "x",
+        "--bun",
+        "--offline",
+        "--package",
+        "typescript@6.0.3",
+        "tsc",
+        "--noEmit",
+        "--strict",
+        "--module",
+        "esnext",
+        "--moduleResolution",
+        "bundler",
+        "--target",
+        "esnext",
+        "consumer.ts",
+      ],
+      consumer,
+    );
+    expect(typed.exit, typed.stdout + typed.stderr).toBe(0);
+  },
+  libraryTestTimeout,
+);
 
 test("single member publishing refuses with suite pointer", async () => {
   const f = await fixture();

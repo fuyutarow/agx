@@ -22,6 +22,7 @@ export async function fixtureRun(
   cmd: string[],
   cwd: string,
   realGit = process.env.RELEASE_TEST_REAL_GIT === "1",
+  timeout = 10_000,
 ) {
   const [binary, ...args] = cmd;
   const fakeGh =
@@ -95,6 +96,7 @@ export async function fixtureRun(
     !fakeGh
   )
     return refused(`Forbidden fixture command: ${JSON.stringify(cmd)}`);
+  const started = performance.now();
   const child = Bun.spawn(
     fakeGh
       ? [process.execPath, join(import.meta.dir, "fake-gh.ts"), ...args]
@@ -117,7 +119,7 @@ export async function fixtureRun(
       },
       stdout: "pipe",
       stderr: "pipe",
-      timeout: 10_000,
+      timeout,
     },
   );
   const [exit, stdout, stderr] = await Promise.all([
@@ -125,6 +127,14 @@ export async function fixtureRun(
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
   ]);
+  if (process.env.RELEASE_TEST_TIMINGS === "1")
+    console.error(
+      JSON.stringify({
+        cmd,
+        ms: Math.round(performance.now() - started),
+        exit,
+      }),
+    );
   return { exit, stdout, stderr };
 }
 async function fakeGit(args: string[], cwd: string) {
