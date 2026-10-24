@@ -9,7 +9,7 @@
 // leaves the state as it was. Nothing here calls a model.
 import { basename } from "node:path";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
-import { oneLine, type Tally } from "./codex-progress.ts";
+import { addUsage, oneLine, type Tally } from "./codex-progress.ts";
 
 const Block = z.looseObject({
   type: z.string(),
@@ -88,7 +88,22 @@ export function foldClaudeEvent(t: Tally, line: string): Tally {
   const sessionId = parsed.data.session_id;
   if (parsed.data.type === "system" && sessionId !== undefined)
     return { ...t, session: sessionId };
-  const usage = parsed.data.usage ?? parsed.data.message?.usage;
+  const rawUsage = parsed.data.usage ?? parsed.data.message?.usage;
+  const cacheParts = [
+    rawUsage?.cache_read_input_tokens,
+    rawUsage?.cache_creation_input_tokens,
+  ].filter((value) => value !== undefined);
+  const reportedCache =
+    cacheParts.length === 0
+      ? undefined
+      : cacheParts.reduce((sum, value) => sum + value, 0);
+  const usage =
+    rawUsage === undefined
+      ? undefined
+      : {
+          ...rawUsage,
+          cached_input_tokens: rawUsage.cached_input_tokens ?? reportedCache,
+        };
   const costValue = parsed.data.total_cost_usd;
   let totalCostUsd: number | undefined;
   if (typeof costValue === "number") totalCostUsd = costValue;
@@ -100,41 +115,16 @@ export function foldClaudeEvent(t: Tally, line: string): Tally {
       ...(usage === undefined
         ? {}
         : {
-            usage: {
-              input_tokens: usage.input_tokens ?? 0,
-              cached_input_tokens:
-                usage.cached_input_tokens ??
-                (usage.cache_read_input_tokens ?? 0) +
-                  (usage.cache_creation_input_tokens ?? 0),
-              output_tokens: usage.output_tokens ?? 0,
-              reasoning_output_tokens: usage.reasoning_output_tokens ?? 0,
-            },
+            usage: addUsage(undefined, usage),
           }),
       ...(totalCostUsd === undefined || !Number.isFinite(totalCostUsd)
         ? {}
         : { totalCostUsd }),
     };
   if (parsed.data.type === "assistant" && usage !== undefined) {
-    const previous = t.usage ?? {
-      input_tokens: 0,
-      cached_input_tokens: 0,
-      output_tokens: 0,
-      reasoning_output_tokens: 0,
-    };
     t = {
       ...t,
-      usage: {
-        input_tokens: previous.input_tokens + (usage.input_tokens ?? 0),
-        cached_input_tokens:
-          previous.cached_input_tokens +
-          (usage.cached_input_tokens ??
-            (usage.cache_read_input_tokens ?? 0) +
-              (usage.cache_creation_input_tokens ?? 0)),
-        output_tokens: previous.output_tokens + (usage.output_tokens ?? 0),
-        reasoning_output_tokens:
-          previous.reasoning_output_tokens +
-          (usage.reasoning_output_tokens ?? 0),
-      },
+      usage: addUsage(t.usage, usage),
     };
   }
   if (parsed.data.type !== "assistant") return t;

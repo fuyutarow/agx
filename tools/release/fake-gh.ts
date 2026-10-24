@@ -13,7 +13,11 @@ const stateSchema = z.object({
 // argv-forwarding: fake gh release protocol, mirroring gh's argument vector in tests.
 const args = process.argv.slice(2);
 const mode = process.env.RELEASE_TEST_GH_MODE;
-const path = join(process.cwd(), "gh-state.json");
+const library = args[2]?.startsWith("usehooks-v") ?? false;
+const path = join(
+  process.cwd(),
+  library ? "gh-usehooks-state.json" : "gh-state.json",
+);
 await appendFile(join(process.cwd(), "calls"), JSON.stringify(args) + "\n");
 const file = Bun.file(path);
 function refuse(message: string): never {
@@ -72,10 +76,16 @@ if (args[1] === "create") {
     mode === "malformed" ? "invalid JSON" : JSON.stringify({ assets }),
   );
 } else if (args[1] === "edit") {
-  if (!args.includes("--draft=false") || !args.includes("--latest"))
+  if (
+    !args.includes("--draft=false") ||
+    !args.includes(library ? "--latest=false" : "--latest")
+  )
     refuse("Expected final publication");
   if (
-    state.assets.length !== 2 ||
+    state.assets.length !== (library ? 1 : 4) ||
+    state.assets.some((asset) =>
+      library ? !asset.name.endsWith(".tgz") : !asset.name.endsWith(".tar.gz"),
+    ) ||
     state.assets.some((asset) => asset.state !== "uploaded")
   )
     refuse("Cannot publish incomplete assets");

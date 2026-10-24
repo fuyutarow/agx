@@ -111,12 +111,12 @@ writes raw Claude stdout after the child ends, including a timeout; it contains
 the full message body and is intended for explicit diagnostic capture.
 
 Accepted means enqueued, not read or replied. agx msg owns no broker, inbox, launch/delegation, or
-reply tracking. To arrange a reply, declare the sender's full address with --from; the
+reply broker. To arrange a reply, declare the sender's full address with --from; the
 recipient can send another message using its native route or agx msg.
 
 ## Sender envelope
 
-Use `--from codex:<full-session-UUID>` or `--from claude:<full-session-UUID>` to declare the caller's exact reply address, independently of the recipient backend. Full UUIDs are canonicalized, never shortened. Names, prefixes, unsupported backends and malformed IDs exit 2 before discovery or transport. `--from` is send-only. This is attribution supplied by the caller, not authentication.
+Use `--from codex:<full-session-UUID>` or `--from claude:<full-session-UUID>` to declare the caller's exact reply address, independently of the recipient backend. Full UUIDs are canonicalized, never shortened. Names, prefixes, unsupported backends and malformed IDs exit 2 before discovery or transport. `--from` declares the sender on send and selects the expected reply sender on wait. This is attribution supplied by the caller, not authentication.
 
 Every send adds exactly one envelope at the common transport boundary:
 
@@ -136,7 +136,7 @@ Sender selection is `--from` first, then the explicit `AGX_MSG_FROM` declaration
 then unknown. Both declarations accept the same full addresses and UUID
 canonicalization. An invalid selected declaration (including an empty value) exits
 2 before discovery or transport; a valid `--from` overrides even an invalid
-`AGX_MSG_FROM`. List and status ignore `AGX_MSG_FROM`.
+`AGX_MSG_FROM`. List, status and wait ignore `AGX_MSG_FROM`; wait requires explicit addresses.
 
 Without either declaration, the first line is `from: unknown (caller identity unavailable or inherited; use --from backend:<full-session-id>)`.
 Sends still work with truthful missing attribution. `CODEX_THREAD_ID`,
@@ -225,7 +225,7 @@ List exits **0** only when both inventories complete, including a genuinely empt
 **3** means at least one backend is unavailable, failed, timed out, exceeded bounds or
 returned an unsupported schema. Successful vendor results remain in partial output.
 Failures appear in stderr and JSON backend details. Usage errors exit **2** before
-discovery. `--to`/`--message`/`--from` are send-only; `--json` is list-only.
+discovery. `--to`/`--message`/`--from` apply to send and wait; `--json` is list-only.
 
 The existing `--timeout-ms` deadline applies independently to both concurrent inventory
 operations (default 60 seconds). Each backend is capped at 1,000 native records and 4 MiB
@@ -233,3 +233,79 @@ of output; Codex follows bounded pagination. Unsupported fragmented WebSocket fr
 reported as unavailable rather than silently omitted. Listing sends no agent messages,
 per-recipient ping, or retry, and creates no registry/cache. Existing send acceptance and
 exactly-once behavior remain unchanged.
+
+## Reply from Codex to Claude
+
+A Codex session can reply with either the Claude session UUID or its exact native name:
+
+```sh
+agx msg send --from codex:aaaaaaaa-1234-4abc-8def-0123456789ab --to claude:bbbbbbbb-1234-4abc-8def-0123456789ab --message 'reply nonce-1024'
+agx msg send --from codex:aaaaaaaa-1234-4abc-8def-0123456789ab --to 'claude:exact-native-name' --message 'reply nonce-1024'
+```
+
+The sender backend does not choose the transport: both commands use the Claude relay.
+The declared Codex address survives unchanged in the envelope. UUID destinations resolve
+to a live native Claude name before relay. Dedicated fixture tests exercise both Codex-sender
+paths through the CLI, exact envelope, UUID resolution, and correlated SendMessage acceptance.
+This guarantees the supported command path and acceptance checks; it cannot guarantee
+that a native peer remains reachable or that the recipient reads the reply.
+
+## Wait for a reply
+
+A sender using a Codex thread can block until an exact reply is visible as native thread input:
+
+```sh
+agx msg wait --to codex:aaaaaaaa-1234-4abc-8def-0123456789ab --from claude:bbbbbbbb-1234-4abc-8def-0123456789ab --message 'reply nonce-1024' --timeout-ms 30000
+```
+
+Here `--to` is the full address of the waiting recipient and `--from` is the expected
+reply sender. Both require backend-qualified full UUIDs; neither is inferred from the
+environment. Ask the peer to use `agx msg send` with that exact sender declaration,
+recipient and body. Use a fresh unpredictable nonce in each agreed reply body. The command
+also accepts a matching reply already retained in the thread; reusing a body can match
+an older reply. This is declared attribution, not authentication or causal proof.
+
+Codex observation uses the existing local shared app-server control socket and
+`thread/read` with `includeTurns: true`. It polls every 250 ms and matches a native
+`userMessage` with the exact envelope and body. No model or daemon is started, no
+transcript is scraped, and no inbox is consumed. A pending `codex queue` entry may
+remain invisible until the active turn ends and the input becomes part of a thread.
+An app-server on another endpoint, an unreadable thread or unsupported reply schema
+cannot be observed. Assistant prose, send acceptance and discovery membership never
+satisfy wait. Native messages without the agreed envelope do not match.
+
+Claude replies enter the receiving harness inbox. The available ListAgents and
+SendMessage tools expose no inbox read API to this external command. Therefore
+`wait --to claude:<full-UUID>` immediately exits 3 with this explanation; inspect
+the reply inside the receiving Claude session. This also applies to Codex-to-Claude
+replies: send acceptance is observable, the receiving Claude inbox receipt is not.
+
+Wait prints an initial deadline notice to stderr. Exit 0 requires matching native input
+before the deadline and emits one JSON line with `recipient`, `sender`, `itemId`,
+`body`, `elapsedMs` and `evidence`. Exit 2 is invalid usage, 3 means observation
+is unavailable, and 4 means the deadline expired without observed matching input.
+Failures write diagnostics to stderr with empty stdout. The default deadline is 60000 ms;
+positive integer overrides up to 2147483647 ms cover connection, reads and polling together.
+Expiry allows socket cleanup and local scheduling overhead. Ctrl-C cancels the read-only wait;
+retrying only observes again. Unknown JSON fields may be added; existing meanings are stable.
+
+## Measure send latency
+
+Add `--timing` to send to emit one JSON timing line on stderr after a transport attempt:
+`discoveryMs`, `transportMs`, `totalMs`, backend, transport description and exit.
+Durations use a monotonic clock in milliseconds and include process startup and output drain.
+Failures before transport do not emit a timing record. This flag is send-only.
+
+Claude transport runs a one-shot `claude --print` model relay, including startup,
+ListAgents, model selection/tool turns and SendMessage. This is the expensive component;
+a send taking over five seconds need not be local routing overhead. Timing separates
+UUID discovery from this transport cost without weakening acceptance checks. The relay
+already uses Haiku, low effort and only two allowed tools. Exact native-name destinations
+avoid UUID discovery when the caller already knows the verified name. Removing ListAgents
+or skipping correlated receipts would weaken the unique-target and acceptance promises,
+so no such reduction is applied.
+
+The latency fixture deliberately delays the Claude subprocess by 80 ms and verifies
+that transport dominates discovery; its measured sample is recorded in the task result.
+It measures CLI accounting with isolated binaries, not live model latency. Live latency
+varies; use `agx msg send --timing` on an authorized real send to measure that environment.

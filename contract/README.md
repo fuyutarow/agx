@@ -2,6 +2,8 @@
 
 The following contracts now exist:
 
+- [Release assets](release.md): supported suite platforms and separate library releases.
+
 - [Doctor aggregation](doctor.md): bounded refresh, JSON, exit codes and owner snapshots.
 - [Configuration](config.md): repository `agx.toml`, machine-local overrides, user policy and
   the public operator;

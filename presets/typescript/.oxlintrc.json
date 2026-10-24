@@ -95,11 +95,11 @@
       },
       {
         "selector": "TryStatement",
-        "message": "try is banned (catch AND finally): errors as values — neverthrow's fromThrowable/fromAsyncThrowable where the file may import it, else agents/hooks/attempt.ts (Promise.try, zero-dep), or Promise.try(fn).then(ok, err) inline in a self-contained skill; cleanup via using / await using / DisposableStack, or promise.finally()."
+        "message": "try is banned (catch AND finally): errors as values — neverthrow's fromThrowable/fromAsyncThrowable where the file may import it, else a local zero-dependency helper using Promise.try(fn).then(ok, err), or the same expression inline in a self-contained skill; cleanup via using / await using / DisposableStack, or promise.finally()."
       },
       {
         "selector": "ThrowStatement",
-        "message": "throw is banned: no-try left nothing to catch it, so a throw is a crash path no type shows. Return the failure as a value — neverthrow's err()/errAsync() and Result where the file may import it, else a tagged union like agents/hooks/attempt.ts's Attempt; the entry point matches the result, prints the message and calls process.exit(code). Code that throws (a library, JSON.parse) is wrapped once with fromThrowable/attempt."
+        "message": "throw is banned: no-try left nothing to catch it, so a throw is a crash path no type shows. Return the failure as a value — neverthrow's err()/errAsync() and Result where the file may import it, else a local tagged union of success and failure; the entry point matches the result, prints the message and calls process.exit(code). Code that throws (a library, JSON.parse) is wrapped once with fromThrowable or a local error-as-value helper."
       },
       {
         "selector": "CallExpression[callee.object.name='Promise'][callee.property.name='reject']",

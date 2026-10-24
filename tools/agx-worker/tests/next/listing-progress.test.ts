@@ -119,13 +119,16 @@ const rowSchema = z.object({
       files: z.number(),
       turns: z.number().nullable(),
       usage: z.record(z.string(), z.unknown()).nullable(),
+      usage_reason: z.string().nullable(),
       cost_usd: z.number().nullable(),
+      cost_reason: z.string().nullable(),
       session: z.string().nullable(),
     })
     .nullable(),
   progress_source: z.enum(["run", "active"]).nullable(),
   progress_status: z.enum(["available", "missing", "invalid", "unreadable"]),
   progress_fresh_at: z.string().nullable(),
+  progress_reason: z.string().nullable(),
 });
 const invoke = (root: string, state: string, ...flags: string[]) => {
   const { AGX_NEXT_STATE_DIR: _retired, ...env } = process.env;
@@ -157,7 +160,11 @@ test("real ls JSON projects cumulative counts, source precedence, unknowns and s
   const rows = parseRows(invoke(root, state));
   const current = rows.find((row) => row.id === "current");
   const { schema: _schema, ...expected } = progress;
-  expect(current?.progress).toEqual(expected);
+  expect(current?.progress).toEqual({
+    ...expected,
+    usage_reason: null,
+    cost_reason: null,
+  });
   expect(current?.progress_source).toBe("run");
   expect(current?.progress_status).toBe("available");
   expect(current?.progress_fresh_at).toBe(at);
@@ -189,7 +196,10 @@ test("real ls JSON projects cumulative counts, source precedence, unknowns and s
     files: 0,
     turns: null,
     usage: null,
+    usage_reason: "vendor has not reported usage yet",
     cost_usd: null,
+    cost_reason:
+      "vendor has not reported cost and no usage-based estimate is available",
     session: null,
   });
   expect(rows.find((row) => row.id === "ended")?.vendor_session).toBe(
@@ -204,6 +214,48 @@ test("real ls JSON projects cumulative counts, source precedence, unknowns and s
   );
   expect(summary.success).toBe(true);
   if (summary.success) expect(summary.data.runs).toEqual(rows);
+});
+
+test("running JSON exposes live counters and explains unknown progress and usage", async () => {
+  const { root, state } = await fixture();
+  writeFileSync(
+    join(state, "runs", "current", "worker-progress.jsonl"),
+    JSON.stringify({ ...progress, usage: {}, cost_usd: undefined }),
+  );
+  const schema = z.array(
+    rowSchema.extend({
+      progress: rowSchema.shape.progress
+        .unwrap()
+        .extend({
+          usage_reason: z.string().nullable(),
+          cost_reason: z.string().nullable(),
+        })
+        .nullable(),
+    }),
+  );
+  const parsed = jsonOf(schema).safeParse(invoke(root, state, "--running"));
+  expect(parsed.success).toBe(true);
+  if (!parsed.success) return;
+  const rows = parsed.data;
+  expect(rows.some((row) => row.id === "ended")).toBe(false);
+  const live = rows.find((row) => row.id === "current");
+  expect(live?.progress).toMatchObject({
+    last: progress.last,
+    at,
+    commands: 7,
+    files: 3,
+    turns: 2,
+    usage: null,
+    cost_usd: null,
+  });
+  expect(live?.progress_reason).toBeNull();
+  expect(live?.progress?.usage_reason).toContain("vendor has not reported");
+  expect(live?.progress?.cost_reason).toContain("no usage-based estimate");
+  expect(rows.find((row) => row.id === "missing")?.progress_reason).toContain(
+    "producer may predate",
+  );
+  for (const id of ["invalid", "unreadable"])
+    expect(rows.find((row) => row.id === id)?.progress_reason).toBeString();
 });
 
 test("real ls rejects malformed progress and ignores mismatched active identities", async () => {

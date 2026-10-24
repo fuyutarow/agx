@@ -54,6 +54,12 @@ test.each([
       `+++\nschema = 2\nname = "scratch"\noutcome = "write survey data"\nwrites = ["work.txt"]\nverify = ${JSON.stringify(verify)}\npremises = ["file:input.txt"]\n[proposition]\nid = "SCRATCH"\nclaim = "scratch cwd works"\nrefuted_by = "run fails or provenance is wrong"\n+++\nSurvey data.\n`,
     );
     await writeFile(join(cwd, "input.txt"), "survey input\n");
+    const hostPath = join(root, "host.toml");
+    if (kind === "git")
+      await writeFile(
+        hostPath,
+        'schema = 1\nunsandboxed_reason = "fixture isolation"\n',
+      );
     const state = join(root, "state");
     const child = Bun.spawn(
       [
@@ -73,6 +79,8 @@ test.each([
           GIT_WORK_TREE: undefined,
           GIT_INDEX_FILE: undefined,
           AGX_STATE_DIR: state,
+          XDG_STATE_HOME: join(root, "xdg-state"),
+          AGX_CODEX_HOST_FILE: hostPath,
           AGX_TMP_ROOT: join(root, "tmp"),
           AGX_WORKER_BIN: join(import.meta.dir, "fixtures/outcome-worker.ts"),
           AGX_OUTCOME_FIXTURE: "ok",
@@ -113,6 +121,18 @@ test.each([
     const started = events.find((event) => event.kind === "started");
     expect(started).toBeDefined();
     expect(started?.cwd).toBe(cwd);
+    expect(started?.workspace).toBe(cwd);
+    expect(started?.route).toBeString();
+    expect(started?.model).toBeString();
+    expect(started?.effort).toBeString();
+    expect(started?.sandbox_effective).toBe(
+      kind === "git" ? "danger-full-access" : "workspace-write",
+    );
+    expect(started?.sandbox_effective_source).toBe(
+      kind === "git"
+        ? `host declaration: ${hostPath}: fixture isolation`
+        : "built-in default",
+    );
     if (kind === "scratch") {
       expect(started).not.toHaveProperty("base_rev");
       expect(started?.premise_commits).toEqual([]);

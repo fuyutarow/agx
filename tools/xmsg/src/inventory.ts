@@ -114,7 +114,36 @@ export async function claudeInventory(
 }
 
 /** Existing daemon only. RFC6455 client framing; no daemon launch or agent input. */
-export async function codexInventory(timeoutMs: number): Promise<Recipient[]> {
+const ReplyThread = z.object({
+  id: Id,
+  turns: z.array(
+    z
+      .object({
+        items: z.array(
+          z
+            .object({
+              id: Id,
+              type: z.string(),
+              content: z
+                .array(
+                  z
+                    .object({ type: z.string(), text: z.string().optional() })
+                    .loose(),
+                )
+                .optional(),
+            })
+            .loose(),
+        ),
+      })
+      .loose(),
+  ),
+});
+export type ThreadInput = { id: string; text: string };
+
+async function codexRead(
+  timeoutMs: number,
+  threadId?: string,
+): Promise<{ recipients: Recipient[]; inputs: ThreadInput[] }> {
   const socketPath = join(
     process.env.CODEX_HOME ?? join(homedir(), ".codex"),
     "app-server-control",
@@ -194,7 +223,7 @@ export async function codexInventory(timeoutMs: number): Promise<Recipient[]> {
           finish = true;
           clearTimeout(timer);
           close();
-          resolve(recipients);
+          resolve({ recipients, inputs: [] });
         }
       }
       function message(text: string) {
@@ -222,9 +251,11 @@ export async function codexInventory(timeoutMs: number): Promise<Recipient[]> {
           );
           return;
         }
-        if (method === "initialize")
-          send("thread/loaded/list", { limit: MAX_RECORDS });
-        else if (method === "thread/loaded/list") {
+        if (method === "initialize") {
+          if (threadId === undefined)
+            send("thread/loaded/list", { limit: MAX_RECORDS });
+          else send("thread/read", { threadId, includeTurns: true });
+        } else if (method === "thread/loaded/list") {
           const parsedPage = z
             .object({ data: z.array(Id), nextCursor: z.string().nullable() })
             .safeParse(rpc.result);
@@ -244,6 +275,28 @@ export async function codexInventory(timeoutMs: number): Promise<Recipient[]> {
           }
           cursor = page.nextCursor;
           readNext();
+        } else if (threadId !== undefined) {
+          const parsed = z
+            .object({ thread: ReplyThread })
+            .safeParse(rpc.result);
+          if (!parsed.success || parsed.data.thread.id !== threadId) {
+            fail(new Error("Invalid Codex reply thread schema or identity"));
+            return;
+          }
+          const inputs = parsed.data.thread.turns
+            .flatMap((turn) => turn.items)
+            .filter((item) => item.type === "userMessage")
+            .map((item) => ({
+              id: item.id,
+              text: (item.content ?? [])
+                .filter((part) => part.type === "text")
+                .map((part) => part.text ?? "")
+                .join(""),
+            }));
+          finish = true;
+          clearTimeout(timer);
+          close();
+          resolve({ recipients: [], inputs });
         } else {
           const parsedThread = z
             .object({ thread: Thread })
@@ -433,4 +486,15 @@ export async function selectedInventory(
     recipients: result.value,
     evidence: { vendor, available: true, complete: true },
   };
+}
+
+export async function codexInventory(timeoutMs: number): Promise<Recipient[]> {
+  return (await codexRead(timeoutMs)).recipients;
+}
+
+export async function codexInputs(
+  threadId: string,
+  timeoutMs: number,
+): Promise<ThreadInput[]> {
+  return (await codexRead(timeoutMs, threadId)).inputs;
 }

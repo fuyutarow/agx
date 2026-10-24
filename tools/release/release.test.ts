@@ -12,6 +12,8 @@ import {
   platform,
   packages,
   suiteNotes,
+  suiteTargets,
+  suiteArchiveName,
   repository,
   run as productionRun,
 } from "./release.ts";
@@ -37,7 +39,10 @@ async function fixture(pkg = "agx-status") {
     JSON.stringify({
       name: `@agx/${pkg}`,
       version: "2.3.4",
-      bin: { [pkg]: "src/main.ts" },
+      bin:
+        pkg === "xmsg"
+          ? { "agx-msg": "src/main.ts", xmsg: "src/main.ts" }
+          : { [pkg]: "src/main.ts" },
     }),
   );
   await Bun.write(
@@ -206,6 +211,41 @@ test("xmsg archive compiles agx-msg once and preserves its hard-link alias", asy
   expect(calls[0]).toContain("/bin/agx-msg");
 });
 
+test("messaging manifests require explicit commands sharing a source", async () => {
+  const f = await fixture("xmsg");
+  for (const bin of [
+    undefined,
+    {},
+    { xmsg: "src/main.ts" },
+    { "agx-msg": "src/main.ts" },
+    { "agx-msg": "", xmsg: "" },
+    { "agx-msg": "src/main.ts", xmsg: "src/other.ts" },
+  ]) {
+    await Bun.write(
+      join(f.dir, "package.json"),
+      JSON.stringify({ version: "2.3.4", bin }),
+    );
+    const result = await build("xmsg", undefined, f.root);
+    expect(result.isErr()).toBe(true);
+    if (result.isErr())
+      expect(result.error).toContain("Invalid package.json for xmsg");
+    expect(await Bun.file(join(f.root, "calls")).exists()).toBe(false);
+    expect(await Bun.file(join(f.root, "dist/xmsg/bin/agx-msg")).exists()).toBe(
+      false,
+    );
+  }
+});
+
+test("current messaging manifest preserves both command entries", async () => {
+  const info = await packageInfo("xmsg");
+  expect(info.isOk()).toBe(true);
+  if (info.isOk())
+    expect(info.value.commands).toEqual({
+      "agx-msg": "src/xmsg.ts",
+      xmsg: "src/xmsg.ts",
+    });
+});
+
 test("unknown packages exit 2 without producing an archive", async () => {
   const f = await fixture("agx-usehooks");
   await Bun.write(join(f.dir, "package.json"), '{"version":"1.0.0"}');
@@ -235,7 +275,7 @@ test("publish defaults to dry-run and includes all sections since previous suite
   const result = await preview(f, [], { RELEASE_TEST_PREVIOUS: "1" });
   expect(result.exit).toBe(0);
   expect(result.stdout).toContain("DRY RUN");
-  expect(result.stdout.match(/'gh' 'release' 'create'/gu)).toHaveLength(1);
+  expect(result.stdout.match(/'gh' 'release' 'create'/gu)).toHaveLength(2);
   expect(result.stdout).toContain("agx-usehooks-2.3.4.tgz");
   if (process.env.AGX_RELEASE_PLAN_RECEIPT !== undefined)
     await Bun.write(process.env.AGX_RELEASE_PLAN_RECEIPT, result.stdout);
@@ -345,7 +385,7 @@ test("execution requires --yes; conflicting flags and excess arguments refuse", 
   expect(result.exit).toBe(2);
   expect(result.stderr).toContain("Release stopped");
   expect(await Bun.file(join(f.root, "calls")).text()).toContain(
-    '["tag","v2.3.4"]',
+    '["tag","usehooks-v2.3.4"]',
   );
 });
 
@@ -357,9 +397,11 @@ const ghStateSchema = z.object({
   ),
 });
 
-async function ghState(root: string) {
+async function ghState(root: string, library = false) {
   const parsed = jsonOf(ghStateSchema).safeParse(
-    await Bun.file(join(root, "gh-state.json")).text(),
+    await Bun.file(
+      join(root, library ? "gh-usehooks-state.json" : "gh-state.json"),
+    ).text(),
   );
   expect(parsed.success).toBe(true);
   return parsed.success
@@ -375,7 +417,17 @@ for (const mode of ["success", "retry"]) {
     expect(result.stdout).toStartWith("PUBLISHED\n");
     const state = await ghState(f.root);
     expect(state.draft).toBe(false);
-    expect(state.assets).toHaveLength(2);
+    expect(state.assets).toHaveLength(4);
+    expect(state.assets.map((asset) => asset.name).toSorted()).toEqual(
+      suiteTargets
+        .map((target) => suiteArchiveName("2.3.4", target)._unsafeUnwrap())
+        .toSorted(),
+    );
+    const libraryState = await ghState(f.root, true);
+    expect(libraryState.draft).toBe(false);
+    expect(libraryState.assets.map((asset) => asset.name)).toEqual([
+      "agx-usehooks-2.3.4.tgz",
+    ]);
     for (const asset of state.assets) {
       expect(asset.state).toBe("uploaded");
       expect(asset.size).toBe(
@@ -387,10 +439,12 @@ for (const mode of ["success", "retry"]) {
     }
     const calls = (await Bun.file(join(f.root, "calls")).text()).split("\n");
     const ghCalls = calls.filter((line) => line.startsWith('["release"'));
-    expect(ghCalls[0]).toContain('["release","create","v2.3.4","--draft"');
+    expect(ghCalls[0]).toContain(
+      '["release","create","usehooks-v2.3.4","--draft"',
+    );
     expect(ghCalls[0]).not.toContain(".tar.gz");
     expect(ghCalls[0]).not.toContain(".tgz");
-    expect(ghCalls.filter((line) => line.includes('"create"'))).toHaveLength(1);
+    expect(ghCalls.filter((line) => line.includes('"create"'))).toHaveLength(2);
     expect(ghCalls.at(-2)).toBe(
       '["release","view","v2.3.4","--json","assets"]',
     );
@@ -398,9 +452,9 @@ for (const mode of ["success", "retry"]) {
       '["release","edit","v2.3.4","--draft=false","--latest"]',
     );
     const uploads = ghCalls.filter((line) => line.includes('"upload"'));
-    expect(uploads).toHaveLength(mode === "retry" ? 3 : 2);
+    expect(uploads).toHaveLength(mode === "retry" ? 9 : 5);
     expect(uploads[0]).not.toContain("--clobber");
-    if (mode === "retry") expect(uploads[1]).toContain("--clobber");
+    if (mode === "retry") expect(uploads[2]).toContain("--clobber");
   });
 }
 
@@ -408,7 +462,7 @@ for (const mode of ["failure", "silent"]) {
   test(`persistent upload failure names asset and preserves a recoverable draft (${mode})`, async () => {
     const f = await suiteFixture();
     const result = await preview(f, ["--yes"], { RELEASE_TEST_GH_MODE: mode });
-    const name = `agx-2.3.4-${process.platform}-${process.arch}.tar.gz`;
+    const name = "agx-2.3.4-linux-x64.tar.gz";
     expect(result.exit).toBe(2);
     expect(result.stdout).not.toContain("PUBLISHED");
     expect(result.stderr).toContain(
@@ -434,8 +488,8 @@ for (const mode of ["failure", "silent"]) {
     expect(state.draft).toBe(true);
     expect(state.attempts[name]).toBe(3);
     const calls = await Bun.file(join(f.root, "calls")).text();
-    expect(calls).not.toContain('["release","edit"');
-    expect(calls).not.toContain('["release","view"');
+    expect(calls).not.toContain('["release","edit","v2.3.4"');
+    expect(calls).not.toContain('["release","view","v2.3.4"');
     // Execute the printed recovery protocol against the SAME fake release.
     const recover = (args: string[]) =>
       productionRun(
@@ -447,7 +501,9 @@ for (const mode of ["failure", "silent"]) {
         ],
         f.root,
       );
-    for (const asset of [name, "agx-usehooks-2.3.4.tgz"]) {
+    for (const asset of suiteTargets.map((target) =>
+      suiteArchiveName("2.3.4", target)._unsafeUnwrap(),
+    )) {
       const uploaded = await recover([
         "upload",
         "v2.3.4",
@@ -477,7 +533,7 @@ for (const mode of ["failure", "silent"]) {
       (await Bun.file(join(f.root, "calls")).text()).match(
         /\["release","create"/gu,
       ),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
   });
 }
 
@@ -486,17 +542,15 @@ for (const mode of ["missing", "wrong-size", "starter", "malformed"]) {
     const f = await suiteFixture();
     const result = await preview(f, ["--yes"], { RELEASE_TEST_GH_MODE: mode });
     expect(result.exit).toBe(2);
-    expect(result.stderr).toContain(
-      `agx-2.3.4-${process.platform}-${process.arch}.tar.gz`,
-    );
+    expect(result.stderr).toContain("agx-usehooks-2.3.4.tgz");
     expect(result.stderr).toContain(
       mode === "malformed"
         ? "Cannot verify assets"
         : "Asset verification failed",
     );
-    expect(result.stderr).toContain("Draft v2.3.4 retained");
+    expect(result.stderr).toContain("Draft usehooks-v2.3.4 retained");
     expect(result.stdout).not.toContain("PUBLISHED");
-    expect((await ghState(f.root)).draft).toBe(true);
+    expect((await ghState(f.root, true)).draft).toBe(true);
     expect(await Bun.file(join(f.root, "calls")).text()).not.toContain(
       '["release","edit"',
     );
@@ -714,7 +768,13 @@ async function suiteFixture() {
     await mkdir(join(dir, "src"), { recursive: true });
     await Bun.write(
       join(dir, "package.json"),
-      JSON.stringify({ version: "2.3.4", bin: { [pkg]: "src/main.ts" } }),
+      JSON.stringify({
+        version: "2.3.4",
+        bin:
+          pkg === "xmsg"
+            ? { "agx-msg": "src/main.ts", xmsg: "src/main.ts" }
+            : { [pkg]: "src/main.ts" },
+      }),
     );
     await Bun.write(
       join(dir, "src/main.ts"),
@@ -728,12 +788,12 @@ async function suiteFixture() {
   return { ...f, pkg: "suite", dir: join(f.root, "tools/agx") };
 }
 
-test("suite archive contains all commands with member versions and exactly two assets", async () => {
+test("suite archive contains all commands with member versions and only its platform asset", async () => {
   const f = await suiteFixture();
   const result = await build("suite", undefined, f.root);
   expect(result.isOk(), result.isErr() ? result.error : "").toBe(true);
   if (result.isErr()) return;
-  expect(result.value.assets).toHaveLength(2);
+  expect(result.value.assets).toHaveLength(1);
   const listing = await run(["tar", "-tzf", result.value.archive], f.root);
   const names = [...packages]
     .filter((pkg) => pkg !== "agx-usehooks")
@@ -758,10 +818,15 @@ test("suite archive contains all commands with member versions and exactly two a
   );
   expect(messagingCompiles).toHaveLength(1);
   expect(messagingCompiles[0]).toContain("/bin/agx-msg");
+  for (const target of suiteTargets) {
+    const built = await build("suite", target, f.root);
+    expect(built.isOk()).toBe(true);
+    if (built.isOk()) await messagingAlias(f.root, built.value.archive);
+  }
   const archives = await Array.fromAsync(
     new Bun.Glob("*.tar.gz").scan(join(f.root, "dist")),
   );
-  expect(archives).toHaveLength(1);
+  expect(archives).toHaveLength(4);
 }, 30_000);
 
 test("suite notes reject unavailable history", async () => {
@@ -771,6 +836,7 @@ test("suite notes reject unavailable history", async () => {
 
 async function messagingAlias(root: string, archive: string) {
   const extracted = join(root, "dist", "extracted");
+  await rm(extracted, { recursive: true, force: true });
   await mkdir(extracted, { recursive: true });
   const unpacked = await run(["tar", "-xzf", archive, "-C", extracted], root);
   expect(unpacked.exit, unpacked.stderr).toBe(0);
@@ -785,3 +851,24 @@ async function messagingAlias(root: string, archive: string) {
   expect(a.exit).toBe(0);
   expect(b).toEqual(a);
 }
+
+test("suite archive names carry mise OS and architecture tokens", () => {
+  expect(
+    suiteTargets.map((target) =>
+      suiteArchiveName("2.3.4", target)._unsafeUnwrap(),
+    ),
+  ).toEqual([
+    "agx-2.3.4-linux-x64.tar.gz",
+    "agx-2.3.4-linux-arm64.tar.gz",
+    "agx-2.3.4-darwin-x64.tar.gz",
+    "agx-2.3.4-darwin-arm64.tar.gz",
+  ]);
+});
+
+test("suite publishing rejects a partial target before building", async () => {
+  const f = await suiteFixture();
+  const result = await preview(f, ["--target", "bun-linux-x64"]);
+  expect(result.exit).toBe(2);
+  expect(result.stderr).toContain("all supported platforms");
+  expect(await Bun.file(join(f.root, "calls")).exists()).toBe(false);
+});

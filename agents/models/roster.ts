@@ -2,11 +2,10 @@
 // Consumers: the dispatch hook (agents/claude/hooks/enforce-dispatch-contract.ts), the codex worker's
 // `--choice` (tools/agx-worker/src/workers/codex.ts) and scripts/render-home.ts (which
 // writes rosterPolicy into the deployed ~/.claude/CLAUDE.md).
-// Zero-install like the hooks: zod comes from agents/hooks/zod.ts (the committed bundle).
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { attempt, errorMessage } from "../hooks/attempt.ts";
-import { z } from "../hooks/zod.ts";
+import { attempt, errorMessage } from "../../tools/shared/src/attempt.ts";
+import { z } from "../../tools/shared/src/zod.ts";
 
 export const ROSTER_PATH = join(import.meta.dir, "dispatch-roster.toml");
 

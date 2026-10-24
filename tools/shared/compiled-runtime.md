@@ -6,8 +6,8 @@ Compile messaging once as `agx-msg`; `xmsg` is a hard link to it in `bin/`.
 The router and worker launcher resolve those names through `PATH`; installing a
 different suite on that path selects that suite explicitly.
 
-Versions, the default worker catalog, default price roster, and consumer-checker
-registry are static imports embedded by the compiler. Explicit catalog and price
+Versions, the default worker catalog, and default price roster are static imports
+embedded by the compiler. Explicit catalog and price
 paths select exactly that file. A missing or invalid override never selects the
 embedded default instead. Worker policy remains external: `AGX_CONFIG`, otherwise
 `$XDG_CONFIG_HOME/agx/agx.toml` (default `~/.config/agx/agx.toml`).
@@ -23,15 +23,18 @@ load the bundled modules. These flags are internal transport, not additional
 public commands. `AGX_WORKER_BIN` remains an explicit Bun script override for
 custom workers and fixtures; its path is supplied by the caller.
 
-Workspace fleet operations use `AGX_REGISTRY_ROOT`, defaulting to the invocation's
-current directory, for `presets/consumers.toml`. API callers can pass the root
-directly. `AGX_REPOS_ROOT` retains its directory-inventory meaning for workspace
-doctor. No registry is guessed from an executable or source directory.
+Workspace fleet operations read the L2 repository registry at
+`$XDG_CONFIG_HOME/agx/repos/*.toml` (default `~/.config/agx/repos/*.toml`).
+Each schema-1 declaration supplies an absolute repository `root`.
+`AGX_REPOS_ROOT` retains its directory-inventory meaning for workspace doctor.
+See the [configuration contract](../../contract/config.md) for registry rules.
 
-The consumer compatibility checker embeds `tools/agx-usehooks/consumers.toml` but
-needs an explicit checkout to compare revisions: `USEHOOKS_REPO_ROOT`, defaulting
-to the current directory. It derives `tools/agx-usehooks` from that checkout.
-Consumer roots in the embedded registry are user input and are expanded as before.
+The consumer compatibility checker selects L2-registered repositories with a
+`[usehooks]` table; its registry is a runtime input. Revision comparison uses
+`USEHOOKS_REPO_ROOT`, defaulting to the current directory, as the suite checkout
+and derives `tools/agx-usehooks` from it. `USEHOOKS_BASE` selects the comparison
+revision, defaulting to `alpha`. These inputs select the checkout and revision,
+independently of consumer discovery.
 
 State continues to use `AGX_STATE_DIR` or the existing XDG location. Ticket homes,
 target repository policy, host declarations, session inventories and operating

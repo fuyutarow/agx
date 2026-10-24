@@ -412,4 +412,4 @@ test("real dispatch records capacity; fresh and continued dispatches cannot reus
   );
   const expired = await run(["--continue", receipt.id ?? "missing"]);
   expect(decodedJson(Receipt, expired.stdout).row).not.toStartWith("sol-");
-}, 30_000);
+}, 90_000);

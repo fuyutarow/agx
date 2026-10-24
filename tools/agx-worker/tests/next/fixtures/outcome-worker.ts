@@ -11,6 +11,7 @@ const report = {
   for_coordinator: [],
 };
 if (mode !== "no-change") writeFileSync("work.txt", `changed by ${mode}\n`);
+if (mode === "killed-bound") await Bun.sleep(120_000);
 let receipt: unknown = report;
 if (mode === "string-wrapped")
   receipt = { exit_code: 0, result: JSON.stringify(report) };
@@ -24,6 +25,7 @@ if (mode === "timeout") {
   await child.exited;
   receipt = { timed_out: child.signalCode === "SIGTERM", exit_code: 0, report };
 }
+if (mode === "capacity") receipt = { outcome: "capacity", report };
 if (mode === "refused") receipt = { outcome: "refused", report };
 if (mode === "structured") receipt = { structured_output: report };
 if (mode === "last-message") receipt = { last_message: JSON.stringify(report) };

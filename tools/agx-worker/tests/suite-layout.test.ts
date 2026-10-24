@@ -22,6 +22,7 @@ test("the CLI exposes the run, doctor, and process interface commands", () => {
   expect(COMMANDS.map((entry) => entry.name)).toEqual([
     "dispatch",
     "run",
+    "stop",
     "check",
     "ls",
     "judge",

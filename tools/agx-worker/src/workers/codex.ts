@@ -52,6 +52,8 @@ import { jsonOf, jsonText, z } from "../../../shared/src/zod.ts";
 import { attempt, errorMessage } from "../../../shared/src/attempt.ts";
 import { loadRoster } from "../roster/index.ts";
 import {
+  emptyTally,
+  foldEvent,
   lastError,
   progressWriter,
   sessionOf,
@@ -63,7 +65,7 @@ import {
   readCodexHostDeclaration,
 } from "./codex-host.ts";
 import { resourceBriefFallback } from "./codex-resource-probe.ts";
-import { costUsd } from "../dispatch-cost.ts";
+import { costUsd } from "../../../shared/src/dispatch-pricing.ts";
 import { activityWriter } from "../lifecycle.ts";
 import { interimReturnWriter, parseReturn } from "../report.ts";
 import { progressIntervalMs, progressThrottle } from "../progress.ts";
@@ -110,12 +112,6 @@ const EXIT: Record<Outcome, number> = {
   timeout: 3,
   "stdin-wait": 3,
   spin: 3,
-};
-type Usage = {
-  input_tokens: number;
-  cached_input_tokens: number;
-  output_tokens: number;
-  reasoning_output_tokens: number;
 };
 
 // Synchronous writes: every exit path ends in process.exit, and an async write to a pipe can be
@@ -690,37 +686,9 @@ if (progress !== undefined && progress.failedWrites() > 0)
 
 // Usage is the sum over every turn.completed event (`--json` JSONL); a line that is not JSON, or
 // an event of another shape, carries no usage and is skipped.
-const Count = z
-  .number()
-  .int()
-  .nonnegative()
-  .or(z.unknown().transform(() => 0));
-const TurnCompleted = z.object({
-  type: z.literal("turn.completed"),
-  usage: z.object({
-    input_tokens: Count,
-    cached_input_tokens: Count,
-    output_tokens: Count,
-    reasoning_output_tokens: Count,
-  }),
-});
-const usage: Usage = {
-  input_tokens: 0,
-  cached_input_tokens: 0,
-  output_tokens: 0,
-  reasoning_output_tokens: 0,
-};
-let turns = 0;
-for (const line of events.split("\n")) {
-  const json = jsonText.safeParse(line);
-  const turn = json.success ? TurnCompleted.safeParse(json.data) : undefined;
-  if (turn?.success !== true) continue;
-  turns += 1;
-  usage.input_tokens += turn.data.usage.input_tokens;
-  usage.cached_input_tokens += turn.data.usage.cached_input_tokens;
-  usage.output_tokens += turn.data.usage.output_tokens;
-  usage.reasoning_output_tokens += turn.data.usage.reasoning_output_tokens;
-}
+const { usage, turns } = events
+  .split("\n")
+  .reduce((tally, line) => foldEvent(tally, line), emptyTally());
 const last = await attempt(() => readFileSync(lastFile, "utf8"));
 const lastMessage = last.ok ? last.value.trim() : "";
 const stderrTail = errText.trim().split("\n").slice(-20).join("\n");
@@ -735,14 +703,14 @@ const cause =
   `codex printed no error event; last stderr line: ${errText.trim().split("\n").at(-1) ?? ""}`;
 const session = sessionOf(events);
 const workerCostUsd =
-  turns === 0 || selectedPrices === undefined
+  usage === undefined || selectedPrices === undefined
     ? undefined
     : costUsd(selectedPrices, usage);
 const common = {
   ...(session === undefined ? {} : { session }),
   codex_exit: code,
   turns,
-  usage,
+  ...(usage === undefined ? {} : { usage }),
   ...(workerCostUsd === undefined ? {} : { cost_usd: workerCostUsd }),
   progress: progressSoFar,
   last_message: lastMessage,

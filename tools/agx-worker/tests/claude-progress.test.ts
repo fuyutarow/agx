@@ -93,9 +93,7 @@ test("the final Claude billed amount is retained alongside usage", () => {
   expect(tally.totalCostUsd).toBe(0.42);
   expect(tally.usage).toEqual({
     input_tokens: 100,
-    cached_input_tokens: 0,
     output_tokens: 20,
-    reasoning_output_tokens: 0,
   });
 });
 
@@ -115,6 +113,21 @@ test("assistant stream events expose usage before the final result arrives", () 
     input_tokens: 80,
     cached_input_tokens: 30,
     output_tokens: 12,
-    reasoning_output_tokens: 0,
   });
+});
+
+const event = (type: string, usage: unknown) => JSON.stringify({ type, usage });
+test("partial Claude usage preserves unknowns and final totals replace event sums", () => {
+  expect(
+    foldClaudeEvent(emptyTally(), event("assistant", {})).usage,
+  ).toBeUndefined();
+  const first = foldClaudeEvent(
+    emptyTally(),
+    event("assistant", { input_tokens: 0 }),
+  );
+  const next = foldClaudeEvent(first, event("assistant", { output_tokens: 5 }));
+  expect(next.usage).toEqual({ input_tokens: 0, output_tokens: 5 });
+  expect(
+    foldClaudeEvent(next, event("result", { output_tokens: 3 })).usage,
+  ).toEqual({ output_tokens: 3 });
 });

@@ -144,6 +144,18 @@ test("turn completion adds cumulative usage to progress", () => {
   expect(toProgress(t, "2026-10-06T00:00:00Z").turns).toBe(1);
 });
 
+test("partial and empty usage do not invent zero token counts", () => {
+  expect(
+    fold([ev({ type: "turn.completed", usage: {} })]).usage,
+  ).toBeUndefined();
+  const tally = fold([
+    ev({ type: "turn.completed", usage: { input_tokens: 0 } }),
+    ev({ type: "turn.completed", usage: { output_tokens: 5 } }),
+    ev({ type: "turn.completed", usage: { output_tokens: 2 } }),
+  ]);
+  expect(tally.usage).toEqual({ input_tokens: 0, output_tokens: 7 });
+});
+
 test("progress writer persists usage and row-priced cost immediately", () => {
   const dir = registerTempDir(
     mkdtempSync(join(tmpdir(), `agx-test-${process.pid}-codex-progress-cost-`)),

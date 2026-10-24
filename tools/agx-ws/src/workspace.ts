@@ -53,6 +53,11 @@ const bad = (message: string): Attempt<never> => ({
 });
 const good = <T>(value: T): Attempt<T> => ({ ok: true, value });
 const msg = (failed: { error: unknown }): string => errorMessage(failed.error);
+
+/** jj string literals allow raw UTF-8; only backslashes and double quotes need escaping. */
+export const rootFileFileset = (path: string): string =>
+  `root-file:"${path.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+
 const gcCollectionReason = (
   reason: string,
   result: Attempt<boolean>,
@@ -1118,7 +1123,7 @@ async function orphanFileDifference(
         "show",
         "-r",
         trunk,
-        `root-file:${path}`,
+        rootFileFileset(path),
       ],
       repo.backing,
     );
@@ -1462,14 +1467,14 @@ async function consumedChangesets(
     const tool = /^tools\/([^/]+)\/\.changes\/[^/]+\.md$/u.exec(path)?.[1];
     if (tool === undefined) continue;
     const present = await jjOut(
-      ["file", "list", "-r", trunk, `root-file:${path}`],
+      ["file", "list", "-r", trunk, rootFileFileset(path)],
       repo.backing,
       true,
     );
     if (!present.ok) return present;
     if (present.value.trim() !== "") continue;
     const note = await jjOut(
-      ["file", "show", "-r", tip, `root-file:${path}`],
+      ["file", "show", "-r", tip, rootFileFileset(path)],
       repo.backing,
       true,
     );
@@ -1480,7 +1485,13 @@ async function consumedChangesets(
       );
     if (match?.[1] === undefined) continue;
     const log = await jjOut(
-      ["file", "show", "-r", trunk, `root-file:tools/${tool}/CHANGELOG.md`],
+      [
+        "file",
+        "show",
+        "-r",
+        trunk,
+        rootFileFileset(`tools/${tool}/CHANGELOG.md`),
+      ],
       repo.backing,
       true,
     );
@@ -1497,7 +1508,7 @@ async function releaseMetadata(
   path: string,
 ): Promise<boolean> {
   const kind = basename(path);
-  const fileset = `root-file:${path}`;
+  const fileset = rootFileFileset(path);
   const before = await jjOut(
     ["file", "show", "-r", tip, fileset],
     repo.backing,
@@ -1562,7 +1573,7 @@ async function compareContent(
       trunk,
       "--summary",
       "--",
-      ...changed.map((path) => `root-file:${path}`),
+      ...changed.map((path) => rootFileFileset(path)),
     ],
     repo.backing,
     true,
@@ -1592,7 +1603,7 @@ async function compareContent(
           "--context",
           "0",
           "--",
-          ...pending.map((path) => `root-file:${path}`),
+          ...pending.map((path) => rootFileFileset(path)),
         ],
         repo.backing,
         true,
@@ -1611,7 +1622,7 @@ async function compareContent(
   for (const path of changed) {
     if (consumed.includes(path)) continue;
     if (delta !== undefined && !delta.has(path)) continue;
-    const fileset = `root-file:${path}`;
+    const fileset = rootFileFileset(path);
     // A recognized batch summary already tells us this exact file differs.
     // Only ambiguous rename/unknown displays need another per-file probe.
     const diff =

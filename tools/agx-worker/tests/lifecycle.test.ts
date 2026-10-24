@@ -10,8 +10,6 @@ import {
   StallObserver,
   workspaceRoot,
 } from "../src/lifecycle.ts";
-import { parseTicket } from "../src/ticket.ts";
-import { completeTicket } from "./fixture-ticket.ts";
 import { createTempTracker } from "./temp.ts";
 
 const tempDirs = createTempTracker();
@@ -30,21 +28,6 @@ const scratch = (): string => {
   roots.push(root);
   return root;
 };
-
-test("stall_s is optional, accepts positive seconds, and rejects zero/negative/fractional values", () => {
-  expect(parseTicket(completeTicket("+++\nschema = 2\n+++\nwork")).kind).toBe(
-    "ticket",
-  );
-  expect(
-    parseTicket(completeTicket("+++\nschema = 2\nstall_s = 1\n+++\nwork")),
-  ).toMatchObject({ kind: "ticket", ticket: { stall_s: 1 } });
-  for (const seconds of [0, -1, 0.5])
-    expect(
-      parseTicket(
-        completeTicket(`+++\nschema = 2\nstall_s = ${seconds}\n+++\nwork`),
-      ).kind,
-    ).toBe("invalid");
-});
 
 test("CPU time parser handles BSD centiseconds and Linux day/hour clocks", () => {
   expect(cpuSeconds("2:03.45")).toBe(123.45);

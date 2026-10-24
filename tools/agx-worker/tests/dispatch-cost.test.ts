@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { costUsd } from "../src/dispatch-cost.ts";
+import { costUsd } from "../../shared/src/dispatch-pricing.ts";
 
 describe("dispatch receipt cost", () => {
   test("prices uncached input, cached input, output and reasoning output", () => {

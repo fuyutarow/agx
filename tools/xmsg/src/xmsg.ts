@@ -17,6 +17,8 @@ import {
   relayStatus,
 } from "./relay-status.ts";
 
+import { waitForReply } from "./wait.ts";
+
 const unknownSender =
   "unknown (caller identity unavailable or inherited; use --from backend:<full-session-id>)";
 
@@ -181,6 +183,11 @@ async function main(): Promise<number> {
         process.exit(2);
       },
       flags: {
+        timing: {
+          type: Boolean,
+          description:
+            "Print discovery and transport elapsed milliseconds to stderr (send only)",
+        },
         json: {
           type: Boolean,
           description: "Machine-readable recipient inventory (list only)",
@@ -207,12 +214,12 @@ async function main(): Promise<number> {
         timeoutMs: {
           type: Number,
           default: 60_000,
-          description: "Send/discovery deadline in milliseconds",
+          description: "Send/discovery/wait deadline in milliseconds",
         },
       },
       help: {
         description:
-          "List recipients with agx msg list [--json], send once with agx msg send, or inspect a Claude relay with agx msg status --relay <session-UUID>. Sender: --from > AGX_MSG_FROM > unknown; never infer native session variables. The envelope from: line is caller attribution, not authentication. Claude from-name is relay transport, named agx msg relay from <sender or unknown>. List exits 0 complete, 3 incomplete. Send/status exit: 0 accepted, 1 rejected, 2 usage, 3 unreachable, 4 acceptance unknown.",
+          "Wait for exact reply input with agx msg wait --to codex:<full-UUID> --from backend:<full-UUID> --message TEXT [--timeout-ms N] (0 observed, 3 unobservable, 4 deadline; Claude inbox unsupported). List recipients with agx msg list [--json], send once with agx msg send, or inspect a Claude relay with agx msg status --relay <session-UUID>. Sender: --from > AGX_MSG_FROM > unknown; never infer native session variables. The envelope from: line is caller attribution, not authentication. Claude from-name is relay transport, named agx msg relay from <sender or unknown>. List exits 0 complete, 3 incomplete. Send/status exit: 0 accepted, 1 rejected, 2 usage, 3 unreachable, 4 acceptance unknown.",
       },
     }),
   );
@@ -221,11 +228,40 @@ async function main(): Promise<number> {
     return 2;
   }
   const args = parsed.value;
+  if (args._.action === "wait") {
+    const recipient = explicitSender(args.flags.to ?? "");
+    const sender = explicitSender(args.flags.from ?? "");
+    if (
+      recipient === undefined ||
+      sender === undefined ||
+      args.flags.message === undefined ||
+      args.flags.message.length === 0 ||
+      args._.length !== 1 ||
+      args.flags.json !== undefined ||
+      args.flags.timing !== undefined ||
+      args.flags.relay !== undefined ||
+      !Number.isInteger(args.flags.timeoutMs) ||
+      args.flags.timeoutMs < 1 ||
+      args.flags.timeoutMs > 2_147_483_647
+    ) {
+      process.stderr.write(
+        "agx msg: usage: agx msg wait --to backend:<full-UUID> --from backend:<full-UUID> --message TEXT [--timeout-ms N]\n",
+      );
+      return 2;
+    }
+    return waitForReply(
+      recipient,
+      sender,
+      args.flags.message,
+      args.flags.timeoutMs,
+    );
+  }
   if (args._.action === "status") {
     const session = canonicalUuid(args.flags.relay ?? "");
     if (
       session === undefined ||
       args._.length !== 1 ||
+      args.flags.timing !== undefined ||
       args.flags.to !== undefined ||
       args.flags.from !== undefined ||
       args.flags.message !== undefined ||
@@ -240,6 +276,7 @@ async function main(): Promise<number> {
   }
   if (args._.action === "list") {
     if (
+      args.flags.timing !== undefined ||
       args._.length !== 1 ||
       args.flags.to !== undefined ||
       args.flags.from !== undefined ||
@@ -291,7 +328,8 @@ async function main(): Promise<number> {
     );
     return 2;
   }
-  const deadline = performance.now() + timeoutMs;
+  const started = performance.now();
+  const deadline = started + timeoutMs;
   let target = canonicalUuid(id) ?? id;
   let claudeSnapshot: Awaited<ReturnType<typeof selectedInventory>> | undefined;
   if (kind === undefined) {
@@ -373,7 +411,32 @@ async function main(): Promise<number> {
     return 3;
   }
   if (kind !== "codex" && kind !== "claude") return 2;
-  return send(kind, target, message, remaining, sender, relayTarget);
+  const transportStarted = performance.now();
+  const outcome = await send(
+    kind,
+    target,
+    message,
+    remaining,
+    sender,
+    relayTarget,
+  );
+  if (args.flags.timing === true) {
+    process.stderr.write(
+      JSON.stringify({
+        timing: "agx msg send",
+        backend: kind,
+        discoveryMs: Math.round(transportStarted - started),
+        transportMs: Math.round(performance.now() - transportStarted),
+        totalMs: Math.round(performance.now() - started),
+        transport:
+          kind === "claude"
+            ? "one-shot claude --print model relay"
+            : "codex queue",
+        exit: outcome,
+      }) + "\n",
+    );
+  }
+  return outcome;
 }
 
 if (import.meta.main) {

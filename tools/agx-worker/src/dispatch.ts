@@ -48,6 +48,13 @@ const RunRow = z.looseObject({
   workspace: z.string().optional(),
   unit: z.string().optional(),
   sandbox: Sandbox.optional(),
+  sandbox_source: z.string().optional(),
+  sandbox_effective: z.string().optional(),
+  sandbox_effective_source: z.string().optional(),
+  row: z.string().optional(),
+  route: z.string().optional(),
+  model: z.string().optional(),
+  effort: z.string().optional(),
 });
 const Rows = jsonOf(z.array(RunRow));
 const WorkspaceResult = jsonOf(z.object({ workspace: z.string().min(1) }));
@@ -302,6 +309,7 @@ async function registeredWorkspace(
 
 export async function dispatch(options: {
   ticketPath: string;
+  json?: boolean;
   ws?: string;
   unit?: string;
   sandbox?: string;
@@ -574,6 +582,11 @@ export async function dispatch(options: {
     return 2;
   }
 
+  if (checked.err !== "")
+    process.stderr.write(
+      checked.err.endsWith("\n") ? checked.err : `${checked.err}\n`,
+    );
+
   const parsedBinding = DispatchBindingSchema.safeParse({
     id: randomUUID(),
     ticket: slug,
@@ -645,7 +658,23 @@ export async function dispatch(options: {
     listError = current.error;
     const run = current.rows?.find((row) => matches(row, binding));
     if (run !== undefined) {
-      process.stdout.write(`${run.id}\n`);
+      const receipt = {
+        id: run.id,
+        workspace: run.workspace ?? run.cwd,
+        row: run.row ?? null,
+        route: run.route ?? null,
+        model: run.model ?? null,
+        effort: run.effort ?? null,
+        sandbox: run.sandbox ?? sandbox,
+        sandbox_source: run.sandbox_source ?? sandbox_source,
+        sandbox_effective: run.sandbox_effective ?? null,
+        sandbox_effective_source: run.sandbox_effective_source ?? null,
+      };
+      process.stdout.write(
+        options.json === true
+          ? JSON.stringify(receipt) + "\n"
+          : `${run.id} workspace=${JSON.stringify(receipt.workspace)} row=${receipt.row ?? "unknown"} route=${receipt.route ?? "unknown"} model=${receipt.model ?? "unknown"} effort=${receipt.effort ?? "unknown"} sandbox=${receipt.sandbox} sandbox_source=${JSON.stringify(receipt.sandbox_source)} sandbox_effective=${receipt.sandbox_effective ?? "unknown"} sandbox_effective_source=${JSON.stringify(receipt.sandbox_effective_source)}\n`,
+      );
       return 0;
     }
     await Bun.sleep(100);
@@ -662,6 +691,7 @@ export async function dispatchMain(commandArgs: string[]): Promise<void> {
       name: "agx-worker dispatch",
       parameters: ["<ticket>"],
       flags: {
+        json: { type: Boolean, description: "print dispatch receipt as JSON" },
         ws: {
           type: String,
           description: "workspace slug (created as ws_<slug>)",
@@ -690,6 +720,7 @@ export async function dispatchMain(commandArgs: string[]): Promise<void> {
   const result = await attempt(() =>
     dispatch({
       ticketPath: parsed._.ticket,
+      json: parsed.flags.json ?? false,
       ...(parsed.flags.ws === undefined ? {} : { ws: parsed.flags.ws }),
       ...(parsed.flags.unit === undefined ? {} : { unit: parsed.flags.unit }),
       ...(parsed.flags.sandbox === undefined

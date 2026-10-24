@@ -3,7 +3,7 @@
 The distribution version is `tools/agx/package.json`. One GitHub release at
 `v<version>` contains the whole suite. Every command prints this suite version. Member manifest versions are synchronized
 for packaging only; consumer contracts retain their own schema numbers. Historical
-`<pkg>@<version>` tags remain untouched; new releases create only `v<version>`.
+`<pkg>@<version>` tags remain untouched; new releases create `v<version>` and `usehooks-v<version>`.
 The root `CHANGELOG.md` owns new entries; member changelogs are frozen history.
 
 ## Consumers
@@ -17,10 +17,17 @@ Install the whole suite with one mise entry:
 
 mise strips the leading `v` and finds the executables in `bin/`.
 
+Supported suite platforms are linux-x64, linux-arm64, darwin-x64 and
+darwin-arm64 (macOS). Assets use `agx-<version>-<os>-<arch>.tar.gz`.
+The OS tokens are `linux` and `darwin`; architecture tokens are `x64` and
+`arm64`. mise recognizes aliases including `macos`, `x86_64` and `aarch64`.
+Unsupported platforms have no suite archive and installation must fail.
+There is no library fallback on the suite release.
+
 For a Bun library consumer, pin the release asset in `package.json`:
 
 ```json
-"agx-usehooks": "https://github.com/fuyutarow/agx/releases/download/v<version>/agx-usehooks-<version>.tgz"
+"agx-usehooks": "https://github.com/fuyutarow/agx/releases/download/usehooks-v<version>/agx-usehooks-<version>.tgz"
 ```
 
 Both asset versions are the suite version.
@@ -62,8 +69,8 @@ agx-worker, agx-ws, agx-ticket, agx-status, agx-msg, xmsg and jex.
 Messaging is compiled once as `agx-msg`; `xmsg` is a hard link to it inside `bin/`.
 The tar archive retains the hard link when extracted, so both names share one
 executable. Messaging help, version output and diagnostics name `agx msg`.
-The second asset is `dist/agx-usehooks-<version>.tgz`, a platform-independent ESM library.
-Both paths and SHA-256 checksums are printed. Staging is cleared before building.
+A separate library build produces `dist/agx-usehooks-<version>.tgz`, a platform-independent ESM library.
+Asset paths and SHA-256 checksums are printed. Staging is cleared before building.
 
 The default target is the host. `--target bun-linux-x64` selects cross compilation;
 its Bun compiler runtime must already be available for offline builds. Other Bun
@@ -77,8 +84,11 @@ Publishing accepts only `suite`. A member argument exits 2 with a pointer to the
 suite command. Publishing defaults to dry-run and refuses a dirty tree, a branch
 other than alpha, an existing suite tag, or missing version changelog entries.
 
-The preview builds both assets and prints exact shell-quoted commands for the
-suite Git tag and one GitHub release at `v<version>`.
+The preview builds all four suite archives plus the library and prints exact
+shell-quoted commands for two Git tags and two releases. The library is published
+first at `usehooks-v<version>` with `--latest=false`; the suite release at
+`v<version>` contains only the four platform archives and becomes latest.
+Publishing refuses `--target` so a partial suite cannot be published.
 It creates an empty draft, uploads each asset separately, inspects the assets
 with `gh release view --json assets`, and publishes with `--draft=false --latest`
 only after every expected asset is `uploaded` with the local file's byte size.
@@ -101,11 +111,13 @@ Re-upload the assets to the existing draft with `--clobber`, then inspect them:
 
 ```sh
 gh release upload v<version> dist/agx-<version>-linux-x64.tar.gz --clobber
-gh release upload v<version> dist/agx-usehooks-<version>.tgz --clobber
+gh release upload v<version> dist/agx-<version>-linux-arm64.tar.gz --clobber
+gh release upload v<version> dist/agx-<version>-darwin-x64.tar.gz --clobber
+gh release upload v<version> dist/agx-<version>-darwin-arm64.tar.gz --clobber
 gh release view v<version> --json assets
 ```
 
-Check that both names appear exactly once, each state is `uploaded`, and each size
+Check that all four suite names appear exactly once, each state is `uploaded`, and each size
 equals its local file's byte size. Only after those checks, publish the draft:
 
 ```sh
@@ -115,3 +127,42 @@ gh release edit v<version> --draft=false --latest
 Do not re-create the release or rerun `release:publish` to recover a failed
 upload: local tags may already exist. If creation or final publication fails,
 inspect the remote release state before using the recovery commands.
+
+Library draft recovery uses the same upload and view checks with tag
+`usehooks-v<version>` and its single `agx-usehooks-<version>.tgz` asset.
+Finalize that release with `--draft=false --latest=false`. If the library was
+already published when suite publication failed, leave it published and recover
+only the suite draft using the printed commands.
+
+## Upgrade safety release notes
+
+Every release must include an **Upgrade safety** entry in its root changelog
+section, which is included in the generated release notes. Review this entry
+before publishing; absent evidence means **drain runs before upgrading**.
+This is a release review requirement, not an automated publisher check.
+
+The entry must state:
+
+- Whether upgrading with runs active is supported, and from which exact suite
+  versions. Give evidence for mixed-version readers and writers; otherwise say
+  to stop new dispatches and wait for runs to end.
+- That active units retain their original absolute ExecStart executable and
+  require the complete old installation until they end. Include the consequence
+  of pruning it: later starts or self-reentry can fail.
+- Which consumer contract schema numbers change, whether state migration is
+  required, and whether the previous version can read newly written records.
+- Exact migration and rollback actions, backup requirements, and any events lost
+  by restoring a backup. Link to [the upgrade procedure](upgrading.md).
+- Expected install time, identifying an observation or measurement rather than
+  promising a fixed bound. The current consumer observation is about 25 seconds.
+
+For a release without pair-specific compatibility evidence, use an entry such as:
+
+> Upgrade safety: drain active runs before upgrading. Retain old installs until
+> their runs end; pruning can break child re-entry through the old absolute path.
+> State compatibility and rollback: document the reviewed schemas and migration
+> steps here before publication. See the upgrade guide for backup and pin steps.
+
+Replace the state-compatibility placeholder with concrete reviewed facts before
+publishing. A version number or unchanged schema number alone is not evidence of
+concurrent writer compatibility.

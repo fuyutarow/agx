@@ -1,6 +1,7 @@
 export const COMMAND_NAMES = [
   "dispatch",
   "run",
+  "stop",
   "check",
   "ls",
   "judge",

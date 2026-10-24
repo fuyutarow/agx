@@ -195,8 +195,16 @@ async function run(
       name?: string;
       cwd?: string;
       status: { type: string };
+      turns?: Array<{
+        items: Array<{
+          id: string;
+          type: string;
+          content: Array<{ type: string; text: string }>;
+        }>;
+      }>;
     }>;
     codexError?: boolean;
+    replyAfterReads?: number;
     inventory?: string;
     inventoryDelay?: number;
     discoveryDelay?: number;
@@ -230,6 +238,7 @@ async function run(
     );
   }
   let server: ReturnType<typeof Bun.serve> | undefined;
+  let readCount = 0;
   if (options.threads !== undefined || options.codexError === true) {
     await mkdir(join(root, "app-server-control"));
     server = Bun.serve({
@@ -266,12 +275,18 @@ async function run(
               data: options.threads?.map((t) => t.id),
               nextCursor: null,
             };
-          if (request.method === "thread/read")
+          if (request.method === "thread/read") {
+            readCount++;
             response = {
-              thread: options.threads?.find(
-                (t) => t.id === request.params.threadId,
-              ),
+              thread: options.threads
+                ?.map((t) =>
+                  readCount < (options.replyAfterReads ?? 0)
+                    ? { ...t, turns: [] }
+                    : t,
+                )
+                .find((t) => t.id === request.params.threadId),
             };
+          }
           await Bun.sleep(options.discoveryDelay ?? 0);
           ws.send(JSON.stringify({ id: request.id, result: response }));
         },
@@ -340,6 +355,8 @@ process.exit(Number(process.env.XMSG_FAKE_EXIT ?? 0));
         ...process.env,
         PATH: root,
         HOME: root,
+        AGX_STATE_DIR: join(root, "agx-state"),
+        XDG_STATE_HOME: join(root, "xdg-state"),
         CODEX_HOME: root,
         CODEX_THREAD_ID: undefined,
         CODEX_SESSION_ID: undefined,
@@ -1715,4 +1732,169 @@ test("additional metadata and final-result fields preserve a complete no-send re
   });
   expect(r.exit).toBe(3);
   expect(r.stderr).toContain("no SendMessage attempted");
+});
+
+const replySender = "codex:aaaaaaaa-1234-4abc-8def-0123456789ab";
+const replyTarget = "bbbbbbbb-1234-4abc-8def-0123456789ab";
+test.each([replyTarget, "peer"])(
+  "Codex sender replies to Claude %s with a correlated acceptance",
+  async (target) => {
+    const text = envelope(
+      message,
+      replySender,
+      target === "peer" ? undefined : target,
+    );
+    const event = {
+      ...use,
+      message: {
+        ...use.message,
+        content: [
+          { ...use.message.content[0], input: { to: "peer", message: text } },
+        ],
+      },
+    };
+    const r = await run({
+      args: [
+        "send",
+        "--to",
+        "claude:" + target,
+        "--from",
+        replySender,
+        "--message",
+        message,
+      ],
+      inventory: JSON.stringify([
+        { sessionId: replyTarget, name: "peer", status: "busy" },
+      ]),
+      output: completeStream(event, accepted),
+    });
+    expect(r.exit).toBe(0);
+    expect(r.stdout).toContain(msgId);
+    expect(r.argv.at(-1)).toContain(JSON.stringify(text));
+    expect(r.argv.at(-1)).toContain('Target: "peer"');
+  },
+);
+const waitArgs = [
+  "wait",
+  "--to",
+  "codex:" + replyTarget,
+  "--from",
+  replySender,
+  "--message",
+  "reply nonce-1024",
+  "--timeout-ms",
+  "150",
+];
+const input = (text: string, type = "userMessage") => ({
+  id: "input-1024",
+  type,
+  content: [{ type: "text", text }],
+});
+const replyThread = (items: ReturnType<typeof input>[]) => [
+  { id: replyTarget, status: { type: "idle" }, turns: [{ items }] },
+];
+test("wait succeeds only with exact addressed native user input evidence", async () => {
+  const r = await run({
+    args: waitArgs,
+    threads: replyThread([input(envelope("reply nonce-1024", replySender))]),
+  });
+  expect(r.exit).toBe(0);
+  const parsed = jsonOf(z.object({ itemId: z.string() })).safeParse(r.stdout);
+  expect(parsed.success && parsed.data.itemId).toBe("input-1024");
+  expect(r.stderr).toContain("waiting up to");
+  expect(r.called).toBe(false);
+});
+test.each([
+  input(envelope("wrong body", replySender)),
+  input(envelope("reply nonce-1024", "claude:" + replyTarget)),
+  input(envelope("reply nonce-1024", replySender), "agentMessage"),
+  input("accepted for codex:" + replyTarget),
+])("wait cannot turn non-reply evidence into success: %j", async (item) => {
+  const r = await run({ args: waitArgs, threads: replyThread([item]) });
+  expect(r.exit).toBe(4);
+  expect(r.stdout).toBe("");
+  expect(r.stderr).toContain("no matching native thread input");
+});
+test("wait refuses Claude inbox observation without calling a vendor", async () => {
+  const r = await run({
+    args: [
+      "wait",
+      "--to",
+      "claude:" + replyTarget,
+      "--from",
+      replySender,
+      "--message",
+      "nonce",
+    ],
+  });
+  expect(r.exit).toBe(3);
+  expect(r.stderr).toContain("no inbox read API");
+  expect(r.called).toBe(false);
+});
+test("wait reports absent Codex endpoint as unavailable", async () => {
+  const r = await run({ args: waitArgs });
+  expect(r.exit).toBe(3);
+  expect(r.stdout).toBe("");
+});
+test("wait rejects names, missing sender and invalid deadlines", async () => {
+  for (const args of [
+    ["wait"],
+    [...waitArgs, "--to", "codex:peer"],
+    [...waitArgs, "--timeout-ms", "0"],
+  ]) {
+    const r = await run({ args });
+    expect(r.exit).toBe(2);
+    expect(r.called).toBe(false);
+  }
+});
+
+test("send timing measures discovery separately from the one-shot Claude relay", async () => {
+  const r = await run({
+    args: ["send", "--to", "claude:peer", "--message", message, "--timing"],
+    output: completeStream(use, accepted),
+    delay: 80,
+  });
+  expect(r.exit).toBe(0);
+  const parsed = jsonOf(
+    z.object({
+      transport: z.string(),
+      transportMs: z.number(),
+      totalMs: z.number(),
+      discoveryMs: z.number(),
+    }),
+  ).safeParse(r.stderr.trim());
+  expect(parsed.success).toBe(true);
+  if (!parsed.success) return;
+  const timing = parsed.data;
+  expect(timing.transport).toBe("one-shot claude --print model relay");
+  expect(timing.transportMs).toBeGreaterThanOrEqual(70);
+  expect(timing.totalMs).toBeGreaterThanOrEqual(timing.transportMs);
+  expect(timing.discoveryMs).toBeLessThan(timing.transportMs);
+  process.stdout.write(
+    `Fixture latency measurement: ${JSON.stringify(timing)}\n`,
+  );
+});
+
+test("wait deadline covers a backend that never answers before expiry", async () => {
+  const r = await run({
+    args: waitArgs,
+    threads: replyThread([]),
+    discoveryDelay: 300,
+  });
+  expect(r.exit).toBe(4);
+  expect(r.stdout).toBe("");
+  expect(r.stderr).toContain("reply deadline exceeded");
+});
+
+test("wait polls until a reply becomes native thread input", async () => {
+  const r = await run({
+    args: [...waitArgs, "--timeout-ms", "1500"],
+    threads: replyThread([input(envelope("reply nonce-1024", replySender))]),
+    replyAfterReads: 2,
+  });
+  expect(r.exit).toBe(0);
+  const parsed = jsonOf(z.object({ elapsedMs: z.number() })).safeParse(
+    r.stdout,
+  );
+  expect(parsed.success && parsed.data.elapsedMs >= 200).toBe(true);
 });

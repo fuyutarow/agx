@@ -68,8 +68,13 @@ const EventSchema = z.discriminatedUnion("kind", [
     unit: z.string().optional(),
     workspace_name: z.string().optional(),
     row: z.string(),
+    route: z.string().optional(),
+    model: z.string().optional(),
+    effort: z.string().optional(),
     sandbox: Sandbox.optional(),
     sandbox_source: SandboxSource.optional(),
+    sandbox_effective: z.string().optional(),
+    sandbox_effective_source: z.string().optional(),
     dispatcher_session: z.string().nullable(),
     vendor_session: z.string().nullable(),
     continues: z.string().nullable().optional(),
@@ -86,6 +91,14 @@ const EventSchema = z.discriminatedUnion("kind", [
     pick_audit: PickAuditSchema.optional(),
     legacy_key: z.string().optional(),
     legacy: LegacyIdentity.optional(),
+  }),
+  z.looseObject({
+    kind: z.literal("stop-requested"),
+    legacy_key: z.string().optional(),
+    id: z.string(),
+    at: z.string(),
+    stopped_by: z.string(),
+    vendor_session: z.string().nullable().optional(),
   }),
   z.looseObject({
     kind: z.literal("progress"),
@@ -110,6 +123,7 @@ const EventSchema = z.discriminatedUnion("kind", [
     outcome: Outcome.optional(),
     evidence: Evidence.optional(),
     signal: StopSignal.optional(),
+    stopped_by: z.string().optional(),
     report_path: z.string().nullable(),
     vendor_session: z.string().nullable(),
     verify: z.array(VerifyResult).default([]),
@@ -132,6 +146,7 @@ const EventSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 export type NextEvent = z.output<typeof EventSchema>;
+const EventTextSchema = jsonOf(EventSchema);
 
 import { stateDir } from "../state.ts";
 export { stateDir };
@@ -218,7 +233,7 @@ export function events(root = stateDir()): NextEvent[] {
   if (!text.endsWith("\n")) lines.pop();
   const parsed = lines
     .filter((line) => line !== "")
-    .map((line) => jsonOf(EventSchema).safeParse(line));
+    .map((line) => EventTextSchema.safeParse(line));
   const invalid = parsed.find((event) => !event.success);
   if (invalid !== undefined)
     exitWithError(
@@ -552,6 +567,7 @@ const SnapshotSchema = z
     size: z.number().int().nonnegative(),
     offset: z.number().int().nonnegative(),
     runs: z.array(RunSchema),
+    malformed: z.array(LegacyRow),
   })
   .refine((snapshot) => snapshot.offset <= snapshot.size);
 
@@ -574,8 +590,13 @@ function foldInto(runs: Map<string, FoldedRun>, input: NextEvent[]): void {
         exit: null,
         outcome: null,
         row: event.row,
+        route: event.route,
+        model: event.model,
+        effort: event.effort,
         sandbox: event.sandbox,
         sandbox_source: event.sandbox_source,
+        sandbox_effective: event.sandbox_effective,
+        sandbox_effective_source: event.sandbox_effective_source,
         worker_name: event.worker_name ?? `agt_${event.ticket}`,
         unit: event.unit ?? event.worker_name ?? `agt_${event.ticket}`,
         workspace_name: event.workspace_name ?? basename(event.workspace),
@@ -606,6 +627,7 @@ function foldInto(runs: Map<string, FoldedRun>, input: NextEvent[]): void {
     if (event.kind === "ended") {
       run.state = "ended";
       run.signal = event.signal;
+      run.stopped_by = event.stopped_by;
       run.evidence = event.evidence;
       run.ended_at = event.at;
       run.exit = event.exit;
@@ -701,7 +723,7 @@ export function recordCursor(root = stateDir()) {
       .toString("utf8")
       .split("\n")
       .filter((line) => line !== "")
-      .map((line) => jsonOf(EventSchema).safeParse(line));
+      .map((line) => EventTextSchema.safeParse(line));
     const invalid = input.find((event) => !event.success);
     if (invalid !== undefined)
       return exitWithError(
@@ -724,8 +746,20 @@ export async function foldedRuns(root = stateDir()) {
   return readFoldedRuns(root);
 }
 
-/** Read only bytes after the last complete line folded into the snapshot. */
-async function readFoldedRuns(root: string) {
+/** Decode legacy records before applying listing visibility; preserve raw failures. */
+export async function listingHistory(workspace?: string, root = stateDir()) {
+  const malformed: Record<string, unknown>[] = [];
+  const runs =
+    workspace === undefined
+      ? await readFoldedRuns(root, malformed)
+      : await workspaceRuns(workspace, root, malformed);
+  return { runs, malformed };
+}
+
+async function readFoldedRuns(
+  root: string,
+  malformed?: Record<string, unknown>[],
+) {
   const path = recordPath(root);
   if (!existsSync(path)) return [];
   const fd = openSync(path, "r");
@@ -734,6 +768,8 @@ async function readFoldedRuns(root: string) {
   const snapshot = parsed.success ? parsed.data : undefined;
   const valid =
     snapshot !== undefined &&
+    // Strict readers must still reject malformed imports cached by a listing.
+    (malformed !== undefined || snapshot.malformed.length === 0) &&
     snapshot.inode === stat.ino &&
     snapshot.device === stat.dev &&
     stat.size >= snapshot.size &&
@@ -742,6 +778,7 @@ async function readFoldedRuns(root: string) {
   const runs = new Map<string, FoldedRun>(
     valid ? snapshot.runs.map((run) => [run.id, run]) : [],
   );
+  const malformedRows = valid ? snapshot.malformed : [];
   const read = fromThrowable(() => {
     const bytes = Buffer.alloc(stat.size - offset);
     let length = 0;
@@ -769,7 +806,23 @@ async function readFoldedRuns(root: string) {
     .toString("utf8")
     .split("\n")
     .filter((line) => line !== "")
-    .map((line) => jsonOf(EventSchema).safeParse(line));
+    .flatMap((line) => {
+      const event = EventTextSchema.safeParse(line);
+      if (!event.success && malformed !== undefined) {
+        const raw = jsonOf(z.record(z.string(), z.unknown())).safeParse(line);
+        if (
+          raw.success &&
+          raw.data.kind === "started" &&
+          (LegacyIdentity.safeParse(raw.data.legacy).success ||
+            (typeof raw.data.legacy_key === "string" &&
+              raw.data.legacy_key.startsWith("run:")))
+        ) {
+          malformedRows.push(raw.data);
+          return [];
+        }
+      }
+      return [event];
+    });
   const invalid = input.find((event) => !event.success);
   if (invalid !== undefined)
     exitWithError(
@@ -780,6 +833,7 @@ async function readFoldedRuns(root: string) {
     runs,
     input.flatMap((event) => (event.success ? [event.data] : [])),
   );
+  malformed?.push(...malformedRows);
   foldCache.set(path, {
     version: 1,
     inode: stat.ino,
@@ -787,6 +841,7 @@ async function readFoldedRuns(root: string) {
     size: stat.size,
     offset: offset + complete,
     runs: [...runs.values()],
+    malformed: malformedRows,
   });
   return liveRuns(runs, stat, root);
 }
@@ -826,6 +881,7 @@ const workspacePublicationPath = (workspace: string, root: string) =>
 export async function workspaceRuns(
   workspace: string,
   root = stateDir(),
+  malformed?: Record<string, unknown>[],
 ): Promise<ListedRun[]> {
   const before = await recordIdentity(root);
   const publication = jsonOf(WorkspacePublication).safeParse(
@@ -849,7 +905,10 @@ export async function workspaceRuns(
   process.stderr.write(
     `agx: workspace publication missing, invalid, or stale; scanning records.jsonl for ${workspace}\n`,
   );
-  const runs = await foldedRuns(root);
+  const runs =
+    malformed === undefined
+      ? await foldedRuns(root)
+      : await readFoldedRuns(root, malformed);
   const canonical = new Map(
     await Promise.all(
       [...new Set(runs.map((run) => run.workspace))].map(
@@ -917,8 +976,20 @@ async function liveRuns(
 ): Promise<ListedRun[]> {
   const listed: ListedRun[] = [];
   const losses = new Set<string>();
+  const retired = join(dirname(root), "agx-next") + "/";
+  const reports = new Map<string, string>();
+  const currentReport = (path: string | null) => {
+    if (path === null || !path.startsWith(retired)) return path;
+    const cached = reports.get(path);
+    if (cached !== undefined) return cached;
+    const current = join(root, path.slice(retired.length));
+    const result = existsSync(current) ? current : path;
+    reports.set(path, result);
+    return result;
+  };
   for (const stored of runs.values()) {
     const run = { ...stored };
+    run.report_path = currentReport(run.report_path);
     run.worker_name ??= `agt_${run.ticket}`;
     run.workspace_name ??= basename(run.workspace);
     // Old event logs and snapshots used verify-failed for every nonzero check.
@@ -937,7 +1008,10 @@ async function liveRuns(
       });
     const endedAt = run.ended_at;
     const elapsedResult =
-      endedAt === null
+      endedAt === null ||
+      run.returned !== false ||
+      run.changed_files !== 0 ||
+      run.exit !== 0
         ? undefined
         : fromThrowable(
             () =>

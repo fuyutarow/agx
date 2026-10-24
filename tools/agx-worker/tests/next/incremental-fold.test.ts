@@ -8,6 +8,7 @@ import {
   flushRunPublications,
   foldedRuns,
   fullFoldedRuns,
+  listingHistory,
   recordPath,
   type NextEvent,
 } from "../../src/next/store.ts";
@@ -151,6 +152,59 @@ test("warm fold reads exactly appended record bytes and zero for unchanged histo
   whole.mockRestore();
   read.mockRestore();
   expect(await foldedRuns()).toEqual(await fullFoldedRuns());
+});
+
+test("warm listing retains malformed imports without rereading history, while strict folds reject them", async () => {
+  const root = fixture();
+  append(started("native", process.pid));
+  await flushRunPublications();
+  await foldedRuns();
+  const malformed = {
+    ...started("legacy"),
+    row: 42,
+    legacy: { run_id: "old", source: "legacy-v1" },
+  };
+  const before = fs.statSync(recordPath()).size;
+  await appendFile(recordPath(), `${JSON.stringify(malformed)}\n`);
+  const appended = fs.statSync(recordPath()).size - before;
+  const read = spyOn(fs, "readSync");
+  const whole = spyOn(fs, "readFileSync");
+  const output = spyOn(process.stdout, "write").mockImplementation(() => true);
+  const warning = spyOn(process.stderr, "write").mockImplementation(() => true);
+  using _restore = {
+    [Symbol.dispose]: () => {
+      warning.mockRestore();
+      output.mockRestore();
+      whole.mockRestore();
+      read.mockRestore();
+    },
+  };
+  const history = await listingHistory();
+  expect(history.runs.map((run) => run.id)).toEqual(["native"]);
+  expect(history.malformed).toEqual([malformed]);
+  expect(read.mock.calls).toHaveLength(1);
+  expect(read.mock.calls[0]?.[2]?.length).toBe(appended);
+  expect(read.mock.calls[0]?.[2]?.position).toBe(before);
+  read.mockClear();
+  expect(await listingHistory()).toEqual(history);
+  expect(await list({ json: true })).toBe(0);
+  expect(warning.mock.calls[0]?.[0]).toContain("hidden_legacy=1");
+  expect(await list({ json: true, includeLegacy: true })).toBe(0);
+  expect(output.mock.calls.at(-1)?.[0]).toContain('"row":42');
+  expect(read.mock.calls).toHaveLength(0);
+  expect(whole.mock.calls.some(([path]) => path === recordPath())).toBe(false);
+  const strict = Bun.spawnSync(
+    [
+      process.execPath,
+      "-e",
+      'import { listingHistory, foldedRuns } from "./tools/agx-worker/src/next/store.ts"; await listingHistory(); await foldedRuns();',
+    ],
+    { env: { ...process.env, AGX_STATE_DIR: root }, timeout: 5000 },
+  );
+  expect(strict.exitCode).toBe(1);
+  expect(strict.stderr.toString()).toContain("invalid record log line");
+  fs.writeFileSync(recordPath(), "");
+  expect(await listingHistory()).toEqual({ runs: [], malformed: [] });
 });
 
 test("partial UTF-8 tail is reread, and rotation, truncation, corrupt cache and version changes rebuild", async () => {

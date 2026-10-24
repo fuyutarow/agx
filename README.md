@@ -1,6 +1,14 @@
 # agx
 
-agx operates and observes local agent sessions and runs. A suite member owns one state or is stateless; members compose through CLI commands and `--json` output, importing only their own package and `packages/core`. General filters that also accept non-agent input, and tools for machine-wide resources, display, or search, are outside the suite. The planned colocated non-member `jex` shares the Jev client in core. Consumer-facing specifications live in [contract/](contract/); this repository currently contains only its independent build and gate skeleton.
+agx operates and observes local agent sessions and runs. A suite member owns one state or is stateless; members compose through CLI commands and `--json` output, importing only their own package and `packages/core`. General filters that also accept non-agent input, and tools for machine-wide resources, display, or search, are outside the suite. The planned colocated non-member `jex` shares the Jev client in core. Consumer-facing specifications live in [contract/](contract/).
+
+For a standalone checkout, run `mise run setup` to install locked dependencies;
+`mise run up` updates them. Command installation and distribution are described in
+[Suite releases](docs/release.md). For installation changes, active-run safety,
+and rollback, see [Upgrading agx](docs/upgrading.md). Suite archives support
+linux-x64, linux-arm64, darwin-x64, and darwin-arm64. Local library linking is documented in
+[agx-usehooks](tools/agx-usehooks/README.md). Acceptance, landing, and host hook
+deployment belong to the consumer repository.
 
 ## Agent skill
 

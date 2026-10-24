@@ -6,6 +6,7 @@ import {
   readFile,
   readdir,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -44,6 +45,70 @@ const overlapStartedRecord = (
     vendor_session: null,
     pid: process.pid,
   });
+
+test("public check warns about user bus and shared VCS store without changing ticket or sandbox", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agx-sandbox-check-"));
+  roots.push(root);
+  await prepareTicketRepo(root);
+  const workspace = join(root, "workspace");
+  await mkdir(workspace);
+  const bin = join(root, "bin");
+  await mkdir(bin);
+  await symlink(
+    resolve("tools/agx-worker/src/next/cli.ts"),
+    join(bin, "agx-worker"),
+  );
+  const ticket = join(root, "sandbox-warning.md");
+  const original =
+    '+++\nschema = 2\nname = "sandbox-warning"\noutcome = "fixture"\nwrites = ["src/**"]\nverify = ["systemctl --user status fixture"]\n[proposition]\nid = "SANDBOX"\nclaim = "warning before start"\nrefuted_by = "silent dispatch"\n+++\n';
+  await writeFile(ticket, original);
+  for (const sandbox of ["workspace-write", "none"]) {
+    const child = Bun.spawn(
+      [
+        process.execPath,
+        resolve("tools/agx/src/agx.ts"),
+        "worker",
+        "check",
+        ticket,
+        "--cd",
+        workspace,
+        "--sandbox",
+        sandbox,
+      ],
+      {
+        env: {
+          ...inheritedEnv(),
+          PATH: `${bin}:${process.env.PATH}`,
+          AGX_STATE_DIR: join(root, "state"),
+          XDG_STATE_HOME: join(root, "xdg-state"),
+          XDG_CONFIG_HOME: join(root, "config"),
+          AGX_CONFIG: new URL(
+            "../../src/roster/policy.example.toml",
+            import.meta.url,
+          ).pathname,
+        },
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 15000,
+      },
+    );
+    const [exit, out, err] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    expect(exit, err).toBe(0);
+    expect(out).toContain("OK ticket=sandbox-warning");
+    if (sandbox === "workspace-write") {
+      expect(err).toContain("capability=user-systemd-bus");
+      expect(err).toContain("capability=external-vcs-store-write");
+      expect(err).toContain("verify[0]: systemctl --user status fixture");
+      expect(err).toContain("writes[0]: src/**");
+    } else expect(err).not.toContain("WARN sandbox");
+    expect(await readFile(ticket, "utf8")).toBe(original);
+  }
+}, 30000);
 
 test("schema failures include every invalid field and write glob", () => {
   const parsed = parseNextTicket(

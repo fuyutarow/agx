@@ -1,5 +1,11 @@
 # Harness VCS reads and REDO-JJSAFE4 disposition
 
+Historical patch-recovery inventory. The call-site counts, host hook paths, and
+verification statements below describe that recovery episode, not the current
+standalone suite or installed host wiring. Retained paths are evidence labels;
+they do not require runtime shims. Current worker ownership is documented in
+[scope and ownership](scope.md).
+
 Audience: maintainers reviewing the recovered patch against alpha `3d7c611804d4`.
 Source: `$HOME/.cache/coord/triage2/consumer-ws-jjsafe4.patch`;
 triage: `verdicts.tsv` marks it REDO; its adjacent `.desc` file is empty.

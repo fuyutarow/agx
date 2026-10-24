@@ -1,17 +1,12 @@
 #!/usr/bin/env bun
-import { check, judgeRun, list, run, stats, type Flags } from "./run.ts";
+import type { Flags } from "./run.ts";
+import { stopRun } from "./stop.ts";
 import { waitRun } from "./wait.ts";
 import { COMMAND_NAMES } from "./commands.ts";
 import { cli as cleyeCli, command } from "cleye";
 import { standardCli } from "../../../shared/src/cli.ts";
 import { exitWithError } from "./exit.ts";
 import { flushRunPublications, stateDir } from "./store.ts";
-import { doctor } from "./doctor.ts";
-import { roster } from "./public.ts";
-import { host } from "./host.ts";
-import { jevUsageStats } from "./jev-usage.ts";
-import { routingStats } from "./routing-stats.ts";
-import { probe } from "./probe.ts";
 import packageJson from "../../package.json" with { type: "json" };
 
 const cliArgv = () => process.argv.slice(2);
@@ -95,9 +90,30 @@ async function main(): Promise<void> {
       undefined,
       commandArgs,
     );
+    const { probe } = await import("./probe.ts");
     process.exitCode = await probe(parsed.flags, parsed._.length);
     return;
+  } else if (commandName === "stop") {
+    const parsed = cli(
+      {
+        name: "agx worker stop",
+        parameters: ["<run>"],
+        strictFlags: true,
+        ignoreArgv: rejectPrototypeFlag,
+        help: {
+          description:
+            "Stop an agx run by exact ID or unique prefix, recording who stopped it.",
+        },
+      },
+      undefined,
+      commandArgs,
+    );
+    if (parsed._.length !== 1) {
+      process.stderr.write("agx worker stop: expected one run ID\n");
+      exit = 2;
+    } else exit = await stopRun(parsed._[0]!);
   } else if (commandName === "host") {
+    const { host } = await import("./host.ts");
     exit = host(commandArgs);
   } else if (commandName === "dispatch") {
     const { dispatchMain } = await import("../dispatch.ts");
@@ -158,6 +174,7 @@ async function main(): Promise<void> {
       session: parsed.flags.session,
       dispatchBinding: parsed.flags.dispatchBinding,
     } satisfies Flags;
+    const { run } = await import("./run.ts");
     exit = await run(flags);
   } else if (commandName === "check") {
     const parsed = cli(
@@ -186,6 +203,7 @@ async function main(): Promise<void> {
       undefined,
       commandArgs,
     );
+    const { check } = await import("./run.ts");
     exit = await check({
       ticket: parsed._[0],
       cd: parsed.flags.cd,
@@ -217,6 +235,10 @@ async function main(): Promise<void> {
             description:
               "with --json, include running counts by dispatcher session",
           },
+          includeLegacy: {
+            type: Boolean,
+            description: "include malformed imported legacy runs",
+          },
           all: { type: Boolean, description: "show every run" },
           workspace: {
             type: String,
@@ -240,6 +262,7 @@ async function main(): Promise<void> {
       process.exitCode = 2;
       return;
     }
+    const { list } = await import("./list-command.ts");
     exit =
       parsed.flags.wait === true
         ? await waitRun({
@@ -268,6 +291,7 @@ async function main(): Promise<void> {
       undefined,
       commandArgs,
     );
+    const { judgeRun } = await import("./run.ts");
     exit = await judgeRun({
       id: parsed._[0],
       decision: parsed._[1],
@@ -326,13 +350,18 @@ async function main(): Promise<void> {
       );
       exit = 2;
     } else if (parsed.flags.usage === "jev") {
+      const { jevUsageStats } = await import("./jev-usage.ts");
       exit = await jevUsageStats(parsed.flags.window ?? "7d");
     } else if (parsed.flags.routing === true) {
+      const { routingStats } = await import("./routing-stats.ts");
       exit = await routingStats(
         parsed.flags.window ?? "24h",
         parsed.flags.host,
       );
-    } else exit = await stats(parsed.flags satisfies Flags);
+    } else {
+      const { stats } = await import("./run.ts");
+      exit = await stats(parsed.flags satisfies Flags);
+    }
   } else if (commandName === "doctor") {
     if (Object.hasOwn(process.env, "AGX_DOCTOR_QUIET")) {
       process.stderr.write(
@@ -361,6 +390,7 @@ async function main(): Promise<void> {
       undefined,
       commandArgs,
     );
+    const { doctor } = await import("./doctor.ts");
     exit = await doctor(parsed.flags.quiet === true);
   } else if (commandName === "roster") {
     const parsed = cli(
@@ -380,6 +410,7 @@ async function main(): Promise<void> {
       undefined,
       commandArgs,
     );
+    const { roster } = await import("./public.ts");
     if (parsed._[0] !== undefined) exit = await roster(parsed._[0]);
     else if (parsed.flags.json === true) exit = await roster();
     else {

@@ -21,6 +21,14 @@ const manifestSchema = z.object({
   source: z.string().optional(),
   bin: z.record(z.string().regex(/^[\da-z-]+$/u), z.string()).optional(),
 });
+const messagingBinSchema = z
+  .object({
+    "agx-msg": z.string().min(1),
+    xmsg: z.string().min(1),
+  })
+  .refine((bin) => bin["agx-msg"] === bin.xmsg, {
+    message: "agx-msg and xmsg must share the same source",
+  });
 
 export async function run(cmd: string[], cwd: string) {
   const timeout =
@@ -60,19 +68,13 @@ export async function packageInfo(pkg: string, root = repository) {
     await Bun.file(join(root, "tools/agx/package.json")).text(),
   );
   if (!suite.success) return err("Invalid suite manifest");
-  const commands =
-    pkg === "xmsg"
-      ? {
-          "agx-msg":
-            parsed.data.bin?.["agx-msg"] ??
-            parsed.data.bin?.xmsg ??
-            "src/xmsg.ts",
-          xmsg:
-            parsed.data.bin?.["agx-msg"] ??
-            parsed.data.bin?.xmsg ??
-            "src/xmsg.ts",
-        }
-      : { ...parsed.data.bin };
+  let commands = { ...parsed.data.bin };
+  if (pkg === "xmsg") {
+    const messaging = messagingBinSchema.safeParse(parsed.data.bin);
+    if (!messaging.success)
+      return err(`Invalid package.json for ${pkg}: ${messaging.error.message}`);
+    commands = messaging.data;
+  }
   return ok({
     pkg,
     dir,
@@ -95,6 +97,19 @@ export function platform(target?: string) {
   if (os === undefined || arch === undefined)
     return err(`Invalid Bun target: ${target}`);
   return ok({ os: os === "windows" ? "win32" : os, arch });
+}
+
+export const suiteTargets = [
+  "bun-linux-x64",
+  "bun-linux-arm64",
+  "bun-darwin-x64",
+  "bun-darwin-arm64",
+];
+
+export function suiteArchiveName(version: string, target: string) {
+  const parsed = platform(target);
+  if (parsed.isErr()) return parsed;
+  return ok(`agx-${version}-${parsed.value.os}-${parsed.value.arch}.tar.gz`);
 }
 
 export type CommandRunner = typeof run;
@@ -190,11 +205,13 @@ async function buildSuite(
     const compiled = await buildMember(member, target, root, runner, bin);
     if (compiled.isErr()) return compiled;
   }
-  const archive = join(
-    root,
-    "dist",
-    `agx-${suite.value.version}-${host.value.os}-${host.value.arch}.tar.gz`,
+  const name = suiteArchiveName(
+    suite.value.version,
+    target ??
+      `bun-${host.value.os === "win32" ? "windows" : host.value.os}-${host.value.arch}`,
   );
+  if (name.isErr()) return name;
+  const archive = join(root, "dist", name.value);
   const packed = await runner(
     ["tar", "-czf", archive, "-C", stage, "bin"],
     root,
@@ -203,12 +220,10 @@ async function buildSuite(
   const sha256 = new Bun.CryptoHasher("sha256")
     .update(await Bun.file(archive).arrayBuffer())
     .digest("hex");
-  const library = await buildMember("agx-usehooks", target, root, runner);
-  if (library.isErr()) return library;
   return ok({
     archive,
     sha256,
-    assets: [{ archive, sha256 }, ...library.value.assets],
+    assets: [{ archive, sha256 }],
   });
 }
 
@@ -409,6 +424,11 @@ export async function publish(
   const info = await packageInfo("agx", root);
   if (info.isErr()) return info;
   const tag = `v${info.value.version}`;
+  const libraryTag = `usehooks-v${info.value.version}`;
+  if (target !== undefined)
+    return err(
+      "Suite publishing always builds all supported platforms; omit --target",
+    );
   const status = await runner(
     ["git", "status", "--porcelain", "--untracked-files=all"],
     root,
@@ -419,13 +439,15 @@ export async function publish(
     return err(
       "Working copy is dirty; record or remove changes before publishing",
     );
-  const existing = await runner(
-    ["git", "show-ref", "--verify", "--quiet", `refs/tags/${tag}`],
-    root,
-  );
-  if (existing.exit === 0) return err(`Tag already exists: ${tag}`);
-  if (existing.exit !== 1)
-    return err(`Cannot inspect tag ${tag}: ${existing.stderr}`);
+  for (const checkedTag of [tag, libraryTag]) {
+    const existing = await runner(
+      ["git", "show-ref", "--verify", "--quiet", `refs/tags/${checkedTag}`],
+      root,
+    );
+    if (existing.exit === 0) return err(`Tag already exists: ${checkedTag}`);
+    if (existing.exit !== 1)
+      return err(`Cannot inspect tag ${checkedTag}: ${existing.stderr}`);
+  }
   const head = await runner(["git", "rev-parse", "HEAD"], root);
   if (head.exit !== 0) return err(`Cannot resolve HEAD: ${head.stderr}`);
   const alpha = await runner(
@@ -473,12 +495,55 @@ export async function publish(
     runner,
   );
   if (section.isErr()) return section;
-  const built = await build(pkg, target, root, runner);
-  if (built.isErr()) return built;
-  const notes = join(root, "dist", pkg, "release-notes.md");
+  const suiteAssets: { archive: string; sha256: string }[] = [];
+  for (const compileTarget of suiteTargets) {
+    const built = await build("suite", compileTarget, root, runner);
+    if (built.isErr()) return built;
+    suiteAssets.push(...built.value.assets);
+  }
+  const library = await build("agx-usehooks", undefined, root, runner);
+  if (library.isErr()) return library;
+  const notes = join(root, "dist/suite/release-notes.md");
   await Bun.write(notes, section.value);
+  const commands: string[] = [];
+  for (const release of [
+    { tag: libraryTag, assets: library.value.assets, latest: false },
+    { tag, assets: suiteAssets, latest: true },
+  ]) {
+    const published = await publishAssets(
+      release.tag,
+      release.assets,
+      release.latest,
+      notes,
+      headCommit,
+      yes,
+      root,
+      runner,
+    );
+    if (published.isErr()) return published;
+    commands.push(...published.value);
+  }
+  return ok({
+    archive: suiteAssets[0]?.archive ?? "",
+    sha256: suiteAssets[0]?.sha256 ?? "",
+    assets: [...suiteAssets, ...library.value.assets],
+    commands,
+    dryRun: !yes,
+  });
+}
+
+async function publishAssets(
+  tag: string,
+  releaseAssets: { archive: string; sha256: string }[],
+  latest: boolean,
+  notes: string,
+  headCommit: string,
+  yes: boolean,
+  root: string,
+  runner: CommandRunner,
+) {
   const assets = await Promise.all(
-    built.value.assets.map(async ({ archive }) => ({
+    releaseAssets.map(async ({ archive }) => ({
       archive,
       name: basename(archive),
       size: (await stat(archive)).size,
@@ -506,7 +571,14 @@ export async function publish(
     ...(retry ? ["--clobber"] : []),
   ];
   const view = ["gh", "release", "view", tag, "--json", "assets"];
-  const edit = ["gh", "release", "edit", tag, "--draft=false", "--latest"];
+  const edit = [
+    "gh",
+    "release",
+    "edit",
+    tag,
+    "--draft=false",
+    latest ? "--latest" : "--latest=false",
+  ];
   const tags = [["git", "tag", tag]];
   const commands = [
     ...tags,
@@ -515,12 +587,7 @@ export async function publish(
     view,
     edit,
   ];
-  if (!yes)
-    return ok({
-      ...built.value,
-      commands: commands.map((command) => shellCommand(command)),
-      dryRun: true,
-    });
+  if (!yes) return ok(commands.map((command) => shellCommand(command)));
   const recovery = [
     `Recover the existing draft ${tag}; do not re-create the release or rerun publish:`,
     ...assets.map((asset) => shellCommand(upload(asset.archive, true))),
@@ -571,9 +638,5 @@ export async function publish(
     return err(
       `Release finalization failed for ${tag}. Assets verified; inspect the release state before recovery.\n${commandFailure(edit, published)}\n${recovery}`,
     );
-  return ok({
-    ...built.value,
-    commands: commands.map((command) => shellCommand(command)),
-    dryRun: false,
-  });
+  return ok(commands.map((command) => shellCommand(command)));
 }

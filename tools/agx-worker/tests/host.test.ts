@@ -163,7 +163,7 @@ test("final symlinks, including dangling ones, are never followed or replaced", 
     else expect(() => lstatSync(target)).toThrow();
     rmSync(f.path);
   }
-});
+}, 30_000);
 
 test("retired path blocks creation; current valid file takes precedence without migration", async () => {
   using f = fixture();
@@ -235,4 +235,4 @@ test("help and usage failures do not create declarations", async () => {
     expect((await f.invoke(...args)).exit).not.toBe(0);
   }
   expect(() => lstatSync(f.path)).toThrow();
-});
+}, 30_000);

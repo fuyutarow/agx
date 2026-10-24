@@ -70,8 +70,8 @@ export function deriveOutcome(input: {
   reportValid: boolean;
   changed: number | undefined;
 }): Outcome {
-  if (input.capacity === true) return "capacity";
   if (input.timedOut) return "timeout";
+  if (input.capacity === true) return "capacity";
   if (input.refused || input.changed === undefined) return "refused";
   const kinds = new Set(
     input.verify.map((check) => check.kind ?? verifyKind(check.exit)),

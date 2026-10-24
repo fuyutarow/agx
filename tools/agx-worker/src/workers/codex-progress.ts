@@ -40,12 +40,14 @@ export type Tally = {
   commands: number;
   turns: number;
   files: ReadonlySet<string>;
-  usage?: {
-    input_tokens: number;
-    cached_input_tokens: number;
-    output_tokens: number;
-    reasoning_output_tokens: number;
-  };
+  usage?:
+    | {
+        input_tokens?: number | undefined;
+        cached_input_tokens?: number | undefined;
+        output_tokens?: number | undefined;
+        reasoning_output_tokens?: number | undefined;
+      }
+    | undefined;
   totalCostUsd?: number;
   // The vendor's own id for this worker (codex thread_id, claude session_id), once it has printed
   // it: how a coordinator names the worker, and what `codex exec resume` / `claude --resume` take.
@@ -57,6 +59,27 @@ export const emptyTally = (): Tally => ({
   turns: 0,
   files: new Set(),
 });
+
+/** Sum only reported fields; an absent token count is not a reported zero. */
+export function addUsage(
+  previous: Tally["usage"],
+  usage: NonNullable<Tally["usage"]>,
+): Tally["usage"] {
+  const entries = [
+    "input_tokens",
+    "cached_input_tokens",
+    "output_tokens",
+    "reasoning_output_tokens",
+  ] as const;
+  const reported: NonNullable<Tally["usage"]> = {};
+  for (const key of entries) {
+    const value = usage[key];
+    const before = previous?.[key];
+    if (value !== undefined || before !== undefined)
+      reported[key] = (before ?? 0) + (value ?? 0);
+  }
+  return Object.keys(reported).length === 0 ? undefined : reported;
+}
 
 const LAST_CHARS = 72;
 export const oneLine = (s: string): string => {
@@ -215,23 +238,9 @@ export function foldEvent(t: Tally, line: string): Tally {
     const usage = parsed.data.usage;
     const withTurn = { ...t, turns: t.turns + 1 };
     if (usage === undefined) return withTurn;
-    const previous = t.usage ?? {
-      input_tokens: 0,
-      cached_input_tokens: 0,
-      output_tokens: 0,
-      reasoning_output_tokens: 0,
-    };
     return {
       ...withTurn,
-      usage: {
-        input_tokens: previous.input_tokens + (usage.input_tokens ?? 0),
-        cached_input_tokens:
-          previous.cached_input_tokens + (usage.cached_input_tokens ?? 0),
-        output_tokens: previous.output_tokens + (usage.output_tokens ?? 0),
-        reasoning_output_tokens:
-          previous.reasoning_output_tokens +
-          (usage.reasoning_output_tokens ?? 0),
-      },
+      usage: addUsage(t.usage, usage),
     };
   }
   if (item === undefined) return t;

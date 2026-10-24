@@ -123,7 +123,7 @@ function fixture() {
       "}",
       'const cdIndex = command.indexOf("--cd");',
       "const workspace = command[cdIndex + 1];",
-      'const record = JSON.stringify([{ ...binding, state: "running", cwd: workspace }]) + "\\n";',
+      'const record = JSON.stringify([{ ...binding, state: "running", cwd: workspace, row: "fixture-high", route: "codex", model: "fixture-model", effort: "high", sandbox: "workspace-write", sandbox_source: "built-in default", sandbox_effective: "workspace-write", sandbox_effective_source: "built-in default" }]) + "\\n";',
       'if (process.env.FAKE_LATE_RECORD === "yes") writeFileSync(process.env.FAKE_PENDING_RECORD!, record);',
       "else writeFileSync(process.env.FAKE_RECORDS!, record);",
     ].join("\n"),
@@ -425,7 +425,10 @@ test("dispatch records its one ticket-derived binding", async () => {
   expect(bindingResult.success).toBe(true);
   if (!recordResult.success || !bindingResult.success) return;
   const [record] = recordResult.data;
-  expect(result.stdout).toBe(`${bindingResult.data.id}\n`);
+  expect(result.stdout).toStartWith(`${bindingResult.data.id} workspace=`);
+  expect(result.stdout).toContain(
+    `workspace=${JSON.stringify(workspace)} row=fixture-high route=codex model=fixture-model effort=high sandbox=workspace-write sandbox_source="built-in default"`,
+  );
   expect(bindingResult.data).toMatchObject({
     ticket: "foo-bar",
     workspace,
@@ -451,7 +454,7 @@ test("workspace and unit overrides are honored even when they differ from the ti
   expect(parsed.success).toBe(true);
   if (!parsed.success) return;
   expect(parsed.data[0]).toMatchObject({
-    id: result.stdout.trim(),
+    id: result.stdout.trim().split(" ")[0]!,
     ticket: "foo-bar",
     workspace,
     cwd: workspace,
@@ -501,7 +504,7 @@ test("dispatch finds a run record that appears after the first read", async () =
   );
   expect(parsedBinding.success).toBe(true);
   if (!parsedBinding.success) return;
-  expect(result.stdout).toBe(`${parsedBinding.data.id}\n`);
+  expect(result.stdout).toStartWith(`${parsedBinding.data.id} workspace=`);
   expect(result.stderr).toBe("");
 });
 
@@ -521,9 +524,11 @@ test("dispatch resolves the ticket repository from an unrelated caller cwd", asy
   f.env.FAKE_CALLER_CWD = f.root;
   const result = await invoke(f);
   expect(result.exitCode, result.stderr).toBe(0);
-  expect(result.stdout.trim()).not.toBe("");
+  expect(result.stdout.trim().split(" ")[0]!).not.toBe("");
   expect(await Bun.file(f.wsArgs).text()).toContain(`--repo\n${f.repo}\n`);
-  expect(await Bun.file(f.records).text()).toContain(result.stdout.trim());
+  expect(await Bun.file(f.records).text()).toContain(
+    result.stdout.trim().split(" ")[0]!,
+  );
 });
 
 test("dispatch uses machine output when readiness prints the reported install chatter and stray quote", async () => {
@@ -531,9 +536,11 @@ test("dispatch uses machine output when readiness prints the reported install ch
   f.env.FAKE_WS_CHATTER = "yes";
   const result = await invoke(f);
   expect(result.exitCode, result.stderr).toBe(0);
-  expect(result.stdout.trim()).not.toBe("");
+  expect(result.stdout.trim().split(" ")[0]!).not.toBe("");
   expect(await Bun.file(f.wsArgs).text()).toContain("--json\n");
-  expect(await Bun.file(f.records).text()).toContain(result.stdout.trim());
+  expect(await Bun.file(f.records).text()).toContain(
+    result.stdout.trim().split(" ")[0]!,
+  );
   expect(await Bun.file(f.unitArgs).text()).toContain(
     `${f.repo}.ws/ws_foo-bar\n`,
   );
@@ -628,7 +635,7 @@ test.each([false, true])(
     if (!parsedBinding.success) return;
     const binding = parsedBinding.data;
     expect(binding).toMatchObject({
-      id: result.stdout.trim(),
+      id: result.stdout.trim().split(" ")[0]!,
       workspace: join(f.repo + ".ws", "ws_roster"),
       unit: "agt_roster",
       ticket: "foo-bar",
@@ -636,7 +643,7 @@ test.each([false, true])(
     expect(
       jsonOf(z.array(RunRecord)).safeParse(await Bun.file(f.records).text())
         .data,
-    ).toEqual([{ ...binding, state: "running", cwd: binding.workspace }]);
+    ).toMatchObject([{ ...binding, state: "running", cwd: binding.workspace }]);
   },
 );
 
@@ -677,6 +684,24 @@ test.each(["malformed", "unavailable", "empty", "stale"])(
       expect(await Bun.file(f.unitArgs).exists()).toBe(false);
   },
 );
+
+test("dispatch relays successful preflight warnings before launch without upgrading sandbox", async () => {
+  const f = fixture();
+  const worker = join(f.root, "bin/agx-worker");
+  const original = await Bun.file(worker).text();
+  await Bun.write(
+    worker,
+    original.replace(
+      'if [ "$1" = "check" ]; then',
+      'if [ "$1" = "check" ]; then printf "WARN sandbox capability=user-systemd-bus; requested=workspace-write; evidence=verify[0]: systemctl --user status fixture; allows=none; sandbox unchanged\\n" >&2;',
+    ),
+  );
+  const result = await invoke(f, "--sandbox", "workspace-write");
+  expect(result.exitCode, result.stderr).toBe(0);
+  expect(result.stderr).toContain("WARN sandbox capability=user-systemd-bus");
+  const args = (await Bun.file(f.unitArgs).text()).split("\n");
+  expect(args[args.indexOf("--sandbox") + 1]).toBe("workspace-write");
+});
 
 test("preflight refusal identifies the checked tree, revision and child exit", async () => {
   const f = fixture();
@@ -1182,3 +1207,36 @@ test.each([undefined, ""])(
     expect(await Bun.file(f.unitArgs).exists()).toBe(false);
   },
 );
+
+test("dispatch --json exposes the recorded execution receipt", async () => {
+  const f = fixture();
+  const result = await invoke(f, "--json", "--ws", "receipt");
+  expect(result.exitCode, result.stderr).toBe(0);
+  const receipt = jsonOf(
+    z.looseObject({
+      id: z.string(),
+      workspace: z.string(),
+      row: z.string(),
+      route: z.string(),
+      model: z.string(),
+      effort: z.string(),
+      sandbox: z.string(),
+      sandbox_source: z.string(),
+      sandbox_effective: z.string(),
+      sandbox_effective_source: z.string(),
+    }),
+  ).safeParse(result.stdout);
+  expect(receipt.success).toBe(true);
+  if (!receipt.success) return;
+  expect(receipt.data).toMatchObject({
+    workspace: join(`${f.repo}.ws`, "ws_receipt"),
+    row: "fixture-high",
+    route: "codex",
+    model: "fixture-model",
+    effort: "high",
+    sandbox: "workspace-write",
+    sandbox_source: "built-in default",
+    sandbox_effective: "workspace-write",
+    sandbox_effective_source: "built-in default",
+  });
+});

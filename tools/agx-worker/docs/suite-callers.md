@@ -2,6 +2,10 @@
 
 # AGX suite caller inventory — 2026-10-19
 
+Historical search snapshot. Paths and line numbers below identify the searched
+consumer trees at that date; they are not current checkout links or deployment
+instructions. The inventory is retained as migration evidence.
+
 Read-only search of the workspace, registered repositories (`scripts/workspace-repos.ts`), and the rendered global CLAUDE.md. Includes command argv arrays, executable callers, tests, documentation, and historical records; a match is not a claim that a historical instruction is executed. The accepted interfaces are `agx worker|ticket|ws ARGS` and `agx-worker|agx-ticket|agx-ws ARGS`. Old top-level verbs, `agx-next`, `agx-run`, `agx jev`, `agx-worker jev`, and the bare `ws` / `tkt` bins are removed. `jex` owns the Jev client interface.
 
 Query: `\bagx[ \t]+(run|dispatch|check|ls|judge|stats|roster|doctor)\b|["']agx["'][ \t]*,[ \t]*["'](run|dispatch|check|ls|judge|stats|roster|doctor)["']|\bagx-run\b`

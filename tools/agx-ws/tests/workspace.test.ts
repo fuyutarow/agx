@@ -21,6 +21,7 @@ import { tmpdir, hostname } from "node:os";
 import { join } from "node:path";
 import { mkdir, chmod, unlink, lstat, symlink } from "node:fs/promises";
 import { jsonOf, z } from "../../shared/src/zod.ts";
+import { rootFileFileset } from "../src/workspace.ts";
 
 setDefaultTimeout(60_000);
 const WS = join(import.meta.dir, "../src/ws.ts");
@@ -1256,6 +1257,74 @@ const recFor = (dir: string) => ({
 });
 
 describe("gc integration branches", () => {
+  test("filesets select literal paths without selecting neighboring files", async () => {
+    const path = await repo();
+    const names = [
+      ".dx/verdicts/20261019_x%2Emd.jsonl",
+      'space and "quote".txt',
+      "operators (a|b)&~glob:*.txt",
+      "back\\slash.txt",
+      "日本語.txt",
+      "tab\tline\n.txt",
+    ];
+    for (const name of names) {
+      await Bun.write(join(path, name), `literal ${name}`);
+      await Bun.write(join(path, `${name}.neighbor`), "wrong file");
+    }
+    expect((await jj(["status"], path)).code).toBe(0);
+    for (const name of names) {
+      const shown = await jj(["file", "show", rootFileFileset(name)], path);
+      expect(shown.code, shown.err).toBe(0);
+      expect(shown.out).toBe(`literal ${name}`);
+    }
+  });
+
+  test("gc judges percent and quoted paths after an independent landing", async () => {
+    const path = await repo('trunk = "main"\n');
+    const names = [
+      ".dx/verdicts/20261019_x%2Emd.jsonl",
+      'space and "quote".txt',
+    ];
+    for (const name of names)
+      await Bun.write(join(path, name), "a\nb\nc\nd\ne\nf\ng\n");
+    expect((await jj(["commit", "-m", "literal path base"], path)).code).toBe(
+      0,
+    );
+    expect((await jj(["bookmark", "set", "main", "-r", "@-"], path)).code).toBe(
+      0,
+    );
+    const dir = join(scratch, "literal-paths");
+    expect(
+      (
+        await jj(
+          ["workspace", "add", "--name", "literal-paths", "-r", "main", dir],
+          path,
+        )
+      ).code,
+    ).toBe(0);
+    for (const name of names) {
+      await Bun.write(join(dir, name), "a\nB\nc\nd\ne\nf\ng\n");
+      await Bun.write(join(path, name), "a\nB\nc\nd\ne\nf\nG\n");
+    }
+    expect((await jj(["status"], dir)).code).toBe(0);
+    expect(
+      (await jj(["commit", "-m", "independent literal path landing"], path))
+        .code,
+    ).toBe(0);
+    expect((await jj(["bookmark", "set", "main", "-r", "@-"], path)).code).toBe(
+      0,
+    );
+    setRecords([]);
+    const landed = await ws(["gc", "--dry-run", "--legacy"], path);
+    expect(landed.code, landed.err).toBe(0);
+    expect(landed.out).toContain(`${dir}\tlegacy\tlanded\t`);
+    await Bun.write(join(dir, names[0]!), "a\nB\nc\nD\ne\nf\ng\n");
+    expect((await jj(["status"], dir)).code).toBe(0);
+    const pending = await ws(["gc", "--dry-run", "--legacy"], path);
+    expect(pending.code, pending.err).toBe(0);
+    expect(pending.out).toContain(`${dir}\tlegacy\tunlanded\t`);
+  });
+
   test("WS-GC-IMMUTABLE: collects without abandoning an immutable workspace commit", async () => {
     const path = await repo('trunk = "main"\n');
     expect((await ws(["add", "immutable-abandoned"], path)).code).toBe(0);

@@ -2,6 +2,14 @@
 
 Part of the tools architecture.
 
+Pin the library to the suite version using its separate release:
+
+```json
+"agx-usehooks": "https://github.com/fuyutarow/agx/releases/download/usehooks-v<suite>/agx-usehooks-<suite>.tgz"
+```
+
+The suite release `v<suite>` contains only platform executables.
+
 “usehooks” names React-style `useXX` selectors: the IF side of an agent hook.
 Projects own the THEN side and write their actions in TypeScript.
 
@@ -54,8 +62,11 @@ temporary config extending the project's config with `agx-usehooks` mapped to th
 workspace. It changes no consumer files or symlinks. Hook diagnostics fail either check; diagnostics
 elsewhere are reported, and compiler/config failures also fail. An absent checkout
 prints `SKIP: consumer not present on this host`, never PASS; run the check on
-a host where the declared consumer exists. Land invokes it before commit when this library
-changes. The 0.8.0 migration and consumer impact are recorded in CHANGELOG.md;
+a host where the declared consumer exists. Consumer repositories can invoke this check in
+their acceptance or publication gates when the library changes. Revision comparison uses
+`USEHOOKS_REPO_ROOT` (default current directory) as the suite checkout and
+`USEHOOKS_BASE` (default `alpha`) as the base revision. These do not select consumers.
+The 0.8.0 migration and consumer impact are recorded in CHANGELOG.md;
 the consumer owner migrates their hooks, with no `utilPct` compatibility alias.
 
 - `await runningRuns(ctx)`: live `{ id, lane, row }[]`; missing ticket lanes are `"other"`.
@@ -107,8 +118,11 @@ may be supplied for alternate proc mounts or fixtures.
 
 Register the package once with `cd <repository>/tools/agx-usehooks && bun link`.
 In the project, run `bun link agx-usehooks`, then import from `"agx-usehooks"`.
-The repo's `mise run deps` installs dependencies and links the root package's CLI bins;
-this library has no bin and needs the separate package registration above.
+From the suite checkout, `mise run setup` installs locked dependencies and
+`mise run up` updates them. Setup does not register this library or install the
+suite commands on PATH. This library has no bin and needs the separate package
+registration above; see the [suite release instructions](../../docs/release.md)
+for command installation.
 
 `.agents/hooks/prompt.ts`:
 

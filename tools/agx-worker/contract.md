@@ -16,6 +16,38 @@
 
 The top-level `objective` field in `roster --json` is the routing objective text used to select workers; the per-ticket `roster TICKET` output remains one selected row.
 
+## Sandbox capability preflight
+
+`check TICKET --cd TREE [--sandbox MODE]`, `run`, and dispatch's check emit
+advisory `WARN sandbox` lines on stderr before worker startup. A warning does not
+change the exit status, requested sandbox, sandbox provenance, or launch arguments.
+Dispatch forwards successful check stderr before starting the worker unit.
+`none` suppresses these restricted-sandbox warnings. No detector executes a verify
+command, contacts systemd, runs a declared tool, writes VCS metadata, or upgrades
+the sandbox.
+
+Each warning contains `capability`, `requested`, JSON-quoted `evidence`,
+`allows=none` with an explicit unsandboxed explanation, and `sandbox unchanged`.
+One user-bus warning is emitted per matching verification entry. One external-store
+warning is emitted per distinct canonical store path, with writes and VCS verify
+evidence (or an explicit empty-writes qualification).
+
+`user-systemd-bus` detects literal `systemctl` or `systemd-run` commands followed
+by `--user`, and the known `agent-resource-run` wrapper, in ticket `verify` and
+repository `[verify].always`. `external-vcs-store-write` resolves the nearest
+workspace/ancestor `.git` directory or gitdir file, its `commondir`, and `.jj/repo`
+directory or relative repo pointer, following symlinks. A store outside canonical
+`--cd` warns even when writes is empty. A shared store may need writes for VCS
+operations that do not change tracked files.
+
+Detection is conservative static inspection. It does not expand aliases, inspect
+arbitrary scripts or nested task definitions, infer unknown tool requirements,
+certify host bus availability, or model vendor-specific writable roots and host
+declarations. Quoted/commented commands may warn; absent warnings do not certify
+capability. The operator chooses any different sandbox explicitly. Acceptance
+coverage lives in `tests/next/sandbox-needs.test.ts`, `tests/next/preflight.test.ts`
+and `tests/dispatch.test.ts`, using disposable filesystem pointers and fake launchers.
+
 `agx worker stats` emits one JSON object without requiring `--json`. Its additive
 `legacy_land` field is the public legacy landing presence contract (C4):
 
@@ -162,21 +194,45 @@ capability policy, live quota availability, and operational capacity guards.
 
 Use `agx worker ls --json` as the machine-readable view. Its rows include the run ID, ticket, state,
 workspace, selected roster row, write globs, judgment, report path, progress path, and continuation
-metadata. `scripts/land.ts` consumes this view alongside legacy run records when deciding whether a
-workspace has an accepted run.
+metadata. External acceptance and landing tools consume this public view; their policies and
+deployment belong to the consumer repository.
 
 Every ordinary `ls --json` row (including selector, `--all`, `--running`, `--wait`, workspace
 and `--summary` run rows) includes `progress`, `progress_source`,
 `progress_status`, and `progress_fresh_at`. The separate `--ticket --latest`
 receipt projection is unchanged.
 
-`progress` is null or `{last, at, commands, files, turns, usage, cost_usd, session}`.
+`progress` is null or `{last, at, commands, files, turns, usage, usage_reason,
+cost_usd, cost_reason, session}`.
 Commands count observed command invocations; files count distinct paths in observed
 edit events, and turns carry the worker tally's vendor turn count. These are cumulative within
 the worker invocation, not a repository diff or session lifetime total. Optional
 turns, usage, cost and session are explicitly null when unreported. Usage retains
 the reported token fields; absent token fields are unknown, not zero. Reported
 zeros remain zero. `session` is the vendor worker identity, never the dispatcher.
+
+When progress is null, the row's `progress_reason` explains a missing sink,
+invalid record, or unreadable record; otherwise it is null. Missing sinks can
+mean an older producer predates the sink or no event has arrived. Listing cannot
+distinguish these causes from file absence alone. In particular, a run launched
+by an older binary need not acquire progress merely because the reader is upgraded.
+When `usage` or `cost_usd` is null, `usage_reason` or `cost_reason` respectively
+explains the absence; each reason is null when its value is available. Empty usage
+objects count as unreported. Partial usage preserves only reported token fields;
+it does not invent zero counts. Cumulative fields sum the values actually reported,
+so omitted fields do not certify a complete total for every event.
+
+| Vendor route | When usage becomes known                                                                                                               | When cost becomes known                                                                                                                                                                                          | Wrapper evidence                                                                                                                                         |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| codex        | At each `turn.completed` event carrying usage; cumulative across those events. Command/file events do not carry usage into this tally. | The live writer estimates cost once reported input/output usage and selected prices are available. During an unfinished first turn, cost is unknowable; a prior completed turn's estimate excludes current work. | [foldEvent, `turn.completed` branch](src/workers/codex-progress.ts), [codex live stdout reader and `progress.feed`](src/workers/codex.ts)                |
+| claude       | On each `assistant` event with top-level or message usage. A `result` event with usage replaces the event sums with final totals.      | The live writer can estimate from reported input/output usage and prices. Reported `total_cost_usd` from `result` takes precedence over the estimate.                                                            | [foldClaudeEvent, `assistant` and `result` branches](src/workers/claude-progress.ts), [runClaude, `feed` and `progress.feed`](src/workers/run-claude.ts) |
+
+Both routes use [progressWriter](src/workers/codex-progress.ts) to atomically
+replace the sink while reading stream events and to flush on exit. Publication is
+event-driven: command/usage changes write immediately; other events write after
+the throttle interval. This does not promise a timer-driven update while silent.
+`cost_reason` means no reported cost and no estimate is available; listing does
+not infer whether usage or price configuration is responsible from an absent cost.
 
 | Field               | Meaning                                                                                                                        |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
@@ -238,9 +294,10 @@ In-process full and incremental fold readers wait for already scheduled owner
 publication before reading. Publication uses its internal replay path to avoid
 waiting on itself; a read never schedules publication.
 
-`scripts/agx-accept.ts SELECTOR`, exposed as `mise run accept -- SELECTOR`, composes the selected
-latest run's verification exits, report preview, workspace diff stat, and suggested judge/land
-commands. It is read-only; the coordinator runs those commands separately.
+External acceptance tools can compose the selected latest run's verification exits and report
+with a workspace diff. A human or coordinator decides acceptance and records it with
+`agx worker judge`; landing and publication remain the consumer repository's responsibility.
+The standalone suite does not provide an acceptance script or landing task.
 
 See [Worker environment, version 1](#worker-environment-version-1) for dispatcher identity,
 worker markers, inheritance, and operational environment variables. Use
@@ -749,3 +806,105 @@ or field changes require another schema version.
 `tests/next/jev-usage.test.ts` exercises the real suite CLI with isolated state and
 a local Jev HTTP fixture, including successful capture, fallbacks, missing historical
 usage, legacy deduplication, invalid input, partial writes and out-of-window records.
+
+## Listing visibility and moved reports
+
+Use the selector directly instead of filtering JSON:
+
+```sh
+agx worker ls <id-prefix|ticket>
+agx worker ls run-abc --json
+agx worker ls exact-ticket-name --json
+agx worker ls --json --summary
+agx worker ls --include-legacy --all
+```
+
+A selector accepts an exact run ID, a unique ID prefix, or an exact ticket name.
+Ticket matches are ordered oldest to newest. Plain unselected output shows the
+newest 30; `--all` shows every visible run. JSON retains its array of all visible
+runs; `--summary` wraps it in `{runs, summary}`.
+
+Malformed imported runs are hidden by default. Only imported started records
+that fail event decoding are malformed. Missing historical choice metadata and
+placeholder strings do not make a decoded run malformed. Stderr reports
+`hidden_legacy=N` when rows are excluded; `--json --summary` also includes
+`summary.hidden_legacy` (including zero). The count covers the workspace scope
+before selector/running/limit filtering; `--include-legacy` includes those rows
+and sets the hidden count to zero. Undecodable imported started records are
+shown as raw records for inspection. Invalid complete event-log JSON and
+undecodable records without legacy provenance still fail.
+
+If a report recorded under the sibling retired `agx-next/` root exists at the
+same relative location under the current state root, listings return the current
+`report_path`. Missing files and unrelated absolute paths retain their recorded
+value. Listing does not rewrite records or move files.
+
+Listing scans retained records, so latency scales with store size. The isolated
+5,000-run acceptance fixture checks plain and JSON commands below one second;
+missing progress directories are discovered once rather than opened per row.
+
+## Dispatch receipt and run outcomes
+
+Human and agent consumers receive a dispatch receipt on stdout after the matching
+started record appears. `dispatch TICKET --json` emits exactly one JSON object;
+plain `dispatch TICKET` emits one line starting with the run ID followed by labeled
+fields. Diagnostics remain on stderr in both modes, independently of TTY state.
+This replaces the former ID-only human line; scripts should select `--json` and
+read `id`. Receipt fields are additive and consumers must tolerate new fields.
+
+Both forms expose `id`, `workspace` (the absolute execution path, including a
+custom or continued workspace), `row` (selected roster row ID), `route`, `model`,
+`effort`, `sandbox`, `sandbox_source`, `sandbox_effective`, and
+`sandbox_effective_source`. Routing values come from the selected run, never a
+second routing request. Historical records without routing or effective sandbox
+evidence yield JSON null / human `unknown`, rather than an invented selection.
+`run` also includes these execution fields in its final JSON receipt.
+
+`sandbox` and `sandbox_source` retain the requested policy and the resolution
+precedence above. `sandbox_effective` describes the launch policy: Codex `none`
+becomes `danger-full-access`; a valid host isolation declaration or a resource
+probe fallback also selects `danger-full-access`. Its source identifies the
+request source, host declaration path and reason, or blocked resource. Claude
+retains the selected agx sandbox policy. These describe configured launch policy,
+not certification of kernel isolation. Started records and `ls --json` retain
+these fields, including while the worker runs. Dispatch exit 0 confirms the unit
+and matching record, not completion or acceptance. Preflight/start failures and
+record observation deadlines keep their existing nonzero exits and effects;
+retrying a started unit requires inspecting it first.
+
+Every ended run has exactly one of the following `outcome` values; running runs
+have null. Judgment is independent of outcome. Historical explicit values remain
+readable without reclassification. Historical records lacking an explicit outcome
+are conservatively derived from available exit, verification and workspace evidence.
+
+| Value               | Meaning                                                                                                                                                                                                                                               |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ok`                | Worker completed, report is valid, verification passed, and at least one promised file changed.                                                                                                                                                       |
+| `no-change`         | Same completion requirements as `ok`, with zero changed promised files. This does not assert acceptance.                                                                                                                                              |
+| `timeout`           | The run's own `timeout_s` deadline killed the worker, or its worker receipt/exit reports a timeout (`timed_out`, `timeout`, exit 3 or 124). Takes precedence over receipt content and all derived outcomes.                                           |
+| `capacity`          | Worker reports vendor capacity/resource unavailability; promised work was not completed. Distinct from worker refusal; verification is skipped and continuation may reroute.                                                                          |
+| `refused`           | Worker explicitly refuses, execution exits unsuccessfully for another reason, or promised workspace evidence cannot be measured. It does not mean capacity or deadline expiry. Preflight refusals before a started record do not create an ended run. |
+| `verify-killed`     | At least one verification command was killed.                                                                                                                                                                                                         |
+| `verify-unrunnable` | No killed verification; at least one command could not execute (126/127).                                                                                                                                                                             |
+| `verify-failed`     | No killed/unrunnable verification; at least one command failed.                                                                                                                                                                                       |
+| `malformed`         | Worker otherwise completed but its final report failed the report contract.                                                                                                                                                                           |
+| `stopped`           | The runner received SIGINT, SIGTERM or SIGHUP and recorded its own cancellation.                                                                                                                                                                      |
+| `lost`              | Reconciliation found the run's recorded process/unit ownership no longer alive, without a recorded completion.                                                                                                                                        |
+
+For ordinary completion the precedence is timeout, capacity, refused, verification
+killed/unrunnable/failed, malformed report, then no-change/ok. Stopped and lost
+are lifecycle outcomes. `run` preserves its child exit status; a receipt outcome
+can therefore be non-success even with exit 0 (for example failed verification).
+Callers inspect both outcome and exit. Unknown future outcome values are non-success.
+
+The changed-file count compares contents, modes and symlink targets before/after
+execution within `writes`, including additions and deletions. It excludes preexisting
+unchanged dirt and VCS/dependency metadata; the worker's claimed `changes` list
+and commits do not determine this count. Changes outside `writes` do not make `ok`.
+`ls` prints the outcome and `ls --json` retains it. Ordinary `stats` includes
+`by_outcome`, with every listed value present even at zero; counts are ended runs
+with that outcome, including historical runs, excluding currently running runs.
+
+Fixtures: `tests/dispatch.test.ts` covers both receipt formats and custom workspace;
+`tests/next/outcome.test.ts` runs a real worker past its 60-second ticket deadline,
+checks persisted/listed timeout, refusal/capacity distinction, and stats counts.

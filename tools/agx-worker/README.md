@@ -50,8 +50,30 @@ systemd service name. The repository comes from the ticket's location, independe
 working directory. Dispatch consumes `agx ws add --json` so readiness output cannot become a path.
 Dispatch creates or reuses the workspace, refuses an active unit, verifies
 the ticket and workspace resolve to the same repository default workspace, then starts the unit.
-It waits for a run record containing its binding and prints the run id. It exits non-zero when the
+It waits for a run record containing its binding and prints a labeled dispatch receipt. It exits non-zero when the
 unit cannot start or the record does not appear.
+
+## Sandbox capability warnings
+
+Run `agx worker check TICKET --cd TREE --sandbox workspace-write` before dispatch.
+Check, run and dispatch warn on stderr before worker startup when a restricted
+sandbox conflicts with detectable needs. Warnings name the capability, requested
+sandbox, exact `writes`/`verify` entry or workspace store pointer, and `--sandbox none`
+as the mode permitting that capability. They are advisory: check still exits 0
+when validation succeeds, and no sandbox is upgraded or retried automatically.
+
+Detection covers external Git directories and common stores, jj repo pointers,
+symlinked stores, `systemctl`/`systemd-run` commands with `--user`, and the known
+`agent-resource-run` wrapper in ticket verification or repository `[verify].always`.
+External stores warn even with empty writes because VCS operations may mutate them.
+Paths are compared with the canonical `--cd` workspace boundary.
+
+This is static evidence, not an execution or permission probe. Aliases, arbitrary
+scripts, nested task definitions, tool internals, additional vendor writable roots,
+and host isolation policy are not inferred. Quoted or commented command text may
+produce conservative warnings. Unknown tools require operator review; absence of
+a warning does not establish compatibility. Choose `--sandbox none` explicitly
+only when the task and host policy allow unsandboxed execution.
 
 ## Doctor
 
@@ -131,3 +153,54 @@ import. Prices describe effective configuration, not a historical bill.
 See [Jev usage JSON, version 1](contract.md#jev-usage-json-version-1) for count,
 coverage, compatibility and exit semantics. The command is read-only; consume its
 JSON rather than reading private journals.
+
+## List runs
+
+Use the selector directly instead of filtering JSON:
+
+```sh
+agx worker ls <id-prefix|ticket>
+agx worker ls run-abc --json
+agx worker ls exact-ticket-name --json
+agx worker ls --json --summary
+agx worker ls --include-legacy --all
+```
+
+A selector accepts an exact run ID, a unique ID prefix, or an exact ticket name.
+Ticket matches are ordered oldest to newest. Plain unselected output shows the
+newest 30; `--all` shows every visible run. JSON retains its array of all visible
+runs; `--summary` wraps it in `{runs, summary}`.
+
+Malformed imported runs are hidden by default. Only imported started records
+that fail event decoding are malformed. Missing historical choice metadata and
+placeholder strings do not make a decoded run malformed. Stderr reports
+`hidden_legacy=N` when rows are excluded; `--json --summary` also includes
+`summary.hidden_legacy` (including zero). The count covers the workspace scope
+before selector/running/limit filtering; `--include-legacy` includes those rows
+and sets the hidden count to zero. Undecodable imported started records are
+shown as raw records for inspection. Invalid complete event-log JSON and
+undecodable records without legacy provenance still fail.
+
+If a report recorded under the sibling retired `agx-next/` root exists at the
+same relative location under the current state root, listings return the current
+`report_path`. Missing files and unrelated absolute paths retain their recorded
+value. Listing does not rewrite records or move files.
+
+Listing scans retained records, so latency scales with store size. The isolated
+5,000-run acceptance fixture checks plain and JSON commands below one second;
+missing progress directories are discovered once rather than opened per row.
+
+## Receipts and outcomes
+
+`agx worker dispatch TICKET --json` returns the run ID, actual absolute workspace,
+selected roster row, route, model and effort, plus requested/effective sandbox and
+source. Plain dispatch prints the same fields with labels after the ID; scripts
+should use JSON and read `id`. A dispatch receipt confirms launch, not completion.
+
+`agx worker ls --json` exposes each run's outcome; `agx worker stats` counts ended
+runs in `by_outcome`. A run killed at its own deadline is `timeout`. Vendor resource
+unavailability is `capacity`; a worker/execution refusal is `refused`. Successful
+completion is `ok` when promised files changed and `no-change` when none changed;
+both require a valid report and passing verification. See the full
+[receipt and outcome contract](contract.md#dispatch-receipt-and-run-outcomes)
+for all values, precedence, compatibility and exit semantics.

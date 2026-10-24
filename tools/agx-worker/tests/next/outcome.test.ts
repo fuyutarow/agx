@@ -43,6 +43,7 @@ test("ended fixtures retain measured outcomes while routing omits ungraded raw h
     ["no-change", "no-change"],
     ["verify-failed", "verify-failed"],
     ["timeout", "timeout"],
+    ["killed-bound", "timeout"],
     ["string-wrapped", "malformed"],
     ["ok", "ok"],
     ["malformed", "malformed"],
@@ -51,11 +52,14 @@ test("ended fixtures retain measured outcomes while routing omits ungraded raw h
     ["last-message", "ok"],
     ["string-report", "malformed"],
     ["trailing-text", "ok"],
+    ["capacity", "capacity"],
   ];
   const expected: string[] = [];
   const env = {
     ...process.env,
     AGX_STATE_DIR: state,
+    XDG_STATE_HOME: join(root, "xdg-state"),
+    AGX_CODEX_HOST_FILE: join(root, "absent-host.toml"),
     AGX_TMP_ROOT: join(root, "agx-tmp"),
     JEV_URL: `http://127.0.0.1:${server.port}/choice`,
     AGX_WORKER_BIN: join(import.meta.dir, "fixtures/outcome-worker.ts"),
@@ -67,7 +71,7 @@ test("ended fixtures retain measured outcomes while routing omits ungraded raw h
     const ticket = join(root, `${mode}.md`);
     writeFileSync(
       ticket,
-      `+++\nschema = 2\nname = "${mode}"\nwrites = ["work.txt"]\noutcome = "fixture"\nverify = ["${mode === "verify-failed" ? "false" : "true"}"]\n[proposition]\nid = "OUTCOME"\nclaim = "derived outcomes"\nrefuted_by = "incorrect classification"\n+++\nFixture.\n`,
+      `+++\nschema = 2\ntimeout_s = 60\nname = "${mode}"\nwrites = ["work.txt"]\noutcome = "fixture"\nverify = ["${mode === "verify-failed" ? "false" : "true"}"]\n[proposition]\nid = "OUTCOME"\nclaim = "derived outcomes"\nrefuted_by = "incorrect classification"\n+++\nFixture.\n`,
     );
     const child = Bun.spawn(
       [
@@ -89,7 +93,7 @@ test("ended fixtures retain measured outcomes while routing omits ungraded raw h
       new Response(child.stderr).text(),
       child.exited,
     ]);
-    expect(exit, stderr).toBe(0);
+    expect(exit, stderr).toBe(mode === "killed-bound" ? 143 : 0);
     const receipt = jsonOf(z.looseObject({ outcome: z.string() })).safeParse(
       stdout,
     );
@@ -112,13 +116,30 @@ test("ended fixtures retain measured outcomes while routing omits ungraded raw h
   );
   expect(listed.exitCode).toBe(0);
   const rows = jsonOf(
-    z.array(z.looseObject({ outcome: z.string(), changed_files: z.number() })),
+    z.array(
+      z.looseObject({
+        outcome: z.string(),
+        changed_files: z.number().optional(),
+      }),
+    ),
   ).safeParse(listed.stdout.toString());
   expect(rows.success).toBe(true);
   if (rows.success) {
     expect(rows.data.map((row) => row.outcome)).toEqual(expected);
     expect(rows.data.map((row) => row.changed_files)).toEqual([
-      0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+      0,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      undefined,
     ]);
   }
   const events = readFileSync(join(state, "records.jsonl"), "utf8")
@@ -131,7 +152,22 @@ test("ended fixtures retain measured outcomes while routing omits ungraded raw h
     return parsed.success ? [parsed.data.outcome] : [];
   });
   expect(ended).toEqual(expected);
-}, 60_000);
+  const stats = Bun.spawnSync(
+    [process.execPath, "tools/agx-worker/src/next/cli.ts", "stats"],
+    { env },
+  );
+  expect(stats.exitCode).toBe(0);
+  const counts = jsonOf(
+    z.looseObject({ by_outcome: z.record(z.string(), z.number()) }),
+  ).safeParse(stats.stdout.toString());
+  expect(counts.success).toBe(true);
+  if (!counts.success) return;
+  expect(counts.data.by_outcome).toMatchObject({
+    timeout: 2,
+    capacity: 1,
+    refused: 1,
+  });
+}, 180_000);
 
 test("workspace evidence detects added, deleted and edited files without counting preexisting dirt", () => {
   const root = scratch();
