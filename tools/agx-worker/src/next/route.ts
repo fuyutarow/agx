@@ -1,3 +1,4 @@
+import { fromThrowable } from "neverthrow";
 import { randomUUID } from "node:crypto";
 import { jevEndpoint, postJev } from "../../../shared/src/jev-client.ts";
 import { sampleRow } from "../selection.ts";
@@ -89,6 +90,14 @@ export function blindCriterion(text: string, rows: readonly Choice[]): string {
       "strong coding or reasoning at a modest setting",
     )
     .replaceAll(
+      /\bdeepest (?:luna|terra|sol|astra) reasoning\b/giu,
+      "deepest reasoning from another model",
+    )
+    .replaceAll(
+      /\bstrongest (?:luna|terra|sol|astra) effort\b/giu,
+      "strongest setting of another model",
+    )
+    .replaceAll(
       /\blow-effort (reasoning|design judgment)\b/giu,
       "$1 at a modest setting",
     )
@@ -142,7 +151,18 @@ export function blindCriterion(text: string, rows: readonly Choice[]): string {
     .replaceAll(/\bhigh\b/giu, "intensive")
     .replaceAll(/\bxhigh\b/giu, "very intensive")
     .replaceAll(/\bmax\b/giu, "maximum")
-    .replaceAll(/\beffort\b/giu, "setting");
+    .replaceAll(/\beffort\b/giu, "setting")
+    .replaceAll(
+      /(?:^|\s)-cost\b/giu,
+      (match) => `${match.startsWith(" ") ? " " : ""}inexpensive`,
+    )
+    .replaceAll(/\s-\s/gu, " ")
+    .replaceAll(/\b(when|where|than|for)\s+'s\b/giu, "$1 another model's")
+    .replace(
+      /^(Route [^.]+\. )([a-z])/u,
+      (_match, prefix: string, first: string) =>
+        `${prefix}${first.toUpperCase()}`,
+    );
 }
 
 export async function route(
@@ -201,10 +221,61 @@ export async function route(
   const anonymizationMap = Object.fromEntries(
     candidates.map((row, index) => [`model_${index}`, row.id]),
   );
+  const measuredEvidence = Object.fromEntries(
+    candidates.map((row, index) => {
+      const history = runs.filter((run) => run.row === row.id);
+      const judged = history.filter((run) => run.judgment !== null);
+      const accepted = judged.filter(
+        (run) => run.judgment?.decision === "accept",
+      ).length;
+      const minutes = history
+        .flatMap((run) => {
+          if (run.ended_at === null) return [];
+          const duration = fromThrowable(() =>
+            Temporal.Instant.from(run.ended_at!)
+              .since(Temporal.Instant.from(run.started_at))
+              .total({ unit: "minutes" }),
+          )();
+          if (duration.isErr()) return [];
+          const elapsed = duration.value;
+          return Number.isFinite(elapsed) && elapsed >= 0 && elapsed <= 1440
+            ? [elapsed]
+            : [];
+        })
+        .toSorted((a, b) => a - b);
+      const middle = Math.floor(minutes.length / 2);
+      const median =
+        minutes.length === 0
+          ? null
+          : (minutes[middle]! +
+              minutes[Math.floor((minutes.length - 1) / 2)]!) /
+            2;
+      const share =
+        judged.length < 5 ? null : Math.round((100 * accepted) / judged.length);
+      const medianMinutes = median === null ? null : Number(median.toFixed(1));
+      const medianText =
+        medianMinutes === null ? "unknown" : medianMinutes.toFixed(1);
+      const text =
+        share === null
+          ? "agx measured: too few judged runs"
+          : `agx measured: ${share}% of ${judged.length} judged runs accepted, median ${medianText} min.`;
+      return [
+        `model_${index}`,
+        {
+          judged_runs: judged.length,
+          accepted_runs: accepted,
+          accepted_percent: share,
+          ended_runs: minutes.length,
+          median_wall_minutes: medianMinutes,
+          text,
+        },
+      ];
+    }),
+  );
   const criteria: Record<string, string> = Object.fromEntries([
     ...candidates.map((row, index): [string, string] => [
       `model_${index}`,
-      blindCriterion(criterionFor(roster, row), loaded.catalogRows),
+      `${blindCriterion(criterionFor(roster, row), loaded.catalogRows)} ${measuredEvidence[`model_${index}`]!.text}`,
     ]),
     ...Object.entries(returns).map(([reason, value]): [string, string] => [
       reason,
@@ -269,6 +340,7 @@ export async function route(
     anonymization_map: anonymizationMap,
     usage_snapshot: usage,
     usage_id: usageId,
+    measured_evidence: measuredEvidence,
   });
   const recordPick = (
     row: Choice,

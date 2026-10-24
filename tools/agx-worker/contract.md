@@ -922,3 +922,25 @@ and exclusions; choosing one prints its reason and fix to stderr, records a refu
 and exits 2 before worker startup. Model IDs are mapped back locally. The pick audit
 retains the anonymization map, answer, and complete probability distribution.
 Invalid or missing answers retain the eligible default-row fallback and its reason.
+
+### Local evidence in blinded routing
+
+At routing time, the existing folded run reader supplies one observation per run
+for each exact roster row. The latest valid acceptance judgment determines its
+judged status; accepted share uses all judged runs, not process exit status.
+Every blinded option appends `agx measured: N% of M judged runs accepted, median
+T min.` Percent is rounded to an integer and minutes to one decimal. Fewer than
+five judged runs instead show `agx measured: too few judged runs`, without a share.
+Wall time is the median of ended runs, including unjudged runs, with nonfinite,
+negative and over-24-hour durations excluded. An empty duration sample says
+`median unknown min.` Exactly 24 hours remains eligible.
+
+The objective maximizes accepted results per hour and per dollar and prioritizes
+this machine's measured acceptance over published benchmarks when judging
+sufficiency. These observations have selection bias: rows received different
+tickets, so their shares are not controlled comparisons or causal rankings.
+Option IDs, ordering, prices and published scores retain their existing meaning.
+The pick audit's `measured_evidence`, keyed by blinded option ID, saves judged and
+accepted counts, displayed percent, eligible ended-run count, displayed median
+minutes and exact evidence text for every candidate, including fallback picks
+and ticket returns. The audit retains the separate private anonymization map.

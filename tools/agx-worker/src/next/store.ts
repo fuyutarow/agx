@@ -49,6 +49,19 @@ export const PickAuditSchema = z.object({
   probabilities: z.record(z.string(), z.number()).nullable(),
   usage_snapshot: z.unknown(),
   usage_id: z.string().optional(),
+  measured_evidence: z
+    .record(
+      z.string(),
+      z.object({
+        judged_runs: z.number(),
+        accepted_runs: z.number(),
+        accepted_percent: z.number().nullable(),
+        ended_runs: z.number(),
+        median_wall_minutes: z.number().nullable(),
+        text: z.string(),
+      }),
+    )
+    .optional(),
   candidates: z.array(z.string()).optional(),
   chosen_row: z.string().optional(),
 });

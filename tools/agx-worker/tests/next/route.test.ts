@@ -150,10 +150,10 @@ function startServer(choice: string, probabilities?: Record<string, number>) {
         const criteria = parsed.data.questions.worker.criteria;
         wireIds = Object.fromEntries(
           Object.entries(criteria).flatMap(([id, value]) => {
-            const matchedRow = roster.choice.find(
-              (row) =>
-                blindCriterion(criterionFor(roster, row), roster.choice) ===
-                value,
+            const matchedRow = roster.choice.find((row) =>
+              value.startsWith(
+                `${blindCriterion(criterionFor(roster, row), roster.choice)} agx measured:`,
+              ),
             );
             return matchedRow === undefined ? [] : [[matchedRow.id, id]];
           }),
@@ -910,7 +910,7 @@ test("one raw Choice blinds the entire injected payload and preserves every crit
   ]);
   ordered.forEach((row, i) => {
     expect(request.questions.worker.criteria[`model_${i}`]).toBe(
-      blindCriterion(criterionFor(roster, row), roster.choice),
+      `${blindCriterion(criterionFor(roster, row), roster.choice)} agx measured: too few judged runs`,
     );
   });
   expect(server.calls()).toBe(1);
@@ -1026,4 +1026,171 @@ test("blinding retains grammatical comparisons and compound meanings", async () 
   expect(
     blindCriterion("AA 50, TB4 51.5%, SciCode 55.8%. Price $2/$10", rows),
   ).toBe("AA 50, TB4 51.5%, SciCode 55.8%. Price $2/$10");
+});
+
+test("every shipped Jev option is readable and keeps its row measurements", async () => {
+  await isolateState();
+  const loaded = await loadRoster();
+  expect(loaded.ok).toBe(true);
+  if (!loaded.ok) return;
+  const rows = loaded.value.choice;
+  const optionOrder = rows.toSorted(
+    (a, b) =>
+      ["low", "medium", "high", "xhigh", "max"].indexOf(a.effort) -
+      ["low", "medium", "high", "xhigh", "max"].indexOf(b.effort),
+  );
+  const measurements = rows.map((row) => ({
+    id: row.id,
+    route: row.route,
+    effort: row.effort,
+    aa_index: row.aa_index,
+    tb4: row.tb4,
+    scicode: row.scicode,
+    price_in: row.price_in,
+    price_cached_in: row.price_cached_in,
+    price_out: row.price_out,
+  }));
+  const texts = optionOrder.map((row) =>
+    blindCriterion(criterionFor(loaded.value, row), rows),
+  );
+
+  expect(texts).toHaveLength(rows.length);
+  expect(optionOrder.map((row) => row.id)).toEqual(
+    rows
+      .toSorted(
+        (a, b) =>
+          ["low", "medium", "high", "xhigh", "max"].indexOf(a.effort) -
+          ["low", "medium", "high", "xhigh", "max"].indexOf(b.effort),
+      )
+      .map((row) => row.id),
+  );
+  expect(
+    rows.map((row) => ({
+      id: row.id,
+      route: row.route,
+      effort: row.effort,
+      aa_index: row.aa_index,
+      tb4: row.tb4,
+      scicode: row.scicode,
+      price_in: row.price_in,
+      price_cached_in: row.price_cached_in,
+      price_out: row.price_out,
+    })),
+  ).toEqual(measurements);
+  for (const text of texts) {
+    expect(text).not.toMatch(/(?:^|[.!?]\s*)-/u);
+    expect(text).not.toMatch(/\s's\s/u);
+    expect(text).not.toMatch(/ {2,}/u);
+    expect(text).not.toMatch(
+      /\b(?:when|where|than|for)\s+(?:'s|capability|setting)\b/iu,
+    );
+  }
+  expect(
+    blindCriterion(
+      "-cost contained reasoning when 's capability is insufficient",
+      rows,
+    ),
+  ).not.toMatch(/(?:^|[.!?]\s*)-|\s's\s| {2,}/u);
+  expect(blindCriterion("strong - coding or reasoning", rows)).not.toMatch(
+    /(?:^|[.!?]\s*)-|\s's\s| {2,}/u,
+  );
+});
+
+test("local record evidence follows each blinded option and survives the pick audit", async () => {
+  await isolateState();
+  const fixture = (row: string, count: number, accepted: number) => {
+    for (let i = 0; i < count; i++) {
+      const started = appendStarted(row);
+      if (started?.kind !== "started") return;
+      append({
+        kind: "ended",
+        id: started.id,
+        at: Temporal.Instant.from(started.at).add({ seconds: 306 }).toString(),
+        exit: 0,
+        report_path: null,
+        vendor_session: null,
+        verify: [],
+      });
+      append({
+        kind: "judged",
+        id: started.id,
+        at: now(),
+        decision: i < accepted ? "accept" : "reject",
+        note: "fixture",
+      });
+      // A later judgment replaces the previous one, rather than adding a run.
+      if (i === 0)
+        append({
+          kind: "judged",
+          id: started.id,
+          at: now(),
+          decision: "accept",
+          note: "rejudged fixture",
+        });
+    }
+  };
+  fixture("luna-high", 25, 21);
+  fixture("sol-medium", 5, 3);
+  fixture("luna-medium", 4, 4);
+  const stale = appendStarted("luna-high");
+  if (stale?.kind !== "started") return;
+  append({
+    kind: "ended",
+    id: stale.id,
+    at: Temporal.Instant.from(stale.at).add({ seconds: 86401 }).toString(),
+    exit: 0,
+    report_path: null,
+    vendor_session: null,
+    verify: [],
+  });
+  append({
+    kind: "started",
+    id: "running-fixture",
+    at: now(),
+    ticket: "running",
+    writes: [],
+    cwd: tmpdir(),
+    workspace: tmpdir(),
+    row: "luna-high",
+    dispatcher_session: null,
+    vendor_session: null,
+    pid: process.pid,
+  }); // Running records have no wall time.
+  const server = startServer("luna-high");
+  const selected = await route("local evidence fixture");
+  const criteria = server.request()!.questions.worker.criteria;
+  expect(criteria["luna-high"]).toEndWith(
+    "agx measured: 84% of 25 judged runs accepted, median 5.1 min.",
+  );
+  expect(criteria["sol-medium"]).toEndWith(
+    "agx measured: 60% of 5 judged runs accepted, median 5.1 min.",
+  );
+  expect(criteria["luna-medium"]).toEndWith(
+    "agx measured: too few judged runs",
+  );
+  const loaded = await loadRoster();
+  if (!loaded.ok) return;
+  for (const text of Object.values(
+    server.rawRequest()!.questions.worker.criteria,
+  )) {
+    for (const row of loaded.value.choice) expect(text).not.toContain(row.id);
+  }
+  expect(server.request()!.questions.worker.instructions).toContain(
+    "accepted results per hour and per dollar",
+  );
+  expect(server.request()!.questions.worker.instructions).toContain(
+    "outranks published benchmarks",
+  );
+  const picked = appendStarted(selected.id);
+  if (picked?.kind !== "started") return;
+  expect(
+    picked.pick_audit?.measured_evidence?.[server.wireIds()["luna-high"]!],
+  ).toEqual({
+    judged_runs: 25,
+    accepted_runs: 21,
+    accepted_percent: 84,
+    ended_runs: 25,
+    median_wall_minutes: 5.1,
+    text: "agx measured: 84% of 25 judged runs accepted, median 5.1 min.",
+  });
 });

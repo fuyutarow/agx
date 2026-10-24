@@ -187,3 +187,10 @@ and its linked tool contracts/READMEs, selecting the matching release tag when
 using a released install. The index explicitly distinguishes published contracts
 from schemas not yet published; do not invent schema files. Use CLI JSON instead
 of importing implementation modules or reading private snapshot files.
+
+Blinded Jev options include local folded-run acceptance and median wall minutes.
+Shares require at least five judged runs; wall durations over 24 hours are
+excluded. The pick audit preserves the numbers and text shown for every option.
+The objective favors accepted results per hour and per dollar, with local
+acceptance ahead of published benchmarks for sufficiency. Different rows received
+different tickets; treat this evidence as observational, with selection bias.
