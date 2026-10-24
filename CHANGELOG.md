@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.6.4 — 2026-10-25
+
+- Make blinded Jev option prose readable
+- Show local acceptance and median wall time in blinded Jev routing options and pick audits.
+
 ## 1.6.3 — 2026-10-25
 
 - Blind model and effort identities in the single routing Choice; audit anonymous picks and refuse returned tickets before worker startup.
