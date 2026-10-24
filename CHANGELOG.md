@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.6.1 — 2026-10-24
+
+- Judge workspace GC by current unlanded content instead of accepted run commit reachability.
+
 ## 1.6.0 — 2026-10-24
 
 - Keep decodable imported legacy runs visible in ls; hide and count only undecodable imported started records.
