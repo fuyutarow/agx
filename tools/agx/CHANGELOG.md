@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.2 — 2026-10-24
+
+- Update suite member agx-ticket to 2.0.3.
+- Resolve suite tools beside compiled agx before falling back to PATH
+
 ## 1.3.1 — 2026-10-23
 
 - Update suite member agx-worker to 10.0.5.

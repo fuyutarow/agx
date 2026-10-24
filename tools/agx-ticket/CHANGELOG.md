@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.3 — 2026-10-24
+
+- Report repository configuration errors as doctor findings and continue inspecting other repositories.
+
 ## 2.0.2 — 2026-10-23
 
 - Accept usehooks declarations through the shared strict agx L2 configuration reader.
