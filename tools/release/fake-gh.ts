@@ -72,6 +72,7 @@ if (args[1] === "create") {
   if (fails) process.exitCode = 1;
 } else if (args[1] === "view") {
   if (args.includes("assets,isDraft")) {
+    await Bun.sleep(Number(process.env.RELEASE_TEST_CI_DELAY_MS ?? "0"));
     const names = [
       "linux-x64",
       "linux-arm64",

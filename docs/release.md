@@ -130,7 +130,9 @@ No local archives, compiler cache, or upload bandwidth are required. CI then
 creates the GitHub releases and uploads the assets. Review the
 preview in the canonical repository first. `--yes` and `--dry-run` conflict.
 In CI, each asset upload has at most three attempts, with `--clobber` on retries and a
-ten-minute timeout per attempt. Other commands have a two-minute timeout.
+ten-minute timeout per attempt. Asset probes while waiting for CI use the
+remaining asset-wait deadline. Other commands have a two-minute timeout.
+Command timeout errors include the command, elapsed milliseconds and limit.
 An upload or verification failure leaves the release as a draft and exits 2.
 The refusal names the failing asset, includes captured stderr and stdout (or an
 explicit empty-output diagnostic), and prints commands to recover the existing
@@ -227,5 +229,7 @@ mise run release:machine -- --verify-in /path/to/consumer --verify-in /another/r
 ```
 
 The asset wait defaults to 900 seconds with 5-second polling; override with
-`--wait-seconds N --poll-seconds N`. Global installation runs from home, without
+`--wait-seconds N --poll-seconds N`. This deadline also bounds each
+`gh release view` probe, so waiting for CI can exceed two minutes without
+resetting the overall deadline. Global installation runs from home, without
 changing the global `latest` declaration or creating a repository lock.

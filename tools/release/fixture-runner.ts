@@ -21,9 +21,14 @@ const gitCommands = new Set([
 export async function fixtureRun(
   cmd: string[],
   cwd: string,
-  realGit = process.env.RELEASE_TEST_REAL_GIT === "1",
+  realGitOrOptions: boolean | { deadline?: number } = process.env
+    .RELEASE_TEST_REAL_GIT === "1",
   timeout = 10_000,
 ) {
+  const realGit =
+    typeof realGitOrOptions === "boolean"
+      ? realGitOrOptions
+      : process.env.RELEASE_TEST_REAL_GIT === "1";
   const [binary, ...args] = cmd;
   if (binary === "mise" && process.env.RELEASE_TEST_GH_MODE !== undefined) {
     const child = Bun.spawn(

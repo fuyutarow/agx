@@ -31,11 +31,17 @@ const messagingBinSchema = z
     message: "agx-msg and xmsg must share the same source",
   });
 
-export async function run(cmd: string[], cwd: string) {
-  const timeout =
-    cmd[0] === "gh" && cmd[1] === "release" && cmd[2] === "upload"
-      ? 600_000
-      : 120_000;
+export async function run(
+  cmd: string[],
+  cwd: string,
+  options: { deadline?: number } = {},
+) {
+  const started = performance.now();
+  let timeout = 120_000;
+  if (cmd[0] === "gh" && cmd[1] === "release" && cmd[2] === "upload")
+    timeout = 600_000;
+  if (options.deadline !== undefined)
+    timeout = Math.max(1, Math.ceil(options.deadline - started));
   const signal = AbortSignal.timeout(timeout);
   const child = Bun.spawn(cmd, {
     cwd,
@@ -49,10 +55,10 @@ export async function run(cmd: string[], cwd: string) {
     new Response(child.stderr).text(),
   ]);
   return {
-    exit,
+    exit: signal.aborted ? 124 : exit,
     stdout,
     stderr: signal.aborted
-      ? `${stderr}\nCommand timed out after ${timeout} ms`
+      ? `${stderr}\nCommand timed out after ${Math.round(performance.now() - started)} ms (limit ${timeout} ms): ${shellCommand(cmd)}`
       : stderr,
   };
 }
@@ -731,9 +737,9 @@ export async function machineSwap(
   runner: CommandRunner = run,
 ) {
   const home = homedir();
-  const execute: CommandRunner = (cmd, cwd) =>
+  const execute: CommandRunner = (cmd, cwd, commandOptions) =>
     fromPromise(
-      Promise.resolve().then(() => runner(cmd, cwd)),
+      Promise.resolve().then(() => runner(cmd, cwd, commandOptions)),
       (error: unknown) =>
         error instanceof Error ? error.message : String(error),
     ).match(
@@ -767,6 +773,7 @@ export async function machineSwap(
         "assets,isDraft",
       ],
       root,
+      { deadline },
     );
     const parsed = jsonOf(
       releaseAssetsSchema.extend({ isDraft: z.boolean() }),
@@ -789,7 +796,9 @@ export async function machineSwap(
     } else detail = `${view.stderr} ${view.stdout}`.trim();
     if (detail === "ready") break;
     if (performance.now() >= deadline)
-      return err(`asset-wait in ${root}: v${version}: ${detail}`);
+      return err(
+        `asset-wait in ${root}: v${version}: timed out after ${waitSeconds * 1000} ms: ${detail}`,
+      );
     await Bun.sleep(
       Math.min(pollSeconds * 1000, Math.max(0, deadline - performance.now())),
     );

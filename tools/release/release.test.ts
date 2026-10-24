@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, spyOn } from "bun:test";
 import {
   cp,
   mkdir,
@@ -26,6 +26,8 @@ import {
   repository,
   run as productionRun,
   publishCI,
+  publish,
+  machineSwap,
 } from "./release.ts";
 
 import { fixtureRun, fixtureRun as run } from "./fixture-runner.ts";
@@ -169,6 +171,84 @@ async function gitSuiteFixture() {
 }
 
 const realGit = { RELEASE_TEST_REAL_GIT: "1" };
+
+const fakeGhProductionRun: typeof productionRun = (cmd, cwd, options) =>
+  productionRun(
+    [process.execPath, join(import.meta.dir, "fake-gh.ts"), ...cmd.slice(1)],
+    cwd,
+    options,
+  );
+const completionRun: typeof productionRun = (cmd, cwd, options) =>
+  cmd[0] === "gh" && cmd[1] === "release"
+    ? fakeGhProductionRun(cmd, cwd, options)
+    : fixtureRun(cmd, cwd);
+
+test("publish and machine allow three-minute fake CI with a scaled command clock", async () => {
+  const f = await suiteFixture();
+  const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
+  const limits: number[] = [];
+  // One millisecond represents one second: the old 120 s limit kills this
+  // 180 s fake CI; the asset deadline permits it. No real gh is executed.
+  const timeout = spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+    limits.push(ms);
+    return originalTimeout(Math.ceil(ms / 1000));
+  });
+  const oldDelay = process.env.RELEASE_TEST_CI_DELAY_MS;
+  const oldMode = process.env.RELEASE_TEST_GH_MODE;
+  process.env.RELEASE_TEST_CI_DELAY_MS = "180";
+  process.env.RELEASE_TEST_GH_MODE = "success";
+  await (async () => {
+    for (const complete of [
+      () => publish("suite", true, undefined, f.root, completionRun),
+      () => machineSwap("2.3.4", {}, f.root, completionRun),
+    ]) {
+      const result = await complete();
+      expect(result.isOk(), result.isErr() ? result.error : "").toBe(true);
+    }
+    expect(limits).toHaveLength(2);
+    expect(limits.every((limit) => limit > 899_000 && limit <= 900_000)).toBe(
+      true,
+    );
+    const ordinary = await productionRun(
+      [process.execPath, "-e", "await Bun.sleep(180)"],
+      f.root,
+    );
+    expect(limits.at(-1)).toBe(120_000);
+    expect(ordinary.exit).toBe(124);
+    expect(ordinary.stderr).toContain("Command timed out after");
+    expect(ordinary.stderr).toContain("ms (limit 120000 ms)");
+    expect(ordinary.stderr).toContain("await Bun.sleep(180)");
+  })().finally(() => {
+    timeout.mockRestore();
+    if (oldDelay === undefined) delete process.env.RELEASE_TEST_CI_DELAY_MS;
+    else process.env.RELEASE_TEST_CI_DELAY_MS = oldDelay;
+    if (oldMode === undefined) delete process.env.RELEASE_TEST_GH_MODE;
+    else process.env.RELEASE_TEST_GH_MODE = oldMode;
+  });
+});
+
+test("asset deadline bounds a stuck fake gh and names the command", async () => {
+  const f = await suiteFixture();
+  const previous = process.env.RELEASE_TEST_CI_DELAY_MS;
+  process.env.RELEASE_TEST_CI_DELAY_MS = "180";
+  await (async () => {
+    const result = await machineSwap(
+      "2.3.4",
+      { waitSeconds: 0.05 },
+      f.root,
+      fakeGhProductionRun,
+    );
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error).toContain("timed out after 50 ms");
+      expect(result.error).toContain("fake-gh.ts");
+      expect(result.error).toContain("'release' 'view' 'v2.3.4'");
+    }
+  })().finally(() => {
+    if (previous === undefined) delete process.env.RELEASE_TEST_CI_DELAY_MS;
+    else process.env.RELEASE_TEST_CI_DELAY_MS = previous;
+  });
+});
 
 test("command fixtures refuse network Git and unknown processes and intercept gh", async () => {
   const f = await fixture();
