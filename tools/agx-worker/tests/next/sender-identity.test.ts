@@ -16,6 +16,7 @@ const fixture = resolve(import.meta.dir, "fixtures/sender-vendor.ts");
 const captureSchema = z.object({
   args: z.array(z.string()),
   sender: z.string().nullable(),
+  runId: z.string(),
 });
 
 test("a parent's declaration is cleared even with matching native IDs", () => {
@@ -74,6 +75,7 @@ for (const backend of ["claude", "codex"] as const) {
             AGX_CODEX_BIN: fixture,
             AGX_CODEX_HOST_FILE: join(root, "missing-host.toml"),
             AGX_SENDER_CAPTURE: capture,
+            AGX_RUN_ID: "sender-fixture-run",
             AGX_MSG_FROM: "claude:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
             CODEX_THREAD_ID: uuid,
             CLAUDE_CODE_SESSION_ID: uuid,
@@ -95,6 +97,7 @@ for (const backend of ["claude", "codex"] as const) {
       expect(parsed.success).toBe(true);
       if (!parsed.success) return;
       const actual = parsed.data;
+      expect(actual.runId).toBe("sender-fixture-run");
       if (resume === undefined && backend === "claude") {
         const session = actual.args[actual.args.indexOf("--session-id") + 1];
         expect(session).toMatch(/^[a-f0-9-]{36}$/u);

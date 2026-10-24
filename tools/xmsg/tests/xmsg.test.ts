@@ -209,6 +209,11 @@ async function run(
     inventoryDelay?: number;
     discoveryDelay?: number;
     env?: Record<string, string | undefined>;
+    runRecord?: {
+      route?: string | undefined;
+      session: string | null;
+      progress?: string;
+    };
     transcript?: string | undefined;
     registry?: ReadonlyArray<{
       sessionId: string;
@@ -220,6 +225,38 @@ async function run(
 ) {
   const root = await mkdtemp(join(tmpdir(), "xmsg-test-"));
   roots.push(root);
+  if (options.runRecord !== undefined) {
+    const state = join(root, "agx-state");
+    await Bun.write(
+      join(state, "records.jsonl"),
+      JSON.stringify({
+        kind: "started",
+        id: "worker-run",
+        at: Temporal.Now.instant().toString(),
+        ticket: "sender-fixture",
+        writes: [],
+        cwd: root,
+        workspace: root,
+        row: "fixture",
+        route: options.runRecord.route,
+        dispatcher_session: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        vendor_session: options.runRecord.session,
+        pid: process.pid,
+      }) + "\n",
+    );
+    if (options.runRecord.progress !== undefined)
+      await Bun.write(
+        join(state, "runs", "worker-run", "worker-progress.jsonl"),
+        JSON.stringify({
+          schema: 1,
+          at: Temporal.Now.instant().toString(),
+          last: "thread started",
+          commands: 0,
+          files: 0,
+          session: options.runRecord.progress,
+        }),
+      );
+  }
   if (options.registry !== undefined) {
     await mkdir(join(root, ".claude", "sessions"), { recursive: true });
     for (const [index, record] of options.registry.entries())
@@ -364,6 +401,7 @@ process.exit(Number(process.env.XMSG_FAKE_EXIT ?? 0));
         CLAUDE_SESSION_ID: undefined,
         CLAUDE_CONFIG_DIR: undefined,
         AGX_MSG_FROM: undefined,
+        AGX_RUN_ID: undefined,
         XMSG_RELAY_CAPTURE: undefined,
         ...options.env,
         XMSG_FAKE_INVENTORY: options.inventory,
@@ -1452,6 +1490,69 @@ test.each(["codex", "claude"])(
         );
       }
     }
+  },
+);
+
+test.each(["codex", "claude"])(
+  "recorded %s worker sender reaches the envelope",
+  async (route) => {
+    const r = await run({
+      kind: "codex",
+      args: sendArgs(`codex:${uuidB}`),
+      runRecord: { route, session: uuidA },
+      env: { AGX_RUN_ID: "worker-run" },
+    });
+    expect(r.exit).toBe(0);
+    expect(r.argv.at(-1)).toBe(envelope(message, `${route}:${uuidA}`));
+  },
+);
+
+test("fresh Codex sender uses its recorded live progress session", async () => {
+  const r = await run({
+    kind: "codex",
+    args: sendArgs(`codex:${uuidB}`),
+    runRecord: { route: "codex", session: null, progress: uuidA },
+    env: { AGX_RUN_ID: "worker-run" },
+  });
+  expect(r.exit).toBe(0);
+  expect(r.argv.at(-1)).toBe(envelope(message, `codex:${uuidA}`));
+});
+
+test.each([
+  { route: "codex", session: null, id: "worker-run" },
+  { route: "codex", session: uuidA, id: "unknown-run" },
+  { route: "codex", session: "native-name", id: "worker-run" },
+  { route: "unsupported", session: uuidA, id: "worker-run" },
+  { route: undefined, session: uuidA, id: "worker-run" },
+])("unproven run sender stays unknown: %j", async ({ route, session, id }) => {
+  const r = await run({
+    kind: "codex",
+    args: sendArgs(`codex:${uuidB}`),
+    runRecord: { route, session },
+    env: { AGX_RUN_ID: id, CODEX_THREAD_ID: uuidA },
+  });
+  expect(r.exit).toBe(0);
+  expect(r.argv.at(-1)).toBe(envelope(message));
+});
+
+test.each([false, true])(
+  "explicit sender overrides recorded run (flag=%s)",
+  async (flag) => {
+    const sender = `claude:${uuidB}`;
+    const r = await run({
+      kind: "codex",
+      args: [
+        ...sendArgs(`codex:${uuidB}`),
+        ...(flag ? ["--from", sender] : []),
+      ],
+      runRecord: { route: "codex", session: uuidA },
+      env: {
+        AGX_RUN_ID: "worker-run",
+        AGX_MSG_FROM: flag ? "invalid" : sender,
+      },
+    });
+    expect(r.exit).toBe(0);
+    expect(r.argv.at(-1)).toBe(envelope(message, sender));
   },
 );
 

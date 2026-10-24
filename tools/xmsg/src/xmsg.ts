@@ -219,7 +219,7 @@ async function main(): Promise<number> {
       },
       help: {
         description:
-          "Wait for exact reply input with agx msg wait --to codex:<full-UUID> --from backend:<full-UUID> --message TEXT [--timeout-ms N] (0 observed, 3 unobservable, 4 deadline; Claude inbox unsupported). List recipients with agx msg list [--json], send once with agx msg send, or inspect a Claude relay with agx msg status --relay <session-UUID>. Sender: --from > AGX_MSG_FROM > unknown; never infer native session variables. The envelope from: line is caller attribution, not authentication. Claude from-name is relay transport, named agx msg relay from <sender or unknown>. List exits 0 complete, 3 incomplete. Send/status exit: 0 accepted, 1 rejected, 2 usage, 3 unreachable, 4 acceptance unknown.",
+          "Wait for exact reply input with agx msg wait --to codex:<full-UUID> --from backend:<full-UUID> --message TEXT [--timeout-ms N] (0 observed, 3 unobservable, 4 deadline; Claude inbox unsupported). List recipients with agx msg list [--json], send once with agx msg send, or inspect a Claude relay with agx msg status --relay <session-UUID>. Sender: --from > AGX_MSG_FROM > recorded AGX_RUN_ID session > unknown; never infer native session variables. The envelope from: line is caller attribution, not authentication. Claude from-name is relay transport, named agx msg relay from <sender or unknown>. List exits 0 complete, 3 incomplete. Send/status exit: 0 accepted, 1 rejected, 2 usage, 3 unreachable, 4 acceptance unknown.",
       },
     }),
   );
@@ -320,8 +320,16 @@ async function main(): Promise<number> {
     return 2;
   }
   const declaration = args.flags.from ?? process.env.AGX_MSG_FROM;
+  const runSender =
+    declaration === undefined && process.env.AGX_RUN_ID !== undefined
+      ? await (
+          await import("../../agx-worker/src/next/message-sender.ts")
+        ).runMessageSender(process.env.AGX_RUN_ID)
+      : undefined;
   const sender =
-    declaration === undefined ? unknownSender : explicitSender(declaration);
+    declaration === undefined
+      ? (explicitSender(runSender ?? "") ?? unknownSender)
+      : explicitSender(declaration);
   if (sender === undefined) {
     process.stderr.write(
       `agx msg: invalid ${args.flags.from === undefined ? "AGX_MSG_FROM" : "--from"}; use codex:<full-session-UUID> or claude:<full-session-UUID> (no prefixes or names)\n`,

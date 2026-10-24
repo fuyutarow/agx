@@ -391,7 +391,7 @@ describe("agx-worker run", () => {
     const interimMessage = `\`\`\`agx-return\n${interim}\n\`\`\``;
     writeFileSync(
       worker,
-      `import { appendFileSync } from "node:fs";\nconst resumeIndex = process.argv.indexOf("--resume");\nconst vendorSession = resumeIndex < 0 ? "vendor-1" : "continued-" + String(process.argv[resumeIndex + 1]);\nawait Bun.write(process.env.AGX_CODEX_PROGRESS_FILE, JSON.stringify({ schema: 1, at: "2026-10-24T00:00:00Z", last: "fixture activity", commands: 4, files: 2, session: vendorSession }));\nif (process.env.AGX_LATE_FIXTURE === "1") await Bun.sleep(1400);\nelse appendFileSync(process.env.AGX_INTERIM_REPORTS_FILE, JSON.stringify({ last_message: ${JSON.stringify(interimMessage)} }) + "\\n");\nprocess.stdout.write(JSON.stringify({ exit: 0, report: { summary: "fake done", changes: [], checks: [], for_coordinator: [], open: [] }, vendor_session: vendorSession }) + "\\n");\n`,
+      `import { appendFileSync } from "node:fs";\nif (!process.env.AGX_RUN_ID || process.env.AGX_RUN_ID === "inherited-run" || !process.env.AGX_CODEX_PROGRESS_FILE.includes(process.env.AGX_RUN_ID)) throw new Error("worker run ID missing or inherited");\nconst resumeIndex = process.argv.indexOf("--resume");\nconst vendorSession = resumeIndex < 0 ? "vendor-1" : "continued-" + String(process.argv[resumeIndex + 1]);\nawait Bun.write(process.env.AGX_CODEX_PROGRESS_FILE, JSON.stringify({ schema: 1, at: "2026-10-24T00:00:00Z", last: "fixture activity", commands: 4, files: 2, session: vendorSession }));\nif (process.env.AGX_LATE_FIXTURE === "1") await Bun.sleep(1400);\nelse appendFileSync(process.env.AGX_INTERIM_REPORTS_FILE, JSON.stringify({ last_message: ${JSON.stringify(interimMessage)} }) + "\\n");\nprocess.stdout.write(JSON.stringify({ exit: 0, report: { summary: "fake done", changes: [], checks: [], for_coordinator: [], open: [] }, vendor_session: vendorSession }) + "\\n");\n`,
     );
 
     const workerEnv = {
@@ -407,6 +407,7 @@ describe("agx-worker run", () => {
         import.meta.url,
       ).pathname,
       AGX_DISPATCHER_SESSION: "",
+      AGX_RUN_ID: "inherited-run",
       CLAUDE_CODE_SESSION_ID: "claude-session",
     };
     const binding = {

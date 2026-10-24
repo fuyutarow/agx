@@ -139,7 +139,7 @@ const renderPromise = (
           : [`${key}: ${JSON.stringify(ticket[key])}`],
       ),
       'If this work needs a tool release changeset, create it with `mise run changeset -- <tool> <patch|minor|major> "<entry>"`; do not hand-write a `.changes` file.',
-      "For agx msg sender attribution, --from overrides AGX_MSG_FROM. agx-worker declares AGX_MSG_FROM only when it knows this vendor process's full session UUID before spawn. For a fresh Codex thread, pass --from codex:<full-thread-UUID> using the current thread ID reported by the vendor. Never guess from inherited native session variables, dispatcher identity, inventory, cwd or the latest session. If the vendor has not supplied your ID, leave sender unknown. The envelope's from: line is the declared reply address; Claude's visible from-name identifies the relay transport.",
+      "For agx msg sender attribution, --from overrides AGX_MSG_FROM. agx-worker declares AGX_MSG_FROM only when it knows this vendor process's full session UUID before spawn. Without either declaration, agx msg resolves this AGX_RUN_ID from its recorded vendor session and route; missing run sessions stay unknown. For a fresh Codex thread, pass --from codex:<full-thread-UUID> using the current thread ID reported by the vendor. Never guess from inherited native session variables, dispatcher identity, inventory, cwd or the latest session. If the vendor has not supplied your ID, leave sender unknown. The envelope's from: line is the declared reply address; Claude's visible from-name identifies the relay transport.",
       "",
       prose.trim(),
     ].join("\n"),
@@ -603,6 +603,7 @@ export async function run(flags: Flags): Promise<number> {
       stderr: "inherit",
       env: {
         ...runEnv,
+        AGX_RUN_ID: id,
         ...(process.env.AGX_WORKER_BIN === undefined
           ? {}
           : { BUN_BE_BUN: "1" }),

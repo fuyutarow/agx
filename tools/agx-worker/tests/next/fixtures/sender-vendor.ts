@@ -6,7 +6,11 @@ const capture = process.env.AGX_SENDER_CAPTURE;
 if (capture === undefined) process.exit(2);
 await Bun.write(
   capture,
-  JSON.stringify({ args, sender: process.env.AGX_MSG_FROM ?? null }),
+  JSON.stringify({
+    args,
+    sender: process.env.AGX_MSG_FROM ?? null,
+    runId: process.env.AGX_RUN_ID,
+  }),
 );
 if (args[0] === "exec") {
   const last = args[args.indexOf("-o") + 1];

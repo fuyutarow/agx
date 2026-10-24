@@ -133,17 +133,20 @@ deduplicates caller text as existing headers. Claude receipt correlation checks
 the exact composed envelope plus body.
 
 Sender selection is `--from` first, then the explicit `AGX_MSG_FROM` declaration,
-then unknown. Both declarations accept the same full addresses and UUID
+then the exact `AGX_RUN_ID` run's recorded vendor session and route, then unknown.
+The run lookup uses the existing worker record reader and live progress projection;
+unknown runs, missing sessions, unsupported routes and non-UUID sessions stay unknown.
+Both declarations accept the same full addresses and UUID
 canonicalization. An invalid selected declaration (including an empty value) exits
 2 before discovery or transport; a valid `--from` overrides even an invalid
 `AGX_MSG_FROM`. List, status and wait ignore `AGX_MSG_FROM`; wait requires explicit addresses.
 
-Without either declaration, the first line is `from: unknown (caller identity unavailable or inherited; use --from backend:<full-session-id>)`.
+Without either declaration or a recorded full run session, the first line is `from: unknown (caller identity unavailable or inherited; use --from backend:<full-session-id>)`.
 Sends still work with truthful missing attribution. `CODEX_THREAD_ID`,
 `CODEX_SESSION_ID`, `CLAUDE_CODE_SESSION_ID` and other native session variables
 are never consulted: they may belong to a parent, even when they agree. No cwd,
 inventory, transcript, latest session, name or lookup order determines the sender.
-No extra discovery or native calls occur for sender selection.
+No recipient inventory is used for sender selection.
 
 The envelope's first `from:` line is the authoritative **declared reply address**,
 not authenticated identity. The receiving Claude harness's visible from-name
@@ -160,6 +163,9 @@ For fresh Claude workers it assigns `--session-id` before spawn and sets
 Claude and Codex workers receive a declaration only for a full UUID explicitly
 passed to resume. Native-name resumes have no declaration. Fresh Codex thread
 IDs are unavailable before spawn, so agx-worker leaves the declaration unset.
+`agx worker run` exports its own `AGX_RUN_ID`, replacing any inherited run ID.
+Once the vendor reports its session to that run's progress record, sends can
+resolve it automatically without `--from`.
 The generated worker brief instructs the worker to use
 `--from codex:<full-thread-UUID>` from the current thread ID reported by the vendor;
 if no ID is supplied, leave sender unknown. Never use the dispatcher address or

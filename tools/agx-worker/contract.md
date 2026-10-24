@@ -319,7 +319,13 @@ for them. The generated brief tells these workers to pass
 or leave sender unknown when that ID is unavailable. Native inherited IDs, cwd,
 inventory, transcript order and the dispatcher address are not substitutes.
 
-agx msg chooses `--from` > explicit `AGX_MSG_FROM` > unknown, validates the selected
+`agx worker run` exports its own `AGX_RUN_ID` at the worker spawn boundary,
+replacing an inherited run ID. Vendor wrappers forward that run ID. With neither
+explicit sender declaration, agx msg uses the existing run reader and live progress
+projection to resolve that exact run's `route` and full `vendor_session` UUID.
+Missing runs, missing sessions, unsupported routes and non-UUID sessions remain unknown.
+
+agx msg chooses `--from` > explicit `AGX_MSG_FROM` > recorded run sender > unknown, validates the selected
 declaration before transport, and never infers native session identity. Its envelope's
 `from:` line is authoritative caller attribution, not authentication. Claude's
 visible from-name describes the relay transport, named
