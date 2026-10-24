@@ -7,6 +7,7 @@ import { stat, mkdtemp, mkdir, rm, symlink } from "node:fs/promises";
 import { stripVTControlCharacters } from "node:util";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { cli } from "cleye";
 import {
   attempt,
   errorMessage,
@@ -322,14 +323,15 @@ export async function checkConsumer(
   return 0;
 }
 
-/** Every declared consumer, or SKIP when the workspace tree equals the base tree. */
+/** Every declared consumer; by default SKIP when the workspace tree equals the base tree. */
 export async function checkConsumers(
   consumers: Consumer[],
   workspace: string,
   base: string,
   write: Write = stdout,
+  options: { all?: boolean } = {},
 ): Promise<number> {
-  if (!(await usehooksChanged(workspace, base))) {
+  if (options.all !== true && !(await usehooksChanged(workspace, base))) {
     write(
       "SKIP usehooks:consumers: the landed diff does not touch tools/agx-usehooks\n",
     );
@@ -410,7 +412,31 @@ export async function materializeBase(
   return join(into, "tools/agx-usehooks");
 }
 
+const rejectPrototypeFlag = (type: string, flag: string): void => {
+  if (type === "unknown-flag" && flag === "__proto__") {
+    process.stderr.write("FATAL: unknown option --__proto__\n");
+    process.exit(2);
+  }
+};
+
 export async function main(): Promise<number> {
+  const parsed = cli({
+    name: "check-consumers",
+    parameters: [],
+    strictFlags: true,
+    ignoreArgv: rejectPrototypeFlag,
+    flags: {
+      all: {
+        type: Boolean,
+        description:
+          "Check every registered consumer even when agx-usehooks is unchanged",
+      },
+    },
+  });
+  if (parsed._.length > 0) {
+    process.stderr.write("FATAL: unexpected positional arguments\n");
+    return 2;
+  }
   const consumers = await resolveUsehooksConsumers();
   if (!consumers.ok) {
     process.stderr.write(
@@ -435,7 +461,9 @@ export async function main(): Promise<number> {
     return 1;
   }
   stdout(`usehooks:consumers: base ${revision}\n`);
-  return await checkConsumers(consumers.value, workspace, base);
+  return await checkConsumers(consumers.value, workspace, base, stdout, {
+    all: parsed.flags.all ?? false,
+  });
 }
 
 if (import.meta.main)

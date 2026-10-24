@@ -88,11 +88,11 @@ description = "Build the suite distribution or a development member archive"
 run = "bun tools/release/build.ts"
 
 [tasks.changeset]
-description = "Record one package change without changing its version"
+description = "Record one suite change without changing its version"
 run = "bun tools/changeset/changeset.ts"
 
 [tasks."release:version"]
-description = "Apply member changesets and advance the suite version"
+description = "Apply all pending changesets and advance the suite once"
 run = "bun tools/changeset/apply.ts"
 
 [tasks."lint:changesets"]

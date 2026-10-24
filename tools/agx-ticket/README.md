@@ -145,9 +145,12 @@ State uses non-empty `AGX_STATE_DIR`, otherwise non-empty `XDG_STATE_HOME` plus 
 otherwise `~/.local/state/agx`. The legacy ledger is read-only at `<state dir>/legacy-v1/`.
 Startup rejects `AGX_NEXT_STATE_DIR` and a pending sibling `agx-next` migration with exit 2
 and migration guidance; it never moves data automatically. Retired `AGX_DOCTOR_HOME` and
-`AGX_DOCTOR_WORKSPACE` are rejected in favor of `AGX_REPOS_ROOT`.
+`AGX_DOCTOR_WORKSPACE` are rejected and direct operators to the L2 repository registry.
 
-Doctor scans repositories under `~/Workspace`. Set `AGX_ADDITIONAL_REPO` to an
-additional repository path outside that directory. Set `AGX_REPOS_ROOT` to replace
-both defaults with the repositories under that root; it suppresses the additional
-repository too. Unset or empty `AGX_ADDITIONAL_REPO` adds no repository.
+Doctor inspects exactly the repositories registered by `listAgxRepos()` in the agx L2
+directory: `$XDG_CONFIG_HOME/agx/repos/*.toml` (default `~/.config/agx/repos/*.toml`).
+Each file's `root` is the repository's absolute main-checkout path. Doctor does not scan
+`~/Workspace` and does not use `AGX_REPOS_ROOT` or `AGX_ADDITIONAL_REPO`; those variables
+do not change ticket-doctor scope. Consumer tests set `XDG_CONFIG_HOME` to a temporary
+registry and check that a registered repository is inspected while an unregistered Git
+directory is ignored.

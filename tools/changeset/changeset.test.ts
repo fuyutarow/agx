@@ -48,7 +48,8 @@ async function fixture() {
   await symlink(join(repository, "node_modules"), join(root, "node_modules"));
   await Bun.write(join(root, "tools/agx/package.json"), '{"version":"1.2.1"}');
   await Bun.write(join(root, "tools/agx/CHANGELOG.md"), "# Changelog\n");
-  return { root, dir, changes: join(dir, ".changes") };
+  await Bun.write(join(root, "CHANGELOG.md"), "# Changelog\n");
+  return { root, dir, changes: join(root, ".changes") };
 }
 
 async function invoke(root: string, file: string, args: string[] = []) {
@@ -114,203 +115,25 @@ test.each([
   expect(parseChangeset(text).isErr()).toBe(true);
 });
 
-test("create writes canonical bytes, lint accepts, and duplicate slugs preserve the first file", async () => {
+test("generator supports suite and scoped forms, keeps duplicate summaries, and lints both", async () => {
   const f = await fixture();
-  const before = await releaseBytes(f.dir);
-  const first = await invoke(f.root, "changeset.ts", [
-    "sample",
-    "patch",
-    "Fix an issue",
+  for (const args of [
+    ["minor", "Same summary"],
+    ["sample", "patch", "Same summary"],
+  ])
+    expect((await invoke(f.root, "changeset.ts", args)).exit).toBe(0);
+  expect(await readdir(f.changes)).toEqual([
+    "same-summary-2.md",
+    "same-summary.md",
   ]);
-  const second = await invoke(f.root, "changeset.ts", [
-    "sample",
-    "minor",
-    "Fix an issue",
-  ]);
-  expect(first.exit).toBe(0);
-  expect(first.stdout).toBe("WROTE tools/sample/.changes/fix-an-issue.md\n");
-  expect(second.stdout).toBe("WROTE tools/sample/.changes/fix-an-issue-2.md\n");
-  expect(await Bun.file(join(f.changes, "fix-an-issue.md")).text()).toBe(
-    "---\nbump: patch\n---\n\nFix an issue\n",
-  );
   expect(await lintChangesets(f.root)).toEqual([]);
-  expect((await invoke(f.root, "lint.ts")).exit).toBe(0);
-  expect(await releaseBytes(f.dir)).toEqual(before);
+  const applied = await invoke(f.root, "apply.ts");
+  expect(applied.exit, applied.stderr).toBe(0);
+  expect(applied.stdout).toBe("VERSIONED suite@1.3.0 (2 changesets)\n");
+  expect((await invoke(f.root, "apply.ts")).exit).toBe(2);
 });
-
-test("generator normalizes non-ASCII and punctuation slugs without losing entry bytes", async () => {
-  const f = await fixture();
-  const change = await writeChangeset(
-    f.root,
-    "sample",
-    "patch",
-    "  Café output!  ",
-  );
-  expect(change.isOk() && change.value).toBe(
-    "tools/sample/.changes/cafe-output.md",
-  );
-  const fallback = await writeChangeset(f.root, "sample", "patch", "修正");
-  expect(fallback.isOk() && fallback.value).toBe(
-    "tools/sample/.changes/change.md",
-  );
-});
-
-test.each([
-  ["missing", "patch", "Entry"],
-  ["changeset", "patch", "Entry"],
-  ["../sample", "patch", "Entry"],
-  ["sample", "huge", "Entry"],
-  ["sample", "patch", "First\nSecond"],
-])("create refuses invalid input %j", async (pkg, level, entry) => {
-  const f = await fixture();
-  expect((await invoke(f.root, "changeset.ts", [pkg, level, entry])).exit).toBe(
-    2,
-  );
-  expect(await readdir(f.changes)).toEqual([]);
-});
-
-test("empty and whitespace-only entries are refused before any write", async () => {
-  const f = await fixture();
-  expect((await writeChangeset(f.root, "sample", "patch", "")).isErr()).toBe(
-    true,
-  );
-  expect(
-    (await invoke(f.root, "changeset.ts", ["sample", "patch", "   "])).exit,
-  ).toBe(2);
-  expect(await readdir(f.changes)).toEqual([]);
-});
-
-test.each([
-  [["patch"], "1.2.4"],
-  [["minor", "patch"], "1.3.0"],
-  [["patch", "major", "minor"], "2.0.0"],
-] as const)(
-  "apply takes the highest pending level %j",
-  async (levels, version) => {
-    const f = await fixture();
-    for (const [index, level] of levels.entries())
-      expect(
-        (
-          await writeChangeset(f.root, "sample", level, `Entry ${index}`)
-        ).isOk(),
-      ).toBe(true);
-    await Bun.write(join(f.changes, ".keep"), "Keep non-changeset files\n");
-    const result = await applyChangesets(f.root, "sample", "2026-10-23");
-    expect(result.isOk() && result.value).toEqual({
-      pkg: "sample",
-      version,
-      entries: levels.length,
-    });
-    const [manifest, changelog] = await releaseBytes(f.dir);
-    expect(manifest).toBe(
-      `{\n  "name": "sample",\n  "version": "${version}",\n  "private": true\n}\n`,
-    );
-    expect(changelog).toBe(
-      `# Changelog\n\n## ${version} — 2026-10-23\n\n${levels.map((_level, index) => `- Entry ${index}`).join("\n")}\n\n## 1.2.3 — 2026-10-01\n\n- Existing entry\n`,
-    );
-    expect(await readdir(f.changes)).toEqual([".keep"]);
-  },
-);
-
-test("apply consumes only the selected package and ignores all repository version metadata", async () => {
-  const f = await fixture();
-  const other = join(f.root, "tools/neighbor");
-  await mkdir(join(other, ".changes"), { recursive: true });
-  await Bun.write(join(other, "package.json"), '{"version":"8.9.10"}');
-  await Bun.write(join(other, "CHANGELOG.md"), "# Changelog\n");
-  const pending = "bump: major\n\nNeighbor entry\n";
-  await Bun.write(join(other, ".changes/pending.md"), pending);
-  const before = await releaseBytes(other);
-  const repositoryBefore = await Bun.file(join(f.root, "package.json")).text();
-  await writeChangeset(f.root, "sample", "patch", "Selected entry");
-  const applied = await invoke(f.root, "apply.ts", ["sample"]);
-  expect(applied.exit).toBe(0);
-  expect(applied.stdout).toBe("VERSIONED sample@1.2.4 (1 changesets)\n");
-  expect(await releaseBytes(other)).toEqual(before);
-  expect(await Bun.file(join(other, ".changes/pending.md")).text()).toBe(
-    pending,
-  );
-  expect(await Bun.file(join(f.root, "package.json")).text()).toBe(
-    repositoryBefore,
-  );
-  expect(await Bun.file(join(f.dir, "CHANGELOG.md")).text()).not.toContain(
-    "Neighbor entry",
-  );
-  const after = await releaseBytes(f.dir);
-  expect((await invoke(f.root, "apply.ts", ["sample"])).exit).toBe(2);
-  expect(await releaseBytes(f.dir)).toEqual(after);
-});
-
-test("no pending files refuses with exit 2, even when another package has a changeset", async () => {
-  const f = await fixture();
-  await mkdir(join(f.root, "tools/neighbor/.changes"), { recursive: true });
-  await Bun.write(
-    join(f.root, "tools/neighbor/.changes/pending.md"),
-    "bump: major\n\nOther entry\n",
-  );
-  const before = await releaseBytes(f.dir);
-  for (const missingDir of [false, true]) {
-    if (missingDir) await rm(f.changes, { recursive: true });
-    const result = await invoke(f.root, "apply.ts", ["sample"]);
-    expect(result.exit).toBe(2);
-    expect(result.stderr).toContain("No pending changesets for sample");
-    expect(await releaseBytes(f.dir)).toEqual(before);
-  }
-});
-
-test("lint refuses unknown packages and levels with paths and generator guidance", async () => {
-  const f = await fixture();
-  await Bun.write(join(f.changes, "unknown-level.md"), "bump: huge\n\nEntry\n");
-  await mkdir(join(f.root, "tools/missing/.changes"), { recursive: true });
-  await Bun.write(
-    join(f.root, "tools/missing/.changes/unknown-package.md"),
-    "bump: patch\n\nEntry\n",
-  );
-  const problems = await lintChangesets(f.root);
-  expect(problems).toHaveLength(2);
-  expect(problems.join("\n")).toContain("Unknown package: missing");
-  expect(problems.join("\n")).toContain("bump must be patch, minor, or major");
-  for (const problem of problems)
-    expect(problem).toContain("mise run changeset -- <pkg>");
-  const result = await invoke(f.root, "lint.ts");
-  expect(result.exit).toBe(1);
-  expect(result.stderr).toContain("tools/missing/.changes/unknown-package.md");
-  expect(result.stderr).toContain("tools/sample/.changes/unknown-level.md");
-});
-
-test.each([
-  ["malformed changeset", "bad.md", "bump: huge\n\nEntry\n"],
-  ["invalid version", "../package.json", '{"version":"1.2.3-beta.1"}'],
-  ["invalid package JSON", "../package.json", "{"],
-  ["invalid changelog", "../CHANGELOG.md", "# Other heading\n"],
-])(
-  "apply validates all selected inputs before writes: %s",
-  async (_name, path, text) => {
-    const f = await fixture();
-    await writeChangeset(f.root, "sample", "patch", "Valid entry");
-    await Bun.write(join(f.changes, path), text);
-    const before = await releaseBytes(f.dir);
-    const names = await readdir(f.changes);
-    expect((await invoke(f.root, "apply.ts", ["sample"])).exit).toBe(2);
-    expect(await releaseBytes(f.dir)).toEqual(before);
-    expect(await readdir(f.changes)).toEqual(names);
-  },
-);
-
-test("apply creates a missing changelog and supports library packages without commands", async () => {
-  const f = await fixture();
-  await rm(join(f.dir, "CHANGELOG.md"));
-  await writeChangeset(f.root, "sample", "patch", "Library change");
-  expect((await invoke(f.root, "apply.ts", ["sample"])).exit).toBe(0);
-  expect(await Bun.file(join(f.dir, "CHANGELOG.md")).text()).toMatch(
-    /^# Changelog\n\n## 1\.2\.4 — \d{4}-\d{2}-\d{2}\n\n- Library change\n$/u,
-  );
-  expect((await invoke(f.root, "apply.ts", ["missing"])).exit).toBe(2);
-  expect((await invoke(f.root, "apply.ts", ["../sample"])).exit).toBe(2);
-});
-
 test.each(["changeset.ts", "apply.ts", "lint.ts"])(
-  "CLI %s owns help, flags and positional counts",
+  "CLI %s rejects unknown flags and excess args",
   async (file) => {
     const f = await fixture();
     expect((await invoke(f.root, file, ["--help"])).exit).toBe(0);
@@ -321,38 +144,43 @@ test.each(["changeset.ts", "apply.ts", "lint.ts"])(
     ).toBe(2);
   },
 );
-
-test.each([
-  ["patch", "1.2.2"],
-  ["minor", "1.3.0"],
-  ["major", "2.0.0"],
-])("member %s bump forces suite version %s", async (level, version) => {
+test("malformed legacy changeset refuses before writing or consuming valid suite changes", async () => {
   const f = await fixture();
-  await writeChangeset(f.root, "sample", level, "Member change");
-  const result = await applyChangesets(f.root, "sample", "2026-10-23");
-  expect(result.isOk()).toBe(true);
-  expect(
-    await Bun.file(join(f.root, "tools/agx/package.json")).text(),
-  ).toContain(`"version": "${version}"`);
-  expect(
-    await Bun.file(join(f.root, "tools/agx/CHANGELOG.md")).text(),
-  ).toContain(
-    `Update suite member sample to ${result.isOk() ? result.value.version : ""}.`,
-  );
-  expect(await lintChangesets(f.root)).toEqual([]);
+  await writeChangeset(f.root, "sample", "minor", "Valid");
+  await Bun.write(join(f.dir, ".changes/bad.md"), "bump: huge\n\nBad\n");
+  const before = await releaseBytes(f.dir);
+  expect((await applyChangesets(f.root)).isErr()).toBe(true);
+  expect(await releaseBytes(f.dir)).toEqual(before);
+  expect(await readdir(f.changes)).toEqual(["valid.md"]);
+  expect(await lintChangesets(f.root)).toHaveLength(1);
 });
 
-test("invalid suite input prevents member writes; pending suite level participates", async () => {
+test("one suite apply consumes every in-flight member file with the highest bump", async () => {
   const f = await fixture();
-  await writeChangeset(f.root, "sample", "patch", "Member change");
-  const before = await releaseBytes(f.dir);
-  await Bun.write(join(f.root, "tools/agx/CHANGELOG.md"), "# Invalid\n");
-  expect((await applyChangesets(f.root, "sample")).isErr()).toBe(true);
-  expect(await releaseBytes(f.dir)).toEqual(before);
-  await Bun.write(join(f.root, "tools/agx/CHANGELOG.md"), "# Changelog\n");
-  await writeChangeset(f.root, "agx", "major", "Suite change");
-  expect((await applyChangesets(f.root, "sample")).isOk()).toBe(true);
-  expect(
-    await Bun.file(join(f.root, "tools/agx/package.json")).text(),
-  ).toContain('"version": "2.0.0"');
+  await writeChangeset(f.root, "agx", "patch", "Suite fix");
+  await Bun.write(
+    join(f.dir, ".changes/a.md"),
+    "bump: minor\n\nMember feature\n",
+  );
+  await Bun.write(
+    join(f.root, "tools/agx/.changes/a.md"),
+    "bump: major\n\nLegacy suite break\n",
+  );
+  const frozen = await Bun.file(join(f.dir, "CHANGELOG.md")).text();
+  const result = await applyChangesets(f.root);
+  expect(result.isOk() && result.value).toEqual({
+    pkg: "suite",
+    version: "2.0.0",
+    entries: 3,
+  });
+  expect(await readdir(f.changes)).toEqual([]);
+  expect(await readdir(join(f.dir, ".changes"))).toEqual([]);
+  expect(await readdir(join(f.root, "tools/agx/.changes"))).toEqual([]);
+  expect(await Bun.file(join(f.dir, "CHANGELOG.md")).text()).toBe(frozen);
+  const log = await Bun.file(join(f.root, "CHANGELOG.md")).text();
+  for (const entry of ["Suite fix", "Member feature", "Legacy suite break"])
+    expect(log).toContain(entry);
+  expect(await Bun.file(join(f.dir, "package.json")).text()).toContain(
+    '"version": "2.0.0"',
+  );
 });

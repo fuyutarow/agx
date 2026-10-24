@@ -94,7 +94,7 @@ export function formatChangeset(changeset: Changeset): string {
 }
 
 export function changesetDiagnostic(path: string, reason: string): string {
-  return `${path}: ${reason}; create a correct changeset with mise run changeset -- <pkg> <patch|minor|major> "<entry>"`;
+  return `${path}: ${reason}; create a correct changeset with mise run changeset -- [pkg] <patch|minor|major> "<entry>"`;
 }
 
 const rejectPrototypeFlag = (type: string, flag: string): void => {
@@ -140,14 +140,14 @@ export async function writeChangeset(
 
   const info = await readPackage(root, tool);
   if (info.isErr()) return info;
-  const changesDir = join(info.value.dir, ".changes");
+  const changesDir = join(root, ".changes");
   const written = await fromAsyncThrowable(
     async () => {
       await mkdir(changesDir, { recursive: true });
       const slug = await uniqueSlug(changesDir, slugOf(checked.data.entry));
       const path = join(changesDir, `${slug}.md`);
       await writeFile(path, formatChangeset(checked.data), { flag: "wx" });
-      return `tools/${tool}/.changes/${slug}.md`;
+      return `.changes/${slug}.md`;
     },
     (error) => new Error(errorMessage(error)),
   )();
@@ -158,22 +158,22 @@ export async function writeChangeset(
 async function main() {
   const parsed = cli({
     name: "changeset",
-    parameters: ["<pkg>", "<bump>", "<entry>"],
+    parameters: ["<args...>"],
     strictFlags: true,
     ignoreArgv: rejectPrototypeFlag,
   });
-  if (parsed._.length !== 3) {
+  if (parsed._.length !== 3 && parsed._.length !== 2) {
     process.stderr.write(
-      'FATAL: usage: mise run changeset -- <pkg> <patch|minor|major> "<entry>"\n',
+      'FATAL: usage: mise run changeset -- [pkg] <patch|minor|major> "<entry>"\n',
     );
     process.exitCode = 2;
   } else
     writeResult(
       await writeChangeset(
         repository,
-        String(parsed._[0]),
-        String(parsed._[1]),
-        String(parsed._[2]),
+        parsed._.length === 3 ? String(parsed._[0]) : "agx",
+        String(parsed._.at(-2)),
+        String(parsed._.at(-1)),
       ),
     );
 }

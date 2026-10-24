@@ -16,7 +16,6 @@ import {
   resolve,
   sep,
 } from "node:path";
-import { homedir } from "node:os";
 import {
   attempt,
   errorMessage,
@@ -24,13 +23,13 @@ import {
 } from "../../shared/src/attempt.ts";
 import { jsonOf, z } from "../../shared/src/zod.ts";
 import { JJ_READ_ARGS } from "../../shared/src/jj-read.ts";
-import { resolveAgxConfig } from "../../shared/src/agx-config.ts";
+import { listAgxRepos, resolveAgxConfig } from "../../shared/src/agx-config.ts";
 import { validateSlug } from "../../shared/src/slug.ts";
 
 for (const retired of ["AGX_DOCTOR_HOME", "AGX_DOCTOR_WORKSPACE"]) {
   if (process.env[retired] !== undefined) {
     process.stderr.write(
-      `agx-ticket: ${retired} is retired; unset it and use AGX_REPOS_ROOT instead\n`,
+      `agx-ticket: ${retired} is retired; register repositories in $XDG_CONFIG_HOME/agx/repos/*.toml instead\n`,
     );
     process.exit(2);
   }
@@ -445,25 +444,12 @@ const isTicketFile = async (path: string): Promise<boolean> => {
 
 /** Read-only fleet check for ticket placement and accepted, landed tickets. */
 export async function doctor(): Promise<Attempt<string[]>> {
-  const override = process.env.AGX_REPOS_ROOT;
-  const workspaceHome = override ?? join(homedir(), "Workspace");
-  const extra = process.env.AGX_ADDITIONAL_REPO;
-  const repos =
-    override === undefined && extra !== undefined && extra !== ""
-      ? [resolve(extra)]
-      : [];
-  const workspaceEntries = await readdir(workspaceHome, {
-    withFileTypes: true,
-  }).catch(() => []);
-  repos.push(
-    ...workspaceEntries
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => join(workspaceHome, entry.name)),
-  );
+  const registered = await listAgxRepos();
+  if (!registered.ok) return registered;
   const findings: string[] = [];
   const seen = new Set<string>();
   const contexts: (Context & { backing: string })[] = [];
-  for (const candidate of repos) {
+  for (const { root: candidate } of registered.value) {
     const git = await exists(join(candidate, ".git"));
     if (!git.ok || !git.value) continue;
     const ctx = await context(candidate);

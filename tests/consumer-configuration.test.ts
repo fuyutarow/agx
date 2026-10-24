@@ -31,13 +31,20 @@ test("verification reads a neutral prefix file or an explicitly configured locat
   }
 });
 
-test("doctor includes a configured additional repository and suppresses it under a root override", async () => {
+test("doctor inspects a registered repository and ignores an unregistered git directory", async () => {
   const root = await mkdtemp(join(tmpdir(), "consumer-doctor-"));
   const home = join(root, "home");
-  const repo = join(root, "consumer");
+  const workspace = join(home, "Workspace");
+  const repo = join(workspace, "registered");
+  const unregistered = join(workspace, "unregistered");
   const bin = join(root, "bin");
-  const empty = join(root, "empty");
-  await Promise.all([home, bin, empty].map((path) => mkdir(path)));
+  const config = join(root, "config");
+  const registry = join(config, "agx/repos");
+  await Promise.all(
+    [home, workspace, bin, registry].map((path) =>
+      mkdir(path, { recursive: true }),
+    ),
+  );
   await writeFile(
     join(bin, "agx"),
     `#!${process.execPath}\nprocess.stdout.write('[]');\n`,
@@ -46,14 +53,18 @@ test("doctor includes a configured additional repository and suppresses it under
   const env = {
     ...process.env,
     HOME: home,
-    AGX_REPOS_ROOT: undefined,
-    AGX_ADDITIONAL_REPO: undefined,
-    XDG_CONFIG_HOME: join(root, "config"),
+    AGX_REPOS_ROOT: join(root, "empty-override"),
+    AGX_ADDITIONAL_REPO: unregistered,
+    XDG_CONFIG_HOME: config,
     PATH: `${bin}:${process.env.PATH}`,
   };
-  async function run(args: string[], extra: NodeJS.ProcessEnv = {}) {
+  async function run(
+    args: string[],
+    extra: NodeJS.ProcessEnv = {},
+    cwd = root,
+  ) {
     const child = Bun.spawn(args, {
-      cwd: root,
+      cwd,
       env: { ...env, ...extra },
       stdout: "pipe",
       stderr: "pipe",
@@ -66,27 +77,47 @@ test("doctor includes a configured additional repository and suppresses it under
     ]);
     return { exit, out, err };
   }
-  const init = await run(["jj", "git", "init", repo]);
-  expect(init.exit, init.err).toBe(0);
+  for (const path of [repo, unregistered]) {
+    const init = await run(["jj", "git", "init", path], {}, root);
+    expect(init.exit, init.err).toBe(0);
+    const revset = await run(
+      [
+        "jj",
+        "config",
+        "set",
+        "--repo",
+        'revset-aliases."trunk()"',
+        "bookmarks(main)",
+      ],
+      {},
+      path,
+    );
+    expect(revset.exit, revset.err).toBe(0);
+    await writeFile(join(path, "base"), "base\n");
+    await writeFile(
+      join(path, "stray.md"),
+      "+++\nschema = 2\n[proposition]\n+++\n",
+    );
+    const commit = await run(["jj", "commit", "-m", "base"], {}, path);
+    expect(commit.exit, commit.err).toBe(0);
+    const bookmark = await run(
+      ["jj", "bookmark", "create", "main", "-r", "@-"],
+      {},
+      path,
+    );
+    expect(bookmark.exit, bookmark.err).toBe(0);
+  }
   await writeFile(
-    join(repo, "stray.md"),
-    "+++\nschema = 2\n[proposition]\n+++\n",
+    join(registry, "registered.toml"),
+    `schema = 1\nroot = ${JSON.stringify(repo)}\n`,
   );
   const cli = [
     process.execPath,
     resolve("tools/agx-ticket/src/tkt.ts"),
     "doctor",
   ];
-  const normal = await run(cli);
-  expect(normal.exit, normal.err).toBe(0);
-  expect(normal.out).not.toContain(repo);
-  const added = await run(cli, { AGX_ADDITIONAL_REPO: repo });
-  expect(added.exit, added.err).toBe(1);
-  expect(added.out).toContain(join(repo, "stray.md"));
-  const overridden = await run(cli, {
-    AGX_ADDITIONAL_REPO: repo,
-    AGX_REPOS_ROOT: empty,
-  });
-  expect(overridden.exit, overridden.err).toBe(0);
-  expect(overridden.out).not.toContain(repo);
+  const result = await run(cli);
+  expect(result.exit, result.err).toBe(1);
+  expect(result.out).toContain(join(repo, "stray.md"));
+  expect(result.out).not.toContain(unregistered);
 });

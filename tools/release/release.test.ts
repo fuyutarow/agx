@@ -48,6 +48,11 @@ async function fixture(pkg = "agx-status") {
     join(dir, "CHANGELOG.md"),
     "# Changelog\n\n## 2.3.4\n\n- This version only.\n\n## 2.3.3\n\n- Earlier version.\n",
   );
+  await Bun.write(join(root, "tools/agx/package.json"), '{"version":"2.3.4"}');
+  await Bun.write(
+    join(root, "CHANGELOG.md"),
+    await Bun.file(join(dir, "CHANGELOG.md")).text(),
+  );
   await Bun.write(join(root, "package.json"), '{"version":"99.99.99"}');
   await mkdir(join(root, "tools/release"), { recursive: true });
   for (const file of [
@@ -158,7 +163,7 @@ test("command fixtures refuse network Git and unknown processes and intercept gh
 test("package versions, tags and archive names ignore the repository version", async () => {
   const f = await fixture();
   const info = await packageInfo("agx-status", f.root);
-  expect(info.isOk() && info.value.tag).toBe("agx-status@2.3.4");
+  expect(info.isOk() && info.value.tag).toBe("v2.3.4");
   const result = await build("agx-status", undefined, f.root);
   expect(result.isOk()).toBe(true);
   if (result.isErr()) return;
@@ -223,6 +228,10 @@ test("publish defaults to dry-run and includes all sections since previous suite
       (await Bun.file(path).text()) + "\n## 2.3.2\n\n- Oldest version.\n",
     );
   }
+  await Bun.write(
+    join(f.root, "CHANGELOG.md"),
+    await Bun.file(join(f.root, "tools/agx/CHANGELOG.md")).text(),
+  );
   const result = await preview(f, [], { RELEASE_TEST_PREVIOUS: "1" });
   expect(result.exit).toBe(0);
   expect(result.stdout).toContain("DRY RUN");
@@ -230,7 +239,7 @@ test("publish defaults to dry-run and includes all sections since previous suite
   expect(result.stdout).toContain("agx-usehooks-2.3.4.tgz");
   if (process.env.AGX_RELEASE_PLAN_RECEIPT !== undefined)
     await Bun.write(process.env.AGX_RELEASE_PLAN_RECEIPT, result.stdout);
-  expect(result.stdout).toContain("'git' 'tag' 'agx-status@2.3.4'");
+  expect(result.stdout).not.toContain("agx-status@");
   expect(result.stdout).toContain("'gh' 'release' 'create' 'v2.3.4'");
   expect(result.stdout).toContain(
     "'--target' '0123456789012345678901234567890123456789'",
@@ -253,11 +262,18 @@ test("publish reads precisely the dated section produced by release:version", as
       await writeChangeset(f.root, "agx-status", "minor", "New release entry.")
     ).isOk(),
   ).toBe(true);
+  await rm(join(f.root, "tools/agx-usehooks/.changes"), {
+    recursive: true,
+    force: true,
+  });
   const applied = await applyChangesets(f.root, "agx-status", "2026-10-23");
+  expect(applied.isOk(), applied.isErr() ? applied.error.message : "").toBe(
+    true,
+  );
   expect(applied.isOk() && applied.value.version).toBe("2.4.0");
   const result = await preview(f);
   expect(result.exit).toBe(0);
-  expect(result.stdout).toContain("'git' 'tag' 'agx-status@2.4.0'");
+  expect(result.stdout).toContain("'git' 'tag' 'v2.4.0'");
   expect(
     await Bun.file(join(f.root, "dist/suite/release-notes.md")).text(),
   ).toContain("## 2.4.0 — 2026-10-23\n\n- New release entry.\n");
@@ -311,7 +327,7 @@ test("explicit dry-run refuses dirty copies, existing tags and missing version e
   expect(tagged.exit).toBe(2);
   expect(tagged.stderr).toContain("Tag already exists: v2.3.4");
   await Bun.write(
-    join(f.dir, "CHANGELOG.md"),
+    join(f.root, "CHANGELOG.md"),
     "## 2.3.40\n\n- Wrong version\n",
   );
   const missing = await preview(f, ["--dry-run"]);

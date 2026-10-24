@@ -64,6 +64,12 @@ async function fixture(custom?: string) {
     ]);
     return { out, err, code };
   }
+  async function register(name: string, repoRoot: string) {
+    await writeFile(
+      join(localDirectory, `${name}.toml`),
+      `schema = 1\nroot = ${JSON.stringify(repoRoot)}\n`,
+    );
+  }
   expect((await run(["jj", "git", "init", repo], root)).code).toBe(0);
   if (custom !== undefined)
     await writeFile(join(repo, "agx.toml"), `schema = 1\n${custom}`);
@@ -109,6 +115,7 @@ async function fixture(custom?: string) {
     home,
     initialHome: await readdir(home),
     local,
+    register,
     records,
     run,
     tkt,
@@ -381,36 +388,83 @@ test("a workspace already removed by ws retains ticket state but cannot authoriz
   expect(await readdir(join(f.repo, ".agents/tickets"))).toEqual(["past.md"]);
 });
 
-test("repository override scans only its root and unset preserves both default locations", async () => {
+test("doctor inspects only L2-registered repositories and ignores root-scan env vars", async () => {
   const f = await fixture();
-  const defaults = [
-    join(f.home, "Workspace/extra"),
-    join(f.home, "Workspace/default"),
-  ];
-  for (const path of defaults) {
-    await mkdir(path, { recursive: true });
+  const workspace = join(f.home, "Workspace");
+  await mkdir(workspace);
+  const registered: string[] = [];
+  for (const name of ["registered-one", "registered-two", "registered-three"]) {
+    const path = join(workspace, name);
+    registered.push(path);
+    await mkdir(path);
     expect((await f.run(["jj", "git", "init", path], f.root)).code).toBe(0);
+    expect(
+      (
+        await f.run(
+          [
+            "jj",
+            "config",
+            "set",
+            "--repo",
+            'revset-aliases."trunk()"',
+            "bookmarks(main)",
+          ],
+          path,
+        )
+      ).code,
+    ).toBe(0);
+    await writeFile(join(path, "base"), "base\n");
+    expect((await f.run(["jj", "commit", "-m", "base"], path)).code).toBe(0);
+    expect(
+      (await f.run(["jj", "bookmark", "create", "main", "-r", "@-"], path))
+        .code,
+    ).toBe(0);
+    await f.register(name, path);
     await writeFile(
       join(path, "stray.md"),
       "+++\nschema = 2\n[proposition]\n+++\n",
     );
   }
-  await writeFile(
-    join(f.repo, "stray.md"),
-    "+++\nschema = 2\n[proposition]\n+++\n",
+  const unregistered = join(workspace, "unregistered-retired");
+  await mkdir(unregistered);
+  await writeFile(join(unregistered, ".agx.toml"), "");
+  expect((await f.run(["jj", "git", "init", unregistered], f.root)).code).toBe(
+    0,
   );
-  const normal = await f.run([bun, cli, "doctor"], f.repo, {
-    AGX_REPOS_ROOT: undefined,
+  expect(
+    (
+      await f.run(
+        [
+          "jj",
+          "config",
+          "set",
+          "--repo",
+          'revset-aliases."trunk()"',
+          "bookmarks(main)",
+        ],
+        unregistered,
+      )
+    ).code,
+  ).toBe(0);
+  expect(
+    (await f.run(["jj", "commit", "-m", "retired"], unregistered)).code,
+  ).toBe(0);
+  expect(
+    (
+      await f.run(
+        ["jj", "bookmark", "create", "main", "-r", "@-"],
+        unregistered,
+      )
+    ).code,
+  ).toBe(0);
+  const result = await f.run([bun, cli, "doctor", "--quiet"], f.repo, {
+    AGX_REPOS_ROOT: join(f.root, "empty-override"),
+    AGX_ADDITIONAL_REPO: unregistered,
   });
-  expect(normal.code, normal.err).toBe(1);
-  for (const path of defaults) expect(normal.out).toContain(path);
-  expect(normal.out).not.toContain(f.repo);
-  const overridden = await f.run([bun, cli, "doctor"], f.repo, {
-    AGX_REPOS_ROOT: f.root,
-  });
-  expect(overridden.code, overridden.err).toBe(1);
-  expect(overridden.out).toContain(f.repo);
-  for (const path of defaults) expect(overridden.out).not.toContain(path);
+  expect(result.code, result.err).toBe(1);
+  for (const path of registered) expect(result.out).toContain(path);
+  expect(result.out).not.toContain(unregistered);
+  expect(result.out).toContain("outside-home");
 });
 
 test("retired repository overrides fail with exit 2 even when empty or paired with the replacement", async () => {
@@ -430,7 +484,7 @@ test("retired repository overrides fail with exit 2 even when empty or paired wi
       expect(refused.out).toBe("");
       expect(refused.err.trim().split("\n")).toHaveLength(1);
       expect(refused.err).toContain(name);
-      expect(refused.err).toContain("AGX_REPOS_ROOT");
+      expect(refused.err).toContain("agx/repos/*.toml");
     }
   }
 });
@@ -482,9 +536,8 @@ test.each([
         (await f.run(["jj", "bookmark", "set", "main", "-r", "@-"])).code,
       ).toBe(0);
     }
-    const doctor = await f.run([bun, cli, "doctor", "--quiet"], f.repo, {
-      AGX_REPOS_ROOT: f.root,
-    });
+    await f.register("repo", f.repo);
+    const doctor = await f.run([bun, cli, "doctor", "--quiet"], f.repo, {});
     expect(doctor.code, doctor.err).toBe(1);
     expect(doctor.err).toBe("");
     expect(doctor.out).toContain(message);
@@ -504,6 +557,7 @@ test.each([
 
 test("doctor retains retired configuration and healthy repository findings together", async () => {
   const f = await fixture();
+  await f.register("repo", f.repo);
   await writeFile(join(f.repo, ".agx.toml"), "");
   expect((await f.run(["jj", "commit", "-m", "Retired policy"])).code).toBe(0);
   expect(
@@ -511,13 +565,33 @@ test("doctor retains retired configuration and healthy repository findings toget
   ).toBe(0);
   const healthy = join(f.root, "healthy");
   expect((await f.run(["jj", "git", "init", healthy], f.root)).code).toBe(0);
+  expect(
+    (
+      await f.run(
+        [
+          "jj",
+          "config",
+          "set",
+          "--repo",
+          'revset-aliases."trunk()"',
+          "bookmarks(main)",
+        ],
+        healthy,
+      )
+    ).code,
+  ).toBe(0);
+  await writeFile(join(healthy, "base"), "base\n");
+  expect((await f.run(["jj", "commit", "-m", "base"], healthy)).code).toBe(0);
+  expect(
+    (await f.run(["jj", "bookmark", "create", "main", "-r", "@-"], healthy))
+      .code,
+  ).toBe(0);
+  await f.register("healthy", healthy);
   await writeFile(
     join(healthy, "stray.md"),
     "+++\nschema = 2\n[proposition]\n+++\n",
   );
-  const result = await f.run([bun, cli, "doctor", "--quiet"], f.repo, {
-    AGX_REPOS_ROOT: f.root,
-  });
+  const result = await f.run([bun, cli, "doctor", "--quiet"], f.repo, {});
   expect(result.code, result.err).toBe(1);
   expect(result.err).toBe("");
   expect(result.out).toContain(

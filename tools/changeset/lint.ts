@@ -9,24 +9,25 @@ import {
 
 export async function lintChangesets(root: string): Promise<string[]> {
   const problems: string[] = [];
-  const paths = await Array.fromAsync(
-    new Bun.Glob("*/.changes/*.md").scan({
-      cwd: join(root, "tools"),
-      onlyFiles: true,
-    }),
-  );
+  const paths = (
+    await Promise.all(
+      [".changes/*.md", "tools/*/.changes/*.md"].map((pattern) =>
+        Array.fromAsync(
+          new Bun.Glob(pattern).scan({ cwd: root, dot: true, onlyFiles: true }),
+        ),
+      ),
+    )
+  ).flat();
   for (const path of paths.toSorted()) {
-    const pkg = path.split("/")[0] ?? "";
+    const pkg = path.startsWith("tools/") ? (path.split("/")[1] ?? "") : "agx";
     const info = await readPackage(root, pkg);
     if (info.isErr()) {
-      problems.push(changesetDiagnostic(`tools/${path}`, info.error.message));
+      problems.push(changesetDiagnostic(path, info.error.message));
       continue;
     }
-    const parsed = parseChangeset(
-      await Bun.file(join(root, "tools", path)).text(),
-    );
+    const parsed = parseChangeset(await Bun.file(join(root, path)).text());
     if (parsed.isErr())
-      problems.push(changesetDiagnostic(`tools/${path}`, parsed.error.message));
+      problems.push(changesetDiagnostic(path, parsed.error.message));
   }
   return problems;
 }

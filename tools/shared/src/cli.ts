@@ -1,3 +1,4 @@
+import suite from "../../agx/package.json" with { type: "json" };
 import { getFlag } from "type-flag";
 import { stripVTControlCharacters } from "node:util";
 
@@ -40,7 +41,7 @@ export function printVersion(
 ): boolean {
   if (argv.length !== 1 || (argv[0] !== "-V" && argv[0] !== "--version"))
     return false;
-  process.stdout.write(`${cliName(pkg, name)} ${pkg.version}\n`);
+  process.stdout.write(`${cliName(pkg, name)} ${suite.version}\n`);
   return true;
 }
 
@@ -115,7 +116,7 @@ export function standardCli(
     apply(target, _receiver, [options, callback, input]: Parameters<Parser>) {
       const argv = input ?? readArgv();
       if (printVersion(pkg, options.name ?? "cli", argv)) process.exit(0);
-      return target(surface(options, argv, pkg.version), callback, argv);
+      return target(surface(options, argv, suite.version), callback, argv);
     },
   });
 }

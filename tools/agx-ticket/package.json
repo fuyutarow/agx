@@ -1,6 +1,6 @@
 {
   "name": "@agx/agx-ticket",
-  "version": "2.0.4",
+  "version": "1.4.0",
   "private": true,
   "type": "module",
   "bin": {

@@ -24,7 +24,7 @@ async function fixture(version = "1.3.0") {
       }),
     );
   await Bun.write(
-    join(root, "tools/agx/CHANGELOG.md"),
+    join(root, "CHANGELOG.md"),
     `# Changelog\n\n## ${version} — 2026-10-23\n\n- Suite update\n`,
   );
   return root;
@@ -48,9 +48,9 @@ async function suite(root: string, version: string, sections: number) {
   expect(await Bun.file(join(root, "tools/agx/package.json")).text()).toContain(
     `"version": "${version}"`,
   );
-  const notes = await Bun.file(join(root, "tools/agx/CHANGELOG.md")).text();
+  const notes = await Bun.file(join(root, "CHANGELOG.md")).text();
   expect(notes.match(/^## /gmu)).toHaveLength(sections);
-  expect(notes).toContain("Update suite member agx-worker to 1.0.1.");
+  expect(notes).toContain("agx-worker change");
   return notes;
 }
 
@@ -64,7 +64,7 @@ test("untagged pending 1.3.0 keeps one section across patch member applies", asy
   await apply(root, "agx-usehooks", "patch", history);
   const notes = await suite(root, "1.3.0", 1);
   expect(notes).toContain("- Suite update\n");
-  expect(notes).toContain("Update suite member agx-usehooks to 1.0.1.");
+  expect(notes).toContain("agx-usehooks change");
 });
 
 test("released 1.3.0 bumps once to 1.3.1 and retains the released notes", async () => {
@@ -75,7 +75,7 @@ test("released 1.3.0 bumps once to 1.3.1 and retains the released notes", async 
   await apply(root, "agx-worker", "patch", history);
   await apply(root, "agx-usehooks", "patch", history);
   const notes = await suite(root, "1.3.1", 2);
-  expect(notes).toContain("Update suite member agx-usehooks to 1.0.1.");
+  expect(notes).toContain("agx-usehooks change");
   expect(notes).toContain("## 1.3.0 — 2026-10-23\n\n- Suite update");
 });
 
@@ -86,7 +86,7 @@ test("minor after patch raises the pending suite version and replaces its sectio
   await apply(root, "agx-usehooks", "minor", history);
   const notes = await suite(root, "1.4.0", 2);
   expect(notes).not.toContain("## 1.3.1");
-  expect(notes).toContain("Update suite member agx-usehooks to 1.1.0.");
+  expect(notes).toContain("agx-usehooks change");
   await apply(root, "agx-worker", "patch", history);
   expect(await Bun.file(join(root, "tools/agx/package.json")).text()).toContain(
     '"version": "1.4.0"',
@@ -159,7 +159,7 @@ test.each(["v-tag", "legacy-tag", "release-commit"])(
       '{"version":"1.3.0"}',
     );
     await Bun.write(
-      join(root, "tools/agx/CHANGELOG.md"),
+      join(root, "CHANGELOG.md"),
       "# Changelog\n\n## 1.3.0 — 2026-10-23\n\n- Pending suite change\n",
     );
     await commit(root, "Prepare pending suite change");
@@ -167,7 +167,7 @@ test.each(["v-tag", "legacy-tag", "release-commit"])(
     const tags = await git(root, ["tag", "--list"]);
     for (const pkg of ["agx-worker", "agx-usehooks"]) {
       expect(
-        (await writeChangeset(root, pkg, "patch", "Member patch")).isOk(),
+        (await writeChangeset(root, pkg, "patch", `${pkg} change`)).isOk(),
       ).toBe(true);
       expect((await applyChangesets(root, pkg, "2026-10-24")).isOk()).toBe(
         true,

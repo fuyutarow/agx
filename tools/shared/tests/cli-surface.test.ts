@@ -1,3 +1,4 @@
+import suite from "../../agx/package.json" with { type: "json" };
 import { expect, test } from "bun:test";
 import { join, resolve } from "node:path";
 import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
@@ -100,7 +101,7 @@ for await (const packagePath of new Bun.Glob("tools/*/package.json").scan({
         for (const flag of ["-V", "--version"]) {
           const result = await run(entry, [flag]);
           expect(result).toEqual({
-            stdout: `${canonicalName} ${pkg.version}\n`,
+            stdout: `${canonicalName} ${suite.version}\n`,
             stderr: "",
             exit: 0,
           });
@@ -110,7 +111,9 @@ for await (const packagePath of new Bun.Glob("tools/*/package.json").scan({
         expect(plain.stderr).toBe("");
         expect(plain.stdout).toContain(name === "agx" ? "TOOLS:" : "Show help");
         if (isMsgAlias) {
-          expect(plain.stdout).toContain(`${canonicalName} v${pkg.version}\n`);
+          expect(plain.stdout).toContain(
+            `${canonicalName} v${suite.version}\n`,
+          );
           expect(plain.stdout).toContain(
             `  ${canonicalName} [flags...] [action]\n`,
           );

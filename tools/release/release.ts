@@ -56,6 +56,10 @@ export async function packageInfo(pkg: string, root = repository) {
   );
   if (!parsed.success)
     return err(`Invalid package.json for ${pkg}: ${parsed.error.message}`);
+  const suite = jsonOf(manifestSchema).safeParse(
+    await Bun.file(join(root, "tools/agx/package.json")).text(),
+  );
+  if (!suite.success) return err("Invalid suite manifest");
   const commands =
     pkg === "xmsg"
       ? {
@@ -72,8 +76,8 @@ export async function packageInfo(pkg: string, root = repository) {
   return ok({
     pkg,
     dir,
-    version: parsed.data.version,
-    tag: `${pkg}@${parsed.data.version}`,
+    version: suite.data.version,
+    tag: `v${suite.data.version}`,
     commands,
     source: parsed.data.source,
   });
@@ -213,36 +217,25 @@ export async function suiteNotes(
   previousTag?: string,
   runner: CommandRunner = run,
 ) {
-  const sections: string[] = [];
-  for (const member of packages) {
-    const info = await packageInfo(member, root);
-    if (info.isErr()) return info;
-    const { version, dir } = info.value;
-    sections.push(`# ${member} ${version}`);
-    const text = await Bun.file(join(dir, "CHANGELOG.md")).text();
-    const current = changelogSection(text, version);
-    if (current.isErr()) return current;
-    if (previousTag === undefined) {
-      sections.push(current.value);
-      continue;
-    }
-    const prior = await runner(
-      ["git", "show", `${previousTag}:tools/${member}/package.json`],
-      root,
-    );
-    if (prior.exit !== 0)
-      return err(`Cannot read previous member version: ${member}`);
-    const parsed = jsonOf(manifestSchema).safeParse(prior.stdout);
-    if (!parsed.success) return err(`Invalid previous manifest: ${member}`);
-    if (parsed.data.version === version) continue;
-    const old = changelogSection(text, parsed.data.version);
-    if (old.isErr()) return old;
-    const start = text.indexOf(current.value.trim());
-    const end = text.indexOf(old.value.trim());
-    if (end <= start) return err(`Invalid changelog order: ${member}`);
-    sections.push(text.slice(start, end).trim());
-  }
-  return ok(sections.join("\n\n") + "\n");
+  const info = await packageInfo("agx", root);
+  if (info.isErr()) return info;
+  const text = await Bun.file(join(root, "CHANGELOG.md")).text();
+  const current = changelogSection(text, info.value.version);
+  if (current.isErr() || previousTag === undefined) return current;
+  const prior = await runner(
+    ["git", "show", previousTag + ":tools/agx/package.json"],
+    root,
+  );
+  if (prior.exit !== 0) return err("Cannot read previous suite version");
+  const parsed = jsonOf(manifestSchema).safeParse(prior.stdout);
+  if (!parsed.success) return err("Invalid previous suite manifest");
+  if (parsed.data.version === info.value.version) return current;
+  const old = changelogSection(text, parsed.data.version);
+  if (old.isErr()) return old;
+  const start = text.indexOf(current.value.trim());
+  const end = text.indexOf(old.value.trim());
+  if (end <= start) return err("Invalid suite changelog order");
+  return ok(text.slice(start, end).trim() + "\n");
 }
 
 /** Build a standalone ESM package; source and declaration paths stay independent. */
@@ -325,6 +318,14 @@ async function buildLibrary(
   );
   for (const file of ["package.json", "README.md", "CHANGELOG.md"])
     await copyFile(join(dir, file), join(stage, file));
+  const manifest = jsonOf(z.record(z.string(), z.unknown())).safeParse(
+    await Bun.file(join(stage, "package.json")).text(),
+  );
+  if (!manifest.success) return err("Invalid library manifest");
+  await Bun.write(
+    join(stage, "package.json"),
+    JSON.stringify({ ...manifest.data, version }, null, 2) + "\n",
+  );
   const archive = join(root, "dist", `${pkg}-${version}.tgz`);
   const packed = await runner(
     [process.execPath, "pm", "pack", "--ignore-scripts", "--filename", archive],
@@ -507,17 +508,6 @@ export async function publish(
   const view = ["gh", "release", "view", tag, "--json", "assets"];
   const edit = ["gh", "release", "edit", tag, "--draft=false", "--latest"];
   const tags = [["git", "tag", tag]];
-  for (const member of packages) {
-    const memberInfo = await packageInfo(member, root);
-    if (memberInfo.isErr()) return memberInfo;
-    const memberTag = memberInfo.value.tag;
-    const exists = await runner(
-      ["git", "show-ref", "--verify", "--quiet", `refs/tags/${memberTag}`],
-      root,
-    );
-    if (exists.exit === 1) tags.push(["git", "tag", memberTag]);
-    else if (exists.exit !== 0) return err(`Cannot inspect tag ${memberTag}`);
-  }
   const commands = [
     ...tags,
     create,

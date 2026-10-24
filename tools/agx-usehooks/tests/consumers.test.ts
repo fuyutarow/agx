@@ -254,6 +254,92 @@ test("an untouched agx-usehooks tree is SKIP; a missing consumer is SKIP", async
   expect(lines.join("")).toContain("SKIP fixture: consumer not present");
 });
 
+test("CLI --all checks every L2 consumer with no library diff; default still skips", async () => {
+  const f = fixture();
+  const repo = join(f.root, "untouched");
+  f.tree("untouched", f.shape);
+  const bin = join(f.root, "bin");
+  const config = join(f.root, "config");
+  const registry = join(config, "agx/repos");
+  mkdirSync(bin);
+  mkdirSync(registry, { recursive: true });
+  // Fixture history reader: materialize precisely the identical base library tree.
+  const jj = join(bin, "jj");
+  writeFileSync(
+    jj,
+    `#!${process.execPath}\n` +
+      `const args = Bun.argv.slice(2);\n` +
+      `if (args.includes("list")) process.stdout.write("tools/agx-usehooks/package.json\\ntools/agx-usehooks/src/index.ts\\n");\n` +
+      `else if (args.includes("show")) {\n` +
+      `  const path = JSON.parse(args.at(-1).slice("root-file:".length));\n` +
+      `  process.stdout.write(await Bun.file(${JSON.stringify(join(f.root, "alpha"))} + "/" + path).text());\n` +
+      `} else process.exitCode = 1;\n`,
+  );
+  chmodSync(jj, 0o755);
+  for (const consumer of [
+    f.consumer,
+    { ...f.consumer, name: "absent", root: join(f.root, "absent") },
+  ])
+    writeFileSync(
+      join(registry, `${consumer.name}.toml`),
+      `schema = 1\nroot = ${JSON.stringify(consumer.root)}\n[usehooks]\nhooks = ${JSON.stringify(consumer.hooks)}\nlink_task = ${JSON.stringify(consumer.link_task)}\nlink_path = ${JSON.stringify(consumer.link_path)}\ncommand = ${JSON.stringify(consumer.command)}\n`,
+    );
+  const run = async (args: string[]) => {
+    const child = Bun.spawn(
+      [
+        process.execPath,
+        join(import.meta.dir, "../src/check-consumers.ts"),
+        ...args,
+      ],
+      {
+        env: {
+          ...process.env,
+          XDG_CONFIG_HOME: config,
+          USEHOOKS_REPO_ROOT: repo,
+          USEHOOKS_BASE: "alpha",
+          PATH: `${bin}:${process.env.PATH ?? ""}`,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+        signal: AbortSignal.timeout(30_000),
+      },
+    );
+    const [stdout, stderr, exit] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
+    return { output: stdout + stderr, exit };
+  };
+  const defaultRun = await run([]);
+  expect(defaultRun.exit).toBe(0);
+  expect(defaultRun.output).toContain(
+    "SKIP usehooks:consumers: the landed diff does not touch tools/agx-usehooks",
+  );
+  expect(defaultRun.output).not.toContain("PRE-EXISTING fixture");
+  expect(defaultRun.output).not.toContain("SKIP absent");
+
+  const all = await run(["--all"]);
+  expect(all.exit).toBe(0);
+  expect(all.output).toContain("PRE-EXISTING fixture: 14 error(s)");
+  expect(all.output).toContain("SKIP absent: consumer not present");
+  expect(all.output).not.toContain("SKIP usehooks:consumers");
+
+  writeFileSync(
+    join(f.root, "bun-check-adapter.ts"),
+    `if (Bun.argv.includes("--showConfig")) process.stdout.write('{"compilerOptions":{}}');\nelse process.exitCode = 1;\n`,
+  );
+  const failed = await run(["--all"]);
+  expect(failed.exit).toBe(1);
+  expect(failed.output).toContain("FAIL fixture:");
+  expect(failed.output).toContain("SKIP absent: consumer not present");
+
+  expect((await run(["--help"])).output).toContain("--all");
+  expect((await run(["--unknown"])).exit).toBe(1);
+  expect((await run(["--__proto__"])).exit).toBe(2);
+  expect((await run(["unexpected"])).exit).toBe(2);
+}, 120_000);
+
 test("consumer resolution selects exactly L2 usehooks tables and propagates strict errors", async () => {
   const { resolveUsehooksConsumers } =
     await import("../src/check-consumers.ts");

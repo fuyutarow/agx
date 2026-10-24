@@ -1,3 +1,5 @@
+See the [suite changelog](../../CHANGELOG.md) for new releases; this member history is frozen.
+
 # Changelog
 
 ## 2.0.4 — 2026-10-24

@@ -38,11 +38,17 @@ root = "/path/to/example-repo"
 hooks = ".agents/hooks"
 link_task = "link:agx-usehooks"
 link_path = "node_modules/agx-usehooks"
-command = ["bunx", "tsc", "--noEmit", "-p", "{root}"]
+command = ["bunx", "--bun", "tsc", "--noEmit", "-p", "{root}"]
 ```
 
 `bun tools/agx-usehooks/src/check-consumers.ts` runs the declared consumer's
-`bunx tsc --noEmit -p <root>`.
+`bunx --bun tsc --noEmit -p <root>`. `--bun` runs TypeScript on Bun, so
+the command also works on hosts without `node` on PATH; plain `bunx tsc`
+uses the compiler's `#!/usr/bin/env node` launcher.
+By default, an unchanged library tree prints `SKIP`. Run
+`bun tools/agx-usehooks/src/check-consumers.ts --all` to check every registered
+consumer regardless of the library diff, including a newly registered consumer.
+Both modes compare base and workspace diagnostics with the same read-only checks.
 The exact project command runs first, followed by a read-only hook check using a
 temporary config extending the project's config with `agx-usehooks` mapped to this
 workspace. It changes no consumer files or symlinks. Hook diagnostics fail either check; diagnostics

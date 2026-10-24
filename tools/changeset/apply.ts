@@ -1,5 +1,5 @@
 import { cli } from "cleye";
-import { readdir, unlink } from "node:fs/promises";
+import { unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { err, ok, type Result } from "neverthrow";
 import { jsonOf, z } from "../zod.ts";
@@ -155,38 +155,28 @@ async function prepareChangesets(
   const info = await readPackage(root, pkg);
   if (info.isErr()) return info;
   const { dir, manifest } = info.value;
-  const changesDir = join(dir, ".changes");
-  const files = await readdir(changesDir, { withFileTypes: true }).catch(
-    (error: NodeJS.ErrnoException) => {
-      if (error.code === "ENOENT") return [];
-      return err(error);
-    },
-  );
-  if (!Array.isArray(files)) return files;
-  const names = files
-    .filter((file) => file.isFile() && file.name.endsWith(".md"))
-    .map((file) => file.name)
+  const names = (
+    await Promise.all(
+      [".changes/*.md", "tools/*/.changes/*.md"].map((pattern) =>
+        Array.fromAsync(
+          new Bun.Glob(pattern).scan({ cwd: root, dot: true, onlyFiles: true }),
+        ),
+      ),
+    )
+  )
+    .flat()
     .toSorted();
-  if (names.length === 0 && extra.length === 0)
+  if (names.length === 0)
     return err(
       new Error(
-        `No pending changesets for ${pkg}; create one with mise run changeset -- ${pkg} <patch|minor|major> "<entry>"`,
+        'No pending suite changesets; create one with mise run changeset -- <patch|minor|major> "<entry>"',
       ),
     );
   const changes: Changeset[] = [...extra];
   for (const name of names) {
-    const parsed = parseChangeset(
-      await Bun.file(join(changesDir, name)).text(),
-    );
+    const parsed = parseChangeset(await Bun.file(join(root, name)).text());
     if (parsed.isErr())
-      return err(
-        new Error(
-          changesetDiagnostic(
-            `tools/${pkg}/.changes/${name}`,
-            parsed.error.message,
-          ),
-        ),
-      );
+      return err(new Error(changesetDiagnostic(name, parsed.error.message)));
     changes.push(parsed.value);
   }
   const bump = changes.reduce<Bump>(
@@ -196,7 +186,7 @@ async function prepareChangesets(
   );
   let next = bumpedVersion(manifest.version, bump);
   if (next.isErr()) return next;
-  const changelog = Bun.file(join(dir, "CHANGELOG.md"));
+  const changelog = Bun.file(join(root, "CHANGELOG.md"));
   const previous = (await changelog.exists())
     ? await changelog.text()
     : "# Changelog\n";
@@ -235,7 +225,7 @@ async function prepareChangesets(
     entries: changes.length,
     bump,
     dir,
-    changesDir,
+
     names,
     manifest: `${JSON.stringify({ ...manifest, version: next.value }, null, 2)}\n`,
     changelog:
@@ -248,7 +238,7 @@ async function prepareChangesets(
 /** Validate member and suite inputs before writing either version. */
 export async function applyChangesets(
   root: string,
-  pkg: string,
+  pkg = "suite",
   date = Temporal.Now.plainDateISO().toString(),
   history?: SuiteHistory,
 ) {
@@ -256,59 +246,49 @@ export async function applyChangesets(
     history === undefined ? await readSuiteHistory(root) : ok(history);
   if (resolved.isErr()) return resolved;
   const suiteHistory = resolved.value;
-  const member = await prepareChangesets(
-    root,
-    pkg,
-    date,
-    [],
-    pkg === "agx" ? suiteHistory : undefined,
-  );
-  if (member.isErr()) return member;
-  const plans = [member.value];
-  if (pkg !== "agx") {
-    const suite = await prepareChangesets(
-      root,
-      "agx",
-      date,
-      [
-        {
-          bump: member.value.bump,
-          entry: `Update suite member ${pkg} to ${member.value.version}.`,
-        },
-      ],
-      suiteHistory,
-    );
-    if (suite.isErr()) return suite;
-    plans.unshift(suite.value);
+  if (pkg !== "suite" && pkg !== "agx") {
+    const scope = await readPackage(root, pkg);
+    if (scope.isErr()) return scope;
   }
-  // Write the suite first: a failed member write cannot leave a member bumped alone.
-  for (const plan of plans) {
-    await Bun.write(join(plan.dir, "package.json"), plan.manifest);
-    await Bun.write(join(plan.dir, "CHANGELOG.md"), plan.changelog);
-    for (const name of plan.names) await unlink(join(plan.changesDir, name));
+  const prepared = await prepareChangesets(root, "agx", date, [], suiteHistory);
+  if (prepared.isErr()) return prepared;
+  const plan = prepared.value;
+  const manifests: { path: string; text: string }[] = [];
+  for await (const path of new Bun.Glob("tools/*/package.json").scan(root)) {
+    const member = await readPackage(root, path.split("/")[1] ?? "");
+    if (member.isErr()) return member;
+    manifests.push({
+      path,
+      text:
+        JSON.stringify(
+          { ...member.value.manifest, version: plan.version },
+          null,
+          2,
+        ) + "\n",
+    });
   }
-  return ok({
-    pkg,
-    version: member.value.version,
-    entries: member.value.entries,
-  });
+  for (const manifest of manifests)
+    await Bun.write(join(root, manifest.path), manifest.text);
+  await Bun.write(join(root, "CHANGELOG.md"), plan.changelog);
+  for (const name of plan.names) await unlink(join(root, name));
+  return ok({ pkg: "suite", version: plan.version, entries: plan.entries });
 }
 
 async function main() {
   const args = cli({
     name: "release:version",
-    parameters: ["<pkg>"],
+    parameters: ["[pkg]"],
     strictFlags: true,
     ignoreArgv(type, flag) {
       if (type === "unknown-flag" && flag === "__proto__") process.exit(2);
     },
   });
-  if (args._.length !== 1) {
-    process.stderr.write("FATAL: Expected exactly one package\n");
+  if (args._.length > 1) {
+    process.stderr.write("FATAL: Expected at most one optional scope\n");
     process.exitCode = 2;
     return;
   }
-  const result = await applyChangesets(repository, args._.pkg);
+  const result = await applyChangesets(repository, args._.pkg ?? "suite");
   if (result.isErr()) {
     process.stderr.write(`FATAL: ${result.error.message}\n`);
     process.exitCode = 2;
