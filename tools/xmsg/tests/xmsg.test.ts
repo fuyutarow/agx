@@ -990,8 +990,13 @@ test("listing rejects record overflow without inventing a partial vendor invento
 
 const uuidA = "deadbeef-1234-4abc-8def-0123456789ab";
 const uuidB = "deadbeef-2234-4abc-8def-0123456789ab";
+const firstUuidThread = {
+  id: uuidA,
+  name: "first",
+  status: { type: "active" },
+};
 const uuidThreads = [
-  { id: uuidA, name: "first", status: { type: "active" } },
+  firstUuidThread,
   { id: uuidB, name: "second", status: { type: "idle" } },
 ];
 const sendArgs = (to: string, timeout = "1000") => [
@@ -1107,7 +1112,7 @@ test.each([
 test("a registered UUID-shaped exact name wins before UUID validation", async () => {
   const r = await run({
     kind: "codex",
-    threads: [{ ...uuidThreads[0]!, name: "dead-beef" }],
+    threads: [{ ...firstUuidThread, name: "dead-beef" }],
     args: sendArgs("codex:dead-beef"),
   });
   expect(r.exit).toBe(0);
@@ -1259,7 +1264,7 @@ test.each([
   "unqualified Codex %s resolves globally and sends exact argv once",
   async (selector) => {
     const r = await run({
-      threads: [uuidThreads[0]!],
+      threads: [firstUuidThread],
       inventory: globalAgents(),
       args: sendArgs(selector),
     });
@@ -1286,7 +1291,7 @@ test.each([
         ? selector
         : "Claude peer";
     const r = await run({
-      threads: [uuidThreads[0]!],
+      threads: [firstUuidThread],
       inventory: globalAgents(uuidB, name),
       output: stream(uuidUse(uuidB), accepted),
       args: sendArgs(selector),
@@ -1308,7 +1313,7 @@ test.each([
   "global collision refuses every native send: %j",
   async ({ selector, id, name }) => {
     const r = await run({
-      threads: [uuidThreads[0]!],
+      threads: [firstUuidThread],
       inventory: globalAgents(id, name),
       args: sendArgs(selector),
     });
@@ -1325,7 +1330,7 @@ test.each([
 
 test("global full identity precedes another vendor's exact name", async () => {
   const r = await run({
-    threads: [uuidThreads[0]!],
+    threads: [firstUuidThread],
     inventory: globalAgents(uuidB, uuidA),
     args: sendArgs(uuidA),
   });
@@ -1339,7 +1344,7 @@ test.each(["deadbeef", "dead-beef", "dea"])(
   "global exact name precedes prefix or format rejection: %s",
   async (name) => {
     const r = await run({
-      threads: [uuidThreads[0]!],
+      threads: [firstUuidThread],
       inventory: globalAgents(uuidB, name),
       output: stream(uuidUse(uuidB), accepted),
       args: sendArgs(name),
@@ -1354,7 +1359,7 @@ test.each([uuidA, "deadbeef1", "first"])(
   "partial Claude inventory blocks even an apparent Codex match: %s",
   async (selector) => {
     const r = await run({
-      threads: [uuidThreads[0]!],
+      threads: [firstUuidThread],
       inventory: "invalid schema",
       args: sendArgs(selector),
     });
@@ -1380,7 +1385,7 @@ test.each(["dea", "dead-beef", "f".repeat(33), "absent", "dead*", "[first]"])(
   "global malformed or missing selector refuses: %s",
   async (selector) => {
     const r = await run({
-      threads: [uuidThreads[0]!],
+      threads: [firstUuidThread],
       inventory: globalAgents(),
       args: sendArgs(selector),
     });
@@ -1400,7 +1405,7 @@ test.each(["", " leading", "trailing ", "other:dead", "codex:"])(
 
 test("unqualified discovery timeout sends nothing", async () => {
   const r = await run({
-    threads: [uuidThreads[0]!],
+    threads: [firstUuidThread],
     inventory: globalAgents(),
     inventoryDelay: 5000,
     args: sendArgs(uuidA, "100"),

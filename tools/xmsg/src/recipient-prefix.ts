@@ -176,7 +176,14 @@ export function resolveGlobalRecipientSelector<R extends RecipientCandidate>(
       matches,
       `${JSON.stringify(value)} matches ${matches.length} recipients; qualify with codex: or claude:, or extend the UUID prefix.`,
     );
-  return resolved(matches[0]!);
+  const recipient = matches.at(0);
+  if (recipient === undefined)
+    return failed(
+      "not-found",
+      [],
+      `No recipient matches ${JSON.stringify(value)}; use an exact native name or UUID front prefix.`,
+    );
+  return resolved(recipient);
 }
 
 /** Resolve only a vendor-qualified exact name, full UUID, or unique UUID front prefix. */
@@ -214,7 +221,9 @@ export function resolveRecipientSelector<R extends RecipientCandidate>(
     const exactIds = known.filter(
       (candidate) => canonicalUuid(candidate.id) === fullUuid,
     );
-    if (exactIds.length === 1) return resolved(exactIds[0]!);
+    const exactId = exactIds.at(0);
+    if (exactIds.length === 1 && exactId !== undefined)
+      return resolved(exactId);
     if (exactIds.length > 1)
       return failed(
         "ambiguous",
@@ -231,7 +240,9 @@ export function resolveRecipientSelector<R extends RecipientCandidate>(
         exactNames,
         "Cannot prove exact-name uniqueness without complete selected-vendor inventory.",
       );
-    if (exactNames.length === 1) return resolved(exactNames[0]!);
+    const exactName = exactNames.at(0);
+    if (exactNames.length === 1 && exactName !== undefined)
+      return resolved(exactName);
     return failed(
       "ambiguous",
       exactNames,
@@ -291,7 +302,14 @@ export function resolveRecipientSelector<R extends RecipientCandidate>(
       matches,
       `${prefix} matches ${matches.length} ${vendor} recipients; add UUID prefix digits.`,
     );
-  return resolved(matches[0]!);
+  const recipient = matches.at(0);
+  if (recipient === undefined)
+    return failed(
+      "not-found",
+      [],
+      `No ${vendor} recipient UUID starts with ${prefix}.`,
+    );
+  return resolved(recipient);
 }
 
 /** Return the shortest currently unique UUID prefix (at least 8 hex digits). */

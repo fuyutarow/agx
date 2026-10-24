@@ -232,15 +232,9 @@ test("opaque ID deduplication is case sensitive", () => {
 });
 
 test("display avoids an exact-name collision with its UUID prefix", () => {
-  const candidates = [
-    recipient("codex", idA),
-    recipient("codex", idC, "01a15754"),
-  ];
-  const address = shortRecipientAddress(
-    candidates[0]!,
-    candidates,
-    complete("codex"),
-  );
+  const target = recipient("codex", idA);
+  const candidates = [target, recipient("codex", idC, "01a15754")];
+  const address = shortRecipientAddress(target, candidates, complete("codex"));
   expect(address).toBe("codex:01a157546");
   expect(
     resolveRecipientSelector(address, candidates, complete("codex")),
@@ -251,20 +245,17 @@ test("display avoids an exact-name collision with its UUID prefix", () => {
 });
 
 test("display address uses the shortest unique prefix and accounts for collisions", () => {
+  const target = recipient("codex", idA);
   const candidates = [
-    recipient("codex", idA),
+    target,
     recipient("codex", idDisplayCollision),
     recipient("claude", idA),
   ];
+  expect(shortRecipientAddress(target, candidates, complete("codex"))).toBe(
+    "codex:01a157546",
+  );
   expect(
-    shortRecipientAddress(candidates[0]!, candidates, complete("codex")),
-  ).toBe("codex:01a157546");
-  expect(
-    shortRecipientAddress(
-      candidates[0]!,
-      candidates.slice(0, 1),
-      complete("codex"),
-    ),
+    shortRecipientAddress(target, candidates.slice(0, 1), complete("codex")),
   ).toBe("codex:01a15754");
 });
 
