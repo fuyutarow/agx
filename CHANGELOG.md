@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.1 — 2026-10-25
+
+- Export the worker run ID so messages can resolve the recorded vendor session.
+- Fix CI release creation to verify existing tags without an explicit target
+- Resolve undeclared message senders from the exact worker run record while preserving explicit sender precedence.
+
 ## 1.7.0 — 2026-10-25
 
 - Build and upload release archives in GitHub Actions; local publication only pushes alpha and release tags
