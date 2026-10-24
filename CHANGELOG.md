@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.9.1 — 2026-10-25
+
+- Bound release asset probes by the CI wait deadline and identify timed out commands
+
 ## 1.9.0 — 2026-10-25
 
 - Export writable AGX_RUN_DIR for worker results and promptly collect fully rejected workspaces with preserved results.
