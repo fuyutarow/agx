@@ -883,6 +883,7 @@ export type GcOptions = {
   repo: string;
   dryRun: boolean;
   includeUnrecorded: boolean;
+  graceMinutes?: number;
   legacy?: boolean;
   abandoned?: boolean;
 };
@@ -896,6 +897,28 @@ type Classification = {
   collect: boolean;
   abandon?: boolean;
 };
+
+const gcGraceMinutes = (options: GcOptions): number =>
+  options.graceMinutes ?? 30;
+
+async function applyGcGrace(
+  ws: Workspace,
+  classification: Classification,
+  graceMinutes: number,
+  now = Temporal.Now.instant().epochMilliseconds,
+): Promise<Classification> {
+  if (graceMinutes === 0) return classification;
+  const created = await stat(ws.dir);
+  const ageMs = now - created.birthtimeMs;
+  if (ageMs >= graceMinutes * 60_000) return classification;
+  const ageSeconds = Math.max(0, Math.floor(ageMs / 1000));
+  return {
+    ...classification,
+    verdict: "young",
+    reason: `created ${ageSeconds} seconds ago; grace ${graceMinutes} min`,
+    collect: false,
+  };
+}
 
 function landState(ws: Workspace): string | undefined {
   const root = realOr(join(stateDir(), "land"));
@@ -2226,6 +2249,7 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
         trunk.value.commit,
         true,
       );
+      c = await applyGcGrace(ws, c, gcGraceMinutes(options));
       let label = c.verdict;
       let reason = c.reason;
       const recorded = lineageOf(records.value, realOr(ws.dir)).length > 0;
@@ -2271,13 +2295,14 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
                 collect: false,
                 reason: "workspace registration changed before removal",
               });
-            const checked = await classify(
+            let checked = await classify(
               repo,
               currentConfig.value,
               ws,
               currentRecords.value,
               currentTrunk.value,
             );
+            checked = await applyGcGrace(ws, checked, gcGraceMinutes(options));
             const stillRecorded =
               lineageOf(currentRecords.value, realOr(ws.dir)).length > 0;
             const stillAllowed =

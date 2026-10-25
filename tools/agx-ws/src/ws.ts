@@ -242,6 +242,11 @@ const gcCommand = command(
         description:
           "also collect workspaces with no agx record when they have no diff",
       },
+      graceMinutes: {
+        type: Number,
+        description:
+          "protect workspaces younger than this many minutes (default: 30; 0 disables)",
+      },
       repo: repoFlag,
     },
   },
@@ -250,11 +255,20 @@ const gcCommand = command(
       fail("--all and --repo cannot be combined");
       return;
     }
+    if (
+      argv.flags.graceMinutes !== undefined &&
+      (!Number.isSafeInteger(argv.flags.graceMinutes) ||
+        argv.flags.graceMinutes < 0)
+    ) {
+      fail("--grace-minutes must be a non-negative integer");
+      return;
+    }
     const options = {
       dryRun: argv.flags.dryRun === true,
       includeUnrecorded: argv.flags.includeUnrecorded === true,
       legacy: argv.flags.legacy === true,
       abandoned: argv.flags.abandoned === true,
+      graceMinutes: argv.flags.graceMinutes ?? 30,
     };
     const done = await (argv.flags.all === true
       ? gcAll(options)

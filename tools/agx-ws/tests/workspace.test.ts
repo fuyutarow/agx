@@ -64,8 +64,22 @@ async function run(cmd: string[], cwd: string, env = baseEnv()) {
   ]);
   return { out, err, code };
 }
+// Existing GC fixtures predate the default grace contract; opt them out unless a test sets it.
 const ws = (args: string[], cwd: string, env = baseEnv()) =>
-  run(["bun", WS, ...args], cwd, env);
+  run(
+    [
+      "bun",
+      WS,
+      ...args,
+      ...(args[0] === "gc" &&
+      !args.includes("--grace-minutes") &&
+      !args.includes("--help")
+        ? ["--grace-minutes", "0"]
+        : []),
+    ],
+    cwd,
+    env,
+  );
 const jj = (args: string[], cwd: string) => run(["jj", ...args], cwd);
 
 function shim(name: string, body: string): void {
@@ -1123,6 +1137,48 @@ describe("agx ws gc", () => {
     expect(wide.code).toBe(0);
     expect(existsSync(wsDir(path, "clean"))).toBe(false);
     expect(existsSync(wsDir(path, "diff"))).toBe(true);
+  });
+
+  test("young unrecorded workspaces survive include-unrecorded unless grace is zero", async () => {
+    const path = await repo('trunk = "main"\n');
+    expect((await ws(["add", "young"], path)).code).toBe(0);
+    const young = wsDir(path, "young");
+    setRecords([]);
+
+    const protectedRun = await run(
+      ["bun", WS, "gc", "--include-unrecorded", "--dry-run"],
+      path,
+      baseEnv(),
+    );
+    expect(protectedRun.code, protectedRun.err).toBe(0);
+    expect(protectedRun.out).toContain(`${young}\tws\tyoung\t`);
+    expect(protectedRun.out).toContain("created ");
+    expect(protectedRun.out).toContain("; grace 30 min");
+
+    const retained = await run(
+      ["bun", WS, "gc", "--include-unrecorded"],
+      path,
+      baseEnv(),
+    );
+    expect(retained.code, retained.err).toBe(0);
+    expect(retained.out).toContain(`${young}\tws\tyoung\t`);
+    expect(existsSync(young)).toBe(true);
+
+    const disabled = await ws(
+      ["gc", "--include-unrecorded", "--grace-minutes", "0"],
+      path,
+    );
+    expect(disabled.code, disabled.err).toBe(0);
+    expect(disabled.out).toContain(`${young}\tws\tcollected\t`);
+    expect(existsSync(young)).toBe(false);
+  });
+
+  test("gc help documents the workspace grace period", async () => {
+    const path = await repo('trunk = "main"\n');
+    const help = await ws(["gc", "--help"], path);
+    expect(help.code).toBe(0);
+    expect(help.out).toContain("--grace-minutes");
+    expect(help.out).toContain("default: 30; 0 disables");
   });
 
   test("legacy workspaces require --legacy even with --include-unrecorded", async () => {
@@ -2187,7 +2243,7 @@ describe("gc integration branches", () => {
       [
         "bun",
         "--eval",
-        `import {gcAll} from ${JSON.stringify(module)};const r=await gcAll({dryRun:true,includeUnrecorded:true,legacy:true},${JSON.stringify(primary)});process.stdout.write(JSON.stringify(r));`,
+        `import {gcAll} from ${JSON.stringify(module)};const r=await gcAll({dryRun:true,includeUnrecorded:true,legacy:true,graceMinutes:0},${JSON.stringify(primary)});process.stdout.write(JSON.stringify(r));`,
       ],
       primary,
       { ...allEnv, XDG_CONFIG_HOME: configHome },

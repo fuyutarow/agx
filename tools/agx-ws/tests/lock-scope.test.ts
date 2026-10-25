@@ -57,7 +57,16 @@ async function fixture(slugs: string[]) {
   };
   const jj = (args: string[], cwd = repo) =>
     run([realJj ?? "jj", ...args], cwd);
-  const command = (args: string[]) => run([process.execPath, ws, ...args]);
+  // These lock-scope fixtures exercise collection races, not the default grace policy.
+  const command = (args: string[]) =>
+    run([
+      process.execPath,
+      ws,
+      ...args,
+      ...(args[0] === "gc" && !args.includes("--grace-minutes")
+        ? ["--grace-minutes", "0"]
+        : []),
+    ]);
   const shim = async (name: string, body: string) => {
     const file = join(bin, name);
     await Bun.write(file, `#!/usr/bin/env bun\n${body}\n`);
