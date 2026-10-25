@@ -29,7 +29,6 @@ export const ProgressSchema = z.strictObject({
 /** Readers validate known fields and discard fields added by newer writers. */
 export const ProgressReaderSchema = ProgressSchema.strip();
 export type Progress = z.output<typeof ProgressSchema>;
-export type ProgressReader = z.output<typeof ProgressReaderSchema>;
 
 export const ActiveWorkerUsageSchema = z.looseObject({
   input_tokens: z.number().nonnegative().optional(),
@@ -72,7 +71,6 @@ export const ActiveMarkerSchema = z.strictObject({
 
 /** Readers accept fields added by newer agx writers while validating the shared contract. */
 export const ActiveMarkerReaderSchema = ActiveMarkerSchema.loose();
-export type ActiveMarker = z.output<typeof ActiveMarkerSchema>;
 export type ActiveMarkerReader = z.output<typeof ActiveMarkerReaderSchema>;
 
 /** Serialize only markers that satisfy the strict agx writer contract. */

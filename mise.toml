@@ -54,6 +54,10 @@ run = "bun tools/lint-ts-candidate.ts"
 [tasks."lint:all"]
 run = "bun lint-oxlint.ts --type-aware"
 
+[tasks."lint:knip"]
+description = "Fail on unused exports, files, dependencies, and binaries"
+run = "bun lint-knip.ts"
+
 [tasks."lint:md"]
 run = "rumdl check"
 
@@ -66,7 +70,7 @@ run = "bun test"
 
 [tasks.check]
 alias = "c"
-depends = ["fmt:check", "lint", "test"]
+depends = ["fmt:check", "lint", "lint:knip", "test"]
 
 [tasks."gate:land"]
 depends = ["check"]

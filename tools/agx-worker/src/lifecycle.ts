@@ -5,9 +5,8 @@ import { lstat, readdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { readFileSync, realpathSync } from "node:fs";
 import { fromThrowable } from "neverthrow";
-import { attempt, errorMessage } from "../../shared/src/attempt.ts";
+import { attempt } from "../../shared/src/attempt.ts";
 
-export const DEFAULT_STALL_S = 600;
 export type FileStamp = { mtime_ms: number; size: number };
 export type FileSnapshot = Map<string, FileStamp>;
 
@@ -37,19 +36,6 @@ export function workspaceRoot(cwd: string): string {
     ),
   )();
   return backingStore.isOk() ? dirname(dirname(backingStore.value)) : directory;
-}
-
-export function fileStamp(path: string): FileStamp | undefined {
-  const result = fromThrowable(() => lstatSync(path))();
-  if (result.isErr()) return undefined;
-  return { mtime_ms: result.value.mtimeMs, size: result.value.size };
-}
-
-export function sameStamp(
-  a: FileStamp | undefined,
-  b: FileStamp | undefined,
-): boolean {
-  return a?.mtime_ms === b?.mtime_ms && a?.size === b?.size;
 }
 
 const EXCLUDED_DIRECTORIES = new Set([".git", ".jj", "node_modules"]);
@@ -269,54 +255,4 @@ export function activityWriter(
       writeFileSync(path, String(total));
     })();
   };
-}
-
-export const INTERIM_RETURN_REQUEST =
-  'Soft first_return_s checkpoint: send an interim RETURN with "interim": true and current findings if you can, then continue the authorized work. Never stop running jobs or wrap up because of this request. timeout_s remains the hard bound.';
-
-/** Queue guidance for the existing session only; never resume, interrupt or start a worker. */
-export async function requestInterimReturn(
-  session: string | undefined,
-  stop?: AbortSignal,
-): Promise<{ sent: boolean; reason?: string }> {
-  if (session === undefined)
-    return { sent: false, reason: "session not observed by first_return_s" };
-  const result = await attempt(async () => {
-    const signal = AbortSignal.any([
-      AbortSignal.timeout(5_000),
-      ...(stop === undefined ? [] : [stop]),
-    ]);
-    const child = Bun.spawn(
-      [
-        process.env.AGX_CODEX_BIN ?? "codex",
-        "queue",
-        "--thread",
-        session,
-        "--message",
-        INTERIM_RETURN_REQUEST,
-      ],
-      {
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-        signal,
-        killSignal: "SIGKILL",
-      },
-    );
-    const [out, err, exit] = await Promise.all([
-      readObservedStream(child.stdout, signal),
-      readObservedStream(child.stderr, signal),
-      child.exited,
-    ]);
-    const details = err.trim() === "" ? out : err;
-    return exit === 0
-      ? { sent: true }
-      : {
-          sent: false,
-          reason: `codex queue exit ${exit}: ${details.trim().slice(-500)}`,
-        };
-  });
-  return result.ok
-    ? result.value
-    : { sent: false, reason: errorMessage(result.error) };
 }

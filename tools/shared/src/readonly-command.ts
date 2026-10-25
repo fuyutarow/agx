@@ -3,7 +3,7 @@
 // cannot establish this property: jj's backend can import refs during a read.
 import readonlySource from "./readonly-exec.txt" with { type: "text" };
 
-export const READONLY_JOB_ENV = "AGX_READONLY_COMMAND_JOB";
+const READONLY_JOB_ENV = "AGX_READONLY_COMMAND_JOB";
 
 export function readonlyCommand(
   argv: string[],

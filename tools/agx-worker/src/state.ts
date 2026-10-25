@@ -1,29 +1,19 @@
 // agx's on-disk paths and progress state. The shared active-marker contract lives in tools/shared;
 // agx validates writes here through its re-export and statusline/hooks use its reader schema.
 // Outside the repo by design: briefs and picks may be private. Zero-dep beyond the repo's zod bundle.
-import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, renameSync, writeFileSync } from "node:fs";
 import { lstat, readdir } from "node:fs/promises";
 import { fromPromise } from "neverthrow";
 import { homedir } from "node:os";
 import { exitWithError } from "./next/exit.ts";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { fromThrowable, z } from "../../shared/src/zod.ts";
 import {
   ACTIVE_MARKER_SCHEMA,
-  ActiveWorkerUsageSchema,
-  ActiveMarkerReaderSchema,
   ActiveMarkerSchema,
   dispatchStateDir,
-  serializeActiveMarker,
-  type ActiveMarker,
 } from "../../shared/src/dispatch-state.ts";
-export {
-  ActiveMarkerReaderSchema,
-  ActiveMarkerSchema,
-  ActiveWorkerUsageSchema,
-};
-export { serializeActiveMarker };
-export type { ActiveMarker };
+export { ActiveMarkerSchema };
 
 export const STATE_SCHEMA = ACTIVE_MARKER_SCHEMA;
 // agx owns the selection extension; shared consumers accept new marker fields.
@@ -34,7 +24,6 @@ export const ActiveWriterSchema = ActiveMarkerSchema.extend({
   /** the ticket's proposition id, so ps can show allocation per proposition */
   proposition: z.string().min(1).optional(),
 });
-export const ActiveSchema = ActiveWriterSchema.loose();
 export type Active = z.output<typeof ActiveWriterSchema>;
 
 /** $AGX_STATE_DIR (test seam), else $XDG_STATE_HOME/agx, else ~/.local/state/agx. */
@@ -109,35 +98,6 @@ export async function legacyLandStatus(
   };
 }
 
-/** Every brief's full original text (ticket included), once per content: `briefs/<sha256>.md`. The
- *  run record's `brief.sha256` is the key; the router's per-run worker copies share the directory
- *  (named by run id) and are removed at the end of the run, these never are. */
-export const storedBriefPath = (
-  sha256: string,
-  env: NodeJS.ProcessEnv = process.env,
-): string => join(stateDir(env), "briefs", `${sha256}.md`);
-
-/** Write the brief under its hash unless that file exists already (written once, never rewritten).
- *  The temp file + rename keeps a reader from ever seeing half a brief; two writers racing past the
- *  existence check land the same bytes, since the name is the content's hash. */
-export function storeBrief(
-  sha256: string,
-  text: string,
-  env: NodeJS.ProcessEnv = process.env,
-): string {
-  const path = storedBriefPath(sha256, env);
-  if (existsSync(path)) return path;
-  mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.${process.pid}.tmp`;
-  writeFileSync(tmp, text);
-  renameSync(tmp, path);
-  return path;
-}
-
-/** One JSON marker per running worker: written at start, removed at exit. */
-export const activeDir = (env: NodeJS.ProcessEnv = process.env): string =>
-  join(stateDir(env), "active");
-
 /** Atomically persist a strictly validated active marker and its live statusline fields. */
 export function writeActiveMarker(path: string, active: Active): boolean {
   const parsed = ActiveWriterSchema.safeParse(active);
@@ -166,16 +126,4 @@ export function briefLabel(brief: string): string {
   );
 }
 
-/** What a running worker is doing, beside its marker: `<run_id>.progress.json` in activeDir.
- *  Written by agx from Codex `--json` events and Claude stream-json events, read by the
- *  statusline Run rows, removed with the marker. Usage is cumulative when the worker reports it;
- *  cost uses the selected roster row, with Claude's reported billed amount preferred. */
-export const progressFile = (
-  runId: string,
-  env: NodeJS.ProcessEnv = process.env,
-): string => join(activeDir(env), `${runId}.progress.json`);
-
-export {
-  ProgressSchema,
-  type Progress,
-} from "../../shared/src/dispatch-state.ts";
+export { type Progress } from "../../shared/src/dispatch-state.ts";

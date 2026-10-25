@@ -5,7 +5,7 @@
 // Human/agent consumer: JSON diagnostics and a checked file count. Exit 0 clean / 1 findings /
 // 2 fatal (including empty, malformed or zero-file reports). No network installation fallback.
 import { cli } from "cleye";
-import { jsonOf, z } from "./tools/zod.ts";
+import { jsonOf, z } from "./zod.ts";
 
 const Report = z.looseObject({
   diagnostics: z.array(z.unknown()),

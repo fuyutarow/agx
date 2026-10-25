@@ -97,6 +97,3 @@ function englishProse(text: string): string[] {
 export function englishSegments(text: string): Promise<string[]> {
   return Promise.resolve(englishProse(text));
 }
-export function hasEnglishProseSegment(text: string): boolean {
-  return englishProse(text).length > 0;
-}

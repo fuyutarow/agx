@@ -24,8 +24,6 @@ const MiBText = z
   .trim()
   .regex(/^\d+(?:\.\d+)?(?:\s*MiB)?$/u)
   .transform((s) => Number(s.replace(/\s*MiB$/u, "")) / 1024);
-export const GPU_QUERY =
-  "--query-gpu=utilization.gpu,utilization.memory,memory.used,memory.total";
 export const GpuOutputSchema = z
   .string()
   .transform((out) => (out.split("\n")[0] ?? "").split(","))
@@ -60,15 +58,6 @@ export function gpuStatePath(): string {
 }
 export function gpuSampleInterval(_random = Math.random): number {
   return GPU_INTERVAL_MS;
-}
-export async function readGpuSamples(
-  path: string,
-  now: number,
-): Promise<GpuSample[]> {
-  const state = await readGpuState(path);
-  return (
-    state?.samples.filter((s) => s.ts <= now && now - s.ts <= RETAIN_MS) ?? []
-  );
 }
 function mean(rows: GpuSample[]): number | null {
   return rows.length < 3

@@ -1,0 +1,69 @@
+{
+  "$schema": "https://unpkg.com/knip@6.42.1/schema-jsonc.json",
+  // Like coralbase, an export used by its own file is not dead code.
+  "ignoreExportsUsedInFile": true,
+  "workspaces": {
+    ".": {
+      "entry": [
+        "**/*.{test,spec}.{ts,tsx,js,jsx}",
+        // Each package CLI, mise task CLI, and preset task script is an executable root.
+        "scripts/*.ts",
+        "tools/agx/src/agx.ts",
+        "tools/agx-worker/src/next/cli.ts",
+        "tools/agx-ws/src/ws.ts",
+        "tools/agx-ticket/src/tkt.ts",
+        "tools/agx-status/src/status.ts",
+        "tools/xmsg/src/xmsg.ts",
+        "tools/jex/src/jex.ts",
+        "tools/fmt-staged.ts",
+        "tools/lint-ts-candidate.ts",
+        "tools/mise-contract.ts",
+        "tools/jj-commit.ts",
+        "tools/jj-precommit.ts",
+        "tools/jj-push.ts",
+        "tools/release/build.ts",
+        "tools/release/publish.ts",
+        "tools/release/machine.ts",
+        "tools/changeset/changeset.ts",
+        "tools/changeset/apply.ts",
+        "tools/changeset/lint.ts",
+        "require-bun.ts",
+        "lint-knip.ts",
+        "lint-oxlint.ts",
+        "house-plugin.js",
+        "presets/typescript/layout-plugin.js",
+        // These files are spawned by tests rather than imported by their test modules.
+        "tools/release/fake-mise.ts",
+        "tools/release/fake-gh.ts",
+        "tools/agx-worker/tests/fake-claude.ts",
+        "tools/agx-worker/tests/fake-codex.ts",
+        "tools/agx-worker/tests/next/fixtures/probe-codex.ts",
+        "tools/agx-worker/tests/next/fixtures/sender-vendor.ts",
+        "tools/agx-worker/tests/next/fixtures/outcome-worker.ts",
+        "tools/agx-status/tests/oracle/status-full-replay.ts",
+        // Ambient declaration for the Bun text import is a project input, not an executable.
+        "tools/shared/src/readonly-exec.d.txt.ts",
+        // Public library surface, shipped to consumers through package exports.
+        "tools/agx-usehooks/src/index.ts",
+      ],
+      "project": ["**/*.{ts,tsx,js,jsx}"],
+      // This generated, vendored Zod bundle is intentionally outside project analysis.
+      "ignore": ["agents/hooks/vendor/deps.js"],
+      // These pinned tools are invoked by mise tasks and hooks, not package scripts.
+      "ignoreDependencies": [
+        "knip", // this wrapper invokes Knip directly, outside package scripts.
+        "oxlint", // lint tasks invoke its local CLI.
+        "oxlint-plugin-eslint", // oxlint loads the JavaScript rules plugin.
+        "oxlint-tsgolint", // oxlint's type-aware lint task invokes this backend.
+        "oxfmt", // format tasks invoke its local CLI.
+      ],
+      // mise and jj are pinned host tools invoked by mise tasks and repository scripts.
+      "ignoreBinaries": [
+        "mise",
+        "jj", // tools/jj-commit.ts invokes the host jj binary.
+      ],
+    },
+  },
+  // For a monorepo, add coralbase-style workspace blocks, e.g.:
+  // "packages/*": { "entry": ["**/*.{test,spec}.ts"], "project": ["**/*.ts"] }
+}

@@ -177,15 +177,3 @@ export function globsOverlap(a: string, b: string): boolean {
     expandBraces(b).some((right) => pathPatternsIntersect(left, right)),
   );
 }
-
-/** Every [mine, theirs] pair of globs that overlap. */
-export function overlappingGlobs(
-  mine: string[],
-  theirs: string[],
-): [string, string][] {
-  return mine.flatMap((m) =>
-    theirs
-      .filter((t) => globsOverlap(m, t))
-      .map((t): [string, string] => [m, t]),
-  );
-}
