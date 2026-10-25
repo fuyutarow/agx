@@ -1327,12 +1327,100 @@ const child = Bun.spawn([${JSON.stringify(rip)}, ...process.argv.slice(2)], {std
         )
       ).code,
     ).toBe(0);
+    expect((await jj(["bookmark", "delete", "main"], path)).code).toBe(0);
     const noTrunk = await ws(["gc", "--include-unrecorded", "--legacy"], path);
     expect(noTrunk.code, noTrunk.err).toBe(0);
     expect(noTrunk.out).toContain("no trunk");
     expect(
       await Bun.file(join(wsDir(path, "ancestor"), "a.txt")).exists(),
     ).toBe(true);
+  });
+});
+
+describe("AGX-GC-LOCAL-TRUNK-1025", () => {
+  for (const names of [
+    ["alpha"],
+    ["main"],
+    ["master"],
+    ["trunk"],
+    [],
+    ["alpha", "main"],
+  ]) {
+    test(`root trunk with local candidates ${names.length === 0 ? "none" : names.join(",")}`, async () => {
+      const path = await repo();
+      expect((await jj(["bookmark", "delete", "main"], path)).code).toBe(0);
+      for (const name of names)
+        expect(
+          (await jj(["bookmark", "create", name, "-r", "@-"], path)).code,
+        ).toBe(0);
+      expect(
+        (
+          await jj(
+            ["config", "set", "--repo", 'revset-aliases."trunk()"', "root()"],
+            path,
+          )
+        ).code,
+      ).toBe(0);
+      expect((await jj(["git", "remote", "list"], path)).out.trim()).toBe("");
+      expect((await ws(["add", "candidate"], path)).code).toBe(0);
+      const before = (
+        await jj(
+          ["operation", "log", "--limit", "1", "--no-graph", "-T", "id"],
+          path,
+        )
+      ).out;
+      const dry = await ws(["gc", "--dry-run", "--include-unrecorded"], path);
+      expect(dry.code, dry.err).toBe(0);
+      if (names.length === 1) {
+        expect(dry.out).toContain("\tws\tempty\t");
+        expect(dry.out).toContain(`trunk source: local bookmark ${names[0]}`);
+        expect(dry.out).not.toContain("no trunk");
+      } else {
+        expect(dry.out).toContain("\tno trunk\t");
+        expect(dry.out).toContain(`${names.length} local candidate bookmarks`);
+        expect(dry.out).toContain(
+          `missing trunk setting; set trunk in .ws.toml: trunk = "alpha"`,
+        );
+      }
+      expect(
+        (
+          await jj(
+            ["operation", "log", "--limit", "1", "--no-graph", "-T", "id"],
+            path,
+          )
+        ).out,
+      ).toBe(before);
+    });
+  }
+
+  test("real jj trunk wins over local alpha and explicit root disables fallback", async () => {
+    const path = await repo();
+    expect(
+      (await jj(["bookmark", "create", "alpha", "-r", "root()"], path)).code,
+    ).toBe(0);
+    expect(
+      (
+        await jj(
+          ["config", "set", "--repo", 'revset-aliases."trunk()"', "main"],
+          path,
+        )
+      ).code,
+    ).toBe(0);
+    expect((await ws(["add", "precedence"], path)).code).toBe(0);
+    const dry = await ws(["gc", "--dry-run", "--include-unrecorded"], path);
+    expect(dry.code, dry.err).toBe(0);
+    expect(dry.out).toContain("\tws\tempty\t");
+    expect(dry.out).toContain("trunk source: jj trunk()");
+    await Bun.write(join(path, ".ws.toml"), 'trunk = "root()"\n');
+    const explicit = await ws(
+      ["gc", "--dry-run", "--include-unrecorded"],
+      path,
+    );
+    expect(explicit.code, explicit.err).toBe(0);
+    expect(explicit.out).toContain("\tno trunk\t");
+    expect(explicit.out).toContain(
+      'trunk source: .ws.toml trunk = "root()" resolves to root',
+    );
   });
 });
 

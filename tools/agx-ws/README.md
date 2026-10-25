@@ -128,6 +128,16 @@ GC always treats real directories named `node_modules` at any depth as regenerab
 
 Unknown keys are an error. This remains the active workspace policy; it is not retired by the shared ticket configuration reader.
 
+When `trunk` is absent and jj's `trunk()` resolves to `root()`, agx checks local
+bookmarks named `alpha`, `main`, `master` and `trunk`, in that order. Exactly one
+candidate is used as trunk, which supports repositories without a remote. The count
+is bookmark names, even when several point to the same commit. With zero or multiple
+candidates, GC retains its `no trunk` classification and the dry-run reason names
+the missing setting and an exact `trunk = "…"` line to add to `.ws.toml`. A conflicted
+or root-pointing candidate cannot provide a usable trunk. Explicit settings and
+`trunk()` resolving to a real commit take precedence. Dry-run workspace reasons
+include `trunk source`, without changing the six-column TSV or JSON row shape.
+
 ## Invariants
 
 - **Derived observations.** Decisions are derived from jj, `.ws.toml`, `agx worker ls --json` and the filesystem. Explicit GC, including dry runs, publishes `<state dir>/workspace-verdicts.json` atomically under its own publication lock when no removal failed. This is an observation, not lifecycle authority. The lock directory `<parent>/<repo>.ws.lock` is removed on release. Foreground

@@ -78,28 +78,37 @@ export type Repo = {
 export type Config = z.infer<typeof ConfigSchema>;
 
 export const CONFIG_FILE = ".ws.toml";
-const ConfigSchema = z.strictObject({
-  ready: z.array(z.string().min(1)).default([]),
-  trunk: z.string().min(1).default("trunk()"),
-  keep: z.array(z.string().min(1)).default([]),
-  regenerable: z
-    .array(
-      z
-        .string()
-        .min(1)
-        .refine(
-          (path) =>
-            !path.startsWith("/") &&
-            !path.includes("\\") &&
-            path
-              .replace(/\/$/u, "")
-              .split("/")
-              .every((part) => part !== "" && part !== "." && part !== ".."),
-          "expected a literal repository-relative path without . or .. components",
-        ),
-    )
-    .default([]),
-});
+// Keep configuration diagnostics beside the reader so migrations update both together.
+const trunkSettingHint = (bookmark: string): string =>
+  `set trunk in ${CONFIG_FILE}: trunk = ${JSON.stringify(bookmark)}`;
+const ConfigSchema = z
+  .strictObject({
+    ready: z.array(z.string().min(1)).default([]),
+    trunk: z.string().min(1).optional(),
+    keep: z.array(z.string().min(1)).default([]),
+    regenerable: z
+      .array(
+        z
+          .string()
+          .min(1)
+          .refine(
+            (path) =>
+              !path.startsWith("/") &&
+              !path.includes("\\") &&
+              path
+                .replace(/\/$/u, "")
+                .split("/")
+                .every((part) => part !== "" && part !== "." && part !== ".."),
+            "expected a literal repository-relative path without . or .. components",
+          ),
+      )
+      .default([]),
+  })
+  .transform((cfg) => ({
+    ...cfg,
+    trunk: cfg.trunk ?? "trunk()",
+    trunkConfigured: cfg.trunk !== undefined,
+  }));
 // Lookup accepts historical names so refresh/rm still work after the creation rule changes.
 const LEGACY_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]*$/u;
 const TERMINAL_STATES = new Set(["ended", "orphaned"]);
@@ -217,7 +226,13 @@ async function missingCommittedConfig(
   );
   if (!files.ok) return files;
   return files.value.trim() === ""
-    ? good({ ready: [], trunk: "trunk()", keep: [], regenerable: [] })
+    ? good({
+        ready: [],
+        trunk: "trunk()",
+        trunkConfigured: false,
+        keep: [],
+        regenerable: [],
+      })
     : failure;
 }
 
@@ -1421,6 +1436,14 @@ async function trunkCommit(
   repo: Repo,
   cfg: Config,
 ): Promise<Attempt<string | null>> {
+  const resolved = await resolveTrunk(repo, cfg);
+  return resolved.ok ? good(resolved.value.commit) : resolved;
+}
+
+async function resolveTrunk(
+  repo: Repo,
+  cfg: Config,
+): Promise<Attempt<{ commit: string | null; source: string }>> {
   const out = await jjOut(
     ["log", "--no-graph", "-r", cfg.trunk, "-T", 'commit_id ++ "\\n"'],
     repo.backing,
@@ -1430,7 +1453,52 @@ async function trunkCommit(
   const ids = out.value.trim().split("\n").filter(Boolean);
   if (ids.length !== 1)
     return bad(`trunk ${cfg.trunk} must resolve to exactly one commit`);
-  return good(/^0+$/u.test(ids[0] ?? "") ? null : (ids[0] ?? null));
+  const commit = ids[0] ?? null;
+  const source = cfg.trunkConfigured
+    ? `${CONFIG_FILE} trunk = ${JSON.stringify(cfg.trunk)}`
+    : "jj trunk()";
+  if (commit !== null && !/^0+$/u.test(commit)) return good({ commit, source });
+  if (cfg.trunkConfigured)
+    return good({ commit: null, source: `${source} resolves to root` });
+  const bookmarks = await jjOut(
+    ["bookmark", "list", "-T", 'if(!remote, name ++ "\\n")'],
+    repo.backing,
+    true,
+  );
+  if (!bookmarks.ok) return bookmarks;
+  const local = new Set(bookmarks.value.trim().split("\n"));
+  const candidates = ["alpha", "main", "master", "trunk"].filter((name) =>
+    local.has(name),
+  );
+  if (candidates.length !== 1)
+    return good({
+      commit: null,
+      source: `jj trunk() resolves to root; ${candidates.length} local candidate bookmarks${candidates.length > 0 ? ` (${candidates.join(", ")})` : ""}; missing trunk setting; ${trunkSettingHint(candidates[0] ?? "alpha")}`,
+    });
+  const bookmark = candidates[0] ?? "alpha";
+  const fallback = await jjOut(
+    [
+      "log",
+      "--no-graph",
+      "-r",
+      `bookmarks(exact:${JSON.stringify(bookmark)})`,
+      "-T",
+      'commit_id ++ "\\n"',
+    ],
+    repo.backing,
+    true,
+  );
+  if (!fallback.ok) return fallback;
+  const targets = fallback.value.trim().split("\n").filter(Boolean);
+  if (targets.length !== 1 || /^0+$/u.test(targets[0] ?? ""))
+    return good({
+      commit: null,
+      source: `local bookmark ${bookmark} has no single real commit; ${trunkSettingHint(bookmark)}`,
+    });
+  return good({
+    commit: targets[0] ?? null,
+    source: `local bookmark ${bookmark} (jj trunk() resolves to root)`,
+  });
 }
 
 /** Zero-context edits anchored to the same base. Unsupported formats fail closed.
@@ -2134,7 +2202,7 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
   const run = async (): Promise<Attempt<GcResult>> => {
     const cfg = await readConfig(repo);
     if (!cfg.ok) return cfg;
-    const trunk = await trunkCommit(repo, cfg.value);
+    const trunk = await resolveTrunk(repo, cfg.value);
     if (!trunk.ok) return trunk;
     const candidates = await workspaces(repo);
     if (!candidates.ok) return candidates;
@@ -2153,7 +2221,7 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
         cfg.value,
         ws,
         records.value,
-        trunk.value,
+        trunk.value.commit,
         true,
       );
       let label = c.verdict;
@@ -2250,6 +2318,7 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
         failed.push(...(label === "FAILED" ? [ws.dir] : []));
       }
       // Escape control characters without breaking the column contract.
+      if (options.dryRun) reason += `; trunk source: ${trunk.value.source}`;
       lines.push(
         [ws.dir, kind, label, c.change, c.age, reason]
           .map((field) => field.replaceAll("\t", "\\t").replaceAll("\n", "\\n"))
