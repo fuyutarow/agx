@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.11.1 — 2026-10-25
+
+- Replace Jev routing objective with the ticket purpose statement
+
 ## 1.11.0 — 2026-10-25
 
 - Resolve root-only default trunk from a unique local integration bookmark and explain GC trunk sources
