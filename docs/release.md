@@ -233,3 +233,11 @@ The asset wait defaults to 900 seconds with 5-second polling; override with
 `gh release view` probe, so waiting for CI can exceed two minutes without
 resetting the overall deadline. Global installation runs from home, without
 changing the global `latest` declaration or creating a repository lock.
+
+Suite installation has a separate 900-second deadline. Both `release:publish`
+and `release:machine` accept `--install-seconds N` (positive seconds) to override
+it. While installing, a progress line reports elapsed time and the latest
+download output every 60 seconds. Timeout diagnostics include the command,
+elapsed time, and limit. Installation completes when the mise process exits;
+descendants retaining its output pipes do not delay completion. Existing limits
+for all other commands, including asset probes and uploads, are unchanged.

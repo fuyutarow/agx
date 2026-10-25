@@ -8,6 +8,19 @@ if (process.env.RELEASE_TEST_MISE_LOG !== undefined)
     JSON.stringify({ args, cwd: process.cwd() }) + "\n",
   );
 if (args[0] === "install") {
+  if (process.env.RELEASE_TEST_PIPE_CHILD_PID !== undefined) {
+    const child = Bun.spawn(
+      [process.execPath, "-e", "await Bun.sleep(300000)"],
+      {
+        stdout: "inherit",
+        stderr: "inherit",
+      },
+    );
+    await Bun.write(process.env.RELEASE_TEST_PIPE_CHILD_PID, String(child.pid));
+    child.unref();
+  }
+  process.stderr.write("downloading fixture suite\n");
+  await Bun.sleep(Number(process.env.RELEASE_TEST_INSTALL_DELAY_MS ?? 0));
   if (process.env.RELEASE_TEST_INSTALL_FAIL === "1") {
     process.stderr.write("fixture install failed\n");
     process.exitCode = 1;

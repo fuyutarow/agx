@@ -22,6 +22,10 @@ const args = cli({
       type: Number,
       description: "Asset poll interval in seconds (default: 5)",
     },
+    installSeconds: {
+      type: Number,
+      description: "Suite install limit in seconds (default: 900)",
+    },
     target: { type: String, description: "Bun compile target (default: host)" },
     dryRun: { type: Boolean, description: "Preview only (the default)" },
     yes: {
@@ -55,6 +59,7 @@ async function main() {
       verifyIn: args.flags.verifyIn,
       waitSeconds: args.flags.waitSeconds,
       pollSeconds: args.flags.pollSeconds,
+      installSeconds: args.flags.installSeconds,
     },
   );
   if (result.isErr()) {

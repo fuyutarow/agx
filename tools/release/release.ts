@@ -34,7 +34,11 @@ const messagingBinSchema = z
 export async function run(
   cmd: string[],
   cwd: string,
-  options: { deadline?: number } = {},
+  options: {
+    deadline?: number;
+    progress?: boolean;
+    completeOnExit?: boolean;
+  } = {},
 ) {
   const started = performance.now();
   let timeout = 120_000;
@@ -43,17 +47,52 @@ export async function run(
   if (options.deadline !== undefined)
     timeout = Math.max(1, Math.ceil(options.deadline - started));
   const signal = AbortSignal.timeout(timeout);
+  const readers: { cancel: () => Promise<void> }[] = [];
   const child = Bun.spawn(cmd, {
     cwd,
+    env: process.env,
     stdout: "pipe",
     stderr: "pipe",
     signal,
+    onExit() {
+      if (options.completeOnExit === true)
+        for (const reader of readers) void reader.cancel().catch(() => {});
+    },
   });
+  let latest = "waiting for download output";
+  async function capture(stream: ReadableStream<Uint8Array>) {
+    const chunks: string[] = [];
+    const decoder = new TextDecoder();
+    const reader = stream.getReader();
+    readers.push(reader);
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      const text = decoder.decode(chunk.value, { stream: true });
+      chunks.push(text);
+      const line = text
+        .split(/[\r\n]/u)
+        .findLast((part) => part.trim().length > 0);
+      if (line !== undefined) latest = line.slice(-500);
+    }
+    chunks.push(decoder.decode());
+    return chunks.join("");
+  }
+  const progress =
+    options.progress === true
+      ? setInterval(() => {
+          process.stderr.write(
+            `Download progress: ${shellCommand(cmd)}; elapsed ${Math.floor((performance.now() - started) / 1000)} s; ${latest}\n`,
+          );
+        }, 60_000)
+      : undefined;
   const [exit, stdout, stderr] = await Promise.all([
     child.exited,
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-  ]);
+    capture(child.stdout),
+    capture(child.stderr),
+  ]).finally(() => {
+    if (progress !== undefined) clearInterval(progress);
+  });
   return {
     exit: signal.aborted ? 124 : exit,
     stdout,
@@ -727,6 +766,7 @@ export type MachineOptions = {
   verifyIn?: string[] | undefined;
   waitSeconds?: number | undefined;
   pollSeconds?: number | undefined;
+  installSeconds?: number | undefined;
 };
 
 /** Read-only consumer probes; installation runs outside repository configuration. */
@@ -748,6 +788,15 @@ export async function machineSwap(
     );
   const waitSeconds = options.waitSeconds ?? 900;
   const pollSeconds = options.pollSeconds ?? 5;
+  const installSeconds = options.installSeconds ?? 900;
+  if (
+    !Number.isFinite(installSeconds) ||
+    installSeconds <= 0 ||
+    installSeconds * 1000 > 2_147_483_647
+  )
+    return err(
+      `install in ${home}: invalid install interval (expected positive seconds, at most 2147483.647)`,
+    );
   if (
     !Number.isFinite(waitSeconds) ||
     waitSeconds < 0 ||
@@ -806,6 +855,11 @@ export async function machineSwap(
   const install = await execute(
     ["mise", "install", `github:fuyutarow/agx@${version}`],
     home,
+    {
+      deadline: performance.now() + installSeconds * 1000,
+      progress: true,
+      completeOnExit: true,
+    },
   );
   if (install.exit !== 0)
     return err(`install in ${home}: ${install.stderr}${install.stdout}`);

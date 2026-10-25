@@ -18,6 +18,10 @@ const args = cli({
       type: Number,
       description: "Poll interval (seconds; default 5)",
     },
+    installSeconds: {
+      type: Number,
+      description: "Suite install limit (seconds; default 900)",
+    },
   },
   strictFlags: true,
   ignoreArgv(type: unknown, flag: unknown) {
