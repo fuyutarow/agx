@@ -1213,9 +1213,8 @@ const adoptLine = (dir: string, target: string, verdict: string): string =>
 
 /** Compare raw bytes (including binary files) without opening or snapshotting the orphan. */
 async function orphanFileDifference(
-  repo: Repo,
   dir: string,
-  trunk: string,
+  revision: string,
   path: string,
 ): Promise<string | undefined> {
   const disk = join(dir, path);
@@ -1237,10 +1236,10 @@ async function orphanFileDifference(
         "file",
         "show",
         "-r",
-        trunk,
+        revision,
         rootFileFileset(path),
       ],
-      repo.backing,
+      dir,
     );
     if (!ran.ok) return `unknown: ${msg(ran)}`;
     const { out: expected, err, code } = ran.value;
@@ -1272,10 +1271,28 @@ async function orphanDifference(
     const path = jsonOf(z.string()).safeParse(line);
     if (!path.success) return "unknown: invalid trunk file list";
     paths.push(path.data);
-    const difference = await orphanFileDifference(repo, dir, trunk, path.data);
+    const difference = await orphanFileDifference(dir, trunk, path.data);
     if (difference !== undefined) return difference;
   }
   return orphanExtraFiles(dir, new Set(paths));
+}
+
+/** Compare tracked disk bytes with the saved working-copy tree without taking a jj snapshot. */
+async function workingCopyDifference(dir: string): Promise<string | undefined> {
+  const listed = await jjOut(
+    ["file", "list", "-r", "@", "-T", 'json(path) ++ "\\n"'],
+    dir,
+    true,
+  );
+  if (!listed.ok)
+    return `unknown: cannot list working-copy files: ${msg(listed)}`;
+  for (const line of listed.value.split("\n").filter(Boolean)) {
+    const path = jsonOf(z.string()).safeParse(line);
+    if (!path.success) return "unknown: invalid working-copy file list";
+    const difference = await orphanFileDifference(dir, "@", path.data);
+    if (difference !== undefined) return difference;
+  }
+  return undefined;
 }
 
 async function orphanExtraFiles(
@@ -1935,6 +1952,7 @@ async function classify(
   trunk: string | null,
   readOnly = false,
   recentRecordedDiagnostic = false,
+  checkStatus = true,
 ): Promise<Classification> {
   let change = ws.change ?? "?";
   let age = ws.age ?? "?";
@@ -1993,15 +2011,29 @@ async function classify(
           "temporary land checkout; no live land lock",
           true,
         );
-  const fresh = readOnly
-    ? await jjOut(["status"], ws.dir, true)
-    : await updateStale(ws.dir, allRejected);
+  let fresh: Attempt<unknown>;
+  if (!checkStatus) fresh = good(undefined);
+  else if (readOnly) fresh = await jjOut(["status"], ws.dir, true);
+  else fresh = await updateStale(ws.dir, allRejected);
   if (!fresh.ok)
     return verdict(
       readOnly && msg(fresh).includes("working copy is stale")
         ? "stale"
         : "keep",
       msg(fresh),
+    );
+  const sparse = await jjOut(["sparse", "list"], ws.dir, true);
+  if (!sparse.ok) return verdict("keep", msg(sparse));
+  if (sparse.value.trim() !== ".")
+    return verdict(
+      "keep",
+      `sparse patterns are not '.': ${JSON.stringify(sparse.value.trim())}`,
+    );
+  const diskDifference = await workingCopyDifference(ws.dir);
+  if (diskDifference !== undefined)
+    return verdict(
+      diskDifference.startsWith("unknown:") ? "unknown" : "keep",
+      `unsnapshotted working-copy changes: ${diskDifference}`,
     );
   const info = await jjOut(
     [
@@ -2019,13 +2051,6 @@ async function classify(
   const [id, since, empty] = info.value.split("\t");
   change = id ?? "?";
   age = since ?? "?";
-  const sparse = await jjOut(["sparse", "list"], ws.dir, true);
-  if (!sparse.ok) return verdict("keep", msg(sparse));
-  if (sparse.value.trim() !== ".")
-    return verdict(
-      "keep",
-      `sparse patterns are not '.': ${JSON.stringify(sparse.value.trim())}`,
-    );
   // Abandonment is based on runs at this workspace path, not a ticket redone elsewhere.
   const local = records.filter(
     (r) =>
@@ -2363,6 +2388,9 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
               ws,
               currentRecords.value,
               currentTrunk.value,
+              true,
+              false,
+              false,
             );
             checked = await applyGcGrace(ws, checked, gcGraceMinutes(options));
             const stillRecorded =

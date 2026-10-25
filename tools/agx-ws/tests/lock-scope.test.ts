@@ -229,6 +229,10 @@ ${delegateJj}`,
 
 test("WS-GC-LOCK-SCOPE: add acquires during many slow read-only classifications", async () => {
   const f = await fixture(["a", "b", "c", "d", "e", "f"]);
+  for (const slug of ["a", "b", "c", "d", "e", "f"]) {
+    await Bun.write(join(f.dir(slug), "a.txt"), `${slug} has pending work\n`);
+    expect((await f.jj(["status"], f.dir(slug))).code).toBe(0);
+  }
   const gate = join(f.root, "classifying");
   await f.shim(
     "jj",
@@ -290,7 +294,7 @@ const child = Bun.spawn([${JSON.stringify(realRip)}, ...process.argv.slice(2)], 
   const added = await f.command(["add", "admitted"]);
   const elapsed = performance.now() - started;
   expect(added.code, added.err).toBe(0);
-  expect(elapsed).toBeLessThan(11_000);
+  expect(elapsed).toBeLessThan(13_000);
   expect(added.err).toMatch(
     /waiting [5-9]\d*s for agx ws gc ws_a \(pid \d+, host .+, since .+\) on /u,
   );
@@ -348,7 +352,7 @@ ${delegateJj}`,
     expect(collected.code, collected.err).toBe(0);
     expect(await Bun.file(gate).text()).toBe("under lock");
     const reason = {
-      file: "unlanded",
+      file: "unsnapshotted working-copy changes: yes: bytes differ at a.txt",
       untracked: "untracked content: 1 files (pending.txt)",
       run: "live or continuing run new-run",
     };

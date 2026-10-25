@@ -1687,6 +1687,69 @@ describe("gc integration branches", () => {
     );
   });
 
+  test("GC keeps an empty saved checkout with unsnapshotted disk edits and never snapshots it", async () => {
+    const path = await repo('trunk = "main"\n');
+    setRecords([]);
+    expect((await ws(["add", "unsnapshotted"], path)).code).toBe(0);
+    const dir = wsDir(path, "unsnapshotted");
+    await Bun.write(join(dir, "a.txt"), "edited on disk after snapshot\n");
+    const saved = await jj(
+      [
+        "--ignore-working-copy",
+        "log",
+        "--no-graph",
+        "-r",
+        "@",
+        "-T",
+        'commit_id ++ "\\t" ++ committer.timestamp()',
+      ],
+      dir,
+    );
+    expect(saved.code, saved.err).toBe(0);
+
+    const dry = await ws(["gc", "--dry-run", "--include-unrecorded"], path);
+    expect(dry.code, dry.err).toBe(0);
+    expect(dry.out).toContain(`${dir}\tws\tkeep\t`);
+    expect(dry.out).toContain(
+      "unsnapshotted working-copy changes: yes: bytes differ at a.txt",
+    );
+    const collected = await ws(["gc", "--include-unrecorded"], path);
+    expect(collected.code, collected.err).toBe(0);
+    expect(collected.out).toContain(`${dir}\tws\tkeep\t`);
+    expect(collected.out).toContain(
+      "unsnapshotted working-copy changes: yes: bytes differ at a.txt",
+    );
+    const realRow = collected.out
+      .split("\n")
+      .find((line) => line.startsWith(`${dir}\t`));
+    const dryRow = dry.out
+      .split("\n")
+      .find((line) => line.startsWith(`${dir}\t`));
+    expect(realRow?.split("\t").slice(0, 4)).toEqual(
+      dryRow?.split("\t").slice(0, 4),
+    );
+    expect(
+      (
+        await jj(
+          [
+            "--ignore-working-copy",
+            "log",
+            "--no-graph",
+            "-r",
+            "@",
+            "-T",
+            'commit_id ++ "\\t" ++ committer.timestamp()',
+          ],
+          dir,
+        )
+      ).out,
+    ).toBe(saved.out);
+    expect(await Bun.file(join(dir, "a.txt")).text()).toBe(
+      "edited on disk after snapshot\n",
+    );
+    setRecords([]);
+  });
+
   test("result preservation requires every file, equal bytes and no symlink escape", async () => {
     const path = await repo('trunk = "main"\n');
     const runDir = join(scratch, "preservation-run");
@@ -1916,11 +1979,14 @@ describe("gc integration branches", () => {
       const dry = await ws(["gc", "--dry-run"], path);
       expect(dry.code, dry.err).toBe(0);
       expect(dry.out).toContain(`${dir}\tws\tempty\t`);
-      // An unsnapshotted real diff must be caught by the locked collection pass.
+      // A locked recheck must see disk edits without recording them into jj.
       await Bun.write(join(dir, changedFile), "still unlanded\n");
       const kept = await ws(["gc"], path);
       expect(kept.code, kept.err).toBe(0);
-      expect(kept.out).toContain(`${dir}\tws\tunlanded\t`);
+      expect(kept.out).toContain(`${dir}\tws\tkeep\t`);
+      expect(kept.out).toContain(
+        `unsnapshotted working-copy changes: yes: bytes differ at ${changedFile}`,
+      );
       expect(kept.out).toContain(changedFile);
       expect(await Bun.file(join(dir, changedFile)).text()).toBe(
         "still unlanded\n",
@@ -2298,13 +2364,17 @@ describe("gc integration branches", () => {
     await Bun.write(join(dir, "feature.txt"), "unreleased work\n");
     const partial = await ws(["gc"], path);
     expect(partial.code, partial.err).toBe(0);
-    expect(partial.out).toContain("differs in 1 of 4 paths: feature.txt");
+    expect(partial.out).toContain(`${dir}\tws\tkeep\t`);
+    expect(partial.out).toContain(
+      "unsnapshotted working-copy changes: yes: bytes differ at feature.txt",
+    );
     expect(await Bun.file(join(dir, "feature.txt")).exists()).toBe(true);
     await Bun.write(join(dir, "feature.txt"), "released work\n");
     await Bun.write(
       join(dir, note),
       "---\nbump: patch\n---\n\nNever released\n",
     );
+    expect((await jj(["status"], dir)).code).toBe(0);
     const missing = await ws(["gc"], path);
     expect(missing.out).toContain(`${dir}\tws\tunlanded\t`);
     expect(await Bun.file(join(dir, note)).exists()).toBe(true);
@@ -2392,11 +2462,14 @@ describe("gc integration branches", () => {
     const dry = await ws(["gc", "--dry-run", "--legacy"], path);
     expect(dry.code, dry.err).toBe(0);
     expect(dry.out).toContain(`${dir}\tlegacy\tlanded\t`);
-    // An additional outstanding edit must prevent deletion even after a partial landing.
+    // An additional on-disk edit must prevent deletion without being snapshotted.
     await Bun.write(join(dir, "a.txt"), "a\nB\nc\nD\ne\nf\ng\n");
     const partial = await ws(["gc", "--legacy"], path);
     expect(partial.code, partial.err).toBe(0);
-    expect(partial.out).toContain(`${dir}\tlegacy\tunlanded\t`);
+    expect(partial.out).toContain(`${dir}\tlegacy\tkeep\t`);
+    expect(partial.out).toContain(
+      "unsnapshotted working-copy changes: yes: bytes differ at a.txt",
+    );
     expect(await Bun.file(join(dir, "a.txt")).exists()).toBe(true);
   });
 
