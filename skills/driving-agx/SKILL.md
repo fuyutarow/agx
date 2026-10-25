@@ -191,9 +191,11 @@ of importing implementation modules or reading private snapshot files.
 Blinded Jev options include local folded-run acceptance and median wall minutes.
 Shares require at least five judged runs; wall durations over 24 hours are
 excluded. The pick audit preserves the numbers and text shown for every option.
-The objective favors accepted results per hour and per dollar, with local
-acceptance ahead of published benchmarks for sufficiency. Different rows received
-different tickets; treat this evidence as observational, with selection bias.
+The objective asks Jev to choose the option expected to produce an accepted
+result for this ticket at the lowest cost and in the shortest time. Local
+`agx measured` acceptance and wall time are primary evidence of sufficiency;
+published benchmarks are background only. Different rows received different
+tickets; treat this evidence as observational, with selection bias.
 
 Worker results, logs and measurements go in `$AGX_RUN_DIR`, which the runner creates,
 exports and allows in the sandbox. Keep workspace paths for source changes. GC

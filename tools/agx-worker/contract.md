@@ -941,10 +941,17 @@ Wall time is the median of ended runs, including unjudged runs, with nonfinite,
 negative and over-24-hour durations excluded. An empty duration sample says
 `median unknown min.` Exactly 24 hours remains eligible.
 
-The objective maximizes accepted results per hour and per dollar and prioritizes
-this machine's measured acceptance over published benchmarks when judging
-sufficiency. These observations have selection bias: rows received different
-tickets, so their shares are not controlled comparisons or causal rankings.
+The objective is: "Purpose: the owner pays for every token and waits for every
+minute until a result is accepted. Choose the option expected to produce an
+accepted result for this ticket at the lowest cost and in the shortest time.
+Evidence: 'agx measured' is the acceptance and wall time of each option on this
+machine and is the primary evidence of whether an option is sufficient;
+published benchmarks are background only. Return the ticket instead of
+choosing a model only when it cannot be done as written. Subscription health:
+weigh 7-day windows most; 5-hour windows are secondary; keep the intended bias
+toward the codex route; stale or unknown usage is neutral." These observations
+have selection bias: rows received different tickets, so their shares are not
+controlled comparisons or causal rankings.
 Option IDs, ordering, prices and published scores retain their existing meaning.
 The pick audit's `measured_evidence`, keyed by blinded option ID, saves judged and
 accepted counts, displayed percent, eligible ended-run count, displayed median

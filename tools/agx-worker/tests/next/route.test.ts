@@ -480,7 +480,7 @@ describe("capability constrained routing", () => {
       server.request()?.questions.worker.criteria["sol-high"],
     ).not.toContain("historical Sol 6.1 acceptance");
   });
-  test("ROUTER-PROMPT-TREE: 7d is primary, 5h is secondary, and Jev chooses Codex", async () => {
+  test("ROUTER-PURPOSE: built request carries the exact purpose and subscription health", async () => {
     const { home } = await isolateState();
     const nowMs = Temporal.Now.instant().epochMilliseconds;
     // Claude 5h = .12 - .84 = -.72; Claude 7d = .20 - .12 = +.08.
@@ -515,6 +515,12 @@ describe("capability constrained routing", () => {
     expect(request?.questions.worker.instructions).toBe(
       `${ROUTING_OBJECTIVE} Pick a roster row for this ticket.`,
     );
+    expect(ROUTING_OBJECTIVE).toBe(
+      "Purpose: the owner pays for every token and waits for every minute until a result is accepted. Choose the option expected to produce an accepted result for this ticket at the lowest cost and in the shortest time. Evidence: 'agx measured' is the acceptance and wall time of each option on this machine and is the primary evidence of whether an option is sufficient; published benchmarks are background only. Return the ticket instead of choosing a model only when it cannot be done as written. Subscription health: weigh 7-day windows most; 5-hour windows are secondary; keep the intended bias toward the codex route; stale or unknown usage is neutral.",
+    );
+    expect(request?.questions.worker.instructions).not.toContain(
+      "A. Capability sufficiency (hard)",
+    );
     expect(request?.questions.worker.criteria["luna-high"]).not.toMatch(
       /graded|history|recent|comparable/iu,
     );
@@ -540,7 +546,7 @@ describe("capability constrained routing", () => {
       "5-hour windows are secondary",
     );
     expect(ROUTING_OBJECTIVE).toContain(
-      "Keep the intended bias toward the codex route",
+      "keep the intended bias toward the codex route",
     );
     expect(ROUTING_OBJECTIVE).toContain("7-day windows most");
   });
@@ -694,7 +700,7 @@ describe("capability constrained routing", () => {
     expect(codexWeek?.pace).toBeCloseTo(0.17, 5);
     expect(request?.questions.worker.instructions).toContain(ROUTING_OBJECTIVE);
     expect(request?.questions.worker.instructions).toContain(
-      "Stale or unknown usage is neutral",
+      "stale or unknown usage is neutral",
     );
     expect(request?.questions.worker.criteria["sonnet-high"]).toBeDefined();
     expect(request?.questions.worker.criteria["luna-high"]).toBeDefined();
@@ -1196,10 +1202,13 @@ test("local record evidence follows each blinded option and survives the pick au
     for (const row of loaded.value.choice) expect(text).not.toContain(row.id);
   }
   expect(request.questions.worker.instructions).toContain(
-    "accepted results per hour and per dollar",
+    "at the lowest cost and in the shortest time",
   );
   expect(request.questions.worker.instructions).toContain(
-    "outranks published benchmarks",
+    "published benchmarks are background only",
+  );
+  expect(request.questions.worker.instructions).not.toContain(
+    "A. Capability sufficiency (hard)",
   );
   const picked = appendStarted(selected.id);
   if (picked?.kind !== "started") return;

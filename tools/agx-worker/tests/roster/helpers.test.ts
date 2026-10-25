@@ -12,12 +12,7 @@ test("moved pure helpers preserve roster evidence and policy labels", async () =
   expect(loaded.ok).toBe(true);
   if (!loaded.ok) return;
   const value = loaded.value;
-  expect(roster.ROUTING_OBJECTIVE).toBe(
-    legacy.ROUTING_OBJECTIVE.replace(
-      "choose sufficient effort",
-      "choose a sufficient setting",
-    ),
-  );
+  expect(roster.ROUTING_OBJECTIVE).toStartWith("Purpose: the owner pays");
   for (const routes of [
     undefined,
     ["codex"] as const,
