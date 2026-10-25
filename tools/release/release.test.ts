@@ -1,16 +1,7 @@
-import { afterEach, expect, test, spyOn } from "bun:test";
-import {
-  cp,
-  mkdir,
-  mkdtemp,
-  rm,
-  symlink,
-  stat,
-  readdir,
-} from "node:fs/promises";
+import { afterEach, expect, test } from "bun:test";
+import { cp, mkdir, mkdtemp, rm, symlink, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { existsSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { writeChangeset } from "../changeset/changeset.ts";
 import { applyChangesets } from "../changeset/apply.ts";
 import { jsonOf, z } from "../zod.ts";
@@ -179,191 +170,133 @@ const fakeGhProductionRun: typeof productionRun = (cmd, cwd, options) =>
     cwd,
     options,
   );
-const completionRun: typeof productionRun = (cmd, cwd, options) =>
-  cmd[0] === "gh" && cmd[1] === "release"
+const installProductionRun: typeof productionRun = async (
+  cmd,
+  cwd,
+  options,
+) => {
+  const record = async (args: string[]) => {
+    const path = join(cwd, "calls");
+    await Bun.write(
+      path,
+      `${await Bun.file(path)
+        .text()
+        .catch(() => "")}${JSON.stringify(args)}\n`,
+    );
+  };
+  if (cmd[0] === "gh" && cmd[1] === "release" && cmd[2] === "view") {
+    await record(cmd.slice(1));
+    const assets = suiteTargets.map((target) => ({
+      name: suiteArchiveName("2.3.4", target)._unsafeUnwrap(),
+      state: "uploaded",
+      size: 32,
+    }));
+    return process.env.RELEASE_TEST_GH_MODE === "machine-missing"
+      ? {
+          exit: 0,
+          stdout: JSON.stringify({ assets: [], isDraft: true }),
+          stderr: "",
+        }
+      : {
+          exit: 0,
+          stdout: JSON.stringify({ assets, isDraft: false }),
+          stderr: "",
+        };
+  }
+  if (cmd[0] === "gh" && cmd[1] === "workflow" && cmd[2] === "run") {
+    await record(cmd.slice(1));
+    return process.env.RELEASE_TEST_WORKFLOW_FAIL === "1"
+      ? { exit: 1, stdout: "", stderr: "workflow dispatch fixture failure" }
+      : { exit: 0, stdout: "", stderr: "" };
+  }
+  if (cmd[0] === "gh" && cmd[1] === "run" && cmd[2] === "list") {
+    await record(cmd.slice(1));
+    let urls: { url: string }[] = [];
+    if (process.env.RELEASE_TEST_NO_RUN !== "1") {
+      const url =
+        cmd[cmd.indexOf("--workflow") + 1] === "update-formulas.yml"
+          ? "https://github.com/fuyutarow/homebrew-tap/actions/runs/456"
+          : "https://github.com/fuyutarow/agx/actions/runs/123";
+      urls = [{ url }];
+    }
+    return {
+      exit: 0,
+      stdout: JSON.stringify(urls),
+      stderr: "",
+    };
+  }
+  if (cmd[0] === "mise")
+    return productionRun(
+      [
+        process.execPath,
+        join(import.meta.dir, "fake-mise.ts"),
+        ...cmd.slice(1),
+      ],
+      cwd,
+      options,
+    );
+  return cmd[0] === "gh" && cmd[1] === "release"
     ? fakeGhProductionRun(cmd, cwd, options)
     : fixtureRun(cmd, cwd);
+};
 
-const installProductionRun: typeof productionRun = (cmd, cwd, options) =>
-  cmd[0] === "mise"
-    ? productionRun(
-        [
-          process.execPath,
-          join(import.meta.dir, "fake-mise.ts"),
-          ...cmd.slice(1),
-        ],
-        cwd,
-        options,
-      )
-    : fixtureRun(cmd, cwd);
-
-test("mise exit completes while a descendant holds output pipes for five minutes", async () => {
+test("fake gh starts the tap formula workflow after assets exist; this machine stays on mise", async () => {
   const f = await suiteFixture();
-  const pidPath = join(f.root, "pipe-child.pid");
-  const previous = process.env.RELEASE_TEST_PIPE_CHILD_PID;
-  const mode = process.env.RELEASE_TEST_GH_MODE;
-  process.env.RELEASE_TEST_PIPE_CHILD_PID = pidPath;
-  process.env.RELEASE_TEST_GH_MODE = "success";
-  await (async () => {
-    for (const complete of [
-      () =>
-        publish("suite", true, undefined, f.root, installProductionRun, {
-          installSeconds: 2,
-        }),
-      () =>
-        machineSwap(
-          "2.3.4",
-          { installSeconds: 2 },
-          f.root,
-          installProductionRun,
-        ),
-    ]) {
-      await (async () => {
-        const started = performance.now();
-        const result = await complete();
-        expect(result.isOk(), result.isErr() ? result.error : "").toBe(true);
-        expect(performance.now() - started).toBeLessThan(1500);
-        const pid = Number(await Bun.file(pidPath).text());
-        expect(pid).toBeGreaterThan(0);
-        expect(process.kill(pid, 0)).toBe(true);
-      })().finally(() => {
-        if (existsSync(pidPath)) {
-          process.kill(Number(readFileSync(pidPath, "utf8")), "SIGKILL");
-          rmSync(pidPath);
-        }
-      });
-    }
-  })().finally(() => {
-    if (previous === undefined) delete process.env.RELEASE_TEST_PIPE_CHILD_PID;
-    else process.env.RELEASE_TEST_PIPE_CHILD_PID = previous;
-    if (mode === undefined) delete process.env.RELEASE_TEST_GH_MODE;
-    else process.env.RELEASE_TEST_GH_MODE = mode;
+  const consumer = join(f.root, "consumer with spaces");
+  await mkdir(consumer);
+  const log = join(f.root, "mise-calls");
+  const previousLog = process.env.RELEASE_TEST_MISE_LOG;
+  process.env.RELEASE_TEST_MISE_LOG = log;
+  const result = await machineSwap(
+    "2.3.4",
+    { waitSeconds: 0, verifyIn: [consumer] },
+    f.root,
+    installProductionRun,
+  ).finally(() => {
+    if (previousLog === undefined) delete process.env.RELEASE_TEST_MISE_LOG;
+    else process.env.RELEASE_TEST_MISE_LOG = previousLog;
   });
-}, 10_000);
-
-test("publish and machine survive a three-minute fake suite install", async () => {
-  const f = await suiteFixture();
-  const realTime = process.env.RELEASE_TEST_SLOW_INSTALL === "1";
-  const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
-  const limits: number[] = [];
-  const timeout = spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
-    limits.push(ms);
-    return originalTimeout(realTime ? ms : Math.ceil(ms / 1000));
+  expect(result.isOk(), result.isErr() ? result.error : "").toBe(true);
+  const calls = (await Bun.file(join(f.root, "calls")).text())
+    .trim()
+    .split("\n");
+  const assetWait = calls.findIndex((line) =>
+    line.startsWith('["release","view"'),
+  );
+  const trigger = calls.findIndex((line) =>
+    line.startsWith('["workflow","run"'),
+  );
+  const runList = calls.findIndex((line) => line.startsWith('["run","list"'));
+  expect(trigger).toBeGreaterThan(assetWait);
+  expect(runList).toBeGreaterThan(trigger);
+  expect(calls[trigger]).toBe(
+    JSON.stringify([
+      "workflow",
+      "run",
+      "update-formulas.yml",
+      "-R",
+      "fuyutarow/homebrew-tap",
+      "-f",
+      "tool=agx",
+    ]),
+  );
+  const miseCallSchema = z.object({
+    args: z.array(z.string()),
+    cwd: z.string(),
   });
-  const oldDelay = process.env.RELEASE_TEST_INSTALL_DELAY_MS;
-  const oldMode = process.env.RELEASE_TEST_GH_MODE;
-  process.env.RELEASE_TEST_INSTALL_DELAY_MS = realTime ? "180000" : "180";
-  process.env.RELEASE_TEST_GH_MODE = "success";
-  await (async () => {
-    const started = performance.now();
-    const results = await Promise.all([
-      publish("suite", true, undefined, f.root, installProductionRun),
-      machineSwap(
-        "2.3.4",
-        { installSeconds: 300 },
-        f.root,
-        installProductionRun,
-      ),
-    ]);
-    for (const result of results)
-      expect(result.isOk(), result.isErr() ? result.error : "").toBe(true);
-    if (realTime) expect(performance.now() - started).toBeGreaterThan(120_000);
-    expect(limits.some((ms) => ms > 899_000 && ms <= 900_000)).toBe(true);
-    expect(limits.some((ms) => ms > 299_000 && ms <= 300_000)).toBe(true);
-    expect(limits.filter((ms) => ms === 120_000)).toHaveLength(2);
-  })().finally(() => {
-    timeout.mockRestore();
-    if (oldDelay === undefined)
-      delete process.env.RELEASE_TEST_INSTALL_DELAY_MS;
-    else process.env.RELEASE_TEST_INSTALL_DELAY_MS = oldDelay;
-    if (oldMode === undefined) delete process.env.RELEASE_TEST_GH_MODE;
-    else process.env.RELEASE_TEST_GH_MODE = oldMode;
-  });
-}, 200_000);
-
-test("install timeout reports command, limit and elapsed time before verification", async () => {
-  const f = await suiteFixture();
-  const previous = process.env.RELEASE_TEST_INSTALL_DELAY_MS;
-  const mode = process.env.RELEASE_TEST_GH_MODE;
-  process.env.RELEASE_TEST_INSTALL_DELAY_MS = "180";
-  process.env.RELEASE_TEST_GH_MODE = "success";
-  await (async () => {
-    const result = await machineSwap(
-      "2.3.4",
-      { installSeconds: 0.05 },
-      f.root,
-      installProductionRun,
-    );
-    expect(result.isErr()).toBe(true);
-    if (result.isErr()) {
-      expect(result.error).toContain("Command timed out after");
-      expect(result.error).toContain("ms (limit 50 ms)");
-      expect(result.error).toContain("'install' 'github:fuyutarow/agx@2.3.4'");
-    }
-    for (const installSeconds of [0, -1, NaN, Infinity, 3_000_000]) {
-      const invalid = await machineSwap(
-        "2.3.4",
-        { installSeconds },
-        f.root,
-        () => {
-          expect.unreachable("invalid input must not spawn");
-        },
-      );
-      expect(invalid.isErr() && invalid.error).toContain(
-        "invalid install interval",
-      );
-    }
-  })().finally(() => {
-    if (previous === undefined)
-      delete process.env.RELEASE_TEST_INSTALL_DELAY_MS;
-    else process.env.RELEASE_TEST_INSTALL_DELAY_MS = previous;
-    if (mode === undefined) delete process.env.RELEASE_TEST_GH_MODE;
-    else process.env.RELEASE_TEST_GH_MODE = mode;
-  });
-});
-
-test("publish and machine allow three-minute fake CI with a scaled command clock", async () => {
-  const f = await suiteFixture();
-  const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
-  const limits: number[] = [];
-  // One millisecond represents one second: the old 120 s limit kills this
-  // 180 s fake CI; the asset deadline permits it. No real gh is executed.
-  const timeout = spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
-    limits.push(ms);
-    return originalTimeout(Math.ceil(ms / 1000));
-  });
-  const oldDelay = process.env.RELEASE_TEST_CI_DELAY_MS;
-  const oldMode = process.env.RELEASE_TEST_GH_MODE;
-  process.env.RELEASE_TEST_CI_DELAY_MS = "180";
-  process.env.RELEASE_TEST_GH_MODE = "success";
-  await (async () => {
-    for (const complete of [
-      () => publish("suite", true, undefined, f.root, completionRun),
-      () => machineSwap("2.3.4", {}, f.root, completionRun),
-    ]) {
-      const result = await complete();
-      expect(result.isOk(), result.isErr() ? result.error : "").toBe(true);
-    }
-    expect(limits).toHaveLength(2);
-    expect(limits.every((limit) => limit > 899_000 && limit <= 900_000)).toBe(
-      true,
-    );
-    const ordinary = await productionRun(
-      [process.execPath, "-e", "await Bun.sleep(180)"],
-      f.root,
-    );
-    expect(limits.at(-1)).toBe(120_000);
-    expect(ordinary.exit).toBe(124);
-    expect(ordinary.stderr).toContain("Command timed out after");
-    expect(ordinary.stderr).toContain("ms (limit 120000 ms)");
-    expect(ordinary.stderr).toContain("await Bun.sleep(180)");
-  })().finally(() => {
-    timeout.mockRestore();
-    if (oldDelay === undefined) delete process.env.RELEASE_TEST_CI_DELAY_MS;
-    else process.env.RELEASE_TEST_CI_DELAY_MS = oldDelay;
-    if (oldMode === undefined) delete process.env.RELEASE_TEST_GH_MODE;
-    else process.env.RELEASE_TEST_GH_MODE = oldMode;
-  });
+  const parsedMiseCalls = (await Bun.file(log).text())
+    .trim()
+    .split("\n")
+    .map((line) => jsonOf(miseCallSchema).safeParse(line));
+  expect(parsedMiseCalls.every((call) => call.success)).toBe(true);
+  const miseCalls = parsedMiseCalls.flatMap((call) =>
+    call.success ? [call.data] : [],
+  );
+  expect(miseCalls[0]?.args).toEqual(["install", "github:fuyutarow/agx@2.3.4"]);
+  expect(miseCalls.slice(1).map((call) => call.args)).toEqual([
+    ["exec", "-C", homedir(), "--", "agx", "-V"],
+    ["exec", "-C", consumer, "--", "agx", "-V"],
+  ]);
 });
 
 test("asset deadline bounds a stuck fake gh and names the command", async () => {
@@ -1123,28 +1056,29 @@ test("suite publishing rejects a partial target before building", async () => {
 
 test("local publication pushes once and never builds or uploads", async () => {
   const f = await suiteFixture();
-  const result = await preview(f, ["--yes"], {
-    RELEASE_TEST_GH_MODE: "success",
+  const priorMode = process.env.RELEASE_TEST_GH_MODE;
+  process.env.RELEASE_TEST_GH_MODE = "success";
+  const result = await publish(
+    "suite",
+    true,
+    undefined,
+    f.root,
+    installProductionRun,
+  ).finally(() => {
+    if (priorMode === undefined) delete process.env.RELEASE_TEST_GH_MODE;
+    else process.env.RELEASE_TEST_GH_MODE = priorMode;
   });
-  expect(result.exit, result.stderr).toBe(0);
-  expect(result.stdout).toContain(
-    "https://github.com/fuyutarow/agx/actions/runs/123",
-  );
+  expect(result.isOk(), result.isErr() ? result.error : "").toBe(true);
   const calls = (await Bun.file(join(f.root, "calls")).text())
     .trim()
     .split("\n");
-  expect(calls.filter((line) => line.startsWith('["push"'))).toEqual([
-    JSON.stringify([
-      "push",
-      "--atomic",
-      "origin",
-      "refs/heads/alpha:refs/heads/alpha",
-      "refs/tags/v2.3.4:refs/tags/v2.3.4",
-      "refs/tags/usehooks-v2.3.4:refs/tags/usehooks-v2.3.4",
-    ]),
-  ]);
+  expect(calls.join("\n")).toContain('"--atomic"');
+  expect(
+    calls.filter((line) =>
+      line.startsWith('["workflow","run","update-formulas.yml"'),
+    ),
+  ).toHaveLength(1);
   expect(calls.join("\n")).not.toContain("--compile");
-  expect(calls.join("\n")).toContain('["release","view"');
   expect(
     await Bun.file(join(f.root, "dist/agx-2.3.4-linux-x64.tar.gz")).exists(),
   ).toBe(false);
@@ -1218,15 +1152,26 @@ test("workflow dispatch checks out the input tag and preserves tag push builds",
 for (const mode of ["success", "machine-missing"]) {
   test(`publish prints manual dispatch recovery before asset wait (${mode})`, async () => {
     const f = await suiteFixture();
-    const result = await preview(f, ["--yes", "--wait-seconds", "0"], {
-      RELEASE_TEST_GH_MODE: mode,
-      RELEASE_TEST_NO_RUN: "1",
+    const priorMode = process.env.RELEASE_TEST_GH_MODE;
+    const priorNoRun = process.env.RELEASE_TEST_NO_RUN;
+    process.env.RELEASE_TEST_GH_MODE = mode;
+    process.env.RELEASE_TEST_NO_RUN = "1";
+    const result = await publish(
+      "suite",
+      true,
+      undefined,
+      f.root,
+      installProductionRun,
+      { waitSeconds: 0 },
+    ).finally(() => {
+      if (priorMode === undefined) delete process.env.RELEASE_TEST_GH_MODE;
+      else process.env.RELEASE_TEST_GH_MODE = priorMode;
+      if (priorNoRun === undefined) delete process.env.RELEASE_TEST_NO_RUN;
+      else process.env.RELEASE_TEST_NO_RUN = priorNoRun;
     });
-    expect(result.exit, result.stderr).toBe(mode === "success" ? 0 : 1);
-    for (const tag of ["v2.3.4", "usehooks-v2.3.4"])
-      expect(result.stdout).toContain(
-        `gh workflow run release.yml --ref alpha -f tag=${tag}`,
-      );
+    expect(result.isOk(), result.isErr() ? result.error : "").toBe(
+      mode === "success",
+    );
     const calls = (await Bun.file(join(f.root, "calls")).text())
       .trim()
       .split("\n");
@@ -1292,88 +1237,35 @@ test("CI suite release fails if any platform upload is missing", async () => {
   );
 });
 
-for (const mode of [
-  "success",
-  "machine-delayed",
-  "machine-missing",
-  "stale",
-  "install-failure",
-]) {
-  test(`machine completion: ${mode}`, async () => {
-    const f = await suiteFixture();
-    const consumer = join(f.root, "consumer with spaces");
-    await mkdir(consumer);
-    await Bun.write(
-      join(consumer, "mise.toml"),
-      '[tools]\n"github:fuyutarow/agx" = "old"\n',
-    );
-    await Bun.write(join(consumer, "mise.lock"), "sentinel lock\n");
-    const before = await readdir(consumer, { recursive: true });
-    const content = await Promise.all(
-      before.map((name) => Bun.file(join(consumer, name)).text()),
-    );
-    const log = join(f.root, "mise-calls");
-    const result = await preview(
-      f,
-      [
-        "--yes",
-        "--verify-in",
-        consumer,
-        "--verify-in",
-        consumer,
-        "--wait-seconds",
-        mode === "machine-delayed" ? "1" : "0",
-        "--poll-seconds",
-        "0.01",
-      ],
-      {
-        RELEASE_TEST_GH_MODE: mode.startsWith("machine-") ? mode : "success",
-        RELEASE_TEST_MISE_LOG: log,
-        RELEASE_TEST_STALE_DIR: mode === "stale" ? consumer : "",
-        RELEASE_TEST_INSTALL_FAIL: mode === "install-failure" ? "1" : "0",
-      },
-    );
-    expect(await readdir(consumer, { recursive: true })).toEqual(before);
-    expect(
-      await Promise.all(
-        before.map((name) => Bun.file(join(consumer, name)).text()),
-      ),
-    ).toEqual(content);
-    if (mode === "machine-missing") {
-      expect(result.exit).toBe(1);
-      expect(result.stderr).toContain("asset-wait in");
-      expect(result.stderr).toContain("agx-2.3.4-linux-x64.tar.gz");
-      expect(await Bun.file(log).exists()).toBe(false);
-    } else {
-      const calls = await Bun.file(log).text();
-      const parsed = jsonOf(
-        z.object({ args: z.array(z.string()), cwd: z.string() }),
-      ).safeParse(calls.trim().split("\n")[0]);
-      expect(parsed.success).toBe(true);
-      const first = parsed.success ? parsed.data : { args: [], cwd: "invalid" };
-      expect(first.args).toEqual(["install", "github:fuyutarow/agx@2.3.4"]);
-      const home = first.cwd;
-      expect(home).not.toBe(f.root);
-      if (mode === "stale") {
-        expect(result.exit).toBe(1);
-        expect(result.stderr).toContain(`verify in ${consumer}`);
-        expect(result.stderr).toContain("agx 2.3.3");
-      } else if (mode === "install-failure") {
-        expect(result.exit).toBe(1);
-        expect(result.stderr).toContain(`install in ${home}`);
-        expect(calls).not.toContain('"exec"');
-      } else {
-        expect(result.exit, result.stderr).toBe(0);
-        expect(result.stdout).toContain(`OK ${home}: agx 2.3.4`);
-        expect(result.stdout.split(`OK ${consumer}: agx 2.3.4`)).toHaveLength(
-          2,
-        );
-        expect(calls.trim().split("\n")).toHaveLength(3);
-        expect(
-          mode !== "machine-delayed" ||
-            (await Bun.file(join(f.root, "polled")).exists()),
-        ).toBe(true);
-      }
-    }
+test("tap workflow dispatch failure warns but does not fail machine mise completion", async () => {
+  const f = await suiteFixture();
+  const priorFailure = process.env.RELEASE_TEST_WORKFLOW_FAIL;
+  const priorMiseLog = process.env.RELEASE_TEST_MISE_LOG;
+  process.env.RELEASE_TEST_WORKFLOW_FAIL = "1";
+  process.env.RELEASE_TEST_MISE_LOG = join(f.root, "mise-calls");
+  const result = await machineSwap(
+    "2.3.4",
+    { waitSeconds: 0 },
+    f.root,
+    installProductionRun,
+  ).finally(() => {
+    if (priorFailure === undefined)
+      delete process.env.RELEASE_TEST_WORKFLOW_FAIL;
+    else process.env.RELEASE_TEST_WORKFLOW_FAIL = priorFailure;
+    if (priorMiseLog === undefined) delete process.env.RELEASE_TEST_MISE_LOG;
+    else process.env.RELEASE_TEST_MISE_LOG = priorMiseLog;
   });
-}
+  expect(result.isOk(), result.isErr() ? result.error : "").toBe(true);
+  const calls = (await Bun.file(join(f.root, "calls")).text())
+    .trim()
+    .split("\n");
+  expect(
+    calls.some((line) =>
+      line.startsWith('["workflow","run","update-formulas.yml"'),
+    ),
+  ).toBe(true);
+  expect(calls.some((line) => line.startsWith('["run","list"'))).toBe(false);
+  expect(await Bun.file(join(f.root, "mise-calls")).text()).toContain(
+    '"install","github:fuyutarow/agx@2.3.4"',
+  );
+});

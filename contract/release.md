@@ -8,8 +8,8 @@ Release `v<suite>` contains exactly four suite archives:
 - `agx-<suite>-darwin-arm64.tar.gz`
 
 Each archive contains all suite commands in `bin/`, including `xmsg` as a
-hard link to `agx-msg`. Unsupported platforms have no suite asset: mise
-installation fails without a library fallback.
+hard link to `agx-msg`. Unsupported platforms have no suite asset and cannot
+install the suite.
 
 The platform-independent library is published only at `usehooks-v<suite>`:
 
@@ -34,17 +34,31 @@ existing tags unchanged.
 
 ## Machine completion
 
-Declare agx exactly once, in the user-global mise configuration, as
-`"github:fuyutarow/agx" = "latest"`, with no lock. Repositories must not declare
-agx in `mise.toml` or `mise.lock`.
+Install agx from the existing Homebrew tap:
 
-A release is complete only after the machine completion step passes.
-`release:publish -- suite --yes` ends with this step; after separate publication,
-run `mise run release:machine`. It waits up to 900 seconds for the published
-`v<suite>` release to list all four platform archives as uploaded and nonempty,
-then runs `mise install github:fuyutarow/agx@<suite>` from the user's home.
-Repeatable `--verify-in DIR` adds consumers to the mandatory home check.
-Each check runs `mise exec -C DIR -- agx -V`, requiring exactly `agx <suite>`.
+```sh
+brew install fuyutarow/tap/agx
+```
+
+A release is complete only after `release:machine` succeeds. After the four
+assets are uploaded, it triggers `gh workflow run update-formulas.yml -R
+fuyutarow/homebrew-tap -f tool=agx` and prints the tap run URL. Failure to
+start that workflow is a warning. The workflow in the tap repository owns
+formula updates. `release:publish -- suite --yes` runs this same completion
+step at the end.
+
+This machine keeps its suite install through its user-global mise pin:
+
+```toml
+[tools]
+"github:fuyutarow/agx" = "latest"
+```
+
+The machine step installs the exact released version through mise and checks
+home plus each requested consumer with `mise exec -C DIR -- agx -V`.
+
+Repeatable `--verify-in DIR` adds consumer checks to the mandatory home check.
+Each check runs `mise exec -C DIR -- agx -V` and requires exactly `agx <suite>`.
 The step prints one success line per distinct directory and exits 1 naming the
-step and directory on failure. It never writes into consumer directories.
-`--wait-seconds` and `--poll-seconds` control the bounded asset wait.
+step and directory on failure. `--wait-seconds` and `--poll-seconds` control
+the bounded asset wait; `--install-seconds` bounds mise installation.

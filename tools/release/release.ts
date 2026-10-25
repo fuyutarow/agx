@@ -769,7 +769,7 @@ export type MachineOptions = {
   installSeconds?: number | undefined;
 };
 
-/** Read-only consumer probes; installation runs outside repository configuration. */
+/** Start the tap-owned formula refresh, then keep this machine on its mise install. */
 export async function machineSwap(
   version: string,
   options: MachineOptions = {},
@@ -851,6 +851,51 @@ export async function machineSwap(
     await Bun.sleep(
       Math.min(pollSeconds * 1000, Math.max(0, deadline - performance.now())),
     );
+  }
+  const trigger = [
+    "gh",
+    "workflow",
+    "run",
+    "update-formulas.yml",
+    "-R",
+    "fuyutarow/homebrew-tap",
+    "-f",
+    "tool=agx",
+  ];
+  const started = await execute(trigger, root);
+  if (started.exit !== 0) {
+    process.stderr.write(
+      `WARNING: tap formula workflow was not started: ${started.stderr}${started.stdout}\n`,
+    );
+  } else {
+    const listed = await execute(
+      [
+        "gh",
+        "run",
+        "list",
+        "--workflow",
+        "update-formulas.yml",
+        "--repo",
+        "fuyutarow/homebrew-tap",
+        "--branch",
+        "alpha",
+        "--limit",
+        "1",
+        "--json",
+        "url",
+      ],
+      root,
+    );
+    const urls = jsonOf(z.array(z.object({ url: z.url() }))).safeParse(
+      listed.stdout,
+    );
+    const url = urls.success ? urls.data[0]?.url : undefined;
+    if (listed.exit === 0 && url !== undefined)
+      process.stdout.write(`Tap formula workflow: ${url}\n`);
+    else
+      process.stderr.write(
+        `WARNING: tap formula workflow started, but its run URL was unavailable: ${listed.stderr}${listed.stdout}\n`,
+      );
   }
   const install = await execute(
     ["mise", "install", `github:fuyutarow/agx@${version}`],

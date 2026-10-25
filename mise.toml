@@ -100,9 +100,9 @@ description = "Validate pending changesets and their package owners"
 run = "bun tools/changeset/lint.ts"
 
 [tasks."release:publish"]
-description = "Preview release; --yes publishes, installs globally and verifies consumers"
+description = "Preview release; --yes publishes, triggers tap formula update and verifies mise consumers"
 run = "bun tools/release/publish.ts"
 
 [tasks."release:machine"]
-description = "Wait for suite assets, install globally and verify machine consumers"
+description = "Wait for suite assets, trigger tap formula update and verify mise consumers"
 run = "bun tools/release/machine.ts"

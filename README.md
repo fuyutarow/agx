@@ -12,8 +12,26 @@ deployment belong to the consumer repository.
 
 Releases are prepared with `mise run release:version`, committed on alpha, then
 started with `mise run release:publish -- suite --yes`. The local command pushes
-alpha and both tags once and prints the workflow URL. GitHub Actions builds and
-uploads the four platform archives and the usehooks package.
+alpha and both tags, then triggers the Homebrew tap formula update workflow.
+GitHub Actions builds and uploads the four platform archives and the usehooks
+package.
+
+Install the released suite with Homebrew:
+
+```sh
+brew install fuyutarow/tap/agx
+```
+
+Release completion keeps this machine on its user-global mise pin and verifies
+that exact suite version. Homebrew formula updates are triggered in the tap
+repository after the release assets are available.
+
+This machine's user-global mise configuration keeps the moving release pin:
+
+```toml
+[tools]
+"github:fuyutarow/agx" = "latest"
+```
 
 ## Agent skill
 

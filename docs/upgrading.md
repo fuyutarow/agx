@@ -15,10 +15,10 @@ unclear notes mean drain first. A patch or minor number alone is not approval.
 Installing another version and changing the pin do not migrate an existing run.
 
 A dispatched Linux unit executes the dispatcher's worker, using its absolute
-path under the old installation. For example, its ExecStart command is
+path under the old mise installation. For example, ExecStart may contain
 `/home/alice/.local/share/mise/installs/github-fuyutarow-agx/1.4.0/bin/agx-worker run ...`.
-This is an illustrative path; use `mise where github:fuyutarow/agx@1.4.0` to
-obtain the actual install directory. You can inspect a run's recorded unit with
+Use `mise where github:fuyutarow/agx@1.4.0` for the actual installation path.
+Inspect the recorded unit with
 `systemctl --user show UNIT.service --property=ExecStart`.
 
 The implementation establishes the following boundary:
@@ -28,7 +28,7 @@ The implementation establishes the following boundary:
   resolved source entry for source execution.
 - [dispatch](../tools/agx-worker/src/dispatch.ts) captures `workerCommand =
 selfCommand()` and passes it after `systemd-run ... --` followed by `run`.
-  The unit does not resolve a new worker through mise on each invocation.
+  The unit does not resolve a new worker through PATH on each invocation.
 - [run](../tools/agx-worker/src/next/run.ts) uses `selfCommand()` again for the
   internal worker child by default. Changing PATH or a mise pin does not replace
   this executable. Explicit `AGX_WORKER_COMMAND`/`AGX_WORKER_BIN` overrides have
@@ -37,15 +37,14 @@ selfCommand()` and passes it after `systemd-run ... --` followed by `run`.
   siblings of the compiled `agx`, keeping an intact installation together.
   Missing siblings fall back to PATH, so retain the whole old install.
 
-If mise prunes the old version, or another cleanup removes its directory, the
+If mise prunes the old version or another cleanup removes its directory, the
 unit's stored absolute ExecStart path becomes unavailable. On Linux an already
 loaded process can continue after unlinking its executable, but a subsequent
 start or child re-entry through that deleted pathname fails; it does not switch
 to the new version. A run may therefore fail after appearing to survive cleanup.
-Do not rely on a particular mise version detecting running processes: keep the
-old version explicitly selected in a retained config, avoid `mise prune` and
-`mise uninstall` during the overlap, and check cleanup automation too. A
-`mise prune --dry-run` preview is not an agx retention guarantee.
+Do not rely on a mise version detecting running processes: keep the old
+version explicitly selected in a retained config, avoid `mise prune` and
+`mise uninstall` during the overlap, and check cleanup automation too.
 
 The [compiled install regression test](../tools/agx/tests/upgrade-install.test.ts)
 uses the real `selfCommand`, competing PATH entries, and a temporary install
@@ -81,7 +80,7 @@ migration rather than attempting old commands against new state.
 
 ## Upgrade steps
 
-Run these commands in each consumer checkout whose `mise.toml` owns the pin.
+Run these commands in the user-global mise configuration that owns the pin.
 Use the version numbers from the chosen release; `1.4.0` and `1.4.1` below are
 examples, not an assertion that either pair supports live upgrade.
 
@@ -113,33 +112,24 @@ examples, not an assertion that either pair supports live upgrade.
    backup; a plain copy during appends is not a consistent backup.
 
 3. For an approved live upgrade, retain a separate mise config selecting the
-   old exact version until every old run ends. Do this before changing the main
-   pin, and keep pruning disabled. For example:
+   old exact version until every old run ends. Then install and select the target:
 
    ```sh
    mkdir -p .agx-upgrade-retain
    mise use --path .agx-upgrade-retain/mise.toml --pin "github:fuyutarow/agx@$old"
-   ```
-
-   Keep this local retention config present through the overlap and rollback
-   window. Then install and select the target:
-
-   ```sh
    mise install "github:fuyutarow/agx@$new"
    mise use --path mise.toml --pin "github:fuyutarow/agx@$new"
-   mise exec -- agx --version
+   mise exec -- agx -V
    mise exec -- agx worker ls --running --json
    ```
 
    Confirm the suite version equals the target and the expected runs remain
    visible. Apply any release-prescribed migration at its specified point.
-   Commit the consumer pin through its normal workflow. Repeat the pin command
-   for other owning configs instead of editing installed executables or clones
-   of agx source. Future dispatches use the selected suite; existing units keep
+   Future dispatches use the selected suite; existing units keep
    their original absolute executable path and dispatcher PATH.
 
 4. Remove old-version retention only after its runs end and the rollback window
-   closes. Review `mise prune --dry-run` before any cleanup. Keep state backups
+   closes. Review `mise prune --dry-run` before cleanup. Keep state backups
    according to your recovery needs.
 
 ## Rollback steps
@@ -156,13 +146,13 @@ examples, not an assertion that either pair supports live upgrade.
    ```sh
    mise install "github:fuyutarow/agx@$old"
    mise use --path mise.toml --pin "github:fuyutarow/agx@$old"
-   mise exec -- agx --version
+   mise exec -- agx -V
    mise exec -- agx worker ls --json --all
    ```
 
    Reinstalling is necessary if cleanup removed the old install. It cannot undo
    an already failed run. Review its record before continuing it. Changing the
-   pin back also does not replace a unit already running the newer executable;
+   selected mise version does not replace a unit already running the newer executable;
    retain that newer installation until those runs end.
 
 ## Expected install time
@@ -171,7 +161,6 @@ The DevX consumer report observed about **25 seconds per install**. Budget that
 as an observed planning estimate, not a benchmark or an upper bound: network,
 platform, asset size, and caches change the duration. The
 [release build](../tools/release/build.ts) produces a precompiled suite archive;
-a release consumer downloads and extracts it rather than building agx from
-source. Measure your own installation with
-`time mise install "github:fuyutarow/agx@$new"`. No production install was timed
-for this guide. An already installed exact version can be reused for rollback.
+The release consumer downloads and extracts the precompiled suite archive.
+Measure your own installation with `time mise install "github:fuyutarow/agx@$new"`. No production install was
+timed for this guide. An existing retained keg may be reused for rollback.

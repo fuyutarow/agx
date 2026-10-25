@@ -10,9 +10,10 @@ description: >-
 
 ## One suite
 
-agx operates and observes local agent sessions and worker runs. Install the suite
-with one mise pin, `"github:fuyutarow/agx" = "1.4.0"` under `[tools]`.
-`agx --version` reports the suite version; members retain their own versions.
+agx operates and observes local agent sessions and worker runs. General users
+install the suite with `brew install fuyutarow/tap/agx`. This machine's release
+completion retains its user-global mise install.
+`agx -V` reports the suite version; members retain their own versions.
 This skill is versioned with the suite repository, not as a separate tool.
 Use the skill and contracts from the same release tag as the installed suite.
 It supersedes driving-xmsg. The `xmsg` compatibility alias has identical behavior to `agx msg`.

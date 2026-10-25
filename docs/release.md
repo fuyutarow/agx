@@ -8,19 +8,20 @@ The root `CHANGELOG.md` owns new entries; member changelogs are frozen history.
 
 ## Consumers
 
-Install the whole suite with one mise entry:
+Install the whole suite from the existing Homebrew tap:
 
-```toml
-[tools]
-"github:fuyutarow/agx" = "<version>"
+```sh
+brew install fuyutarow/tap/agx
 ```
 
-mise strips the leading `v` and finds the executables in `bin/`.
+The formula lives at `Formula/agx.rb` in `fuyutarow/homebrew-tap`. The tap
+repository updates it from the latest agx release and its published assets.
+The formula selects the host archive and installs every command in `bin/`.
 
 Supported suite platforms are linux-x64, linux-arm64, darwin-x64 and
 darwin-arm64 (macOS). Assets use `agx-<version>-<os>-<arch>.tar.gz`.
 The OS tokens are `linux` and `darwin`; architecture tokens are `x64` and
-`arm64`. mise recognizes aliases including `macos`, `x86_64` and `aarch64`.
+`arm64`.
 Unsupported platforms have no suite archive and installation must fail.
 There is no library fallback on the suite release.
 
@@ -203,26 +204,26 @@ concurrent writer compatibility.
 
 ## Complete the release on this machine
 
-Declare agx only once, user-globally, as latest with no lock:
+The machine keeps agx in the user-global mise configuration, exactly once:
 
 ```toml
 [tools]
 "github:fuyutarow/agx" = "latest"
 ```
 
-Repositories must not declare agx in `mise.toml` or `mise.lock`. Remove obsolete
-repository declarations through their normal review process; the release step
-never edits consumer directories.
+Repositories must not declare this pin. `release:publish -- suite --yes`
+finishes by running `release:machine`; after the published release lists all
+four uploaded assets, that step starts the tap repository's
+`update-formulas.yml` workflow with `tool=agx` and prints its run URL. A dispatch
+failure is reported as a warning. It then installs the exact suite version
+through mise and verifies home plus every requested consumer with
+`mise exec -C DIR -- agx -V`.
 
-`mise run release:publish -- suite --yes --verify-in /path/to/consumer` now waits
-for all four platform assets on the published suite release, installs the exact
-suite version using the user-global configuration, and checks home plus every
-repeatable `--verify-in DIR` using `mise exec -C DIR -- agx -V`.
-A release is complete only after this step passes. Each distinct directory gets
-one `OK DIR: agx <suite>` line. A stale pin, unexpected output, install failure,
+A release is complete only after this step passes. Each distinct directory
+gets one `OK DIR: agx <suite>` line. An unexpected version, install failure,
 or expired asset wait fails with exit 1 and names the step and directory.
 
-After a release published separately, or to retry only machine completion:
+After separate publication, or to retry machine completion:
 
 ```sh
 mise run release:machine -- --verify-in /path/to/consumer --verify-in /another/repo
@@ -230,14 +231,11 @@ mise run release:machine -- --verify-in /path/to/consumer --verify-in /another/r
 
 The asset wait defaults to 900 seconds with 5-second polling; override with
 `--wait-seconds N --poll-seconds N`. This deadline also bounds each
-`gh release view` probe, so waiting for CI can exceed two minutes without
-resetting the overall deadline. Global installation runs from home, without
-changing the global `latest` declaration or creating a repository lock.
+`gh release view` probe. Exact-version installation runs from home through
+mise; consumer checks use the requested working directory.
 
-Suite installation has a separate 900-second deadline. Both `release:publish`
-and `release:machine` accept `--install-seconds N` (positive seconds) to override
-it. While installing, a progress line reports elapsed time and the latest
-download output every 60 seconds. Timeout diagnostics include the command,
-elapsed time, and limit. Installation completes when the mise process exits;
-descendants retaining its output pipes do not delay completion. Existing limits
-for all other commands, including asset probes and uploads, are unchanged.
+Mise installation has a separate 900-second deadline. Both `release:publish`
+and `release:machine` accept `--install-seconds N` (positive
+seconds) to override it. Timeout diagnostics include the command, elapsed time,
+and limit. Existing limits for other commands, including asset probes and
+uploads, are unchanged.
