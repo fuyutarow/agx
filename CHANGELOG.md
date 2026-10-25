@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.11.0 — 2026-10-25
+
+- Resolve root-only default trunk from a unique local integration bookmark and explain GC trunk sources
+
 ## 1.10.1 — 2026-10-25
 
 - Keep workspace gc dry-runs read-only with unwritable repository parents and state directories
