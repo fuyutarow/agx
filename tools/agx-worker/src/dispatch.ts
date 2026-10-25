@@ -20,6 +20,7 @@ import {
 import { JJ_READ_ARGS } from "../../shared/src/jj-read.ts";
 import { readonlyCommand } from "../../shared/src/readonly-command.ts";
 import { InspectionTimeout } from "../../shared/src/agx-config.ts";
+import { resolveSuiteTool } from "../../shared/src/path-dispatch.ts";
 
 import { selfCommand } from "./self-command.ts";
 import { parseNextTicket } from "./next/ticket.ts";
@@ -488,7 +489,15 @@ export async function dispatch(options: {
     }
   } else {
     const ws = await invoke(
-      ["agx-ws", "add", wsSlug, "--repo", ticketRepo.root, "--reuse", "--json"],
+      [
+        await resolveSuiteTool("agx-ws"),
+        "add",
+        wsSlug,
+        "--repo",
+        ticketRepo.root,
+        "--reuse",
+        "--json",
+      ],
       cwd,
       env,
     );

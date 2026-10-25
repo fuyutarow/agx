@@ -24,6 +24,7 @@ import {
 import { jsonOf, z } from "../../shared/src/zod.ts";
 import { JJ_READ_ARGS } from "../../shared/src/jj-read.ts";
 import { listAgxRepos, resolveAgxConfig } from "../../shared/src/agx-config.ts";
+import { resolveAgxBinary } from "../../shared/src/path-dispatch.ts";
 import { validateSlug } from "../../shared/src/slug.ts";
 
 for (const retired of ["AGX_DOCTOR_HOME", "AGX_DOCTOR_WORKSPACE"]) {
@@ -319,7 +320,7 @@ export async function list(
   if (!contextResult.ok) return contextResult;
   const ctx = contextResult.value;
   const records = await command(
-    ["agx", "worker", "ls", "--json", "--all"],
+    [await resolveAgxBinary(), "worker", "ls", "--json", "--all"],
     ctx.root,
     options.quiet,
   );
@@ -493,7 +494,7 @@ export async function doctor(): Promise<Attempt<string[]>> {
     first === undefined
       ? good("[]")
       : await command(
-          ["agx", "worker", "ls", "--json", "--all"],
+          [await resolveAgxBinary(), "worker", "ls", "--json", "--all"],
           first.backing,
           true,
         );

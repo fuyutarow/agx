@@ -26,6 +26,7 @@ import { homedir, hostname } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { projectSlug } from "../../shared/src/agent-name.ts";
 import { listAgxRepos } from "../../shared/src/agx-config.ts";
+import { resolveAgxBinary } from "../../shared/src/path-dispatch.ts";
 import {
   attempt,
   errorMessage,
@@ -824,9 +825,10 @@ async function removalGuard(
 }
 
 async function agxRecords(cwd: string): Promise<Attempt<RunRecord[]>> {
-  if (Bun.which("agx") === null)
+  const agx = await resolveAgxBinary();
+  if (agx === "agx" && Bun.which("agx") === null)
     return bad("agx is not on PATH: mise run deps");
-  const ran = await exec(["agx", "worker", "ls", "--all", "--json"], cwd);
+  const ran = await exec([agx, "worker", "ls", "--all", "--json"], cwd);
   if (!ran.ok) return bad(`agx worker ls --json: ${msg(ran)}`);
   if (ran.value.code !== 0)
     return bad(

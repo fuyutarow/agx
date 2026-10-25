@@ -8,7 +8,8 @@ export async function resolveSuiteTool(
   target: string,
   execPath = process.execPath,
 ): Promise<string> {
-  if (!["agx", "agx.exe"].includes(basename(execPath))) return target;
+  if (!/^agx(?:-[a-z][a-z0-9-]*)?(?:\.exe)?$/u.test(basename(execPath)))
+    return target;
   const sibling = join(dirname(execPath), target);
   const executable = await stat(sibling).then(
     async (info) =>
@@ -20,6 +21,13 @@ export async function resolveSuiteTool(
     () => false,
   );
   return executable ? sibling : target;
+}
+
+/** Resolve agx beside any compiled suite executable; source runs use PATH. */
+export async function resolveAgxBinary(
+  execPath = process.execPath,
+): Promise<string> {
+  return resolveSuiteTool("agx", execPath);
 }
 
 // argv-forwarding: PATH
