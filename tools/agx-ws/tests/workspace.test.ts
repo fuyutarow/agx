@@ -999,6 +999,16 @@ describe("agx ws rm", () => {
 });
 
 describe("agx ws gc", () => {
+  test("help explains where and how to declare kept workspaces", async () => {
+    const path = await repo();
+    const result = await ws(["gc", "--help"], path);
+    expect(result.code, result.err).toBe(0);
+    expect(result.out).toContain('keep = ["ws_<name>"]');
+    expect(result.out).toContain('keep = ["ws_reference"]');
+    expect(result.out).toContain("main checkout root `.ws.toml`");
+    expect(result.out).toContain("parent revision");
+  });
+
   test("reports narrowed sparse patterns even for an unrecorded workspace", async () => {
     const path = await repo('trunk = "main"\n');
     expect((await ws(["add", "narrow"], path)).code).toBe(0);

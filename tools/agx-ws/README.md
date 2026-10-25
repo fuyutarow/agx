@@ -58,6 +58,10 @@ agx ws gc  [--dry-run] [--include-unrecorded] [--legacy] [--abandoned] [--json] 
   workspaces. Untracked and ignored disk files are checked even in a dry run. Unsnapshotted tracked edits can change a dry-run verdict; collection always snapshots and
   re-checks the selected workspace under the lock before removal.
 
+To protect a workspace, set `keep = ["ws_<name>"]` in the main checkout root `.ws.toml`, for
+example `keep = ["ws_reference"]`. GC uses the working file when present; otherwise it reads
+`.ws.toml` from the parent revision. A config in a secondary workspace does not override this.
+
 ## gc: what is collected
 
 Inventory comes from registered jj workspaces, excluding the main checkout. The standard

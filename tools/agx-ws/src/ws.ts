@@ -215,7 +215,7 @@ const gcCommand = command(
     ignoreArgv: rejectPrototypeFlag,
     help: {
       description:
-        "Enumerate jj workspaces. Print TSV: path, kind, verdict, change id, age, reason. Legacy workspaces are report-only until --legacy. .ws.toml keep is always protected; agx ws add is the only creator.",
+        'Enumerate jj workspaces. Print TSV: path, kind, verdict, change id, age, reason. Legacy workspaces are report-only until --legacy. Keep a workspace by setting `keep = ["ws_<name>"]` in the main checkout root `.ws.toml` (example: `keep = ["ws_reference"]`). The working file takes precedence; when absent, GC reads that file from the parent revision. agx ws add is the only creator.',
     },
     flags: {
       dryRun: { type: Boolean, description: "report only; remove nothing" },
