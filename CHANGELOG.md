@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.12.1 — 2026-10-25
+
+- Resolve suite child commands beside the running binary
+
 ## 1.12.0 — 2026-10-25
 
 - Install and upgrade the suite through Homebrew
