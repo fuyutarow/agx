@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.11.3 — 2026-10-25
+
+- Pass run-scoped environment to ticket verification
+
 ## 1.11.2 — 2026-10-25
 
 - Give suite installation its own deadline and minute progress, and finish when mise exits even if descendants retain output pipes
