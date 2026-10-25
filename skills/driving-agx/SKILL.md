@@ -202,6 +202,9 @@ exports and allows in the sandbox. Keep workspace paths for source changes. GC
 can promptly reclaim fully rejected workspaces after landing and preservation
 checks; legacy workspace results must have identical copies under the matching
 run directory's `results/<workspace-relative-path>`.
+Ticket `verify` commands run after the worker with the same `AGX_RUN_DIR` and
+`AGX_RUN_ID`. A ticket can check a worker result directly, for example:
+`verify = ["test -s \"$AGX_RUN_DIR/<ticket>.result.md\""]`.
 
 ## Mechanical intake refusals
 

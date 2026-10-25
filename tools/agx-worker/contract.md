@@ -992,6 +992,11 @@ spawning the worker. It adds that directory to the worker sandbox's writable
 paths and names it in the brief. Workers write results, logs and measurements
 there, alongside runner-owned `report.json`; workspace paths hold source changes.
 A continuation receives its own run directory, not its parent's directory.
+After the worker exits, `[verify].always` and ticket `verify` commands receive the
+same `AGX_RUN_DIR` and `AGX_RUN_ID` values as the worker. For example,
+`verify = ["test -s \"$AGX_RUN_DIR/x.result.md\""]` succeeds when the worker wrote
+that file and fails when it is missing. Verification also retains the run's
+assembled repository environment and per-run temporary directory.
 
 ## Model-free ticket intake
 

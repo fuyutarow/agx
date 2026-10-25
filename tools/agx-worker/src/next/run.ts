@@ -612,15 +612,16 @@ export async function run(flags: Flags): Promise<number> {
     ];
   };
   const before = workspaceSnapshot(cwd, ticket.writes);
-  const runEnv = verificationEnvironment(cwd, process.env, temp.env);
-  if (runEnv instanceof InspectionUnavailable) return fatal(runEnv.message, 75);
+  const baseEnv = verificationEnvironment(cwd, process.env, temp.env);
+  if (baseEnv instanceof InspectionUnavailable)
+    return fatal(baseEnv.message, 75);
   const workerCommand = Bun.which(workerPath, {
-    PATH: runEnv.PATH ?? "/usr/bin:/bin",
+    PATH: baseEnv.PATH ?? "/usr/bin:/bin",
     cwd,
   });
   if (process.env.AGX_WORKER_BIN === undefined && workerCommand === null)
     return fatal(
-      `worker executable unavailable: looked for ${workerPath} on PATH=${runEnv.PATH ?? ""}; set AGX_WORKER_COMMAND to an executable or AGX_WORKER_BIN to a worker script`,
+      `worker executable unavailable: looked for ${workerPath} on PATH=${baseEnv.PATH ?? ""}; set AGX_WORKER_COMMAND to an executable or AGX_WORKER_BIN to a worker script`,
     );
   if (stopTask !== undefined) await stopTask;
   const defaultCommand =
@@ -634,6 +635,13 @@ export async function run(flags: Flags): Promise<number> {
       process.env.AGX_WORKER_PATH_SOURCE === "dispatcher"
         ? "PATH from dispatcher"
         : "PATH from caller",
+  };
+  const runEnv = {
+    ...baseEnv,
+    AGX_RUN_ID: id,
+    AGX_RUN_DIR: runDir,
+    AGX_INTERIM_REPORTS_FILE: interimPath,
+    AGX_CODEX_PROGRESS_FILE: join(runDir, "worker-progress.jsonl"),
   };
   const deadline = AbortSignal.timeout((ticket.timeout_s ?? 600) * 1000);
   const child = Bun.spawn(
@@ -655,13 +663,9 @@ export async function run(flags: Flags): Promise<number> {
       stderr: "inherit",
       env: {
         ...runEnv,
-        AGX_RUN_ID: id,
         ...(process.env.AGX_WORKER_BIN === undefined
           ? {}
           : { BUN_BE_BUN: "1" }),
-        AGX_RUN_DIR: runDir,
-        AGX_INTERIM_REPORTS_FILE: interimPath,
-        AGX_CODEX_PROGRESS_FILE: join(runDir, "worker-progress.jsonl"),
       },
       signal: deadline,
       killSignal: "SIGTERM",

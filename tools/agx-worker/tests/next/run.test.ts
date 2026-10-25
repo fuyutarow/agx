@@ -41,7 +41,7 @@ const scratch = async (prefix: string): Promise<string> => {
 };
 
 describe("agx-worker run", () => {
-  test.each(["passed", "failed", "absent"])(
+  test.each(["passed", "failed", "absent", "missing-result"])(
     "real run orders and records verify.always: %s",
     async (mode) => {
       const root = await scratch("always-");
@@ -83,7 +83,7 @@ describe("agx-worker run", () => {
       }
       const ticket = join(root, "ticket.md");
       const ticketCommand =
-        'printf "ticket\\n" >> order; echo ticket-log; test "$VERIFY_FIXTURE" = shared';
+        'printf "ticket\\n" >> order; echo ticket-log; test "$VERIFY_FIXTURE" = shared && test "$AGX_RUN_ID" = "$(cat "$AGX_RUN_DIR/worker-run-id.txt")" && test -s "$AGX_RUN_DIR/x.result.md"';
       writeFileSync(
         ticket,
         `+++\nschema = 2\nname = "always-probe"\nwrites = ["order"]\noutcome = "verify command order"\nverify = ${JSON.stringify([ticketCommand])}\n[proposition]\nid = "ORDER"\nclaim = "always runs first"\nrefuted_by = "incorrect order"\n+++\nRun the fixture.\n`,
@@ -91,7 +91,7 @@ describe("agx-worker run", () => {
       const worker = join(root, "worker.ts");
       writeFileSync(
         worker,
-        'import { writeFileSync } from "node:fs"; writeFileSync("order", ""); writeFileSync(process.env.AGX_RUN_DIR + "/fixture-result.log", "result"); console.log(JSON.stringify({ report: { summary: "done", changes: [], checks: [], for_coordinator: [], open: [] } }));\n',
+        `import { writeFileSync } from "node:fs"; writeFileSync("order", ""); writeFileSync(process.env.AGX_RUN_DIR + "/fixture-result.log", "result"); writeFileSync(process.env.AGX_RUN_DIR + "/worker-run-id.txt", process.env.AGX_RUN_ID); ${mode === "missing-result" ? "" : 'writeFileSync(process.env.AGX_RUN_DIR + "/x.result.md", "result");'} console.log(JSON.stringify({ report: { summary: "done", changes: [], checks: [], for_coordinator: [], open: [] } }));\n`,
       );
       const jevFile = join(root, "jev.ts");
       const probe = Bun.serve({ port: 0, fetch: () => new Response() });
@@ -157,11 +157,14 @@ describe("agx-worker run", () => {
       );
       process.env.AGX_STATE_DIR = state;
       const run = (await foldedRuns()).at(-1);
-      expect(run?.outcome).toBe(mode === "failed" ? "verify-failed" : "ok");
+      expect(run?.outcome).toBe(
+        mode === "failed" || mode === "missing-result" ? "verify-failed" : "ok",
+      );
       expect(run?.verify.map((entry) => entry.cmd)).toEqual(
         mode === "absent" ? [ticketCommand] : [...always, ticketCommand],
       );
-      const alwaysExits = [0, mode === "failed" ? 1 : 0, 0];
+      const ticketExit = mode === "missing-result" ? 1 : 0;
+      const alwaysExits = [0, mode === "failed" ? 1 : 0, ticketExit];
       expect(run?.verify.map((entry) => entry.exit)).toEqual(
         mode === "absent" ? [0] : alwaysExits,
       );
