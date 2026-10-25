@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.12.0 — 2026-10-25
+
+- Install and upgrade the suite through Homebrew
+
 ## 1.11.3 — 2026-10-25
 
 - Pass run-scoped environment to ticket verification
