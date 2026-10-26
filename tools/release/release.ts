@@ -1,5 +1,14 @@
 import { homedir } from "node:os";
-import { mkdir, rm, copyFile, link, realpath, stat } from "node:fs/promises";
+import {
+  mkdir,
+  rm,
+  copyFile,
+  cp,
+  link,
+  realpath,
+  stat,
+  symlink,
+} from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { err, ok, fromPromise } from "neverthrow";
 import { jsonOf, z } from "../zod.ts";
@@ -246,11 +255,74 @@ async function buildSuite(
   await rm(stage, { recursive: true, force: true });
   const bin = join(stage, "bin");
   await mkdir(bin, { recursive: true });
+  const stagedTools = join(stage, "tools");
+  const stagedRelease = join(stagedTools, "release");
+  await mkdir(stagedRelease, { recursive: true });
+  await copyFile(
+    join(root, "tools/release/launcher.ts"),
+    join(stagedRelease, "launcher.ts"),
+  );
+  const shared = join(root, "tools/shared");
+  if (await Bun.file(join(shared, "src/cli.ts")).exists())
+    await symlink(shared, join(stagedTools, "shared"));
+  const guardedEntrypoints = new Map<string, { path: string; command: string }>(
+    [
+      ["agx-worker", { path: "src/next/cli.ts", command: "agx-worker" }],
+      ["xmsg", { path: "src/xmsg.ts", command: "xmsg" }],
+      ["jex", { path: "src/jex.ts", command: "jex" }],
+    ],
+  );
+  const commands = new Set<string>();
   for (const member of packages) {
     if (member === "agx-usehooks") continue;
-    const compiled = await buildMember(member, target, root, runner, bin);
-    if (compiled.isErr()) return compiled;
+    const info = await packageInfo(member, root);
+    if (info.isErr()) return info;
+    for (const command of Object.keys(info.value.commands))
+      commands.add(command);
+    const source = join(root, "tools", member);
+    const destination = join(stagedTools, member);
+    const entrypoint = guardedEntrypoints.get(member);
+    if (entrypoint === undefined) {
+      await symlink(source, destination);
+    } else {
+      const guardedSource = join(source, entrypoint.path);
+      if (await Bun.file(guardedSource).exists()) {
+        await cp(source, destination, { recursive: true });
+        const stagedEntrypoint = join(destination, entrypoint.path);
+        const text = await Bun.file(stagedEntrypoint).text();
+        await Bun.write(
+          stagedEntrypoint,
+          text.replaceAll(
+            "import.meta.main",
+            `Reflect.get(globalThis, "AGX_RELEASE_ENTRYPOINT") === "${entrypoint.command}"`,
+          ),
+        );
+      } else await symlink(source, destination);
+    }
   }
+  const executable = join(bin, `agx${host.value.os === "win32" ? ".exe" : ""}`);
+  const args = [
+    process.execPath,
+    "build",
+    "--compile",
+    join(stagedRelease, "launcher.ts"),
+    "--outfile",
+    executable,
+  ];
+  if (target !== undefined) args.push("--target", target);
+  const compiled = await runner(args, root);
+  if (compiled.exit !== 0)
+    return err(
+      `Build failed for suite launcher: ${compiled.stderr}${compiled.stdout}`,
+    );
+  for (const command of commands) {
+    const outfile = join(
+      bin,
+      `${command}${host.value.os === "win32" ? ".exe" : ""}`,
+    );
+    if (outfile !== executable) await link(executable, outfile);
+  }
+  await rm(stagedTools, { recursive: true, force: true });
   const name = suiteArchiveName(
     suite.value.version,
     target ??

@@ -165,10 +165,14 @@ export async function fixtureRun(
       return refused("Invalid compile fixture");
     await appendFile(join(cwd, "calls"), JSON.stringify(cmd) + "\n");
     await mkdir(dirname(outfile), { recursive: true });
-    await Bun.write(
-      outfile,
-      `#!${process.execPath}\n${await Bun.file(entry).text()}`,
-    );
+    const fixtureEntry = entry.endsWith("/tools/release/launcher.ts")
+      ? [
+          "const command = process.argv[1]?.split('/').at(-1) ?? '';",
+          "const name = command === 'xmsg' || command === 'agx-msg' ? 'agx msg' : command;",
+          "process.stdout.write(name + ' 2.3.4\\n');",
+        ].join("\n")
+      : await Bun.file(entry).text();
+    await Bun.write(outfile, `#!${process.execPath}\n${fixtureEntry}`);
     await chmod(outfile, 0o755);
     return success;
   }

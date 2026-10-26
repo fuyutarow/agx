@@ -76,6 +76,7 @@ async function fixture(pkg = "agx-status") {
   for (const file of [
     "build.ts",
     "ci.ts",
+    "launcher.ts",
     "publish.ts",
     "release.ts",
     "fixture-runner.ts",
@@ -1198,6 +1199,42 @@ async function suiteFixture() {
   return { ...f, pkg: "suite", dir: join(f.root, "tools/agx") };
 }
 
+test("release contract: size", async () => {
+  const root = await mkdtemp(join(tmpdir(), "release-size-"));
+  roots.push(root);
+  await symlink(join(repository, "tools"), join(root, "tools"));
+  await symlink(join(repository, "node_modules"), join(root, "node_modules"));
+
+  const result = await productionBuild("suite", undefined, root, productionRun);
+  expect(result.isOk(), result.isErr() ? result.error : "").toBe(true);
+  if (result.isErr()) return;
+
+  const archiveSize = (await stat(result.value.archive)).size;
+  expect(archiveSize).toBeLessThan(100_000_000);
+  const info = await packageInfo("agx", root);
+  expect(info.isOk(), info.isErr() ? info.error : "").toBe(true);
+  if (info.isErr()) return;
+
+  const names = [...packages]
+    .filter((pkg) => pkg !== "agx-usehooks")
+    .concat("agx-msg");
+  const files = await Promise.all(
+    names.map((name) => stat(join(root, "dist/suite/bin", name))),
+  );
+  expect(new Set(files.map((file) => `${file.dev}:${file.ino}`)).size).toBe(1);
+  expect(files[0]?.nlink).toBe(names.length);
+  for (const name of names) {
+    const version = await productionRun(
+      [join(root, "dist/suite/bin", name), "--version"],
+      root,
+    );
+    expect(version.exit, version.stderr).toBe(0);
+    expect(version.stdout).toBe(
+      `${name === "agx-msg" || name === "xmsg" ? "agx msg" : name} ${info.value.version}\n`,
+    );
+  }
+}, 600_000);
+
 test("suite archive contains all commands with member versions and only its platform asset", async () => {
   const f = await suiteFixture();
   const result = await build("suite", undefined, f.root);
@@ -1211,6 +1248,11 @@ test("suite archive contains all commands with member versions and only its plat
   expect(listing.stdout.trim().split("\n").toSorted()).toEqual(
     ["bin/", ...names.map((name) => `bin/${name}`)].toSorted(),
   );
+  const files = await Promise.all(
+    names.map((name) => stat(join(f.root, "dist/suite/bin", name))),
+  );
+  expect(new Set(files.map((file) => `${file.dev}:${file.ino}`)).size).toBe(1);
+  expect(files[0]?.nlink).toBe(names.length);
   for (const name of names) {
     const version = await run(
       [join(f.root, "dist/suite/bin", name), "--version"],
@@ -1221,17 +1263,19 @@ test("suite archive contains all commands with member versions and only its plat
       `${name === "agx-msg" || name === "xmsg" ? "agx msg" : name} 2.3.4\n`,
     );
   }
-  await messagingAlias(f.root, result.value.archive);
+  await messagingAlias(f.root, result.value.archive, names.length);
   const calls = (await Bun.file(join(f.root, "calls")).text()).split("\n");
-  const messagingCompiles = calls.filter(
-    (line) => line.includes("--compile") && line.includes("/tools/xmsg/"),
+  const suiteCompiles = calls.filter(
+    (line) => line.includes("--compile") && line.includes("launcher.ts"),
   );
-  expect(messagingCompiles).toHaveLength(1);
-  expect(messagingCompiles[0]).toContain("/bin/agx-msg");
+  expect(suiteCompiles).toHaveLength(1);
+  expect(suiteCompiles[0]).toContain("/tools/release/launcher.ts");
+  expect(suiteCompiles[0]).toContain("/bin/agx");
   for (const target of suiteTargets) {
     const built = await build("suite", target, f.root);
     expect(built.isOk()).toBe(true);
-    if (built.isOk()) await messagingAlias(f.root, built.value.archive);
+    if (built.isOk())
+      await messagingAlias(f.root, built.value.archive, names.length);
   }
   const archives = await Array.fromAsync(
     new Bun.Glob("*.tar.gz").scan(join(f.root, "dist")),
@@ -1244,7 +1288,11 @@ test("suite notes reject unavailable history", async () => {
   expect((await suiteNotes(f.root, "v0.0.0", run)).isErr()).toBe(true);
 });
 
-async function messagingAlias(root: string, archive: string) {
+async function messagingAlias(
+  root: string,
+  archive: string,
+  expectedLinkCount = 2,
+) {
   const extracted = join(root, "dist", "extracted");
   await rm(extracted, { recursive: true, force: true });
   await mkdir(extracted, { recursive: true });
@@ -1255,7 +1303,7 @@ async function messagingAlias(root: string, archive: string) {
   const [original, linked] = await Promise.all([stat(canonical), stat(alias)]);
   expect(linked.dev).toBe(original.dev);
   expect(linked.ino).toBe(original.ino);
-  expect(linked.nlink).toBe(2);
+  expect(linked.nlink).toBe(expectedLinkCount);
   const a = await run([canonical, "--version"], root);
   const b = await run([alias, "--version"], root);
   expect(a.exit).toBe(0);
