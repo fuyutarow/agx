@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.13.13 — 2026-10-26
+
+- Handle missing workspace roots during gc
+
 ## 1.13.12 — 2026-10-26
 
 - Print a receipt after recording a worker judgment
