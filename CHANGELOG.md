@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.14.8 — 2026-10-27
+
+- Refuse unchanged tickets after a timed-out run before continuation effects.
+
 ## 1.14.7 — 2026-10-27
 
 - Record dispatch runs before launch and preserve launch failures
