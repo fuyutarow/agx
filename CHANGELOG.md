@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.13.8 — 2026-10-26
+
+- Remove workspace-specific mise tracked and trusted entries
+
 ## 1.13.7 — 2026-10-26
 
 - Keep agx run outcomes out of Jev routing requests
