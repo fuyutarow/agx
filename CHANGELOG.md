@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.13.10 — 2026-10-26
+
+- Send quantitative-only Jev roster criteria
+
 ## 1.13.9 — 2026-10-26
 
 - Enforce a machine-wide live worker limit with bounded --wait-slot dispatch
