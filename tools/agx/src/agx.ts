@@ -7,9 +7,10 @@ import {
 } from "../../shared/src/path-dispatch.ts";
 
 import { doctor } from "./doctor.ts";
+import { change } from "./change.ts";
 
 const argv = process.argv.slice(2);
-const tools = ["worker", "ticket", "ws", "status", "msg", "doctor"];
+const tools = ["worker", "ticket", "ws", "status", "msg", "doctor", "change"];
 
 async function help(): Promise<void> {
   process.stdout.write(
@@ -19,6 +20,12 @@ async function help(): Promise<void> {
     if (tool === "doctor") {
       process.stdout.write(
         "  doctor  Refresh and publish aggregate doctor findings\n",
+      );
+      continue;
+    }
+    if (tool === "change") {
+      process.stdout.write(
+        "  change  Coordinate changes and reserve alpha pushes for agx change land\n",
       );
       continue;
     }
@@ -54,6 +61,7 @@ async function help(): Promise<void> {
       "  Issue/list/collect tickets: agx ticket new|ls|gc.\n" +
       "  Create/adopt/refresh/remove/collect workspaces: agx ws add|adopt|refresh|rm|gc.\n" +
       "  Discover/send/check messages: agx msg list|send|status.\n" +
+      "  Protect the trunk push path: agx change hook pre-push.\n" +
       "  Refresh/read suite health: agx doctor, agx status.\n" +
       "\nOPTIONS:\n  -h, --help  Show help\n  -V, --version  Show version\n",
   );
@@ -68,13 +76,17 @@ async function main(): Promise<void> {
   }
   if (!tools.includes(first)) {
     process.stderr.write(
-      `agx: unknown tool '${first}'; expected worker, ticket, ws, status, msg, doctor\n`,
+      `agx: unknown tool '${first}'; expected worker, ticket, ws, status, msg, doctor, change\n`,
     );
     process.exitCode = 2;
     return;
   }
   if (first === "doctor") {
     await doctor(remaining);
+    return;
+  }
+  if (first === "change") {
+    await change(remaining);
     return;
   }
   process.exitCode = await forwardPath(

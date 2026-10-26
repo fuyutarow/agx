@@ -100,7 +100,7 @@ test.each([
   expect(result.code).toBe(2);
   expect(result.stdout).toBe("");
   expect(result.stderr).toBe(
-    `agx: unknown tool '${verb}'; expected worker, ticket, ws, status, msg, doctor\n`,
+    `agx: unknown tool '${verb}'; expected worker, ticket, ws, status, msg, doctor, change\n`,
   );
 });
 test("suite owns its version and takes descriptions from PATH tools", async () => {
@@ -116,6 +116,9 @@ test("suite owns its version and takes descriptions from PATH tools", async () =
   expect(help.stdout).not.toContain("99.0.0");
   for (const tool of ["worker", "ticket", "ws", "status", "msg"])
     expect(help.stdout).toContain(`  ${tool}  ${tool} description from owner`);
+  expect(help.stdout).toContain(
+    "  change  Coordinate changes and reserve alpha pushes for agx change land",
+  );
 });
 test("driving-agx stays version-independent and points to installed help", async () => {
   const skill = await Bun.file(
