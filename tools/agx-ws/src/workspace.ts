@@ -515,6 +515,30 @@ export type AddOptions = {
   json?: boolean | undefined;
 };
 
+async function installMissingMiseTools(dir: string): Promise<Attempt<void>> {
+  const missing = await exec(["mise", "install", "--dry-run-code"], dir);
+  if (!missing.ok) return bad(`mise install --dry-run-code: ${msg(missing)}`);
+  if (missing.value.code === 0) return good(undefined);
+  if (missing.value.code !== 1)
+    return {
+      ok: false,
+      error: new StepFailure(
+        `mise install --dry-run-code failed (exit ${missing.value.code}): ${missing.value.err.trim()}`,
+        missing.value.code,
+      ),
+    };
+  const installed = await exec(["mise", "install"], dir);
+  if (!installed.ok) return bad(`mise install: ${msg(installed)}`);
+  if (installed.value.code === 0) return good(undefined);
+  return {
+    ok: false,
+    error: new StepFailure(
+      `mise install failed (exit ${installed.value.code}): ${installed.value.err.trim()}`,
+      installed.value.code,
+    ),
+  };
+}
+
 /** Runs in the coordinator's environment, before a sandboxed worker receives the path. */
 async function readyWorkspace(
   dir: string,
@@ -530,9 +554,11 @@ async function readyWorkspace(
     false,
   );
   if (!sparse.ok) return sparse;
+  let hasMiseConfig = false;
   for (const name of ["mise.toml", ".mise.toml"]) {
     const config = join(dir, name);
     if (!(await Bun.file(config).exists())) continue;
+    hasMiseConfig = true;
     if (Bun.which("mise") === null)
       return bad("mise is not on PATH: mise run install:tools");
     const trusted = await exec(["mise", "trust", config], dir);
@@ -546,6 +572,10 @@ async function readyWorkspace(
         ),
       };
     process.stderr.write(`ws: ready: trusted ${config}\n`);
+  }
+  if (hasMiseConfig) {
+    const installed = await installMissingMiseTools(dir);
+    if (!installed.ok) return installed;
   }
   for (const command of cfg.ready) {
     process.stderr.write(`ws: ready: ${command}\n`);

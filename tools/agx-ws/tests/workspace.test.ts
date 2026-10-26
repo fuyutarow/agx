@@ -747,6 +747,44 @@ describe("agx ws add", () => {
     expect(r.err).toContain(`ws: ready: trusted ${config}`);
   });
 
+  test.each([
+    ["all tools are installed", "0", false],
+    ["a tool is missing", "1", true],
+  ] as const)(
+    "checks mise before install when %s",
+    async (_label, code, install) => {
+      const path = await repo('ready = ["echo ready > ready.out"]\n');
+      await Bun.write(join(path, "mise.toml"), '[tools]\nbun = "1.2.0"\n');
+      expect(
+        (await jj(["commit", "-m", "mise install fixture"], path)).code,
+      ).toBe(0);
+
+      const fakeBin = join(scratch, `fake-mise-${++counter}`);
+      const log = join(scratch, `fake-mise-${counter}.log`);
+      mkdirSync(fakeBin);
+      writeFileSync(
+        join(fakeBin, "mise"),
+        `#!/bin/sh\nprintf '%s\\n' "$*" >> "${log}"\nif [ "$1 $2" = "install --dry-run-code" ]; then exit "$MISSING_EXIT"; fi\nexit 0\n`,
+      );
+      chmodSync(join(fakeBin, "mise"), 0o755);
+      const result = await ws(
+        ["add", "mise-check"],
+        path,
+        baseEnv({
+          PATH: `${fakeBin}:${bin}:${process.env.PATH}`,
+          MISSING_EXIT: code,
+        }),
+      );
+      expect(result.code, result.err).toBe(0);
+      const calls = await Bun.file(log).text();
+      expect(calls).toContain("install --dry-run-code");
+      expect(calls.includes("\ninstall\n")).toBe(install);
+      expect(
+        await Bun.file(join(wsDir(path, "mise-check"), "ready.out")).exists(),
+      ).toBe(true);
+    },
+  );
+
   test.each(["mise.toml", ".mise.toml"])(
     "trusts %s before readiness with isolated mise state",
     async (config) => {
