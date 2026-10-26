@@ -15,7 +15,6 @@ import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { exitWithError } from "./exit.ts";
 import { readRouteUsage } from "./usage.ts";
 import { foldedRuns, setPendingPickAudit } from "./store.ts";
-import { CAPACITY_COOLDOWN_MS, capacityRows } from "./capacity.ts";
 import { recordJevUsage } from "./jev-usage.ts";
 import {
   newRoutingAudit,
@@ -178,19 +177,52 @@ export function blindCriterion(text: string, rows: readonly Choice[]): string {
 const hash = (value: unknown) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
+type RouteTicket = { path: string; sha256: string; launch?: boolean } | null;
+export type CapacityRetryRouteResult =
+  | { kind: "selected"; row: Choice }
+  | { kind: "exhausted" }
+  | { kind: "refused"; message: string; exitCode: number };
+type CapacityRetryRouteOptions = {
+  capacityRetry: true;
+  timeoutMs: number;
+};
+
+export function route(
+  brief: string,
+  capabilities?: readonly string[],
+  timeoutS?: number,
+  maskedRows?: readonly string[],
+  rosterOptions?: LoadRosterOptions,
+  ticket?: RouteTicket,
+): Promise<Choice>;
+export function route(
+  brief: string,
+  capabilities: readonly string[],
+  timeoutS: number,
+  maskedRows: readonly string[],
+  rosterOptions: LoadRosterOptions,
+  ticket: RouteTicket,
+  options: CapacityRetryRouteOptions,
+): Promise<CapacityRetryRouteResult>;
 export async function route(
   brief: string,
   capabilities: readonly string[] = [],
   timeoutS = 600,
   maskedRows: readonly string[] = [],
   rosterOptions: LoadRosterOptions = {},
-  ticket: { path: string; sha256: string; launch?: boolean } | null = null,
-): Promise<Choice> {
+  ticket: RouteTicket = null,
+  options?: CapacityRetryRouteOptions,
+): Promise<Choice | CapacityRetryRouteResult> {
   const audit = newRoutingAudit(ticket, capabilities, timeoutS);
-  const refuse = (message: string, code: number): never => {
+  const refuse = (
+    message: string,
+    code: number,
+  ): CapacityRetryRouteResult | never => {
     audit.reason = message;
     audit.outcome_kind = "held";
     recordRoutingPick(null, "refusal", audit, "refusal");
+    if (options?.capacityRetry === true)
+      return { kind: "refused", message, exitCode: code };
     return exitWithError(message, code);
   };
   const loaded = await loadRoster(rosterOptions);
@@ -200,12 +232,8 @@ export async function route(
   audit.policy_version = loaded.provenance.policy_version;
   audit.catalog_version = loaded.provenance.catalog_version;
   audit.pick_temperature = roster.auto.pick_temperature;
+  // Local outcomes remain auditable, but candidate availability never depends on them.
   const runs = await foldedRuns();
-  const cooling = capacityRows(runs, roster.choice);
-  const coolingNote =
-    cooling.size === 0
-      ? ""
-      : `; capacity rows cooling down for up to ${CAPACITY_COOLDOWN_MS / 1000} s`;
   const endpoint = jevEndpoint(roster.auto.jev.url);
   if (!endpoint.ok) return refuse(`agx: ${endpoint.error}\n`, 2);
   let timeoutClass = "standard";
@@ -258,11 +286,6 @@ export async function route(
       roster.auto.routes.includes(row.route),
   );
   eligible = filter(eligible, "masked", (row) => !maskedRows.includes(row.id));
-  eligible = filter(
-    eligible,
-    "capacity cooldown",
-    (row) => !cooling.has(row.id),
-  );
   const beforeTb4 = eligible.filter((row) => row.id.startsWith("luna-"));
   eligible = filter(
     eligible,
@@ -299,10 +322,12 @@ export async function route(
   );
   audit.filters = filters;
   audit.usage_snapshot = usage;
+  if (candidates.length === 0 && eligible.length === 0 && options !== undefined)
+    return { kind: "exhausted" };
   if (candidates.length === 0)
     return refuse(
       eligible.length === 0
-        ? `agx: no roster row satisfies required capabilities (${routeFilterLabel(roster.auto)})${coolingNote}\n`
+        ? `agx: no roster row satisfies required capabilities (${routeFilterLabel(roster.auto)})\n`
         : "agx: all capability-eligible routes are at their subscription limit\n",
       2,
     );
@@ -364,7 +389,7 @@ export async function route(
     const key = `model_${index}`;
     const evidence = measuredEvidence[key];
     if (evidence === undefined)
-      return exitWithError(`missing measured evidence for ${key}`, 2);
+      return refuse(`missing measured evidence for ${key}`, 2);
     criteria[key] = blindCriterion(
       criterionFor(roster, row),
       loaded.catalogRows,
@@ -419,7 +444,13 @@ export async function route(
   audit.input_sha256 = hash(request);
   audit.input_truncated =
     brief.length > Math.min(roster.auto.max_task_chars, 2400);
-  const post = await postJev(endpoint.value, request, roster.auto.timeout_ms);
+  const post = await postJev(
+    endpoint.value,
+    request,
+    options === undefined
+      ? roster.auto.timeout_ms
+      : Math.min(roster.auto.timeout_ms, Math.max(1, options.timeoutMs)),
+  );
   const usageId = recordJevUsage(post, roster);
   audit.usage_id = usageId;
   audit.raw_reply = post.ok ? post.text : null;
@@ -428,7 +459,7 @@ export async function route(
   audit.http_status = post.ok ? post.status : null;
   const fallback =
     candidates.find((row) => row.id === roster.default) ?? candidates[0];
-  if (fallback === undefined) return exitWithError("no routing candidates", 2);
+  if (fallback === undefined) return refuse("no routing candidates", 2);
   let rawAnswer: unknown = null;
   const pickAudit = (
     source: string,
@@ -483,13 +514,21 @@ export async function route(
     });
     return row;
   };
+  const routeChoice = (row: Choice): Choice | CapacityRetryRouteResult =>
+    options?.capacityRetry === true ? { kind: "selected", row } : row;
   if (!post.ok)
-    return recordPick(fallback, "fallback-request-failed", undefined);
+    return routeChoice(
+      recordPick(fallback, "fallback-request-failed", undefined),
+    );
   const decoded = jsonOf(Reply).safeParse(post.text);
   if (post.status !== 200)
-    return recordPick(fallback, `fallback-http-${post.status}`, undefined);
+    return routeChoice(
+      recordPick(fallback, `fallback-http-${post.status}`, undefined),
+    );
   if (!decoded.success)
-    return recordPick(fallback, "fallback-invalid-response", undefined);
+    return routeChoice(
+      recordPick(fallback, "fallback-invalid-response", undefined),
+    );
   const answer = decoded.data.answers.worker;
   rawAnswer = answer ?? null;
   const selected = answer?.choice;
@@ -511,7 +550,7 @@ export async function route(
         : { probability: probabilities[reason.data] }),
       pick_audit: pickAudit("jev-return", probabilities),
     });
-    return exitWithError(
+    return refuse(
       `agx: ticket returned: ${reason.data}: ${returns[reason.data].criterion} Fix: ${returns[reason.data].fix}\n`,
       2,
     );
@@ -520,12 +559,14 @@ export async function route(
     (row) => row.id === anonymizationMap[selected ?? ""],
   );
   if (selectedRow === undefined)
-    return recordPick(
-      fallback,
-      answer === undefined
-        ? "fallback-missing-answer"
-        : "fallback-ineligible-choice",
-      probabilities,
+    return routeChoice(
+      recordPick(
+        fallback,
+        answer === undefined
+          ? "fallback-missing-answer"
+          : "fallback-ineligible-choice",
+        probabilities,
+      ),
     );
   const modelProbabilities =
     probabilities === undefined
@@ -549,5 +590,7 @@ export async function route(
     (row) => row.id === anonymizationMap[sampled?.row ?? ""],
   );
   selectionMode = sampled?.mode ?? "choice";
-  return recordPick(sampledRow ?? selectedRow, "jev", probabilities);
+  return routeChoice(
+    recordPick(sampledRow ?? selectedRow, "jev", probabilities),
+  );
 }

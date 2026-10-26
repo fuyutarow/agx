@@ -209,6 +209,15 @@ const EventSchema = z.discriminatedUnion("kind", [
     stopped_by: z.string().optional(),
     report_path: z.string().nullable(),
     vendor_session: z.string().nullable(),
+    rows: z.array(z.string()).optional(),
+    final_row: z
+      .object({
+        id: z.string(),
+        route: z.string(),
+        model: z.string(),
+        effort: z.string(),
+      })
+      .optional(),
     verify: z.array(VerifyResult).default([]),
     returned: z.boolean().optional(),
     changed_files: z.number().int().nonnegative().optional(),
@@ -865,6 +874,22 @@ function foldInto(runs: Map<string, FoldedRun>, input: NextEvent[]): void {
         });
       run.report_path = event.report_path;
       run.verify = event.verify;
+      Object.assign(run, {
+        ...(event.rows === undefined
+          ? {}
+          : {
+              rows: event.rows,
+              row: event.rows.at(-1) ?? run.row,
+            }),
+        ...(event.final_row === undefined
+          ? {}
+          : {
+              row: event.final_row.id,
+              route: event.final_row.route,
+              model: event.final_row.model,
+              effort: event.final_row.effort,
+            }),
+      });
       run.returned = event.returned;
       run.changed_files = event.changed_files;
       run.vendor_session = event.vendor_session;

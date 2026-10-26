@@ -34,7 +34,7 @@ import {
 } from "../workers/codex-host.ts";
 import { resourceBriefFallback } from "../workers/codex-resource-probe.ts";
 import { leaseFor, type StopSignal } from "./lease.ts";
-import { route } from "./route.ts";
+import { route, type CapacityRetryRouteResult } from "./route.ts";
 import { pinContinuation } from "./continue.ts";
 import { resolveRunId } from "./run-id.ts";
 import { routeFilterLabel } from "../roster/index.ts";
@@ -369,6 +369,9 @@ export async function run(flags: Flags): Promise<number> {
   } = inspected;
   if (ticket === undefined || bytes === null || ctx === undefined)
     return fatal("preflight did not resolve ticket and context");
+  const timeoutMs = (ticket.timeout_s ?? 600) * 1000;
+  const deadline = AbortSignal.timeout(timeoutMs);
+  const runStartedAt = performance.now();
   const actualUnit = await invocationUnitFor();
   const ticketName = ticket.name ?? basename(path, ".md");
   const continuationId = value(flags, "continue");
@@ -393,25 +396,41 @@ export async function run(flags: Flags): Promise<number> {
           judgment: pinned.judgment,
           ticketDiff: diffTicket(pinned.ticketOrigPath, resolve(path)),
         };
+  let currentResumeSession = resumeSession;
+  let latestVendorSession = resumeSession ?? null;
   await overlapWarnings(ticket.writes, ctx.root);
   if (ctx.vcs === undefined)
     process.stderr.write(
       "agx: no repository in --cd; base_rev absent; repository changes, end commit and landing unavailable\n",
     );
-  const row =
-    pinned?.row ??
-    (await route(
-      routing.brief,
-      routing.capabilities,
-      routing.timeoutS,
-      routing.maskedRows,
-      {},
-      {
-        path: resolve(path),
-        launch: true,
-        sha256: createHash("sha256").update(bytes).digest("hex"),
-      },
-    ));
+  const selectedRoute =
+    pinned?.row === undefined
+      ? await route(
+          routing.brief,
+          routing.capabilities,
+          routing.timeoutS,
+          routing.maskedRows,
+          {},
+          {
+            path: resolve(path),
+            launch: true,
+            sha256: createHash("sha256").update(bytes).digest("hex"),
+          },
+          { capacityRetry: true, timeoutMs },
+        )
+      : ({
+          kind: "selected",
+          row: pinned.row,
+        } satisfies CapacityRetryRouteResult);
+  if (deadline.aborted)
+    return fatal("ticket time box expired before worker startup", 124);
+  if (selectedRoute.kind === "exhausted")
+    return fatal("no roster row satisfies the ticket's requirements", 2);
+  if (selectedRoute.kind === "refused")
+    return fatal(selectedRoute.message, selectedRoute.exitCode);
+  const row = selectedRoute.row;
+  let activeRow = row;
+  const attemptedRows = [row.id];
   const id = binding?.id ?? randomUUID();
   // The run owns its temp space: removed on any exit path (process.exit included); a SIGKILL
   // leaves it for the next run's sweep.
@@ -424,13 +443,14 @@ export async function run(flags: Flags): Promise<number> {
   Object.assign(process.env, temp.env);
   process.on("exit", temp.remove);
   const runDir = resolve(stateDir(), "runs", id);
+  let activeProgressPath = join(runDir, "worker-progress.jsonl");
   let started = false;
   let ended = false;
   let stopTask: Promise<never> | undefined;
   let killWorker: (() => void) | undefined;
   const vendorSessionFromProgress = (): string | undefined => {
     const progress = fromThrowable(() =>
-      readFileSync(join(runDir, "worker-progress.jsonl"), "utf8"),
+      readFileSync(activeProgressPath, "utf8"),
     )();
     if (progress.isErr()) return undefined;
     const parsed = jsonOf(
@@ -447,7 +467,8 @@ export async function run(flags: Flags): Promise<number> {
       requested?.kind === "stop-requested" ? requested : undefined;
     const vendorSession =
       request?.vendor_session ??
-      resumeSession ??
+      latestVendorSession ??
+      currentResumeSession ??
       vendorSessionFromProgress() ??
       null;
     killWorker?.();
@@ -476,6 +497,17 @@ export async function run(flags: Flags): Promise<number> {
           stopped_by: request?.stopped_by ?? `signal:${signal}`,
           report_path: null,
           vendor_session: vendorSession,
+          ...(attemptedRows.length > 1 ? { rows: attemptedRows } : {}),
+          ...(attemptedRows.length > 1
+            ? {
+                final_row: {
+                  id: activeRow.id,
+                  route: activeRow.route,
+                  model: activeRow.model,
+                  effort: activeRow.effort,
+                },
+              }
+            : {}),
           verify: [],
         });
         await flushRunPublications();
@@ -639,15 +671,17 @@ export async function run(flags: Flags): Promise<number> {
         "--cd",
         cwd,
         "--row",
-        row.id,
-        ...(resumeSession === undefined ? [] : ["--resume", resumeSession]),
+        activeRow.id,
+        ...(currentResumeSession === undefined
+          ? []
+          : ["--resume", currentResumeSession]),
       ];
-    if (row.route === "codex")
+    if (activeRow.route === "codex")
       return [
         workerPath,
         "--internal-codex",
         "--choice",
-        row.id,
+        activeRow.id,
         "--sandbox",
         sandbox,
         "--cd",
@@ -660,7 +694,9 @@ export async function run(flags: Flags): Promise<number> {
         runDir,
         "--timeout-s",
         String(ticket.timeout_s ?? 600),
-        ...(resumeSession === undefined ? [] : ["--resume", resumeSession]),
+        ...(currentResumeSession === undefined
+          ? []
+          : ["--resume", currentResumeSession]),
       ];
     let permissionMode = "acceptEdits";
     if (sandbox === "read-only") permissionMode = "plan";
@@ -686,9 +722,9 @@ export async function run(flags: Flags): Promise<number> {
       "--prompt-file",
       workerBrief,
       "--model",
-      row.model,
+      activeRow.model,
       "--effort",
-      row.effort,
+      activeRow.effort,
       "--permission-mode",
       permissionMode,
       ...(sandbox === "workspace-write" ? ["--allowed-tools", "Bash"] : []),
@@ -700,9 +736,11 @@ export async function run(flags: Flags): Promise<number> {
       "--timeout-ms",
       String((ticket.timeout_s ?? 600) * 1000),
       "--progress-file",
-      join(runDir, "worker-progress.jsonl"),
+      activeProgressPath,
       "--persist-session",
-      ...(resumeSession === undefined ? [] : ["--resume", resumeSession]),
+      ...(currentResumeSession === undefined
+        ? []
+        : ["--resume", currentResumeSession]),
     ];
   };
   const before = workspaceSnapshot(cwd, ticket.writes);
@@ -737,49 +775,10 @@ export async function run(flags: Flags): Promise<number> {
     AGX_INTERIM_REPORTS_FILE: interimPath,
     AGX_CODEX_PROGRESS_FILE: join(runDir, "worker-progress.jsonl"),
   };
-  const deadline = AbortSignal.timeout((ticket.timeout_s ?? 600) * 1000);
-  const child = Bun.spawn(
-    process.env.AGX_WORKER_BIN === undefined
-      ? [...defaultCommand, ...workerArgs().slice(1)]
-      : [
-          process.execPath,
-          "--eval",
-          "delete process.env.BUN_BE_BUN; await import(process.argv[1]);",
-          "--",
-          resolve(cwd, workerPath),
-          ...workerArgs().slice(1),
-        ],
-    {
-      cwd,
-      detached: process.platform !== "win32",
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "inherit",
-      env: {
-        ...runEnv,
-        ...(process.env.AGX_WORKER_BIN === undefined
-          ? {}
-          : { BUN_BE_BUN: "1" }),
-      },
-      signal: deadline,
-      killSignal: "SIGTERM",
-    },
-  );
   const firstReturnS =
     ticket.first_return_s ?? Math.floor((ticket.timeout_s ?? 600) / 2);
-  const workerStartedAt = performance.now();
   let progressSeen = false;
   let lateRecorded = false;
-  killWorker = () => {
-    if (process.platform !== "win32")
-      fromThrowable(() => process.kill(-child.pid, "SIGKILL"))();
-    child.kill("SIGKILL");
-  };
-  process.on("exit", killWorker);
-  const outputPromise =
-    child.stdout === null
-      ? Promise.resolve("")
-      : new Response(child.stdout).text();
   let progressOffset = 0;
   const observeInterim = (): void => {
     if (!existsSync(interimPath)) return;
@@ -798,27 +797,7 @@ export async function run(flags: Flags): Promise<number> {
         record.data.last_message,
       );
   };
-  const progressWatcher = setInterval(() => {
-    observeInterim();
-    const elapsed = (performance.now() - workerStartedAt) / 1000;
-    if (!progressSeen && !lateRecorded && elapsed >= firstReturnS) {
-      append({
-        kind: "late",
-        id,
-        at: now(),
-        first_return_s: firstReturnS,
-        elapsed: Math.floor(elapsed),
-      });
-      lateRecorded = true;
-    }
-  }, 100);
-  const exit = await child.exited;
-  const timedOut = deadline.aborted;
-  clearInterval(progressWatcher);
-  const output = await outputPromise;
-  if (stopTask !== undefined) await stopTask;
-  const receiptLine = output.trim().split("\n").at(-1) ?? "";
-  const receipt = jsonOf(
+  const workerReceiptSchema = jsonOf(
     z.looseObject({
       report: z.unknown().optional(),
       structured_output: z.unknown().optional(),
@@ -831,22 +810,171 @@ export async function run(flags: Flags): Promise<number> {
       timed_out: z.boolean().optional(),
       exit_code: z.number().optional(),
     }),
-  ).safeParse(receiptLine);
-  const workerReceipt = receipt.success ? receipt.data : {};
-  if (receipt.success)
-    writeFileSync(
-      join(runDir, `${id}.json`),
-      `${JSON.stringify({ ...workerReceipt, sandbox, sandbox_source })}\n`,
+  );
+  let workerReceipt: z.output<typeof workerReceiptSchema> = {};
+  let receiptLine = "";
+  let output = "";
+  let exit = 0;
+  let timedOut = false;
+  let capacityExhausted = false;
+  let endedOnCapacity = false;
+  let routeFailure:
+    | Extract<CapacityRetryRouteResult, { kind: "refused" }>
+    | undefined;
+  let activeChild: ReturnType<typeof Bun.spawn> | undefined;
+  killWorker = () => {
+    const child = activeChild;
+    if (child === undefined) return;
+    if (process.platform !== "win32")
+      fromThrowable(() => process.kill(-child.pid, "SIGKILL"))();
+    child.kill("SIGKILL");
+  };
+  process.on("exit", killWorker);
+  const progressWatcher = setInterval(() => {
+    observeInterim();
+    const elapsed = (performance.now() - runStartedAt) / 1000;
+    if (!progressSeen && !lateRecorded && elapsed >= firstReturnS) {
+      append({
+        kind: "late",
+        id,
+        at: now(),
+        first_return_s: firstReturnS,
+        elapsed: Math.floor(elapsed),
+      });
+      lateRecorded = true;
+    }
+  }, 100);
+  let attemptNumber = 0;
+  while (true) {
+    attemptNumber += 1;
+    activeProgressPath = join(
+      runDir,
+      attemptNumber === 1
+        ? "worker-progress.jsonl"
+        : `worker-progress-${String(attemptNumber).padStart(2, "0")}.jsonl`,
     );
-  // Capacity never ran the promised work; verification cannot turn it into a worker failure
-  // or delay releasing this model to the router's cool-down.
-  const capacity = workerReceipt.outcome === "capacity";
-  const after = capacity ? undefined : workspaceSnapshot(cwd, ticket.writes);
+    progressOffset = 0;
+    const child = Bun.spawn(
+      process.env.AGX_WORKER_BIN === undefined
+        ? [...defaultCommand, ...workerArgs().slice(1)]
+        : [
+            process.execPath,
+            "--eval",
+            "delete process.env.BUN_BE_BUN; await import(process.argv[1]);",
+            "--",
+            resolve(cwd, workerPath),
+            ...workerArgs().slice(1),
+          ],
+      {
+        cwd,
+        detached: process.platform !== "win32",
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "inherit",
+        env: {
+          ...runEnv,
+          AGX_CODEX_PROGRESS_FILE: activeProgressPath,
+          ...(process.env.AGX_WORKER_BIN === undefined
+            ? {}
+            : { BUN_BE_BUN: "1" }),
+        },
+        signal: deadline,
+        killSignal: "SIGTERM",
+      },
+    );
+    activeChild = child;
+    const outputPromise =
+      child.stdout === null
+        ? Promise.resolve("")
+        : new Response(child.stdout).text();
+    exit = await child.exited;
+    timedOut = deadline.aborted;
+    activeChild = undefined;
+    output = await outputPromise;
+    if (stopTask !== undefined) await stopTask;
+    receiptLine = output.trim().split("\n").at(-1) ?? "";
+    const receipt = workerReceiptSchema.safeParse(receiptLine);
+    workerReceipt = receipt.success ? receipt.data : {};
+    if (receipt.success) {
+      const attemptReceipt = {
+        ...workerReceipt,
+        row: activeRow.id,
+        attempt: attemptNumber,
+        sandbox,
+        sandbox_source,
+      };
+      writeFileSync(
+        join(runDir, `attempt-${String(attemptNumber).padStart(2, "0")}.json`),
+        `${JSON.stringify(attemptReceipt)}\n`,
+      );
+      writeFileSync(
+        join(runDir, `${id}.json`),
+        `${JSON.stringify(attemptReceipt)}\n`,
+      );
+    }
+    const session =
+      workerReceipt.vendor_session ??
+      workerReceipt.session ??
+      workerReceipt.session_id ??
+      vendorSessionFromProgress() ??
+      currentResumeSession ??
+      null;
+    latestVendorSession = session;
+    endedOnCapacity = workerReceipt.outcome === "capacity";
+    if (!endedOnCapacity || timedOut) break;
+
+    const remainingMs = Math.floor(
+      timeoutMs - (performance.now() - runStartedAt),
+    );
+    if (deadline.aborted || remainingMs <= 0) {
+      timedOut = true;
+      exit = 124;
+      break;
+    }
+    const next = await route(
+      routing.brief,
+      routing.capabilities,
+      routing.timeoutS,
+      [...routing.maskedRows, ...attemptedRows],
+      {},
+      { path: resolve(path), launch: true, sha256: ticket_sha256 },
+      { capacityRetry: true, timeoutMs: remainingMs },
+    );
+    if (deadline.aborted) {
+      timedOut = true;
+      exit = 124;
+      break;
+    }
+    if (next.kind === "exhausted") {
+      capacityExhausted = true;
+      break;
+    }
+    if (next.kind === "refused") {
+      routeFailure = next;
+      exit = next.exitCode;
+      break;
+    }
+    const previousRow = activeRow;
+    const previousSession =
+      latestVendorSession ?? vendorSessionFromProgress() ?? undefined;
+    activeRow = next.row;
+    attemptedRows.push(activeRow.id);
+    currentResumeSession =
+      previousRow.route === activeRow.route ? previousSession : undefined;
+    if (currentResumeSession === undefined) latestVendorSession = null;
+  }
+  clearInterval(progressWatcher);
+  // A capacity receipt is terminal only after the active run exhausted its eligible rows.
+  const capacity = capacityExhausted && endedOnCapacity;
+  const skipVerification = endedOnCapacity;
+  const after = skipVerification
+    ? undefined
+    : workspaceSnapshot(cwd, ticket.writes);
   const changed =
     before.isOk() && after?.isOk() === true
       ? changedFiles(before.value, after.value)
       : undefined;
-  const verify = capacity
+  const verify = skipVerification
     ? []
     : await runVerify(ticket.verify, cwd, runDir, runEnv, ctx.verifyAlways);
   const parsedReport = parseReport(
@@ -865,6 +993,7 @@ export async function run(flags: Flags): Promise<number> {
       exit === 124,
     refused:
       exit !== 0 ||
+      routeFailure !== undefined ||
       workerReceipt.outcome === "refused" ||
       (workerReceipt.exit_code !== undefined && workerReceipt.exit_code !== 0),
     verify,
@@ -879,15 +1008,29 @@ export async function run(flags: Flags): Promise<number> {
       };
   if (capacity)
     report = {
-      summary: `Vendor capacity on ${row.id}: ${workerReceipt.cause ?? "model unavailable"}`,
+      summary: `Vendor capacity on ${attemptedRows.join(" → ")}: ${workerReceipt.cause ?? "model unavailable"}`,
       changes: [],
       checks: [],
-      for_coordinator: [
-        "Dispatch again or use --continue to route away from this model.",
-      ],
+      for_coordinator: ["Every eligible roster row answered capacity."],
       open: [
         "The vendor did not complete this ticket; this is not a worker failure.",
       ],
+    };
+  else if (routeFailure !== undefined)
+    report = {
+      summary: `Capacity on ${attemptedRows.join(" → ")}; rerouting stopped: ${routeFailure.message.trim()}`,
+      changes: [],
+      checks: [],
+      for_coordinator: [],
+      open: ["The vendor did not complete this ticket."],
+    };
+  else if (timedOut && endedOnCapacity)
+    report = {
+      summary: `Ticket time box expired after capacity on ${attemptedRows.join(" → ")}.`,
+      changes: [],
+      checks: [],
+      for_coordinator: [],
+      open: ["The vendor did not complete this ticket."],
     };
   if (ctx.verifyAlways.length > 0)
     report = {
@@ -896,16 +1039,13 @@ export async function run(flags: Flags): Promise<number> {
     };
   report = {
     ...(typeof report === "object" && report !== null ? report : {}),
+    ...(attemptedRows.length > 1 ? { rows: attemptedRows } : {}),
     execution,
     sandbox,
     sandbox_source,
   };
   writeFileSync(reportPath, `${JSON.stringify(report)}\n`);
-  const vendorSession =
-    workerReceipt.vendor_session ??
-    workerReceipt.session ??
-    workerReceipt.session_id ??
-    null;
+  const vendorSession = latestVendorSession;
   if (existsSync(interimPath)) {
     const finalInterim = readFileSync(interimPath, "utf8")
       .trim()
@@ -947,6 +1087,17 @@ export async function run(flags: Flags): Promise<number> {
     end_notice: endNotice,
     report_path: reportPath,
     vendor_session: vendorSession,
+    ...(attemptedRows.length > 1 ? { rows: attemptedRows } : {}),
+    ...(attemptedRows.length > 1
+      ? {
+          final_row: {
+            id: activeRow.id,
+            route: activeRow.route,
+            model: activeRow.model,
+            effort: activeRow.effort,
+          },
+        }
+      : {}),
     verify,
     returned: /```agx-return\s*\n/u.test(
       workerReceipt.last_message ?? receiptLine,
@@ -956,7 +1107,7 @@ export async function run(flags: Flags): Promise<number> {
   temp.remove();
   await workspaceLock.release();
   process.stdout.write(
-    `${JSON.stringify({ id, ticket: ticketName, workspace, row: row.id, route: row.route, model: row.model, effort: row.effort, sandbox, sandbox_source, sandbox_effective, sandbox_effective_source, exit, outcome, report_path: reportPath, state_file: recordPath(), host: hostname(), unit, execution })}\n`,
+    `${JSON.stringify({ id, ticket: ticketName, workspace, row: activeRow.id, route: activeRow.route, model: activeRow.model, effort: activeRow.effort, ...(attemptedRows.length > 1 ? { rows: attemptedRows } : {}), sandbox, sandbox_source, sandbox_effective, sandbox_effective_source, exit, outcome, report_path: reportPath, state_file: recordPath(), host: hostname(), unit, execution })}\n`,
   );
   return exit;
 }

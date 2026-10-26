@@ -24,6 +24,7 @@ export const RunSchema = z.object({
   outcome: Outcome.nullable(),
   launch_stderr: z.string().optional(),
   row: z.string(),
+  rows: z.array(z.string()).optional(),
   route: z.string().optional(),
   model: z.string().optional(),
   effort: z.string().optional(),
