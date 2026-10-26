@@ -55,6 +55,7 @@ import {
   verifyKind,
   type VerifyKind,
 } from "./verify.ts";
+import { sendEndNotice } from "./end-notice.ts";
 
 export type Flags = Readonly<Record<string, string | boolean | undefined>>;
 const fatal = (message: string, exitCode = 2): never =>
@@ -450,19 +451,37 @@ export async function run(flags: Flags): Promise<number> {
     killWorker?.();
     if (started && !ended) {
       ended = true;
-      append({
-        kind: "ended",
-        id,
-        at: now(),
-        exit: code,
-        outcome: "stopped",
-        signal,
-        stopped_by: request?.stopped_by ?? `signal:${signal}`,
-        report_path: null,
-        vendor_session: vendorSession,
-        verify: [],
-      });
+      const endedAt = now();
+      stopTask = (async () => {
+        const endNotice = await sendEndNotice({
+          id,
+          ticket: ticketName,
+          dispatcher,
+          startedAt,
+          endedAt,
+          outcome: "stopped",
+          resultPath: null,
+          verifyExits: [],
+        });
+        append({
+          kind: "ended",
+          id,
+          at: endedAt,
+          exit: code,
+          outcome: "stopped",
+          end_notice: endNotice,
+          signal,
+          stopped_by: request?.stopped_by ?? `signal:${signal}`,
+          report_path: null,
+          vendor_session: vendorSession,
+          verify: [],
+        });
+        await flushRunPublications();
+        process.exit(code);
+      })();
+      return;
     }
+    if (started && ended) return;
     stopTask = (async () => {
       await flushRunPublications();
       process.exit(code);
@@ -563,10 +582,11 @@ export async function run(flags: Flags): Promise<number> {
       : null,
   );
   if (stopTask !== undefined) await stopTask;
+  const startedAt = now();
   append({
     kind: "started",
     id,
-    at: now(),
+    at: startedAt,
     ticket: binding?.ticket ?? ticketName,
     writes: ticket.writes,
     cwd,
@@ -903,12 +923,26 @@ export async function run(flags: Flags): Promise<number> {
       );
   }
   if (stopTask !== undefined) await stopTask;
+  ended = true;
+  const endedAt = now();
+  const endNotice = await sendEndNotice({
+    id,
+    ticket: ticketName,
+    dispatcher,
+    startedAt,
+    endedAt,
+    outcome,
+    resultPath: reportPath,
+    verifyExits: verify.map((result) => result.exit),
+    env: runEnv,
+  });
   append({
     kind: "ended",
     id,
-    at: now(),
+    at: endedAt,
     exit,
     outcome,
+    end_notice: endNotice,
     report_path: reportPath,
     vendor_session: vendorSession,
     verify,
@@ -917,7 +951,6 @@ export async function run(flags: Flags): Promise<number> {
     ),
     changed_files: changed,
   });
-  ended = true;
   temp.remove();
   await workspaceLock.release();
   process.stdout.write(
