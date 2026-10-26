@@ -57,6 +57,11 @@ const addCommand = command(
         type: String,
         description: "parent revision (default: jj's own default)",
       },
+      noFetch: {
+        type: Boolean,
+        description:
+          "skip remote fetch and report the selected base as unfetched",
+      },
       repo: repoFlag,
       json: {
         type: Boolean,
@@ -75,6 +80,7 @@ const addCommand = command(
       const done = await add({
         slug: argv._.slug,
         rev: argv.flags.rev,
+        noFetch: argv.flags.noFetch === true,
         repo: argv.flags.repo ?? process.cwd(),
         reuse: argv.flags.reuse === true,
         json: argv.flags.json === true,
@@ -91,9 +97,15 @@ const addCommand = command(
         return;
       }
       enterStep("write workspace result");
+      if (argv.flags.json !== true && done.value.base !== undefined) {
+        const base = done.value.base;
+        process.stderr.write(
+          `ws: base change_id=${base.change_id} commit_id=${base.commit_id} ref=${base.ref} fetch=${base.fetch}\n`,
+        );
+      }
       await new Promise<void>((resolve) => {
         process.stdout.write(
-          `${argv.flags.json === true ? JSON.stringify({ workspace: done.value }) : done.value}\n`,
+          `${argv.flags.json === true ? JSON.stringify(done.value) : done.value.workspace}\n`,
           () => {
             resolve();
           },

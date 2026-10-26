@@ -121,8 +121,12 @@ async function exec(
   cmd: string[],
   cwd: string,
   env?: Record<string, string>,
+  timeoutMs?: number,
 ): Promise<Attempt<Ran>> {
-  const ran = await runStep(cmd, cwd, { env });
+  const ran = await runStep(cmd, cwd, {
+    env,
+    ...(timeoutMs === undefined ? {} : { timeoutMs }),
+  });
   return ran.ok ? good({ ...ran.value, out: ran.value.out.toString() }) : ran;
 }
 
@@ -648,6 +652,7 @@ async function collectWorkspace(
 export type AddOptions = {
   slug: string;
   rev?: string | undefined;
+  noFetch?: boolean | undefined;
   repo: string;
   reuse?: boolean | undefined;
   json?: boolean | undefined;
@@ -676,6 +681,16 @@ async function installMissingMiseTools(dir: string): Promise<Attempt<void>> {
     ),
   };
 }
+
+export type AddBaseReceipt = {
+  change_id: string;
+  commit_id: string;
+  ref: string;
+  fetch_succeeded: boolean | null;
+  fetch: "succeeded" | "unfetched" | "no remote" | "explicit --rev";
+};
+
+export type AddResult = { workspace: string; base?: AddBaseReceipt };
 
 /** Runs in the coordinator's environment, before a sandboxed worker receives the path. */
 async function readyWorkspace(
@@ -733,7 +748,150 @@ async function readyWorkspace(
   return good(undefined);
 }
 
-export async function add(options: AddOptions): Promise<Attempt<string>> {
+async function commitId(repo: Repo, rev: string): Promise<Attempt<string>> {
+  const result = await jjOut(
+    ["log", "--no-graph", "-r", rev, "-T", "commit_id"],
+    repo.backing,
+    true,
+  );
+  return result.ok ? good(result.value.trim()) : result;
+}
+
+async function trunkBookmark(
+  repo: Repo,
+  trunk: string,
+): Promise<Attempt<string>> {
+  if (/^[A-Za-z0-9_./-]+$/u.test(trunk)) return good(trunk);
+  const result = await jjOut(
+    ["log", "--no-graph", "-r", trunk, "-T", 'bookmarks.join("\\n")'],
+    repo.backing,
+    true,
+  );
+  if (!result.ok) return result;
+  return good(result.value.trim().split("\n").find(Boolean) ?? "");
+}
+
+async function remoteTrunk(
+  repo: Repo,
+  bookmark: string,
+  remotes: string[],
+): Promise<Attempt<{ ref: string; commit: string }>> {
+  for (const remote of remotes) {
+    const ref = `${bookmark}@${remote}`;
+    const commit = await commitId(repo, ref);
+    if (commit.ok && commit.value !== "")
+      return good({ ref, commit: commit.value });
+  }
+  return bad(
+    `no remote-tracking trunk bookmark found for ${JSON.stringify(bookmark)}; fetch the trunk bookmark or set .ws.toml trunk`,
+  );
+}
+
+async function resolveAddBase(
+  repo: Repo,
+  trunk: string,
+  noFetch: boolean,
+): Promise<Attempt<{ rev: string | undefined; receipt: AddBaseReceipt }>> {
+  const listed = await jjOut(["git", "remote", "list"], repo.backing, true);
+  if (!listed.ok) return listed;
+  const remotes = listed.value
+    .split("\n")
+    .map((line) => line.trim().split(/\s+/u)[0] ?? "")
+    .filter((remote) => remote !== "");
+  let fetchSucceeded: boolean | null = null;
+  if (remotes.length > 0 && !noFetch) {
+    enterStep("fetch trunk remotes");
+    const fetched = await exec(
+      ["jj", "--no-pager", "--color=never", "git", "fetch", "--all-remotes"],
+      repo.backing,
+      undefined,
+      30_000,
+    );
+    if (!fetched.ok)
+      return {
+        ok: false,
+        error: new StepFailure(
+          `jj git fetch --all-remotes failed: ${msg(fetched)}; repair remote connectivity or retry with --no-fetch to use an explicitly unfetched base`,
+          fetched.error instanceof StepFailure ? fetched.error.code : 1,
+        ),
+      };
+    if (fetched.value.code !== 0)
+      return bad(
+        `jj git fetch --all-remotes failed (exit ${fetched.value.code}): ${fetched.value.err.trim()}; repair remote connectivity or retry with --no-fetch to use an explicitly unfetched base`,
+      );
+    fetchSucceeded = true;
+  }
+  if (remotes.length > 0 && noFetch) fetchSucceeded = false;
+
+  let baseRef = trunk;
+  let selectedRev: string | undefined = baseRef;
+  let receiptRef = baseRef;
+  if (remotes.length === 0) {
+    // Preserve jj workspace add's historical default parent when no remote exists.
+    // trunk() may resolve to root() even while the working copy has useful content.
+    baseRef = "@";
+    selectedRev = undefined;
+    receiptRef = "jj default (@)";
+  }
+  if (remotes.length > 0) {
+    const bookmark = await trunkBookmark(repo, trunk);
+    if (!bookmark.ok) return bookmark;
+    if (bookmark.value === "")
+      return bad(
+        `cannot identify a bookmark for configured trunk ${JSON.stringify(trunk)}; set .ws.toml trunk to a bookmark name`,
+      );
+    const remote = await remoteTrunk(repo, bookmark.value, remotes);
+    if (!remote.ok) return remote;
+    baseRef = remote.value.ref;
+    const ancestor = await jjOut(
+      [
+        "log",
+        "--no-graph",
+        "-r",
+        `${remote.value.ref} & ::${bookmark.value}`,
+        "-T",
+        "commit_id",
+      ],
+      repo.backing,
+      true,
+    );
+    if (ancestor.ok && ancestor.value.trim() === remote.value.commit)
+      baseRef = bookmark.value;
+    selectedRev = baseRef;
+    receiptRef = baseRef;
+  }
+  const baseIds = await jjOut(
+    [
+      "log",
+      "--no-graph",
+      "-r",
+      baseRef,
+      "-T",
+      'change_id ++ "\\t" ++ commit_id',
+    ],
+    repo.backing,
+    true,
+  );
+  if (!baseIds.ok) return baseIds;
+  const [change_id, commit_id] = baseIds.value.trim().split("\t");
+  if (change_id === undefined || commit_id === undefined)
+    return bad(`cannot read base identifiers from ${baseRef}`);
+  let fetch: AddBaseReceipt["fetch"] = "no remote";
+  if (fetchSucceeded === true) fetch = "succeeded";
+  else if (fetchSucceeded === false) fetch = "unfetched";
+  return good({
+    rev: selectedRev,
+    receipt: {
+      change_id,
+      commit_id,
+      ref: receiptRef,
+      fetch_succeeded: fetchSucceeded,
+      fetch,
+    },
+  });
+}
+
+export async function add(options: AddOptions): Promise<Attempt<AddResult>> {
   enterStep("validate workspace and read configuration");
   const slug = validateSlug(options.slug, "agx ws add");
   if (!slug.ok) return slug;
@@ -769,7 +927,7 @@ export async function add(options: AddOptions): Promise<Attempt<string>> {
       if (present) {
         if (options.reuse === true && names.value.includes(name)) {
           const recorded = await recordWorkspace(repo.value.backing, dir);
-          return recorded.ok ? good(dir) : recorded;
+          return recorded.ok ? good({ workspace: dir }) : recorded;
         }
         return bad(`${dir} already exists`);
       }
@@ -782,6 +940,42 @@ export async function add(options: AddOptions): Promise<Attempt<string>> {
         const current = await updateStale(root);
         if (!current.ok) return current;
       }
+      let selectedRev = options.rev;
+      let base: AddBaseReceipt | undefined;
+      if (selectedRev === undefined) {
+        const selected = await resolveAddBase(
+          repo.value,
+          cfg.value.trunk,
+          options.noFetch === true,
+        );
+        if (!selected.ok) return selected;
+        selectedRev = selected.value.rev;
+        base = selected.value.receipt;
+      }
+      if (selectedRev !== undefined && base === undefined) {
+        const baseIds = await jjOut(
+          [
+            "log",
+            "--no-graph",
+            "-r",
+            selectedRev,
+            "-T",
+            'change_id ++ "\\t" ++ commit_id',
+          ],
+          repo.value.backing,
+          true,
+        );
+        if (!baseIds.ok) return baseIds;
+        const [change_id, commit_id] = baseIds.value.trim().split("\t");
+        if (change_id !== undefined && commit_id !== undefined)
+          base = {
+            change_id,
+            commit_id,
+            ref: selectedRev,
+            fetch_succeeded: null,
+            fetch: "explicit --rev",
+          };
+      }
       enterStep("create workspace");
       await mkdir(repo.value.wsRoot, { recursive: true });
       const made = await jjOut(
@@ -790,7 +984,7 @@ export async function add(options: AddOptions): Promise<Attempt<string>> {
           "add",
           "--name",
           name,
-          ...(options.rev === undefined ? [] : ["-r", options.rev]),
+          ...(selectedRev === undefined ? [] : ["-r", selectedRev]),
           dir,
         ],
         repo.value.backing,
@@ -823,7 +1017,7 @@ export async function add(options: AddOptions): Promise<Attempt<string>> {
         };
       }
       enterStep("release workspace store lock");
-      return good(dir);
+      return good({ workspace: dir, ...(base === undefined ? {} : { base }) });
     },
   );
   // Verdict inventory belongs to explicit gc, never the latency path of one creation.

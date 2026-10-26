@@ -119,7 +119,7 @@ process.exitCode = await child.exited;`,
       }
     }
     expect(budgets, JSON.stringify(budgets)).toEqual(
-      Array.from({ length: 9 }, () => 6),
+      Array.from({ length: 9 }, () => 7),
     );
     expect(diffs).toEqual([]);
   });

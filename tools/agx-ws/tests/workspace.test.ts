@@ -751,17 +751,159 @@ describe("agx ws add", () => {
     const path = await repo(`ready = [${JSON.stringify(command)}]\n`);
     const created = await ws(["add", "fleet-line-real", "--json"], path);
     expect(created.code, created.err).toBe(0);
-    expect(created.out).toBe(
-      `${JSON.stringify({ workspace: wsDir(path, "fleet-line-real") })}\n`,
-    );
+    const createdJson = jsonOf(
+      z.looseObject({
+        workspace: z.string(),
+        base: z.looseObject({
+          change_id: z.string(),
+          commit_id: z.string(),
+          ref: z.string(),
+          fetch_succeeded: z.null(),
+          fetch: z.literal("no remote"),
+        }),
+      }),
+    ).safeParse(created.out);
+    expect(createdJson.success).toBe(true);
+    if (!createdJson.success) return;
+    expect(createdJson.data).toMatchObject({
+      workspace: wsDir(path, "fleet-line-real"),
+    });
     expect(created.err).toContain(chatter);
     const reused = await ws(
       ["add", "fleet-line-real", "--reuse", "--json"],
       path,
     );
     expect(reused.code, reused.err).toBe(0);
-    expect(reused.out).toBe(created.out);
+    const reusedJson = jsonOf(
+      z.looseObject({ workspace: z.string() }),
+    ).safeParse(reused.out);
+    expect(reusedJson.success).toBe(true);
+    if (!reusedJson.success) return;
+    expect(reusedJson.data).toEqual({
+      workspace: wsDir(path, "fleet-line-real"),
+    });
     expect(reused.err).not.toContain(chatter);
+  });
+
+  test("fetches remote trunk, prefers a descendant local trunk, and supports failed-fetch recovery", async () => {
+    const root = mkdtempSync(join(tmpdir(), "ws-fresh-base-"));
+    const bare = join(root, "remote.git");
+    const seed = join(root, "seed");
+    const path = join(root, "clone");
+    const git = async (args: string[], cwd = root) =>
+      run(["git", ...args], cwd);
+    const jjIn = async (args: string[], cwd = path) => jj(args, cwd);
+    const gitUser = [
+      "-c",
+      "user.name=Fixture",
+      "-c",
+      "user.email=fixture@example.test",
+    ];
+    expect((await git(["init", "--bare", bare])).code).toBe(0);
+    expect((await git(["clone", bare, seed])).code).toBe(0);
+    expect(
+      (await git([...gitUser, "-C", seed, "switch", "-c", "alpha"])).code,
+    ).toBe(0);
+    await Bun.write(join(seed, "base.txt"), "base\n");
+    await Bun.write(join(seed, ".ws.toml"), 'trunk = "alpha"\n');
+    expect((await git(["-C", seed, "add", "base.txt"])).code).toBe(0);
+    expect((await git(["-C", seed, "add", "-f", ".ws.toml"])).code).toBe(0);
+    expect(
+      (await git([...gitUser, "-C", seed, "commit", "-m", "base"])).code,
+    ).toBe(0);
+    expect(
+      (await git(["-C", seed, "push", "-u", "origin", "alpha"])).code,
+    ).toBe(0);
+    expect(
+      (
+        await git([
+          "--git-dir",
+          bare,
+          "symbolic-ref",
+          "HEAD",
+          "refs/heads/alpha",
+        ])
+      ).code,
+    ).toBe(0);
+    expect((await jj(["git", "clone", bare, path], root)).code).toBe(0);
+    expect(await Bun.file(join(path, ".ws.toml")).text()).toBe(
+      'trunk = "alpha"\n',
+    );
+    expect(
+      (await jjIn(["bookmark", "untrack", "alpha", "--remote", "origin"])).code,
+    ).toBe(0);
+    const base = (
+      await jjIn(["log", "--no-graph", "-r", "alpha@origin", "-T", "commit_id"])
+    ).out.trim();
+
+    await Bun.write(join(seed, "remote.txt"), "remote\n");
+    expect((await git(["-C", seed, "add", "remote.txt"])).code).toBe(0);
+    expect(
+      (await git([...gitUser, "-C", seed, "commit", "-m", "remote advance"]))
+        .code,
+    ).toBe(0);
+    expect((await git(["-C", seed, "push", "origin", "alpha"])).code).toBe(0);
+    const remote = await ws(["add", "remote-new", "--json"], path);
+    expect(remote.code, remote.err).toBe(0);
+    const receiptSchema = jsonOf(
+      z.looseObject({
+        workspace: z.string(),
+        base: z.looseObject({
+          commit_id: z.string(),
+          ref: z.string(),
+          fetch: z.string(),
+        }),
+      }),
+    );
+    const remoteReceipt = receiptSchema.safeParse(remote.out);
+    expect(remoteReceipt.success).toBe(true);
+    if (!remoteReceipt.success) return;
+    expect(remoteReceipt.data.base.commit_id).not.toBe(base);
+    expect(remoteReceipt.data.base.ref).toBe("alpha@origin");
+    expect(remoteReceipt.data.base.fetch).toBe("succeeded");
+
+    await jjIn(["new", "alpha@origin"]);
+    const setLocalAdvance = await jjIn(["bookmark", "set", "alpha", "-r", "@"]);
+    expect(setLocalAdvance.code, setLocalAdvance.err).toBe(0);
+    const local = await ws(["add", "local-new", "--json"], path);
+    expect(local.code, local.err).toBe(0);
+    const localReceipt = receiptSchema.safeParse(local.out);
+    expect(localReceipt.success).toBe(true);
+    if (!localReceipt.success) return;
+    expect(localReceipt.data.base.ref).toBe("alpha");
+    expect(localReceipt.data.base.commit_id).toBe(
+      (
+        await jjIn(["log", "--no-graph", "-r", "alpha", "-T", "commit_id"])
+      ).out.trim(),
+    );
+
+    expect(
+      (
+        await jjIn([
+          "git",
+          "remote",
+          "set-url",
+          "origin",
+          join(root, "missing.git"),
+        ])
+      ).code,
+    ).toBe(0);
+    const failed = await ws(["add", "fetch-fails", "--json"], path);
+    expect(failed.code).not.toBe(0);
+    expect(failed.err).toContain("--no-fetch");
+    const unfetched = await ws(
+      ["add", "unfetched", "--json", "--no-fetch"],
+      path,
+    );
+    expect(unfetched.code, unfetched.err).toBe(0);
+    const unfetchedReceipt = receiptSchema.safeParse(unfetched.out);
+    expect(unfetchedReceipt.success).toBe(true);
+    if (!unfetchedReceipt.success) return;
+    expect(unfetchedReceipt.data.base.fetch).toBe("unfetched");
+    expect(unfetchedReceipt.data.base.commit_id).toBe(
+      localReceipt.data.base.commit_id,
+    );
+    rmSync(root, { recursive: true, force: true });
   });
 
   test("uses sparse . even when the source workspace is narrowed", async () => {
