@@ -155,7 +155,7 @@ function startServer(choice: string, probabilities?: Record<string, number>) {
           Object.entries(criteria).flatMap(([id, value]) => {
             const matchedRow = roster.choice.find((row) =>
               value.startsWith(
-                `${blindCriterion(criterionFor(roster, row), roster.choice)} agx measured:`,
+                blindCriterion(criterionFor(roster, row), roster.choice),
               ),
             );
             return matchedRow === undefined ? [] : [[matchedRow.id, id]];
@@ -516,7 +516,7 @@ describe("capability constrained routing", () => {
       `${ROUTING_OBJECTIVE} Pick a roster row for this ticket.`,
     );
     expect(ROUTING_OBJECTIVE).toBe(
-      "Purpose: the owner pays for every token and waits for every minute until a result is accepted. Choose the option expected to produce an accepted result for this ticket at the lowest cost and in the shortest time. Evidence: 'agx measured' is the acceptance and wall time of each option on this machine and is the primary evidence of whether an option is sufficient; published benchmarks are background only. Return the ticket instead of choosing a model only when it cannot be done as written. Subscription health: weigh 7-day windows most; 5-hour windows are secondary; keep the intended bias toward the codex route; stale or unknown usage is neutral.",
+      "Purpose: the owner pays for every token and waits for every minute until a result is accepted. Choose the option expected to produce an accepted result for this ticket at the lowest cost and in the shortest time. Evidence: judge each option by its stated use and published benchmarks against what the ticket requires; agx does not feed its own run outcomes back into this choice. Return the ticket instead of choosing a model only when it cannot be done as written. Subscription health: weigh 7-day windows most; 5-hour windows are secondary; keep the intended bias toward the codex route; stale or unknown usage is neutral.",
     );
     expect(request?.questions.worker.instructions).not.toContain(
       "A. Capability sufficiency (hard)",
@@ -929,7 +929,7 @@ test("one raw Choice blinds the entire injected payload and preserves every crit
   ]);
   ordered.forEach((row, i) => {
     expect(request.questions.worker.criteria[`model_${i}`]).toBe(
-      `${blindCriterion(criterionFor(roster, row), roster.choice)} agx measured: too few judged runs`,
+      blindCriterion(criterionFor(roster, row), roster.choice),
     );
   });
   expect(server.calls()).toBe(1);
@@ -1118,7 +1118,7 @@ test("every shipped Jev option is readable and keeps its row measurements", asyn
   );
 });
 
-test("local record evidence follows each blinded option and survives the pick audit", async () => {
+test("local record evidence stays in the pick audit and out of Jev criteria", async () => {
   await isolateState();
   const fixture = (row: string, count: number, accepted: number) => {
     for (let i = 0; i < count; i++) {
@@ -1184,28 +1184,26 @@ test("local record evidence follows each blinded option and survives the pick au
   if (request === undefined)
     expect.unreachable("route request was not captured");
   const criteria = request.questions.worker.criteria;
-  expect(criteria["luna-high"]).toEndWith(
-    "agx measured: 84% of 25 judged runs accepted, median 5.1 min.",
-  );
-  expect(criteria["sol-medium"]).toEndWith(
-    "agx measured: 60% of 5 judged runs accepted, median 5.1 min.",
-  );
-  expect(criteria["luna-medium"]).toEndWith(
-    "agx measured: too few judged runs",
-  );
+  expect(criteria["luna-high"]).toBeDefined();
+  expect(criteria["sol-medium"]).toBeDefined();
+  expect(criteria["luna-medium"]).toBeDefined();
   const loaded = await loadRoster();
   if (!loaded.ok) return;
   const rawRequest = server.rawRequest();
   if (rawRequest === undefined)
     expect.unreachable("raw route request was not captured");
   for (const text of Object.values(rawRequest.questions.worker.criteria)) {
+    expect(text).not.toContain("agx measured");
     for (const row of loaded.value.choice) expect(text).not.toContain(row.id);
   }
   expect(request.questions.worker.instructions).toContain(
     "at the lowest cost and in the shortest time",
   );
   expect(request.questions.worker.instructions).toContain(
-    "published benchmarks are background only",
+    "published benchmarks against what the ticket requires",
+  );
+  expect(request.questions.worker.instructions).toContain(
+    "agx does not feed its own run outcomes back into this choice",
   );
   expect(request.questions.worker.instructions).not.toContain(
     "A. Capability sufficiency (hard)",
@@ -1223,6 +1221,67 @@ test("local record evidence follows each blinded option and survives the pick au
     median_wall_minutes: 5.1,
     text: "agx measured: 84% of 25 judged runs accepted, median 5.1 min.",
   });
+});
+
+test("local accepted and rejected history cannot change the Jev request", async () => {
+  const requests: string[] = [];
+  for (const decision of ["accept", "reject"] as const) {
+    await isolateState();
+    const loaded = await loadRoster();
+    if (!loaded.ok) return;
+    const start = Temporal.Instant.from(now()).subtract({ seconds: 906 });
+    const ended = start.add({ seconds: 306 });
+    const history = loaded.value.choice.flatMap((row) =>
+      Array.from({ length: 10 }, () => ({
+        row: row.id,
+        id: `history-${crypto.randomUUID()}`,
+      })),
+    );
+    for (const { row, id } of history) {
+      append({
+        kind: "started",
+        id,
+        at: start.toString(),
+        ticket: "history fixture",
+        writes: [],
+        cwd: tmpdir(),
+        workspace: tmpdir(),
+        row,
+        dispatcher_session: null,
+        vendor_session: null,
+        pid: 0,
+      });
+      append({
+        kind: "ended",
+        id,
+        at: ended.toString(),
+        exit: 0,
+        report_path: null,
+        vendor_session: null,
+        verify: [],
+      });
+      append({
+        kind: "judged",
+        id,
+        at: now(),
+        decision,
+        note: "opposite-mix fixture",
+      });
+    }
+    const server = startServer("sol-medium");
+    await route("same ticket for every history");
+    const serialized = server.rawBody();
+    if (serialized === undefined)
+      expect.unreachable("serialized Jev request was not captured");
+    const request = server.rawRequest();
+    if (request === undefined)
+      expect.unreachable("parsed Jev request was not captured");
+    for (const criterion of Object.values(request.questions.worker.criteria))
+      expect(criterion).not.toContain("agx measured");
+    requests.push(serialized);
+  }
+  expect(requests).toHaveLength(2);
+  expect(requests[0]).toBe(requests[1]);
 });
 test("audit retains the exact request and replays the existing sampling guard", async () => {
   await isolateState();

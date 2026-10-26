@@ -929,34 +929,39 @@ and exits 2 before worker startup. Model IDs are mapped back locally. The pick a
 retains the anonymization map, answer, and complete probability distribution.
 Invalid or missing answers retain the eligible default-row fallback and its reason.
 
-### Local evidence in blinded routing
+### Routing evidence and offline measurements
 
-At routing time, the existing folded run reader supplies one observation per run
-for each exact roster row. The latest valid acceptance judgment determines its
-judged status; accepted share uses all judged runs, not process exit status.
-Every blinded option appends `agx measured: N% of M judged runs accepted, median
-T min.` Percent is rounded to an integer and minutes to one decimal. Fewer than
-five judged runs instead show `agx measured: too few judged runs`, without a share.
-Wall time is the median of ended runs, including unjudged runs, with nonfinite,
-negative and over-24-hour durations excluded. An empty duration sample says
-`median unknown min.` Exactly 24 hours remains eligible.
+Jev criteria contain the blinded published capability, price, and stated use
+for each option. The objective asks Jev to judge those facts against the ticket
+requirements and states that agx does not feed its own run outcomes back into
+the choice. In particular, no judged or accepted counts, percentages, thresholds,
+or median wall times from agx runs are serialized into the Jev request.
 
+Option IDs, ordering, prices and published scores retain their existing meaning.
 The objective is: "Purpose: the owner pays for every token and waits for every
 minute until a result is accepted. Choose the option expected to produce an
 accepted result for this ticket at the lowest cost and in the shortest time.
-Evidence: 'agx measured' is the acceptance and wall time of each option on this
-machine and is the primary evidence of whether an option is sufficient;
-published benchmarks are background only. Return the ticket instead of
-choosing a model only when it cannot be done as written. Subscription health:
-weigh 7-day windows most; 5-hour windows are secondary; keep the intended bias
-toward the codex route; stale or unknown usage is neutral." These observations
-have selection bias: rows received different tickets, so their shares are not
-controlled comparisons or causal rankings.
-Option IDs, ordering, prices and published scores retain their existing meaning.
-The pick audit's `measured_evidence`, keyed by blinded option ID, saves judged and
-accepted counts, displayed percent, eligible ended-run count, displayed median
-minutes and exact evidence text for every candidate, including fallback picks
-and ticket returns. The audit retains the separate private anonymization map.
+Evidence: judge each option by its stated use and published benchmarks against
+what the ticket requires; agx does not feed its own run outcomes back into this
+choice. Return the ticket instead of choosing a model only when it cannot be
+done as written. Subscription health: weigh 7-day windows most; 5-hour windows
+are secondary; keep the intended bias toward the codex route; stale or unknown
+usage is neutral."
+For offline evaluation, the pick audit continues to retain `measured_evidence`,
+keyed by blinded option ID. The folded run reader supplies one observation per
+run for each exact roster row. The latest valid acceptance judgment determines
+its judged status; accepted share uses all judged runs, not process exit status.
+The audit stores judged and accepted counts, displayed percent, eligible
+ended-run count, displayed median minutes and exact evidence text for every
+candidate, including fallback picks and ticket returns. Percent is rounded to
+an integer and minutes to one decimal. Fewer than five judged runs have no
+displayed share. Wall time is the median of ended runs, including unjudged runs,
+with nonfinite, negative and over-24-hour durations excluded. An empty duration
+sample has an unknown median. Exactly 24 hours remains eligible. These
+observations have selection bias: rows received different tickets, so their
+shares are not controlled comparisons or causal rankings. They are retained
+only for offline evaluation and do not enter the Jev request. The audit retains
+the separate private anonymization map.
 
 ### Routing audit journal
 

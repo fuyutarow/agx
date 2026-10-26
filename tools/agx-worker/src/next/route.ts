@@ -365,8 +365,10 @@ export async function route(
     const evidence = measuredEvidence[key];
     if (evidence === undefined)
       return exitWithError(`missing measured evidence for ${key}`, 2);
-    criteria[key] =
-      `${blindCriterion(criterionFor(roster, row), loaded.catalogRows)} ${evidence.text}`;
+    criteria[key] = blindCriterion(
+      criterionFor(roster, row),
+      loaded.catalogRows,
+    );
   }
   for (const [reason, value] of Object.entries(returns))
     criteria[reason] = value.criterion;
