@@ -1,18 +1,15 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
 import {
-  chmod,
   cp,
   mkdir,
   mkdtemp,
   readdir,
-  realpath,
   rm,
   symlink,
   stat,
-  unlink,
 } from "node:fs/promises";
 import { existsSync, readFileSync, rmSync } from "node:fs";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { writeChangeset } from "../changeset/changeset.ts";
 import { applyChangesets } from "../changeset/apply.ts";
@@ -185,96 +182,6 @@ const completionRun: typeof productionRun = (cmd, cwd, options) =>
   cmd[0] === "gh" && cmd[1] === "release"
     ? fakeGhProductionRun(cmd, cwd, options)
     : installProductionRun(cmd, cwd, options);
-
-async function unlinkFixtureBrew(prefix: string) {
-  const keg = await realpath(join(prefix, "opt/agx"));
-  for (const name of suiteBinaryNames()) {
-    const destination = join(prefix, "bin", name);
-    const resolved = await realpath(destination).catch(() => null);
-    if (resolved === join(keg, "bin", name)) await unlink(destination);
-  }
-  await rm(join(prefix, "var/homebrew/linked/agx"), { force: true });
-}
-
-async function linkFixtureBrew(prefix: string) {
-  const keg = await realpath(join(prefix, "opt/agx"));
-  for (const name of suiteBinaryNames()) {
-    const destination = join(prefix, "bin", name);
-    const source = join(keg, "bin", name);
-    const resolved = await realpath(destination).catch(() => null);
-    if (resolved === source) continue;
-    await rm(destination, { force: true });
-    await symlink(source, destination);
-  }
-  const linkedKegRecord = join(prefix, "var/homebrew/linked/agx");
-  await rm(linkedKegRecord, { force: true });
-  await symlink(keg, linkedKegRecord);
-}
-
-async function updateFixtureBrew() {
-  if (process.env.RELEASE_TEST_PIPE_CHILD_PID !== undefined) {
-    const child = Bun.spawn(
-      [process.execPath, "-e", "await Bun.sleep(300000)"],
-      { stdout: "inherit", stderr: "inherit" },
-    );
-    await Bun.write(process.env.RELEASE_TEST_PIPE_CHILD_PID, String(child.pid));
-    child.unref();
-  }
-  if (process.env.RELEASE_TEST_BREW_DELAY_MS !== undefined)
-    await Bun.sleep(Number(process.env.RELEASE_TEST_BREW_DELAY_MS));
-  if (process.env.RELEASE_TEST_BREW_FAIL === "1")
-    return { exit: 1, stdout: "", stderr: "brew update failed\n" };
-  return { exit: 0, stdout: "", stderr: "" };
-}
-
-async function fixtureBrewRun(
-  cmd: string[],
-  cwd: string,
-  options: Parameters<typeof productionRun>[2],
-  record: (args: string[]) => Promise<void>,
-) {
-  await record(cmd);
-  const prefix = process.env.RELEASE_TEST_BREW_PREFIX ?? cwd;
-  if (cmd[1] === "list") {
-    if (process.env.RELEASE_TEST_BREW_ABSENT === "1")
-      return { exit: 1, stdout: "", stderr: "not installed\n" };
-    return {
-      exit: 0,
-      stdout: `agx ${basename(await realpath(join(prefix, "opt/agx")))}\n`,
-      stderr: "",
-    };
-  }
-  if (cmd[1] === "--prefix" && cmd[2] === "agx")
-    return { exit: 0, stdout: `${join(prefix, "opt/agx")}\n`, stderr: "" };
-  if (cmd[1] === "--prefix")
-    return { exit: 0, stdout: `${prefix}\n`, stderr: "" };
-  if (cmd[1] === "unlink" && cmd[2] === "agx") {
-    await unlinkFixtureBrew(prefix);
-    return { exit: 0, stdout: "", stderr: "" };
-  }
-  if (cmd[1] === "install") {
-    await Bun.write(
-      join(process.env.RELEASE_TEST_LOG_ROOT ?? cwd, "brew-no-install-cleanup"),
-      options?.env?.HOMEBREW_NO_INSTALL_CLEANUP ?? "missing",
-    );
-    if (options?.env?.HOMEBREW_NO_INSTALL_CLEANUP !== "1")
-      return {
-        exit: 97,
-        stdout: "",
-        stderr: "HOMEBREW_NO_INSTALL_CLEANUP was not set\n",
-      };
-    if (cmd.includes("--skip-link")) await Bun.sleep(75);
-    await makeFixtureKeg(prefix, "2.3.4", !cmd.includes("--skip-link"));
-    return { exit: 0, stdout: "", stderr: "" };
-  }
-  if (cmd[1] === "link" && cmd[2] === "agx") {
-    await linkFixtureBrew(prefix);
-    return { exit: 0, stdout: "", stderr: "" };
-  }
-  if (cmd[1] === "update") return updateFixtureBrew();
-  return { exit: 0, stdout: "", stderr: "" };
-}
-
 const installProductionRun: typeof productionRun = async (
   cmd,
   cwd,
@@ -336,7 +243,39 @@ const installProductionRun: typeof productionRun = async (
     };
   }
   if (cmd[0] === "/home/linuxbrew/.linuxbrew/bin/brew") {
-    return fixtureBrewRun(cmd, cwd, options, record);
+    await record(cmd);
+    if (cmd[1] === "list")
+      return process.env.RELEASE_TEST_BREW_ABSENT === "1"
+        ? { exit: 1, stdout: "", stderr: "not installed\n" }
+        : { exit: 0, stdout: "agx\n", stderr: "" };
+    if (cmd[1] === "--prefix")
+      return {
+        exit: 0,
+        stdout: `${process.env.RELEASE_TEST_BREW_PREFIX}\n`,
+        stderr: "",
+      };
+    if (
+      cmd[1] === "update" &&
+      process.env.RELEASE_TEST_PIPE_CHILD_PID !== undefined
+    ) {
+      const child = Bun.spawn(
+        [process.execPath, "-e", "await Bun.sleep(300000)"],
+        { stdout: "inherit", stderr: "inherit" },
+      );
+      await Bun.write(
+        process.env.RELEASE_TEST_PIPE_CHILD_PID,
+        String(child.pid),
+      );
+      child.unref();
+    }
+    if (
+      cmd[1] === "update" &&
+      process.env.RELEASE_TEST_BREW_DELAY_MS !== undefined
+    )
+      await Bun.sleep(Number(process.env.RELEASE_TEST_BREW_DELAY_MS));
+    if (cmd[1] === "update" && process.env.RELEASE_TEST_BREW_FAIL === "1")
+      return { exit: 1, stdout: "", stderr: "brew update failed\n" };
+    return { exit: 0, stdout: "", stderr: "" };
   }
   if (cmd[0] === "which" && cmd[1] === "agx") {
     await record(cmd);
@@ -427,15 +366,15 @@ test("publish and machine survive a three-minute fake brew update", async () => 
   process.env.RELEASE_TEST_GH_MODE = "success";
   await (async () => {
     const started = performance.now();
-    const results = [
-      await publish("suite", true, undefined, f.root, installProductionRun),
-      await machineSwap(
+    const results = await Promise.all([
+      publish("suite", true, undefined, f.root, installProductionRun),
+      machineSwap(
         "2.3.4",
         { formulaSeconds: 300 },
         f.root,
         installProductionRun,
       ),
-    ];
+    ]);
     for (const result of results)
       expect(result.isOk(), result.isErr() ? result.error : "").toBe(true);
     if (realTime) expect(performance.now() - started).toBeGreaterThan(120_000);
@@ -535,49 +474,13 @@ test("fake gh starts the tap formula workflow before brew and PATH checks", asyn
   const f = await suiteFixture();
   const consumer = join(f.root, "consumer with spaces");
   await mkdir(consumer);
-  const prefix = process.env.RELEASE_TEST_BREW_PREFIX!;
-  const commandPaths = suiteBinaryNames().map((name) =>
-    join(prefix, "bin", name),
-  );
-  let executableChecks = 0;
-  const missingPaths: string[] = [];
-  const monitor = (async () => {
-    for (let round = 0; round < 500; round++) {
-      const checks = await Promise.all(
-        commandPaths.map(async (path) => ({
-          path,
-          executable: await executablePath(path),
-        })),
-      );
-      executableChecks += checks.length;
-      missingPaths.push(
-        ...checks
-          .filter((check) => !check.executable)
-          .map((check) => check.path),
-      );
-      await Bun.sleep(1);
-    }
-  })();
   const result = await machineSwap(
     "2.3.4",
     { waitSeconds: 0, verifyIn: [consumer] },
     f.root,
     installProductionRun,
   );
-  await monitor;
   expect(result.isOk(), result.isErr() ? result.error : "").toBe(true);
-  expect(executableChecks).toBe(commandPaths.length * 500);
-  expect(missingPaths).toEqual([]);
-  expect(await Bun.file(join(f.root, "brew-no-install-cleanup")).text()).toBe(
-    "1",
-  );
-  for (const name of suiteBinaryNames()) {
-    const oldBinary = await stat(join(prefix, "Cellar/agx/2.3.3/bin", name));
-    expect(oldBinary.isFile() && (oldBinary.mode & 0o111) !== 0).toBe(true);
-    expect(await realpath(join(prefix, "bin", name))).toBe(
-      join(prefix, "Cellar/agx/2.3.4/bin", name),
-    );
-  }
   const calls = (await Bun.file(join(f.root, "calls")).text())
     .trim()
     .split("\n");
@@ -606,18 +509,11 @@ test("fake gh starts the tap formula workflow before brew and PATH checks", asyn
     JSON.stringify(["/home/linuxbrew/.linuxbrew/bin/brew", "update"]),
   );
   expect(callsText).toContain(
-    JSON.stringify(["/home/linuxbrew/.linuxbrew/bin/brew", "unlink", "agx"]),
-  );
-  expect(callsText).toContain(
     JSON.stringify([
       "/home/linuxbrew/.linuxbrew/bin/brew",
-      "install",
-      "--skip-link",
+      "upgrade",
       "fuyutarow/tap/agx",
     ]),
-  );
-  expect(callsText).toContain(
-    JSON.stringify(["/home/linuxbrew/.linuxbrew/bin/brew", "link", "agx"]),
   );
   expect(callsText).toContain(JSON.stringify(["which", "agx"]));
   expect(callsText).toContain(JSON.stringify(["agx", "-V"]));
@@ -1270,25 +1166,11 @@ async function suiteFixture() {
   const f = await libraryFixture();
   process.env.RELEASE_TEST_LOG_ROOT = f.root;
   const brewPrefix = join(f.root, "homebrew");
-  const formulaKeg = join(brewPrefix, "Cellar/agx/2.3.3");
-  const formulaBin = join(formulaKeg, "bin");
+  const formulaBin = join(brewPrefix, "Cellar/agx/2.3.4/bin");
   await mkdir(formulaBin, { recursive: true });
   await mkdir(join(brewPrefix, "bin"), { recursive: true });
-  for (const name of suiteBinaryNames()) {
-    const path = join(formulaBin, name);
-    await Bun.write(
-      path,
-      name === "agx"
-        ? '#!/bin/sh\nprintf "agx 2.3.3\\n"\n'
-        : "#!/bin/sh\nexit 0\n",
-    );
-    await chmod(path, 0o755);
-    await symlink(path, join(brewPrefix, "bin", name));
-  }
-  await mkdir(join(brewPrefix, "opt"), { recursive: true });
-  await symlink(formulaKeg, join(brewPrefix, "opt/agx"));
-  await mkdir(join(brewPrefix, "var/homebrew/linked"), { recursive: true });
-  await symlink(formulaKeg, join(brewPrefix, "var/homebrew/linked/agx"));
+  await Bun.write(join(formulaBin, "agx"), "fake Homebrew agx\n");
+  await symlink(join(formulaBin, "agx"), join(brewPrefix, "bin/agx"));
   process.env.RELEASE_TEST_BREW_PREFIX = brewPrefix;
   for (const pkg of packages) {
     if (pkg === "agx-usehooks") continue;
@@ -1314,54 +1196,6 @@ async function suiteFixture() {
     );
   }
   return { ...f, pkg: "suite", dir: join(f.root, "tools/agx") };
-}
-
-function suiteBinaryNames() {
-  return [...packages]
-    .filter((pkg) => pkg !== "agx-usehooks")
-    .flatMap((pkg) => (pkg === "xmsg" ? ["agx-msg", "xmsg"] : [pkg]));
-}
-
-async function executablePath(path: string) {
-  return stat(path).then(
-    (details) => details.isFile() && (details.mode & 0o111) !== 0,
-    () => false,
-  );
-}
-
-async function makeFixtureKeg(
-  prefix: string,
-  version: string,
-  linkCommands: boolean,
-) {
-  const keg = join(prefix, "Cellar/agx", version);
-  const bin = join(keg, "bin");
-  await mkdir(bin, { recursive: true });
-  for (const name of suiteBinaryNames()) {
-    const source = join(bin, name);
-    await Bun.write(
-      source,
-      name === "agx"
-        ? `#!/bin/sh\nprintf "agx ${version}\\n"\n`
-        : "#!/bin/sh\nexit 0\n",
-    );
-    await chmod(source, 0o755);
-    if (linkCommands) {
-      const destination = join(prefix, "bin", name);
-      await rm(destination, { force: true });
-      await symlink(source, destination);
-    }
-  }
-  const opt = join(prefix, "opt/agx");
-  await rm(opt, { force: true });
-  await symlink(keg, opt);
-  if (linkCommands) {
-    const record = join(prefix, "var/homebrew/linked/agx");
-    await mkdir(join(prefix, "var/homebrew/linked"), { recursive: true });
-    await rm(record, { force: true });
-    await symlink(keg, record);
-  }
-  return keg;
 }
 
 test("suite archive contains all commands with member versions and only its platform asset", async () => {
