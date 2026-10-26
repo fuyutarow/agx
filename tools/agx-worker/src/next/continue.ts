@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { exhaustionPolicy, loadRoster, type Choice } from "../roster/index.ts";
 import { exitWithError } from "./exit.ts";
-import { foldedRuns } from "./store.ts";
+import { foldedRuns, stateDir } from "./store.ts";
 import { readRouteUsage } from "./usage.ts";
 import { route } from "./route.ts";
 import { resolveRunId } from "./run-id.ts";
@@ -12,6 +12,8 @@ export type PinnedContinuation = Readonly<{
   row: Choice;
   resumeSession?: string | undefined;
   supersedes?: string;
+  judgment: Readonly<{ decision: string; note: string }> | null;
+  ticketOrigPath: string;
 }>;
 
 /**
@@ -91,12 +93,36 @@ export async function pinContinuation(
         previousId: previous.id,
         row: next,
         resumeSession: previous.vendor_session,
+        judgment:
+          previous.judgment === null
+            ? null
+            : {
+                decision: previous.judgment.decision,
+                note: previous.judgment.note,
+              },
+        ticketOrigPath:
+          previous.ticket_orig_path ??
+          resolve(stateDir(), "runs", previous.id, "ticket.orig.md"),
       };
     }
     process.stderr.write(
       `agx: capacity on ${previous.row}; fresh dispatch on ${next.id} supersedes ${previous.id} (vendor session cannot be resumed on this route)\n`,
     );
-    return { previousId: previous.id, row: next, supersedes: previous.id };
+    return {
+      previousId: previous.id,
+      row: next,
+      supersedes: previous.id,
+      judgment:
+        previous.judgment === null
+          ? null
+          : {
+              decision: previous.judgment.decision,
+              note: previous.judgment.note,
+            },
+      ticketOrigPath:
+        previous.ticket_orig_path ??
+        resolve(stateDir(), "runs", previous.id, "ticket.orig.md"),
+    };
   }
   if (row === undefined)
     return refuse(`its row ${previous.row} is not in the roster`);
@@ -110,5 +136,15 @@ export async function pinContinuation(
     previousId: previous.id,
     row,
     resumeSession: previous.vendor_session ?? undefined,
+    judgment:
+      previous.judgment === null
+        ? null
+        : {
+            decision: previous.judgment.decision,
+            note: previous.judgment.note,
+          },
+    ticketOrigPath:
+      previous.ticket_orig_path ??
+      resolve(stateDir(), "runs", previous.id, "ticket.orig.md"),
   };
 }

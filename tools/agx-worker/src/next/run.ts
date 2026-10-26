@@ -116,9 +116,23 @@ const renderPromise = (
   sandbox: string,
   prose: string,
   runDir: string,
+  continuation?: {
+    judgment: Readonly<{ decision: string; note: string }> | null;
+    ticketDiff: string;
+  },
 ): string =>
   withReportInstruction(
     [
+      ...(continuation === undefined
+        ? []
+        : [
+            "Continuation correction:",
+            `Prior judgment: ${formatJudgment(continuation.judgment)}`,
+            "Ticket diff (continued run's ticket.orig.md → current ticket):",
+            continuation.ticketDiff,
+            "The prior judgment note and current ticket override the earlier brief.",
+            "",
+          ]),
       `Proposition ${ticket.proposition.id}: ${ticket.proposition.claim}`,
       `refuted_by: ${ticket.proposition.refuted_by}`,
       "Everything below serves this proposition; do not let a side task displace it.",
@@ -148,6 +162,32 @@ const renderPromise = (
       prose.trim(),
     ].join("\n"),
   );
+const formatJudgment = (
+  judgment: Readonly<{ decision: string; note: string }> | null,
+): string => {
+  if (judgment === null) return "None was recorded.";
+  return `${judgment.decision}: ${judgment.note}`;
+};
+const diffTicket = (original: string, current: string): string => {
+  if (!existsSync(original))
+    return "(ticket diff unavailable; current ticket text is included below)";
+  const result = Bun.spawnSync(
+    [
+      "diff",
+      "-u",
+      "--label",
+      "ticket.orig.md",
+      "--label",
+      "current ticket",
+      original,
+      current,
+    ],
+    { stdout: "pipe", stderr: "pipe" },
+  );
+  if (result.exitCode === 0) return "(no ticket changes)";
+  if (result.exitCode === 1) return result.stdout.toString().trimEnd();
+  return "(ticket diff unavailable; current ticket text is included below)";
+};
 const persistInterim = (id: string, path: string, message: string): boolean => {
   const parsed = parseReturn(message);
   if (parsed.kind !== "valid" || parsed.record.interim !== true) return false;
@@ -335,6 +375,13 @@ export async function run(flags: Flags): Promise<number> {
   const supersedes =
     pinned?.supersedes ?? value(flags, "supersedes") ?? ticket.supersedes;
   const resumeSession = pinned?.resumeSession;
+  const continuation =
+    pinned === undefined || pinned === null
+      ? undefined
+      : {
+          judgment: pinned.judgment,
+          ticketDiff: diffTicket(pinned.ticketOrigPath, resolve(path)),
+        };
   await overlapWarnings(ticket.writes, ctx.root);
   if (ctx.vcs === undefined)
     process.stderr.write(
@@ -452,7 +499,9 @@ export async function run(flags: Flags): Promise<number> {
   const workspace = resolve(cwd);
   writeFileSync(
     workerBrief,
-    withReportInstruction(renderPromise(ticket, cwd, sandbox, prose, runDir)),
+    withReportInstruction(
+      renderPromise(ticket, cwd, sandbox, prose, runDir, continuation),
+    ),
   );
   let sandbox_effective: string = sandbox;
   let sandbox_effective_source: string = sandbox_source;

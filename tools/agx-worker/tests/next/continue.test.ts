@@ -83,6 +83,16 @@ const fixture = async (ticketName = "pin") => {
     ticket,
     ticketText("first prose").replace('name = "pin"', `name = "${ticketName}"`),
   );
+  const writeOriginal = (id = "codex-run") => {
+    mkdirSync(join(state, "runs", id), { recursive: true });
+    writeFileSync(
+      join(state, "runs", id, "ticket.orig.md"),
+      ticketText("first prose").replace(
+        'name = "pin"',
+        `name = "${ticketName}"`,
+      ),
+    );
+  };
   const resume = (
     id: string | undefined,
     overrides: NodeJS.ProcessEnv = {},
@@ -136,7 +146,7 @@ const fixture = async (ticketName = "pin") => {
           .safeParse(decoded.data);
         return event.success ? [event.data] : [];
       });
-  return { root, state, ticket, resume, events };
+  return { root, state, ticket, resume, events, writeOriginal };
 };
 
 test.each([false, true])(
@@ -373,6 +383,7 @@ describe("agx worker run --continue pins the prior row", () => {
     "legacy ticket %s resumes on its pinned row",
     async (name) => {
       const f = await fixture(name);
+      f.writeOriginal();
       const result = f.resume("codex-run");
       expect(result.exitCode).toBe(0);
       const receiptResult = jsonOf(Receipt).safeParse(
@@ -396,6 +407,7 @@ describe("agx worker run --continue pins the prior row", () => {
 
   test("a unique run id prefix resolves to the full prior id", async () => {
     const f = await fixture();
+    f.writeOriginal();
     const result = f.resume("codex-");
     expect(result.exitCode, result.stderr.toString()).toBe(0);
     const receipt = jsonOf(Receipt).safeParse(result.stdout.toString().trim());
@@ -449,6 +461,7 @@ describe("agx worker run --continue pins the prior row", () => {
 
   test("a claude run resumes its claude session on its claude row", async () => {
     const f = await fixture();
+    f.writeOriginal("claude-run");
     const result = f.resume("claude-run");
     expect(result.exitCode).toBe(0);
     const receiptResult = jsonOf(Receipt).safeParse(
@@ -490,6 +503,7 @@ describe("agx worker run --continue pins the prior row", () => {
 
   test("the ticket file is re-read on continue", async () => {
     const f = await fixture();
+    f.writeOriginal();
     writeFileSync(f.ticket, ticketText("amended prose"));
     const result = f.resume("codex-run");
     expect(result.exitCode).toBe(0);
@@ -504,7 +518,78 @@ describe("agx worker run --continue pins the prior row", () => {
       "utf8",
     );
     expect(brief).toContain("amended prose");
-    expect(brief).not.toContain("first prose");
+    expect(brief).toContain("-first prose");
+    expect(brief.slice(brief.indexOf("Proposition"))).toContain(
+      "amended prose",
+    );
+  }, 30000);
+
+  test("the continuation prompt starts with the prior judgment and ticket diff", async () => {
+    const f = await fixture();
+    f.writeOriginal();
+    writeFileSync(f.ticket, ticketText("coordinator correction"));
+    const events = f.events();
+    writeFileSync(
+      join(f.state, "records.jsonl"),
+      `${[...events, { kind: "judged", id: "codex-run", at: "2026-10-14T01:11:00.000Z", decision: "reject", note: "Fix the Jev evidence before continuing." }].map((event) => JSON.stringify(event)).join("\n")}\n`,
+    );
+
+    const result = f.resume("codex-run");
+    expect(result.exitCode, result.stderr.toString()).toBe(0);
+    const receipt = jsonOf(Receipt).safeParse(result.stdout.toString().trim());
+    expect(receipt.success).toBe(true);
+    if (!receipt.success) return;
+    const prompt = readFileSync(
+      join(f.state, "runs", receipt.data.id, "brief.md"),
+      "utf8",
+    );
+    expect(prompt.startsWith("Continuation correction:")).toBe(true);
+    expect(prompt).toContain(
+      "Prior judgment: reject: Fix the Jev evidence before continuing.",
+    );
+    expect(prompt).toContain("--- ticket.orig.md");
+    expect(prompt).toContain("+++ current ticket");
+    expect(prompt).toContain("-first prose");
+    expect(prompt).toContain("+coordinator correction");
+    expect(prompt).toContain(
+      "The prior judgment note and current ticket override the earlier brief.",
+    );
+  }, 30000);
+
+  test("the continuation prompt says when no judgment was recorded", async () => {
+    const f = await fixture();
+    f.writeOriginal();
+    const result = f.resume("codex-run");
+    expect(result.exitCode, result.stderr.toString()).toBe(0);
+    const receipt = jsonOf(Receipt).safeParse(result.stdout.toString().trim());
+    expect(receipt.success).toBe(true);
+    if (!receipt.success) return;
+    const prompt = readFileSync(
+      join(f.state, "runs", receipt.data.id, "brief.md"),
+      "utf8",
+    );
+    expect(prompt.startsWith("Continuation correction:")).toBe(true);
+    expect(prompt).toContain("Prior judgment: None was recorded.");
+    expect(prompt).toContain("(no ticket changes)");
+  }, 30000);
+
+  test("a missing original ticket does not prevent continuation", async () => {
+    const f = await fixture();
+    const result = f.resume("codex-run");
+    expect(result.exitCode, result.stderr.toString()).toBe(0);
+    const receipt = jsonOf(Receipt).safeParse(result.stdout.toString().trim());
+    expect(receipt.success).toBe(true);
+    if (!receipt.success) return;
+    const prompt = readFileSync(
+      join(f.state, "runs", receipt.data.id, "brief.md"),
+      "utf8",
+    );
+    expect(prompt).toContain(
+      "(ticket diff unavailable; current ticket text is included below)",
+    );
+    expect(prompt.slice(prompt.indexOf("Proposition"))).toContain(
+      "first prose",
+    );
   }, 30000);
 });
 
