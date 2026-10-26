@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.15.0 — 2026-10-27
+
+- Fetch remote trunk before creating workspaces and report the selected base.
+- Notify dispatchers when worker runs end
+
 ## 1.14.9 — 2026-10-27
 
 - Preserve unknown check exit statuses in readable worker reports
