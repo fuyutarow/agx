@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.13.1 — 2026-10-26
+
+- Keep workspace GC read-only and preserve unsnapshotted edits
+
 ## 1.13.0 — 2026-10-26
 
 - Add ws harvest to preserve ended runs' workspace results once and allow gc to reclaim rejected workspaces.
