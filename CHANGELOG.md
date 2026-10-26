@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.14.4 — 2026-10-27
+
+- Show fixed-workload Artificial Analysis cost in Jev routing criteria.
+
 ## 1.14.3 — 2026-10-27
 
 - Include continuation judgment notes and ticket diffs in worker prompts
