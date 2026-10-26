@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.13.7 — 2026-10-26
+
+- Keep agx run outcomes out of Jev routing requests
+
 ## 1.13.6 — 2026-10-26
 
 - Report bounded GC inventory timeouts and allow a per-invocation limit
