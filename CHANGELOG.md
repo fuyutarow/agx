@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.13.6 — 2026-10-26
+
+- Report bounded GC inventory timeouts and allow a per-invocation limit
+
 ## 1.13.5 — 2026-10-26
 
 - Revert Jev acceptance intervals, cost per accepted result and the cheaper-option rule; Jev requests no longer depend on local run history
