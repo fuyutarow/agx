@@ -154,7 +154,16 @@ async function stopOwnedRun(run: ListedRun): Promise<number> {
     }
     const finished = recordStopped(run, actor);
     if (finished !== undefined) return finished;
-    process.stdout.write(`stopped ${run.id} by ${actor}\n`);
+    const ended = events().findLast(
+      (event) => event.id === run.id && event.kind === "ended",
+    );
+    const session =
+      ended?.kind === "ended" ? ended.vendor_session : run.vendor_session;
+    process.stdout.write(
+      session === null
+        ? `stopped ${run.id} by ${actor}; not continuable because no vendor session had started\n`
+        : `stopped ${run.id} by ${actor}; continuable with vendor session ${session}\n`,
+    );
     return 0;
   }
   return refuse(

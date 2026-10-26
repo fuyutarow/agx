@@ -133,8 +133,13 @@ test("unknown, ended, ownerless and reused PID records never signal an unrelated
   expect(unrelated.exitCode).toBeNull();
 });
 
-for (const unit of [null, "agt_stop-fixture", "agt_stop-fixture-c2"]) {
-  test(`real run stop kills vendor descendants under ${unit ?? "PID lease"}`, async () => {
+for (const { unit, session } of [
+  { unit: null, session: "fake-session" },
+  { unit: "agt_stop-fixture", session: "fake-session" },
+  { unit: "agt_stop-fixture-c2", session: "fake-session" },
+  { unit: null, session: null },
+]) {
+  test(`real run stop under ${unit ?? "PID lease"} preserves session=${session !== null}`, async () => {
     const f = await fixture();
     await prepareTicketRepo(f.root);
     const ticket = join(f.root, "ticket.md");
@@ -143,9 +148,10 @@ for (const unit of [null, "agt_stop-fixture", "agt_stop-fixture-c2"]) {
       '+++\nschema = 2\nname = "stop-fixture"\nwrites = []\noutcome = "stop fixture"\nverify = []\n[proposition]\nid = "STOP"\nclaim = "stops"\nrefuted_by = "vendor remains"\n+++\nWait.\n',
     );
     const worker = join(f.root, "worker.ts");
+    const resumedSession = join(f.root, "resumed-session");
     await Bun.write(
       worker,
-      `const descendant = Bun.spawn([process.execPath, "-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"], {stdout:"ignore",stderr:"ignore"}); await Bun.write(${JSON.stringify(join(f.root, "pids"))}, JSON.stringify([process.pid, descendant.pid])); setInterval(() => {}, 1000);`,
+      `const resumeIndex = process.argv.indexOf("--resume");\nif (resumeIndex >= 0 && process.env.AGX_TEST_FINISH_RESUME === "1") { const session = process.argv[resumeIndex + 1]; await Bun.write(${JSON.stringify(resumedSession)}, session); process.stdout.write(JSON.stringify({ exit: 0, report: { summary: "resumed", changes: [], checks: [], for_coordinator: [], open: [] }, vendor_session: session }) + "\\n"); } else { if (process.env.AGX_TEST_VENDOR_SESSION !== undefined) await Bun.write(process.env.AGX_CODEX_PROGRESS_FILE, JSON.stringify({ schema: 1, last: "vendor started", at: Temporal.Now.instant().toString(), commands: 0, files: 0, session: process.env.AGX_TEST_VENDOR_SESSION })); const descendant = Bun.spawn([process.execPath, "-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"], {stdout:"ignore",stderr:"ignore"}); await Bun.write(${JSON.stringify(join(f.root, "pids"))}, JSON.stringify([process.pid, descendant.pid])); setInterval(() => {}, 1000); }`,
     );
     const server = Bun.serve({
       port: 0,
@@ -160,6 +166,7 @@ for (const unit of [null, "agt_stop-fixture", "agt_stop-fixture-c2"]) {
       TYPESAFE_API_KEY: "test",
       AGX_CONFIG: resolve("tools/agx-worker/src/roster/policy.example.toml"),
       AGX_WORKER_PATH_SOURCE: "dispatcher",
+      ...(session === null ? {} : { AGX_TEST_VENDOR_SESSION: session }),
     });
     const resumed = unit?.endsWith("-c2") === true;
     if (resumed) {
@@ -250,18 +257,6 @@ for (const unit of [null, "agt_stop-fixture", "agt_stop-fixture-c2"]) {
         : [];
     })[0];
     if (start === undefined) expect.unreachable("started record is missing");
-    const progressDir = join(f.state, "runs", start.id);
-    await Bun.write(
-      join(progressDir, "worker-progress.jsonl"),
-      JSON.stringify({
-        schema: 1,
-        last: "waiting",
-        at: Temporal.Now.instant().toString(),
-        commands: 0,
-        files: 0,
-        session: "fake-session",
-      }),
-    );
     const stopped = await f.invoke("stop", start.id.slice(0, 12));
     expect(stopped.exit, stopped.err).toBe(0);
     expect(await owner.exited, await ownerError).toBe(143);
@@ -283,8 +278,35 @@ for (const unit of [null, "agt_stop-fixture", "agt_stop-fixture-c2"]) {
     expect(listed.exit).toBe(0);
     expect(listed.out).toContain('"outcome":"stopped"');
     expect(listed.out).toContain('"stopped_by":"stop-fixture"');
-    expect(listed.out).toContain('"vendor_session":"fake-session"');
+    expect(listed.out).toContain(
+      `"vendor_session":${session === null ? "null" : JSON.stringify(session)}`,
+    );
     expect((await f.invoke("stop", start.id)).err).toContain("already ended");
+    if (session === null) {
+      expect(stopped.out).toContain("not continuable");
+      const refused = await f.invoke(
+        "run",
+        ticket,
+        "--cd",
+        f.root,
+        "--continue",
+        start.id,
+      );
+      expect(refused.exit).toBe(2);
+      expect(refused.err).toContain("has no vendor session to continue");
+    } else if (unit === null) {
+      f.env.AGX_TEST_FINISH_RESUME = "1";
+      const continued = await f.invoke(
+        "run",
+        ticket,
+        "--cd",
+        f.root,
+        "--continue",
+        start.id,
+      );
+      expect(continued.exit, continued.err).toBe(0);
+      expect(await Bun.file(resumedSession).text()).toBe(session);
+    }
   });
 }
 
@@ -354,4 +376,121 @@ test("a unit that truly ended is not reported stopped", async () => {
   expect(await Bun.file(join(f.state, "records.jsonl")).text()).not.toContain(
     "stop-requested",
   );
+});
+
+test("a direct systemctl stop retains a started vendor session for continuation", async () => {
+  const f = await fixture();
+  await prepareTicketRepo(f.root);
+  const ticket = join(f.root, "ticket.md");
+  await Bun.write(
+    ticket,
+    '+++\nschema = 2\nname = "signal-fixture"\nwrites = []\noutcome = "signal fixture"\nverify = []\n[proposition]\nid = "SIGNAL"\nclaim = "preserves sessions"\nrefuted_by = "a stopped session is lost"\n+++\nWait.\n',
+  );
+  const unit = "agt_signal-fixture";
+  const session = "fake-vendor-session";
+  const ready = join(f.root, "vendor-ready");
+  const resumed = join(f.root, "resumed-session");
+  const worker = join(f.root, "worker.ts");
+  await Bun.write(
+    worker,
+    `const resumeIndex = process.argv.indexOf("--resume");\nif (resumeIndex >= 0) { const session = process.argv[resumeIndex + 1]; await Bun.write(${JSON.stringify(resumed)}, session); process.stdout.write(JSON.stringify({ exit: 0, report: { summary: "resumed", changes: [], checks: [], for_coordinator: [], open: [] }, vendor_session: session }) + "\\n"); } else { await Bun.write(process.env.AGX_CODEX_PROGRESS_FILE, JSON.stringify({ schema: 1, last: "vendor started", at: Temporal.Now.instant().toString(), commands: 0, files: 0, session: ${JSON.stringify(session)} })); await Bun.write(${JSON.stringify(ready)}, "started"); setInterval(() => {}, 1000); }\n`,
+  );
+  const server = Bun.serve({
+    port: 0,
+    fetch: () =>
+      Response.json({ answers: { worker: { choice: "luna-high" } } }),
+  });
+  servers.push(server);
+  Object.assign(f.env, {
+    AGX_WORKER_BIN: worker,
+    AGX_TMP_ROOT: join(f.root, "tmp"),
+    JEV_URL: `http://127.0.0.1:${server.port}`,
+    TYPESAFE_API_KEY: "test",
+    AGX_CONFIG: resolve("tools/agx-worker/src/roster/policy.example.toml"),
+    AGX_WORKER_PATH_SOURCE: "dispatcher",
+    INVOCATION_ID: "fixture-invocation",
+  });
+  const binding = {
+    id: crypto.randomUUID(),
+    ticket: "signal-fixture",
+    workspace: f.root,
+    unit,
+  };
+  const owner = Bun.spawn(
+    [
+      process.execPath,
+      cli,
+      "worker",
+      "run",
+      ticket,
+      "--cd",
+      f.root,
+      "--dispatch-binding",
+      JSON.stringify(binding),
+    ],
+    { env: f.env, stdout: "ignore", stderr: "pipe", timeout: 30000 },
+  );
+  children.push(owner);
+  const ownerError = new Response(owner.stderr).text();
+  for (let i = 0; i < 400 && !(await Bun.file(ready).exists()); i += 1)
+    await Bun.sleep(25);
+  const vendorReady = await Bun.file(ready).exists();
+  expect(
+    vendorReady,
+    owner.exitCode === null
+      ? "fake vendor startup timed out"
+      : await ownerError,
+  ).toBe(true);
+  const recordsPath = join(f.state, "records.jsonl");
+  const beforeStop = (await Bun.file(recordsPath).text())
+    .trim()
+    .split("\n")
+    .flatMap((line) => {
+      const event = jsonOf(
+        z.looseObject({ kind: z.string(), id: z.string() }),
+      ).safeParse(line);
+      return event.success ? [event.data] : [];
+    });
+  const started = beforeStop.findLast((event) => event.kind === "started");
+  if (started === undefined) expect.unreachable("started event is missing");
+  const systemctl = join(f.root, "systemctl");
+  await Bun.write(
+    systemctl,
+    `#!${process.execPath}\nconst args = process.argv.slice(2); if (JSON.stringify(args) !== JSON.stringify(["--user", "stop", ${JSON.stringify(`${unit}.service`)}])) process.exit(2); const events = (await Bun.file(${JSON.stringify(recordsPath)}).text()).trim().split("\\n").map(line => JSON.parse(line)); const started = events.findLast(event => event.kind === "started"); process.kill(started.pid, "SIGTERM");`,
+  );
+  await chmod(systemctl, 0o755);
+  const stoppedBySystemd = Bun.spawnSync(
+    [systemctl, "--user", "stop", `${unit}.service`],
+    { env: f.env, timeout: 5000 },
+  );
+  expect(stoppedBySystemd.exitCode, stoppedBySystemd.stderr.toString()).toBe(0);
+  expect(await owner.exited, await ownerError).toBe(143);
+  const afterStop = (await Bun.file(recordsPath).text())
+    .trim()
+    .split("\n")
+    .flatMap((line) => {
+      const event = jsonOf(
+        z.looseObject({
+          kind: z.string(),
+          id: z.string(),
+          vendor_session: z.string().nullable().optional(),
+        }),
+      ).safeParse(line);
+      return event.success ? [event.data] : [];
+    });
+  const ended = afterStop.findLast(
+    (event) => event.kind === "ended" && event.id === started.id,
+  );
+  expect(ended?.vendor_session).toBe(session);
+
+  const continued = await f.invoke(
+    "run",
+    ticket,
+    "--cd",
+    f.root,
+    "--continue",
+    started.id,
+  );
+  expect(continued.exit, continued.err).toBe(0);
+  expect(await Bun.file(resumed).text()).toBe(session);
 });

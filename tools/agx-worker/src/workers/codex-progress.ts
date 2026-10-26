@@ -300,6 +300,7 @@ export function progressWriter(
   let lastWrite = 0;
   let lastWrittenCommands = -1;
   let lastWrittenUsage = "";
+  let lastWrittenSession: string | undefined;
   let failed = 0;
   const write = (): void => {
     const tmp = `${path}.tmp`;
@@ -321,6 +322,7 @@ export function progressWriter(
     lastWrite = performance.now();
     lastWrittenCommands = tally.commands;
     lastWrittenUsage = JSON.stringify(tally.usage ?? null);
+    lastWrittenSession = tally.session;
   };
   return {
     feed: (line) => {
@@ -329,6 +331,7 @@ export function progressWriter(
       if (
         tally.commands > lastWrittenCommands ||
         usage !== lastWrittenUsage ||
+        tally.session !== lastWrittenSession ||
         performance.now() - lastWrite >= WRITE_EVERY_MS
       )
         write();

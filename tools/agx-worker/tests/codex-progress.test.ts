@@ -188,6 +188,29 @@ test("progress writer persists usage and row-priced cost immediately", () => {
   );
 });
 
+test("progress writer persists a newly announced vendor session immediately", () => {
+  const dir = registerTempDir(
+    mkdtempSync(
+      join(tmpdir(), `agx-test-${process.pid}-codex-progress-session-`),
+    ),
+  );
+  roots.push(dir);
+  const path = join(dir, "worker.progress.json");
+  const writer = progressWriter(path);
+  writer.feed(
+    ev({
+      type: "thread.started",
+      thread_id: "fake-vendor-session",
+    }),
+  );
+  const progress = jsonOf(
+    z.looseObject({ session: z.string().optional() }),
+  ).safeParse(readFileSync(path, "utf8"));
+  expect(progress.success ? progress.data.session : undefined).toBe(
+    "fake-vendor-session",
+  );
+});
+
 test("toProgress is the state.ts record: counts, not the path set", () => {
   const t = fold([
     ev({

@@ -365,20 +365,36 @@ export async function run(flags: Flags): Promise<number> {
   const temp = made.value;
   Object.assign(process.env, temp.env);
   process.on("exit", temp.remove);
+  const runDir = resolve(stateDir(), "runs", id);
   let started = false;
   let ended = false;
   let stopTask: Promise<never> | undefined;
   let killWorker: (() => void) | undefined;
+  const vendorSessionFromProgress = (): string | undefined => {
+    const progress = fromThrowable(() =>
+      readFileSync(join(runDir, "worker-progress.jsonl"), "utf8"),
+    )();
+    if (progress.isErr()) return undefined;
+    const parsed = jsonOf(
+      z.looseObject({ session: z.string().optional() }),
+    ).safeParse(progress.value);
+    return parsed.success ? parsed.data.session : undefined;
+  };
   const stop = (signal: StopSignal, code: number): void => {
     if (stopTask !== undefined) return;
+    const requested = events().findLast(
+      (event) => event.kind === "stop-requested" && event.id === id,
+    );
+    const request =
+      requested?.kind === "stop-requested" ? requested : undefined;
+    const vendorSession =
+      request?.vendor_session ??
+      resumeSession ??
+      vendorSessionFromProgress() ??
+      null;
     killWorker?.();
     if (started && !ended) {
       ended = true;
-      const requested = events().findLast(
-        (event) => event.kind === "stop-requested" && event.id === id,
-      );
-      const request =
-        requested?.kind === "stop-requested" ? requested : undefined;
       append({
         kind: "ended",
         id,
@@ -388,7 +404,7 @@ export async function run(flags: Flags): Promise<number> {
         signal,
         stopped_by: request?.stopped_by ?? `signal:${signal}`,
         report_path: null,
-        vendor_session: request?.vendor_session ?? resumeSession ?? null,
+        vendor_session: vendorSession,
         verify: [],
       });
     }
@@ -403,7 +419,6 @@ export async function run(flags: Flags): Promise<number> {
     ["SIGHUP", 129],
   ] as const)
     process.on(signal, stop.bind(undefined, signal, code));
-  const runDir = resolve(stateDir(), "runs", id);
   mkdirSync(runDir, { recursive: true });
   const ticketPath = join(runDir, "ticket.orig.md");
   const ticket_sha256 = createHash("sha256").update(bytes).digest("hex");
