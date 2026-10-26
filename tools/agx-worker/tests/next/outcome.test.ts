@@ -110,7 +110,7 @@ test("ended fixtures retain measured outcomes while routing omits ungraded raw h
         value.includes("AA 33,"),
       ),
     ).toBe(
-      "Route codex. the default worker: clear-spec code and text, fixes, tests. Published benchmark snapshot (Artificial Analysis, 2026-10-08): AA 33, TB4 4.5% (long terminal/agentic), SciCode 50.3%. Price $0.10/$0.50 per 1M tokens in/out = 1x the cheapest row.",
+      "Route codex. AA 33 (Artificial Analysis, 2026-10-08); TB4 4.5% (Artificial Analysis, 2026-10-08); SciCode 50.3% (Artificial Analysis, 2026-10-08). Price $0.10/$0.01/$0.50 per 1M tokens in/cache/out. Multiple 1x cheapest row.",
     );
     expected.push(outcome);
   }

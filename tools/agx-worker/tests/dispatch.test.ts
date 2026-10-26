@@ -696,7 +696,6 @@ id = "fixture-high"
 route = "codex"
 model = "fixture"
 effort = "high"
-use_for = "fixture"
 `,
   );
   f.env.FAKE_ROSTER_CHECK = "yes";

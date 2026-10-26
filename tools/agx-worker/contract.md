@@ -929,9 +929,10 @@ checks persisted/listed timeout, refusal/capacity distinction, and stats counts.
 
 Routing sends one Choice containing the same eligible rows in their existing order,
 with IDs `model_0` through `model_n`, followed by `split`, `uncheckable`,
-`contradiction`, and `missing_input`. Row criteria retain published scores, prices,
-and use-for meaning, replacing model identities, family versions, and effort words
-with neutral grammatical wording. Routing has no capability levels or return
+`contradiction`, and `missing_input`. Row criteria contain only route, every
+published benchmark score with source and snapshot date, list price, and the
+multiple of the cheapest priced row. Catalog rows contain no use-for prose.
+Routing has no capability levels or return
 threshold: a chosen return option returns the ticket.
 The user task text is retained. The four returns describe observable conditions
 and exclusions; choosing one prints its reason and fix to stderr, records a refusal,
@@ -941,8 +942,9 @@ Invalid or missing answers retain the eligible default-row fallback and its reas
 
 ### Routing evidence and offline measurements
 
-Jev criteria contain the blinded published capability, price, and stated use
-for each option. The objective asks Jev to judge those facts against the ticket
+Jev criteria contain the route, every published score with source and snapshot
+date, list price, and cheapest-row multiple for each option. The objective asks
+Jev to judge each option by its published scores and price against the ticket
 requirements and states that agx does not feed its own run outcomes back into
 the choice. In particular, no judged or accepted counts, percentages, thresholds,
 or median wall times from agx runs are serialized into the Jev request.
@@ -951,8 +953,8 @@ Option IDs, ordering, prices and published scores retain their existing meaning.
 The objective is: "Purpose: the owner pays for every token and waits for every
 minute until a result is accepted. Choose the option expected to produce an
 accepted result for this ticket at the lowest cost and in the shortest time.
-Evidence: judge each option by its stated use and published benchmarks against
-what the ticket requires; agx does not feed its own run outcomes back into this
+Evidence: judge each option by its published scores and price against what the
+ticket requires; agx does not feed its own run outcomes back into this
 choice. Return the ticket instead of choosing a model only when it cannot be
 done as written. Subscription health: weigh 7-day windows most; 5-hour windows
 are secondary; keep the intended bias toward the codex route; stale or unknown

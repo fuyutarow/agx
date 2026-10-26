@@ -23,7 +23,6 @@ const ChoiceSchema = z.strictObject({
   price_in: z.number().optional(),
   price_cached_in: z.number().optional(),
   price_out: z.number().optional(),
-  use_for: z.string(),
 });
 export type Choice = z.output<typeof ChoiceSchema>;
 

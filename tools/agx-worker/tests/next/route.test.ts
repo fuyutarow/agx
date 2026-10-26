@@ -516,7 +516,7 @@ describe("capability constrained routing", () => {
       `${ROUTING_OBJECTIVE} Pick a roster row for this ticket.`,
     );
     expect(ROUTING_OBJECTIVE).toBe(
-      "Purpose: the owner pays for every token and waits for every minute until a result is accepted. Choose the option expected to produce an accepted result for this ticket at the lowest cost and in the shortest time. Evidence: judge each option by its stated use and published benchmarks against what the ticket requires; agx does not feed its own run outcomes back into this choice. Return the ticket instead of choosing a model only when it cannot be done as written. Subscription health: weigh 7-day windows most; 5-hour windows are secondary; keep the intended bias toward the codex route; stale or unknown usage is neutral.",
+      "Purpose: the owner pays for every token and waits for every minute until a result is accepted. Choose the option expected to produce an accepted result for this ticket at the lowest cost and in the shortest time. Evidence: judge each option by its published scores and price against what the ticket requires; agx does not feed its own run outcomes back into this choice. Return the ticket instead of choosing a model only when it cannot be done as written. Subscription health: weigh 7-day windows most; 5-hour windows are secondary; keep the intended bias toward the codex route; stale or unknown usage is neutral.",
     );
     expect(request?.questions.worker.instructions).not.toContain(
       "A. Capability sufficiency (hard)",
@@ -795,6 +795,9 @@ test("fresh Sol 6.1 choice records the restored model and sourced criteria", asy
   expect(criteria["sol-high"]).toContain("AA 50");
   expect(criteria["sol-high"]).toContain("TB4 51.5%");
   expect(criteria["sol-high"]).toContain("SciCode 55.8%");
+  expect(criteria["sol-high"]).toContain(
+    "TB4 51.5% (Artificial Analysis, 2026-10-08)",
+  );
   expect(criteria["sol-high"]).not.toMatch(
     /graded|history|recent|comparable|accepted|rejected/iu,
   );
@@ -811,7 +814,9 @@ test("retired Sol 6.0 Jev IDs are ineligible and never point to the 6.1 rows", a
   expect(picked.model).not.toBe("gpt-6-sol");
   const criteria = server.request()?.questions.worker.criteria ?? {};
   expect(criteria["sol6-high"]).toBeUndefined();
-  expect(criteria["sol-high"]).toContain("AA 50, TB4 51.5%");
+  expect(criteria["sol-high"]).toContain(
+    "AA 50 (Artificial Analysis, 2026-10-08)",
+  );
 });
 for (const capability of ["terminal-agentic", "long-tool-loop"]) {
   test(`all restored Sol 6.1 efforts meet ${capability} eligibility`, async () => {
@@ -1077,6 +1082,15 @@ test("every shipped Jev option is readable and keeps its row measurements", asyn
   );
 
   expect(texts).toHaveLength(rows.length);
+  const quantitativeCriterion =
+    /^Route (?:codex|claude)\. (?:(?:AA|TB4|SciCode|CodingAgent) \d+(?:\.\d+)?%? \(Artificial Analysis, \d{4}-\d{2}-\d{2}\)(?:; (?:AA|TB4|SciCode|CodingAgent) \d+(?:\.\d+)?%? \(Artificial Analysis, \d{4}-\d{2}-\d{2}\))*|no published scores)\. Price (?:\$\d+(?:\.\d+)?|—)\/(?:\$\d+(?:\.\d+)?|—)\/(?:\$\d+(?:\.\d+)?|—) per 1M tokens in\/cache\/out\. Multiple (?:\d+(?:\.\d+)?|unknown)x cheapest row\.$/u;
+  for (const text of texts) {
+    expect(text).toMatch(quantitativeCriterion);
+    expect(text).not.toMatch(
+      /\b(?:capable|task|work|where|insufficient|reasoning)\b/iu,
+    );
+  }
+  for (const row of rows) expect(row).not.toHaveProperty("use_for");
   expect(optionOrder.map((row) => row.id)).toEqual(
     rows
       .toSorted(
@@ -1200,7 +1214,7 @@ test("local record evidence stays in the pick audit and out of Jev criteria", as
     "at the lowest cost and in the shortest time",
   );
   expect(request.questions.worker.instructions).toContain(
-    "published benchmarks against what the ticket requires",
+    "published scores and price against what the ticket requires",
   );
   expect(request.questions.worker.instructions).toContain(
     "agx does not feed its own run outcomes back into this choice",
@@ -1221,6 +1235,56 @@ test("local record evidence stays in the pick audit and out of Jev criteria", as
     median_wall_minutes: 5.1,
     text: "agx measured: 84% of 25 judged runs accepted, median 5.1 min.",
   });
+});
+
+test("Jev request is byte-identical across opposite local run histories", async () => {
+  await isolateState();
+  const accepted = appendStarted("luna-high");
+  if (accepted?.kind !== "started")
+    expect.unreachable("missing accepted history run");
+  append({
+    kind: "ended",
+    id: accepted.id,
+    at: now(),
+    exit: 0,
+    outcome: "ok",
+    report_path: null,
+    vendor_session: null,
+  });
+  append({
+    kind: "judged",
+    id: accepted.id,
+    at: now(),
+    decision: "accept",
+    note: "accepted history fixture",
+  });
+  const first = startServer("luna-high", { "luna-high": 1 });
+  await route("open-loop byte guard");
+  expect(first.rawBody()).toBeDefined();
+
+  await isolateState();
+  const rejected = appendStarted("luna-high");
+  if (rejected?.kind !== "started")
+    expect.unreachable("missing rejected history run");
+  append({
+    kind: "ended",
+    id: rejected.id,
+    at: now(),
+    exit: 0,
+    outcome: "ok",
+    report_path: null,
+    vendor_session: null,
+  });
+  append({
+    kind: "judged",
+    id: rejected.id,
+    at: now(),
+    decision: "reject",
+    note: "rejected history fixture",
+  });
+  const second = startServer("luna-high", { "luna-high": 1 });
+  await route("open-loop byte guard");
+  expect(second.rawBody()).toBe(first.rawBody());
 });
 
 test("local accepted and rejected history cannot change the Jev request", async () => {

@@ -27,7 +27,6 @@ const ChoiceSchema = z.strictObject({
   price_in: z.number().optional(),
   price_cached_in: z.number().optional(),
   price_out: z.number().optional(),
-  use_for: z.string(),
 });
 export type Choice = z.output<typeof ChoiceSchema>;
 
@@ -281,24 +280,33 @@ export const ROUTING_OBJECTIVE =
 /** What Jev reads about one row: its route, measured capability, and relative price. */
 export function criterionFor(r: Roster, c: Choice): string {
   const measured = [
-    c.aa_index === undefined ? undefined : `AA ${c.aa_index}`,
-    c.tb4 === undefined ? undefined : `TB4 ${c.tb4}% (long terminal/agentic)`,
-    c.scicode === undefined ? undefined : `SciCode ${c.scicode}%`,
+    c.aa_index === undefined
+      ? undefined
+      : `AA ${c.aa_index} (Artificial Analysis, ${r.as_of})`,
+    c.tb4 === undefined
+      ? undefined
+      : `TB4 ${c.tb4}% (Artificial Analysis, ${r.as_of})`,
+    c.scicode === undefined
+      ? undefined
+      : `SciCode ${c.scicode}% (Artificial Analysis, ${r.as_of})`,
+    c.coding_agent === undefined
+      ? undefined
+      : `CodingAgent ${c.coding_agent} (Artificial Analysis, ${r.as_of})`,
   ].filter((x) => x !== undefined);
   return (
-    `Route ${c.route}. ${c.use_for}. Published benchmark snapshot (Artificial Analysis, ${r.as_of}): ${measured.length === 0 ? "unknown" : measured.join(", ")}. ` +
-    `Price ${price(c.price_in)}/${price(c.price_out)} per 1M tokens in/out = ${costMultiple(r, c) ?? "unknown"}x the cheapest row.`
+    `Route ${c.route}. ${measured.length === 0 ? "no published scores" : measured.join("; ")}. ` +
+    `Price ${price(c.price_in)}/${price(c.price_cached_in)}/${price(c.price_out)} per 1M tokens in/cache/out. Multiple ${costMultiple(r, c) ?? "unknown"}x cheapest row.`
   );
 }
 
 /** The full roster, including routes excluded from auto-pick; the default is marked ●. */
 export function rosterTable(r: Roster): string {
   const head =
-    "| default | id | route | AA | TB4 | SciCode | $in/cache/out | cost | use for |\n" +
-    "| :-: | --- | --- | --: | --: | --: | --- | --: | --- |";
+    "| default | id | route | AA | TB4 | SciCode | $in/cache/out | cost |\n" +
+    "| :-: | --- | --- | --: | --: | --: | --- | --: |";
   const rows = r.choice.map(
     (c) =>
-      `| ${c.id === r.default ? "●" : "○"} | \`${c.id}\` | ${c.route} | ${num(c.aa_index)} | ${num(c.tb4)}${c.tb4_source === undefined ? "" : ` ([AA](${c.tb4_source}))`} | ${num(c.scicode)}${c.scicode_source === undefined ? "" : ` ([AA](${c.scicode_source}))`} | ${price(c.price_in)}/${price(c.price_cached_in)}/${price(c.price_out)} | ${costMultiple(r, c) === undefined ? "—" : `${costMultiple(r, c)}x`} | ${c.use_for} |`,
+      `| ${c.id === r.default ? "●" : "○"} | \`${c.id}\` | ${c.route} | ${num(c.aa_index)} | ${num(c.tb4)}${c.tb4_source === undefined ? "" : ` ([AA](${c.tb4_source}))`} | ${num(c.scicode)}${c.scicode_source === undefined ? "" : ` ([AA](${c.scicode_source}))`} | ${price(c.price_in)}/${price(c.price_cached_in)}/${price(c.price_out)} | ${costMultiple(r, c) === undefined ? "—" : `${costMultiple(r, c)}x`} |`,
   );
   return [head, ...rows].join("\n");
 }

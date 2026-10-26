@@ -50,17 +50,33 @@ export type Graded = Readonly<{
 }>;
 
 export const ROUTING_OBJECTIVE =
-  "Purpose: the owner pays for every token and waits for every minute until a result is accepted. Choose the option expected to produce an accepted result for this ticket at the lowest cost and in the shortest time. Evidence: judge each option by its stated use and published benchmarks against what the ticket requires; agx does not feed its own run outcomes back into this choice. Return the ticket instead of choosing a model only when it cannot be done as written. Subscription health: weigh 7-day windows most; 5-hour windows are secondary; keep the intended bias toward the codex route; stale or unknown usage is neutral.";
+  "Purpose: the owner pays for every token and waits for every minute until a result is accepted. Choose the option expected to produce an accepted result for this ticket at the lowest cost and in the shortest time. Evidence: judge each option by its published scores and price against what the ticket requires; agx does not feed its own run outcomes back into this choice. Return the ticket instead of choosing a model only when it cannot be done as written. Subscription health: weigh 7-day windows most; 5-hour windows are secondary; keep the intended bias toward the codex route; stale or unknown usage is neutral.";
 
 /** What Jev reads about one row: its route, measured capability, and relative price. */
 export function criterionFor(r: Roster, c: Choice): string {
+  const source = (key: string): string => {
+    const url = r.sources[key];
+    return url !== undefined && url.includes("artificialanalysis.ai")
+      ? "Artificial Analysis"
+      : (url ?? "unknown source");
+  };
   const measured = [
-    c.aa_index === undefined ? undefined : `AA ${c.aa_index}`,
-    c.tb4 === undefined ? undefined : `TB4 ${c.tb4}% (long terminal/agentic)`,
-    c.scicode === undefined ? undefined : `SciCode ${c.scicode}%`,
+    c.aa_index === undefined
+      ? undefined
+      : `AA ${c.aa_index} (${source("aa_releases")}, ${r.as_of})`,
+    c.tb4 === undefined
+      ? undefined
+      : `TB4 ${c.tb4}% (${source("aa_releases")}, ${r.as_of})`,
+    c.scicode === undefined
+      ? undefined
+      : `SciCode ${c.scicode}% (${source("aa_releases")}, ${r.as_of})`,
+    c.coding_agent === undefined
+      ? undefined
+      : `CodingAgent ${c.coding_agent} (${source("aa_coding_agents")}, ${r.as_of})`,
   ].filter((x) => x !== undefined);
+  const priceText = `Price ${price(c.price_in)}/${price(c.price_cached_in)}/${price(c.price_out)} per 1M tokens in/cache/out`;
   return (
-    `Route ${c.route}. ${c.use_for}. Published benchmark snapshot (Artificial Analysis, ${r.as_of}): ${measured.length === 0 ? "unknown" : measured.join(", ")}. ` +
-    `Price ${price(c.price_in)}/${price(c.price_out)} per 1M tokens in/out = ${costMultiple(r, c) ?? "unknown"}x the cheapest row.`
+    `Route ${c.route}. ${measured.length === 0 ? "no published scores" : measured.join("; ")}. ` +
+    `${priceText}. Multiple ${costMultiple(r, c) ?? "unknown"}x cheapest row.`
   );
 }
