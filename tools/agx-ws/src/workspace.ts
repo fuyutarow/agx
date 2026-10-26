@@ -308,6 +308,63 @@ async function bury(
     : bad(`rip ${dir} failed: ${ran.value.err.trim()}`);
 }
 
+function miseStateDir(): string {
+  const configured = process.env.MISE_STATE_DIR;
+  if (configured !== undefined && configured !== "") return resolve(configured);
+  const stateHome = process.env.XDG_STATE_HOME;
+  return join(
+    stateHome === undefined || stateHome === ""
+      ? join(process.env.HOME ?? homedir(), ".local", "state")
+      : stateHome,
+    "mise",
+  );
+}
+
+function pathIsInside(root: string, target: string): boolean {
+  return target === root || target.startsWith(`${root}${sep}`);
+}
+
+async function symlinksWithin(
+  directory: string,
+  root: string,
+): Promise<string[]> {
+  const entries = existsSync(directory) ? await readdir(directory) : [];
+  const matching = await Promise.all(
+    entries.map(async (entry) => {
+      const link = join(directory, entry);
+      if (!(await lstat(link)).isSymbolicLink()) return null;
+      const target = resolve(dirname(link), await readlink(link));
+      return pathIsInside(root, target) ? link : null;
+    }),
+  );
+  return matching.filter((link) => link !== null);
+}
+
+/** Remove only mise state links that point into the workspace being buried. */
+async function untrackMiseWorkspace(dir: string, cwd: string): Promise<void> {
+  const root = resolve(dir);
+  const state = miseStateDir();
+  const trusted = join(state, "trusted-configs");
+  const mise = Bun.which("mise");
+  if (mise === null)
+    process.stderr.write(
+      "ws: mise command cleanup skipped (mise not on PATH); removing matching state links directly\n",
+    );
+  for (const link of await symlinksWithin(trusted, root)) {
+    const target = resolve(dirname(link), await readlink(link));
+    // mise has used both config-file and parent-directory trust targets. Passing
+    // a config path lets mise own removal; the fallback remains workspace-scoped.
+    const config = basename(target).endsWith(".toml")
+      ? target
+      : join(target, "mise.toml");
+    if (mise !== null) await exec(["mise", "untrust", config], cwd);
+  }
+  for (const kind of ["tracked-configs", "trusted-configs"]) {
+    const directory = join(state, kind);
+    for (const link of await symlinksWithin(directory, root)) await rm(link);
+  }
+}
+
 /** Preconditions common to every verb: checked before any work, each failure names its repair. */
 function common(repo: Repo, readonly = false): Attempt<void> {
   if (Bun.which("jj") === null)
@@ -475,7 +532,9 @@ async function forgetAndBury(
     immutable = !abandoned.ok;
   }
   const buried = await bury(graveyard, dir, burialTip.value.trim());
-  return buried.ok ? good(immutable) : buried;
+  if (!buried.ok) return buried;
+  const mise = await attempt(() => untrackMiseWorkspace(dir, repo.backing));
+  return mise.ok ? good(immutable) : bad(`mise cleanup ${dir}: ${msg(mise)}`);
 }
 
 /** Hold land's own lock through removal, closing the gap after classification. */

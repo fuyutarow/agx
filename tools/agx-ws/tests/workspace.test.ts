@@ -10,23 +10,19 @@ import {
 } from "bun:test";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readlinkSync,
+  realpathSync,
   writeFileSync,
   chmodSync,
   rmSync,
 } from "node:fs";
 import { tmpdir, hostname } from "node:os";
-import { join } from "node:path";
-import {
-  mkdir,
-  chmod,
-  unlink,
-  lstat,
-  symlink,
-  truncate,
-} from "node:fs/promises";
+import { delimiter, join } from "node:path";
+import { mkdir, chmod, unlink, lstat, symlink, truncate } from "node:fs/promises";
 import { jsonOf, z } from "../../shared/src/zod.ts";
 import { rootFileFileset, untrackedContent } from "../src/workspace.ts";
 
@@ -129,6 +125,11 @@ afterAll(() => {
 
 const listing = (dir: string): string[] =>
   existsSync(dir) ? readdirSync(dir).toSorted() : [];
+const symlinkTargets = (directory: string): string[] =>
+  readdirSync(directory).flatMap((entry) => {
+    const link = join(directory, entry);
+    return lstatSync(link).isSymbolicLink() ? [readlinkSync(link)] : [];
+  });
 const pathExists = (dir: string): Promise<boolean> =>
   lstat(dir).then(
     () => true,
@@ -1064,6 +1065,92 @@ describe("agx ws refresh", () => {
 });
 
 describe("agx ws rm", () => {
+  test("removes only the removed workspace's tracked and trusted mise entries", async () => {
+    const path = await repo(
+      'trunk = "main"\nready = ["mise trust -q mise.toml"]\n',
+    );
+    await Bun.write(join(path, "mise.toml"), '[env]\nWS_FIXTURE = "yes"\n');
+    expect(
+      (await jj(["commit", "-m", "mise workspace fixture"], path)).code,
+    ).toBe(0);
+    expect((await jj(["bookmark", "set", "main", "-r", "@"], path)).code).toBe(
+      0,
+    );
+    const env = baseEnv({
+      MISE_STATE_DIR: join(scratch, `mise-state-untrack-${++counter}`),
+    });
+    expect((await ws(["add", "removed"], path, env)).code).toBe(0);
+    expect((await ws(["add", "live"], path, env)).code).toBe(0);
+
+    const removedDir = wsDir(path, "removed");
+    const liveDir = wsDir(path, "live");
+    const trackedDir = join(env.MISE_STATE_DIR ?? "", "tracked-configs");
+    const trustedDir = join(env.MISE_STATE_DIR ?? "", "trusted-configs");
+    const trackedTargets = (): string[] => symlinkTargets(trackedDir);
+    const trustedTargets = (): string[] => symlinkTargets(trustedDir);
+    const removedConfig = join(removedDir, "mise.toml");
+    const liveConfig = join(liveDir, "mise.toml");
+    expect(trackedTargets()).toContain(removedConfig);
+    expect(trackedTargets()).toContain(liveConfig);
+    expect(trustedTargets()).toContain(removedConfig);
+    expect(trustedTargets()).toContain(liveConfig);
+
+    const result = await ws(["rm", "removed"], path, env);
+    expect(result.code, result.err).toBe(0);
+    expect(trackedTargets()).not.toContain(removedConfig);
+    expect(trustedTargets()).not.toContain(removedConfig);
+    expect(trackedTargets()).toContain(liveConfig);
+    expect(trustedTargets()).toContain(liveConfig);
+  });
+
+  test("removes matching mise links when mise is absent from PATH", async () => {
+    const path = await repo(
+      'trunk = "main"\nready = ["mise trust -q mise.toml"]\n',
+    );
+    await Bun.write(join(path, "mise.toml"), '[env]\nWS_FIXTURE = "yes"\n');
+    expect(
+      (await jj(["commit", "-m", "mise no-command fixture"], path)).code,
+    ).toBe(0);
+    expect((await jj(["bookmark", "set", "main", "-r", "@"], path)).code).toBe(
+      0,
+    );
+    const env = baseEnv({
+      MISE_STATE_DIR: join(scratch, `mise-state-no-command-${++counter}`),
+    });
+    expect((await ws(["add", "no-command"], path, env)).code).toBe(0);
+
+    const misePath = Bun.which("mise");
+    expect(misePath).not.toBeNull();
+    const noMiseBin = join(scratch, `no-mise-bin-${counter}`);
+    mkdirSync(noMiseBin);
+    for (const command of ["bun", "jj", "rip"]) {
+      const resolved = Bun.which(command);
+      expect(resolved).not.toBeNull();
+      await symlink(realpathSync(resolved ?? ""), join(noMiseBin, command));
+    }
+    const withoutMise = [
+      noMiseBin,
+      ...(env.PATH ?? "")
+        .split(delimiter)
+        .filter((directory) => !existsSync(join(directory, "mise"))),
+    ].join(delimiter);
+    const dir = wsDir(path, "no-command");
+    const config = join(dir, "mise.toml");
+    const state = env.MISE_STATE_DIR ?? "";
+    const removed = await ws(["rm", "no-command"], path, {
+      ...env,
+      PATH: withoutMise,
+    });
+    expect(removed.code, removed.err).toBe(0);
+    expect(removed.err).toContain("mise command cleanup skipped");
+    expect(symlinkTargets(join(state, "tracked-configs"))).not.toContain(
+      config,
+    );
+    expect(symlinkTargets(join(state, "trusted-configs"))).not.toContain(
+      config,
+    );
+  });
+
   test("removes a landed workspace: forgotten and ripped", async () => {
     const path = await repo('trunk = "main"\n');
     await ws(["add", "clean"], path);
