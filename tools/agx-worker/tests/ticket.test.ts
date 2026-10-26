@@ -35,9 +35,9 @@ RESOURCE-ENVELOPE(cpu): 1 core
 
 describe("globsOverlap (segment-exact intersection)", () => {
   test.each([
-    ["tools/agx-worker/**", "agents/models/roster.ts", false],
+    ["tools/agx-worker/**", "tools/agx-worker/src/roster/catalog.toml", true],
     ["tools/agx-worker/**", "tools/agx-worker/tests/a.ts", true],
-    ["agents/**", "agents/models/roster.ts", true],
+    ["agents/**", "tools/agx-worker/src/roster/catalog.toml", false],
     ["**", "anything/at/all", true],
     ["a/b.ts", "a/b.ts", true],
     ["a/b.ts", "a/c.ts", false],

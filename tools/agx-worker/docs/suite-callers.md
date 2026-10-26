@@ -10,7 +10,7 @@ Read-only search of the workspace, registered repositories (`scripts/workspace-r
 
 Query: `\bagx[ \t]+(run|dispatch|check|ls|judge|stats|roster|doctor)\b|["']agx["'][ \t]*,[ \t]*["'](run|dispatch|check|ls|judge|stats|roster|doctor)["']|\bagx-run\b`
 
-Raw output, including snippets and pre-edit matches: `/tmp/agx-suite-callers.json`. Entries below list every matched file and line; a count means matched lines, not invocations. The pre-edit workspace inventory is retained so moved callers are not lost.
+Raw output, including snippets and pre-edit matches: `/tmp/agx-suite-callers.json`. Entries below list every matched file and line; a count means matched lines, not invocations. The pre-edit workspace inventory is retained so moved callers are not lost. Retired duplicate-roster and loader entries are omitted from this view; current row facts live in `tools/agx-worker/src/roster/catalog.toml`.
 
 The previously inventoried external DX caller declared `["agx", "jev"]`; that external repository is outside this checkout. This repository no longer provides either Jev command; use `jex`.
 
@@ -150,9 +150,7 @@ The previously inventoried external DX caller declared `["agx", "jev"]`; that ex
 - `agents/claude/hooks/tests/enforce-dispatch-contract.test.ts:10,53,58,59,60,61,62,64`
 - `agents/claude/hooks/tests/bash-durations.test.ts:36`
 - `agents/claude/hooks/tests/dispatch-contract.diagnostic-card.md:14,15,16,19,20,22`
-- `agents/models/dispatch-roster.contract.md:6,12,14,15,16,17,18,19,20,21,27`
 - `agents/claude/hooks/enforce-background-waits.ts:24`
-- `agents/models/dispatch-roster.toml:3,5,6`
 - `agents/claude/hooks/log-agx-snapshot.ts:10,46,47`
 - `agents/claude/hooks/enforce-dispatch-contract.ts:2,6,24,48,49,50,51`
 - `agents/claude/hooks/bash-durations.ts:9`
@@ -162,7 +160,6 @@ The previously inventoried external DX caller declared `["agx", "jev"]`; that ex
 - `scripts/land.ts:128,130,134,139,147,164,901,1007,1062,1064,1065`
 - `CLAUDE.md:49,117,118`
 - `systemd/agx-doctor.path:5,6`
-- `agents/models/roster.ts:3,71,194,202,203,204`
 - `agents/skills/driving-grok/SKILL.md:27,31,102,180,217,219,233,235`
 - `scripts/doctor.ts:1972,1979,1983`
 - `tools/statusline/tests/fixtures/codex-rollout-run-activity.jsonl:1`
@@ -277,9 +274,6 @@ The previously inventoried external DX caller declared `["agx", "jev"]`; that ex
 - `agents/hooks/storage-headroom.contract.md:17`
 - `agents/models/tests/roster.test.ts:208,209,210,211,212,216`
 - `package.json:49`
-- `agents/models/roster.ts:194,202,203,204`
-- `agents/models/dispatch-roster.toml:3`
-- `agents/models/dispatch-roster.contract.md:6,12,14,15,16,17,18,19,21,27`
 - `agents/codex/AGENTS.md:11`
 - `agents/skills/orchestrating-agents/references/model-roster.md:22,26`
 - `scripts/agx-accept.ts:150,158,167,172,182`
@@ -450,9 +444,6 @@ The previously inventoried external DX caller declared `["agx", "jev"]`; that ex
 - `.agents/tickets/agx-one-run-per-ws.md:4,12,23`
 - `.agents/tickets/statusline-step3.md:4`
 - `.agents/tickets/redo-versionguard.md:5`
-- `agents/models/roster.ts:3,71,194,202,203,204`
-- `agents/models/dispatch-roster.toml:3,5,6`
-- `agents/models/dispatch-roster.contract.md:6,12,14,15,16,17,18,19,20,21,27`
 - `agents/skills/orchestrating-agents/SKILL.md:83,360`
 - `agents/skills/orchestrating-agents/references/model-roster.md:22,26`
 - `tools/statusline/src/dataframe.ts:60`

@@ -125,10 +125,11 @@ The composed roster also passes generation-exclusivity validation.
 
 `agx worker roster --json` exports the combined roster; worker routing, continuation and
 preflight consume it. External integrations should use this interface rather than parse an
-internal file. Legacy price reporting still reads the embedded `agents/models/dispatch-roster.toml`
-or `DISPATCH_ROSTER_PATH` through `tools/shared/src/dispatch-pricing.ts`. That variable is not
-currently rejected by the routing loader. Price reporting therefore remains a second reader.
-Shell-command model-floor enforcement belongs to the invoking host, not this routing policy.
+internal file. Price reporting reads row values from
+`tools/agx-worker/src/roster/catalog.toml` through `tools/shared/src/dispatch-pricing.ts`; the
+machine routing policy remains separate. There is no independent roster-path override for price
+reporting. Shell-command model-floor enforcement belongs to the invoking host, not this routing
+policy.
 
 ## Public roster pricing projection
 

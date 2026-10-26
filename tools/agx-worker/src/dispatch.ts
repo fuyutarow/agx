@@ -441,15 +441,7 @@ export async function dispatch(options: {
     return 2;
   }
   const workerCommand = selfCommand();
-  // systemd does not inherit the caller's cwd; resolve the override once so
-  // preflight and the child load the same file. Keep empty input invalid.
-  const rosterPath = callerEnv.DISPATCH_ROSTER_PATH;
-  const env: NodeJS.ProcessEnv = {
-    ...callerEnv,
-    ...(rosterPath === undefined || rosterPath === ""
-      ? {}
-      : { DISPATCH_ROSTER_PATH: resolve(cwd, rosterPath) }),
-  };
+  const env: NodeJS.ProcessEnv = { ...callerEnv };
   const ticketPath = resolve(cwd, options.ticketPath);
   const intakeBytes = await readFile(ticketPath).catch(() => null);
   const intakeTicket =
@@ -824,7 +816,6 @@ export async function dispatch(options: {
     "CLAUDE_CODE_SESSION_ID",
     "-E",
     "CODEX_SESSION_ID",
-    ...(rosterPath === undefined ? [] : ["-E", "DISPATCH_ROSTER_PATH"]),
     `--setenv=PATH=${callerEnv.PATH}`,
     "--setenv=AGX_WORKER_PATH_SOURCE=dispatcher",
     "--",

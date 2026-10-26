@@ -3,16 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
 import { loadRoster } from "../../src/roster/load.ts";
-import { loadRoster as loadLegacyRoster } from "../../../../agents/models/roster.ts";
 
 const catalogPath = join(import.meta.dir, "../../src/roster/catalog.toml");
 const examplePath = join(
   import.meta.dir,
   "../../src/roster/policy.example.toml",
-);
-const productionPath = join(
-  import.meta.dir,
-  "../../../../agents/models/dispatch-roster.toml",
 );
 const tempDirs: string[] = [];
 
@@ -31,16 +26,6 @@ afterEach(async () => {
 });
 
 describe("roster loader", () => {
-  test("catalog and example policy equal today's production roster", async () => {
-    const [actual, expected] = await Promise.all([
-      loadRoster({ catalogPath, policyPath: examplePath }),
-      loadLegacyRoster(productionPath),
-    ]);
-    expect(actual.ok).toBe(true);
-    expect(expected.ok).toBe(true);
-    if (actual.ok && expected.ok) expect(actual.value).toEqual(expected.value);
-  });
-
   test("exclude removes a catalog row", async () => {
     const example = await readFile(examplePath, "utf8");
     const result = await withPolicy(

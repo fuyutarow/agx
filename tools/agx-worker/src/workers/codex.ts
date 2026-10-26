@@ -4,7 +4,7 @@
 // WHY A COMMAND, not a recipe pasted into every relay prompt: the recipe drifted (a dropped
 // `</dev/null` hung two runs for their whole budget), relays summarized instead of relaying, and
 // this file owns the invocation so a caller only has to read the receipt (agx C2/C3). The selected
-// dispatch-roster row is the only authority for the model and effort this worker runs.
+// The selected catalog row is the only authority for the model and effort this worker runs.
 //
 // Internal CLI contract (designing-command-line-interfaces C0–C5)
 //   C0  consumers   agx main loop; tests invoke the internal file directly.

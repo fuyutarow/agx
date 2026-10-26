@@ -1,6 +1,5 @@
-import { readFileSync } from "node:fs";
-import shippedRoster from "../../../agents/models/dispatch-roster.toml" with { type: "toml" };
-import { fromThrowable, z } from "./zod.ts";
+import shippedCatalog from "../../agx-worker/src/roster/catalog.toml" with { type: "toml" };
+import { z } from "./zod.ts";
 
 export type TokenUsage = Readonly<{
   input_tokens?: number | undefined;
@@ -49,7 +48,7 @@ export function costUsd(
 }
 
 export type DispatchRowPrice = TokenPrices & Readonly<{ route: string }>;
-const ROSTER_PRICES = z.object({
+const CatalogPricesSchema = z.object({
   choice: z.array(
     z.object({
       id: z.string(),
@@ -61,20 +60,11 @@ const ROSTER_PRICES = z.object({
   ),
 });
 
-/** Read the chosen row's route and token prices from the same roster agx uses. */
-export function dispatchRowPrice(
-  choice: string,
-  path = process.env.DISPATCH_ROSTER_PATH,
-): DispatchRowPrice | undefined {
-  const raw = fromThrowable((): unknown =>
-    path === undefined
-      ? shippedRoster
-      : Bun.TOML.parse(readFileSync(path, "utf8")),
-  )();
-  if (raw.isErr()) return undefined;
-  const parsed = ROSTER_PRICES.safeParse(raw.value);
-  if (!parsed.success) return undefined;
-  const row = parsed.data.choice.find((candidate) => candidate.id === choice);
+/** Read the chosen row's route and token prices from the shipped model catalog. */
+export function dispatchRowPrice(choice: string): DispatchRowPrice | undefined {
+  const catalog = CatalogPricesSchema.safeParse(shippedCatalog);
+  if (!catalog.success) return undefined;
+  const row = catalog.data.choice.find((candidate) => candidate.id === choice);
   if (row === undefined) return undefined;
   return {
     route: row.route,

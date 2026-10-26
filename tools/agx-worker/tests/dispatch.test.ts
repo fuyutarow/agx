@@ -22,22 +22,6 @@ const RunRecord = z.looseObject({
   workspace: z.string(),
   unit: z.string(),
 });
-const ROSTER_MODULE = fileURLToPath(
-  new URL("../../../agents/models/roster.ts", import.meta.url),
-);
-const RosterObservation = jsonOf(
-  z.object({
-    path: z.string().nullable(),
-    selected: z.string(),
-    claude: z.string(),
-    codex: z.string(),
-  }),
-);
-async function observation(path: string) {
-  const parsed = RosterObservation.safeParse(await Bun.file(path).text());
-  expect(parsed.success).toBe(true);
-  return parsed.data;
-}
 const roots: string[] = [];
 function inheritedEnv() {
   const env = { ...process.env };
@@ -69,16 +53,6 @@ function fixture() {
   const wsArgs = join(root, "ws-args.txt");
   const home = join(root, "home");
   mkdirSync(home);
-  const rosterCheck = join(root, "roster-check.ts");
-  writeFileSync(
-    rosterCheck,
-    [
-      `import { loadRoster } from ${JSON.stringify(ROSTER_MODULE)};`,
-      "const loaded = await loadRoster(process.env.DISPATCH_ROSTER_PATH);",
-      'if (!loaded.ok) { console.error("cannot read dispatch roster"); process.exit(2); }',
-      "console.log(JSON.stringify({ path: process.env.DISPATCH_ROSTER_PATH ?? null, selected: loaded.value.default, claude: process.env.CLAUDE_CODE_SESSION_ID, codex: process.env.CODEX_SESSION_ID }));",
-    ].join("\n"),
-  );
   const entry = join(root, "dispatcher.ts");
   writeFileSync(
     entry,
@@ -108,21 +82,6 @@ function fixture() {
       "const bindingText = command[bindingIndex + 1];",
       "writeFileSync(process.env.FAKE_BINDING!, bindingText!);",
       "const binding = JSON.parse(bindingText!);",
-      'if (process.env.FAKE_ROSTER_CHECK === "yes") {',
-      "  const env: Record<string, string> = { HOME: process.env.HOME!, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME!, XDG_STATE_HOME: process.env.XDG_STATE_HOME! };",
-      "  for (let i = 0; i < divider; i++) {",
-      '    if (args[i] !== "-E") continue;',
-      "    const entry = args[++i]!;",
-      '    const equal = entry.indexOf("=");',
-      "    if (equal >= 0) env[entry.slice(0, equal)] = entry.slice(equal + 1);",
-      "    else if (process.env[entry] !== undefined) env[entry] = process.env[entry]!;",
-      "  }",
-      '  if (process.env.FAKE_STALE_ROSTER === "yes") await Bun.write(process.env.DISPATCH_ROSTER_PATH!, "invalid TOML [");',
-      '  const child = Bun.spawn([process.execPath, process.env.FAKE_ROSTER_SCRIPT!], { cwd: process.env.HOME!, env, stdout: "pipe", stderr: "pipe", timeout: 5000 });',
-      "  const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);",
-      "  if (code !== 0) { process.stderr.write(err); process.exit(code); }",
-      "  writeFileSync(process.env.FAKE_CHILD_ROSTER!, out);",
-      "}",
       'const cdIndex = command.indexOf("--cd");',
       "const workspace = command[cdIndex + 1];",
       'const record = JSON.stringify([{ ...binding, state: "running", cwd: workspace, row: "fixture-high", route: "codex", model: "fixture-model", effort: "high", sandbox: "workspace-write", sandbox_source: "built-in default", sandbox_effective: "workspace-write", sandbox_effective_source: "built-in default" }]) + "\\n";',
@@ -184,7 +143,6 @@ function fixture() {
     "  fi",
     '  cat "$FAKE_RECORDS"; exit 0',
     "fi",
-    'if [ "$1" = "check" ] && [ "$FAKE_ROSTER_CHECK" = "yes" ]; then exec bun "$FAKE_ROSTER_SCRIPT" > "$FAKE_PREFLIGHT_ROSTER"; fi',
     'if [ "$1" = "check" ]; then if [ "$FAKE_CHECK_FAIL" = "yes" ]; then printf "agx: invalid writes; repair: use relative globs\\nagx: untrusted mise.toml; repair: mise trust\\n" >&2; exit 2; fi; exit 0; fi',
     'echo "unexpected fake agx command: $*" >&2',
     "exit 2",
@@ -196,13 +154,9 @@ function fixture() {
     XDG_CONFIG_HOME: join(home, "config"),
     XDG_STATE_HOME: join(home, "state"),
     AGX_STATE_DIR: join(home, "state", "agx"),
-    DISPATCH_ROSTER_PATH: undefined,
     CLAUDE_CODE_SESSION_ID: "fixture-claude",
     CODEX_SESSION_ID: "fixture-codex",
     FAKE_WORKER_COMMAND: join(bin, "agx-worker"),
-    FAKE_ROSTER_SCRIPT: rosterCheck,
-    FAKE_CHILD_ROSTER: join(root, "child-roster.json"),
-    FAKE_PREFLIGHT_ROSTER: join(root, "preflight-roster.json"),
     FAKE_REPO: repo,
     FAKE_RECORDS: records,
     FAKE_PENDING_RECORD: join(root, "pending-record.json"),
@@ -769,124 +723,6 @@ test("dispatch reports service and all check failures before starting a unit", a
   expect(await Bun.file(f.unitArgs).exists()).toBe(false);
 });
 
-function explicitRoster(f: ReturnType<typeof fixture>) {
-  const path = join(f.repo, "explicit roster.toml");
-  writeFileSync(
-    path,
-    `schema = 1
-as_of = "2026-10-22"
-default = "fixture-high"
-[auto]
-max_task_chars = 2400
-timeout_ms = 100
-no_egress = []
-pick_temperature = 0
-[auto.jev]
-api = "reseller"
-url = "http://127.0.0.1:1"
-[claude_run]
-max_budget_usd = 1
-max_turns = 1
-reason = "isolated dispatch fixture only"
-[sources]
-[[choice]]
-id = "fixture-high"
-route = "codex"
-model = "fixture"
-effort = "high"
-use_for = "fixture"
-`,
-  );
-  f.env.FAKE_ROSTER_CHECK = "yes";
-  f.env.DISPATCH_ROSTER_PATH = path;
-  return path;
-}
-
-test.each([false, true])(
-  "explicit roster reaches the bound child with naming overrides (relative=%s)",
-  async (relative) => {
-    const f = fixture();
-    const path = explicitRoster(f);
-    if (relative) f.env.DISPATCH_ROSTER_PATH = "explicit roster.toml";
-    const result = await invoke(f, "--ws", "roster", "--unit", "agt_roster");
-    expect(result.exitCode, result.stderr).toBe(0);
-    const childRoster = f.env.FAKE_CHILD_ROSTER;
-    const preflightRoster = f.env.FAKE_PREFLIGHT_ROSTER;
-    if (childRoster === undefined || preflightRoster === undefined)
-      expect.unreachable("roster fixture paths are missing");
-    const runId = result.stdout.trim().split(" ")[0];
-    if (runId === undefined)
-      expect.unreachable("dispatch output has no run ID");
-    expect(await observation(childRoster)).toEqual({
-      path,
-      selected: "fixture-high",
-      claude: "fixture-claude",
-      codex: "fixture-codex",
-    });
-    expect(await observation(preflightRoster)).toEqual(
-      await observation(childRoster),
-    );
-    const parsedBinding = jsonOf(DispatchBindingSchema).safeParse(
-      await Bun.file(f.bindingFile).text(),
-    );
-    expect(parsedBinding.success).toBe(true);
-    if (!parsedBinding.success) return;
-    const binding = parsedBinding.data;
-    expect(binding).toMatchObject({
-      id: runId,
-      workspace: join(f.repo + ".ws", "ws_roster"),
-      unit: "agt_roster",
-      ticket: "foo-bar",
-    });
-    expect(
-      jsonOf(z.array(RunRecord)).safeParse(await Bun.file(f.records).text())
-        .data,
-    ).toMatchObject([{ ...binding, state: "running", cwd: binding.workspace }]);
-  },
-);
-
-test("absent roster override keeps the normal loader default", async () => {
-  const f = fixture();
-  f.env.FAKE_ROSTER_CHECK = "yes";
-  const result = await invoke(f);
-  expect(result.exitCode, result.stderr).toBe(0);
-  const { loadRoster } = await import("../../../agents/models/roster.ts");
-  const normal = await loadRoster();
-  expect(normal.ok).toBe(true);
-  if (normal.ok) {
-    const childRoster = f.env.FAKE_CHILD_ROSTER;
-    if (childRoster === undefined)
-      expect.unreachable("child roster fixture path is missing");
-    expect(await observation(childRoster)).toMatchObject({
-      path: null,
-      selected: normal.value.default,
-    });
-  }
-  expect(await Bun.file(f.unitArgs).text()).not.toContain(
-    "DISPATCH_ROSTER_PATH",
-  );
-});
-
-test.each(["malformed", "unavailable", "empty", "stale"])(
-  "explicit %s roster cannot become default success",
-  async (kind) => {
-    const f = fixture();
-    const path = explicitRoster(f);
-    if (kind === "malformed") writeFileSync(path, "invalid TOML [");
-    if (kind === "unavailable")
-      f.env.DISPATCH_ROSTER_PATH = join(f.root, "missing.toml");
-    if (kind === "empty") f.env.DISPATCH_ROSTER_PATH = "";
-    if (kind === "stale") f.env.FAKE_STALE_ROSTER = "yes";
-    const result = await invoke(f, "--ws", "roster", "--unit", "agt_roster");
-    expect(result.exitCode).not.toBe(0);
-    expect(result.stdout).toBe("");
-    expect(result.stderr).toContain("cannot read dispatch roster");
-    expect(await Bun.file(f.records).text()).toBe("[]\n");
-    if (kind !== "stale")
-      expect(await Bun.file(f.unitArgs).exists()).toBe(false);
-  },
-);
-
 test("dispatch relays successful preflight warnings before launch without upgrading sandbox", async () => {
   const f = fixture();
   const worker = join(f.root, "bin/agx-worker");
@@ -985,9 +821,6 @@ test.each([
     f.env.JJ_CONFIG = "";
     f.env.JJ_USER = "Fixture";
     f.env.JJ_EMAIL = "fixture@example.invalid";
-    f.env.DISPATCH_ROSTER_PATH = fileURLToPath(
-      new URL("../../../agents/models/dispatch-roster.toml", import.meta.url),
-    );
     const jjCommand = async (...args: string[]) => {
       const child = Bun.spawn([jj, ...args], {
         cwd: f.repo,
