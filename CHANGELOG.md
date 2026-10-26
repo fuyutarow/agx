@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.14.6 — 2026-10-27
+
+- Make subscription usage tests deterministic across fixed clocks and temporary homes.
+
 ## 1.14.5 — 2026-10-27
 
 - Report invalid local workspace metadata with a broken verdict
