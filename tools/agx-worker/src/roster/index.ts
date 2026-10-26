@@ -50,7 +50,7 @@ export type Graded = Readonly<{
 }>;
 
 export const ROUTING_OBJECTIVE =
-  "Purpose: the owner pays for every token and waits for every minute until a result is accepted. Choose the option expected to produce an accepted result for this ticket at the lowest cost and in the shortest time. Evidence: judge each option by its published scores and price against what the ticket requires; agx does not feed its own run outcomes back into this choice. Return the ticket instead of choosing a model only when it cannot be done as written. Subscription health: weigh 7-day windows most; 5-hour windows are secondary; keep the intended bias toward the codex route; stale or unknown usage is neutral.";
+  "Purpose: maximize productive throughput per cost: accepted results per unit of the owner's spend (list price × tokens) and per minute of waiting. For this ticket choose the cheapest option whose published scores indicate it can produce an accepted result; pay for a more expensive option only when the ticket's requirements exceed what the cheaper option's scores support. Evidence: judge each option by its published scores and price against what the ticket requires; agx does not feed its own run outcomes back into this choice. Return the ticket instead of choosing a model only when it cannot be done as written. Subscription health: weigh 7-day windows most; 5-hour windows are secondary; keep the intended bias toward the codex route; stale or unknown usage is neutral.";
 
 /** What Jev reads about one row: its route, measured capability, and relative price. */
 export function criterionFor(r: Roster, c: Choice): string {

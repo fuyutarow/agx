@@ -516,7 +516,7 @@ describe("capability constrained routing", () => {
       `${ROUTING_OBJECTIVE} Pick a roster row for this ticket.`,
     );
     expect(ROUTING_OBJECTIVE).toBe(
-      "Purpose: the owner pays for every token and waits for every minute until a result is accepted. Choose the option expected to produce an accepted result for this ticket at the lowest cost and in the shortest time. Evidence: judge each option by its published scores and price against what the ticket requires; agx does not feed its own run outcomes back into this choice. Return the ticket instead of choosing a model only when it cannot be done as written. Subscription health: weigh 7-day windows most; 5-hour windows are secondary; keep the intended bias toward the codex route; stale or unknown usage is neutral.",
+      "Purpose: maximize productive throughput per cost: accepted results per unit of the owner's spend (list price × tokens) and per minute of waiting. For this ticket choose the cheapest option whose published scores indicate it can produce an accepted result; pay for a more expensive option only when the ticket's requirements exceed what the cheaper option's scores support. Evidence: judge each option by its published scores and price against what the ticket requires; agx does not feed its own run outcomes back into this choice. Return the ticket instead of choosing a model only when it cannot be done as written. Subscription health: weigh 7-day windows most; 5-hour windows are secondary; keep the intended bias toward the codex route; stale or unknown usage is neutral.",
     );
     expect(request?.questions.worker.instructions).not.toContain(
       "A. Capability sufficiency (hard)",
@@ -1211,7 +1211,7 @@ test("local record evidence stays in the pick audit and out of Jev criteria", as
     for (const row of loaded.value.choice) expect(text).not.toContain(row.id);
   }
   expect(request.questions.worker.instructions).toContain(
-    "at the lowest cost and in the shortest time",
+    "Purpose: maximize productive throughput per cost: accepted results per unit of the owner's spend (list price × tokens) and per minute of waiting.",
   );
   expect(request.questions.worker.instructions).toContain(
     "published scores and price against what the ticket requires",
