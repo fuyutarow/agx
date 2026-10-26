@@ -919,6 +919,7 @@ export type GcOptions = {
   dryRun: boolean;
   includeUnrecorded: boolean;
   graceMinutes?: number;
+  inventorySeconds?: number;
   legacy?: boolean;
   abandoned?: boolean;
 };
@@ -935,6 +936,9 @@ type Classification = {
 
 const gcGraceMinutes = (options: GcOptions): number =>
   options.graceMinutes ?? 30;
+const gcInventoryTimeoutMs = (options: GcOptions): number =>
+  (options.inventorySeconds ?? 10) * 1000;
+const MAX_PRESERVED_RESULT_BYTES = 16 * 1024 * 1024;
 
 async function applyGcGrace(
   ws: Workspace,
@@ -1953,6 +1957,7 @@ async function classify(
   readOnly = false,
   recentRecordedDiagnostic = false,
   checkStatus = true,
+  inventoryTimeoutMs = 10_000,
 ): Promise<Classification> {
   let change = ws.change ?? "?";
   let age = ws.age ?? "?";
@@ -1992,7 +1997,7 @@ async function classify(
   const inventory = await untrackedContent(
     ws.dir,
     cfg.regenerable,
-    10_000,
+    inventoryTimeoutMs,
     resultDirs,
   );
   if (!inventory.ok)
@@ -2169,30 +2174,64 @@ async function preservedResult(
   dir: string,
   path: string,
   resultDirs: string[],
+  deadline: number,
 ): Promise<boolean> {
   const preserved = await attempt(async () => {
-    const bytes = await readFile(join(dir, path));
-    for (const runDir of resultDirs.flatMap((runRoot) => [
-      join(runRoot, "results"),
-      join(runRoot, "harvest"),
-    ])) {
-      const root = resolve(runDir);
-      const copy = join(root, path);
-      const equal = await attempt(async () => {
-        const target = await realpath(copy);
-        if (
-          !target.startsWith(root + sep) ||
-          target.startsWith(realOr(dir) + sep)
-        )
-          return false;
-        if (!(await lstat(copy)).isFile()) return false;
-        return bytes.equals(await readFile(copy));
-      });
-      if (equal.ok && equal.value) return true;
+    const source = join(dir, path);
+    const sourceInfo = await lstat(source);
+    if (
+      !sourceInfo.isFile() ||
+      sourceInfo.size > MAX_PRESERVED_RESULT_BYTES ||
+      performance.now() >= deadline
+    )
+      return false;
+    const bytes = await readFile(source);
+    for (const runDir of preservationDirectories(resultDirs)) {
+      if (
+        performance.now() < deadline &&
+        (await preservedResultCopy(
+          dir,
+          path,
+          runDir,
+          sourceInfo.size,
+          bytes,
+          deadline,
+        ))
+      )
+        return true;
     }
     return false;
   });
   return preserved.ok && preserved.value;
+}
+
+function* preservationDirectories(resultDirs: string[]): Generator<string> {
+  for (const runRoot of resultDirs) {
+    yield join(runRoot, "results");
+    yield join(runRoot, "harvest");
+  }
+}
+
+async function preservedResultCopy(
+  dir: string,
+  path: string,
+  runDir: string,
+  sourceSize: number,
+  bytes: Buffer,
+  deadline: number,
+): Promise<boolean> {
+  const root = resolve(runDir);
+  const copy = join(root, path);
+  const equal = await attempt(async () => {
+    const target = await realpath(copy);
+    if (!target.startsWith(root + sep) || target.startsWith(realOr(dir) + sep))
+      return false;
+    const copyInfo = await lstat(copy);
+    if (!copyInfo.isFile() || copyInfo.size !== sourceSize) return false;
+    if (performance.now() >= deadline) return false;
+    return bytes.equals(await readFile(copy));
+  });
+  return equal.ok && equal.value;
 }
 
 /** Inventory disk entries against the saved snapshot; never follow directory symlinks. */
@@ -2201,12 +2240,15 @@ export async function untrackedContent(
   regenerable: string[],
   timeoutMs = 10_000,
   resultDirs: string[] = [],
-): Promise<
-  Attempt<{
-    count: number;
-    paths: string[];
-  }>
-> {
+): Promise<Attempt<{ count: number; paths: string[]; entries: number }>> {
+  const startedAt = performance.now();
+  const deadline = startedAt + timeoutMs;
+  let count = 0;
+  let entriesInventoried = 0;
+  const timeoutFailure = (): Attempt<never> =>
+    bad(
+      `inventory timed out: limit ${timeoutMs}ms, elapsed ${Math.floor(performance.now() - startedAt)}ms, entries inventoried ${entriesInventoried}`,
+    );
   const tracked = await runStep(
     [
       "jj",
@@ -2219,29 +2261,34 @@ export async function untrackedContent(
       'path ++ "\\0"',
     ],
     dir,
-    { timeoutMs },
+    { timeoutMs: Math.max(1, Math.ceil(deadline - performance.now())) },
   );
-  if (!tracked.ok) return tracked;
+  if (!tracked.ok)
+    return performance.now() >= deadline ||
+      msg(tracked).includes("deadline exceeded")
+      ? timeoutFailure()
+      : tracked;
+  if (performance.now() >= deadline) return timeoutFailure();
   if (tracked.value.code !== 0)
     return bad(`jj file list failed: ${tracked.value.err.trim()}`);
   const files = new Set(
     tracked.value.out.toString().split("\0").filter(Boolean),
   );
   const roots = regenerable.map((path) => path.replace(/\/$/u, ""));
-  const deadline = performance.now() + timeoutMs;
   let expired = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let count = 0;
   const paths: string[] = [];
   const pending = [""];
   const timedOut = () => expired || performance.now() >= deadline;
+  const timeoutDiagnostic = (): Attempt<never> => timeoutFailure();
   const visit = async (parent: string): Promise<Attempt<void>> => {
     const entries = await attempt(() =>
       readdir(join(dir, parent), { withFileTypes: true }),
     );
     if (!entries.ok) return entries;
     for (const entry of entries.value) {
-      if (timedOut()) return bad("inventory timed out");
+      if (timedOut()) return timeoutDiagnostic();
+      entriesInventoried++;
       const path = parent === "" ? entry.name : `${parent}/${entry.name}`;
       if (entry.name === ".jj" || entry.name === ".git") continue;
       if (roots.some((root) => path === root || path.startsWith(`${root}/`)))
@@ -2254,7 +2301,7 @@ export async function untrackedContent(
       if (
         entry.isFile() &&
         resultDirs.length > 0 &&
-        (await preservedResult(dir, path, resultDirs))
+        (await preservedResult(dir, path, resultDirs, deadline))
       )
         continue;
       count++;
@@ -2263,23 +2310,23 @@ export async function untrackedContent(
     return good(undefined);
   };
   const walk = async (): Promise<
-    Attempt<{
-      count: number;
-      paths: string[];
-    }>
+    Attempt<{ count: number; paths: string[]; entries: number }>
   > => {
     while (pending.length > 0) {
-      if (timedOut()) return bad("inventory timed out");
+      if (timedOut()) return timeoutDiagnostic();
       const result = await visit(pending.pop() ?? "");
       if (!result.ok) return result;
     }
-    return good({ count, paths });
+    return good({ count, paths, entries: entriesInventoried });
   };
   const timeout = new Promise<Attempt<never>>((resolveTimeout) => {
-    timer = setTimeout(() => {
-      expired = true;
-      resolveTimeout(bad("inventory timed out"));
-    }, timeoutMs);
+    timer = setTimeout(
+      () => {
+        expired = true;
+        resolveTimeout(timeoutDiagnostic());
+      },
+      Math.max(0, deadline - performance.now()),
+    );
   });
   const result = await Promise.race([walk(), timeout]);
   clearTimeout(timer);
@@ -2334,6 +2381,9 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
           records.value,
           trunk.value.commit,
           true,
+          false,
+          true,
+          gcInventoryTimeoutMs(options),
         );
         c = await applyGcGrace(ws, c, gcGraceMinutes(options));
       }
@@ -2391,6 +2441,7 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
               true,
               false,
               false,
+              gcInventoryTimeoutMs(options),
             );
             checked = await applyGcGrace(ws, checked, gcGraceMinutes(options));
             const stillRecorded =

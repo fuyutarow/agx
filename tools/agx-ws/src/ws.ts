@@ -248,6 +248,11 @@ const gcCommand = command(
         description:
           "protect workspaces younger than this many minutes (default: 30; 0 disables)",
       },
+      inventorySeconds: {
+        type: Number,
+        description:
+          "limit untracked-file inventory to this many seconds per workspace (default: 10)",
+      },
       repo: repoFlag,
     },
   },
@@ -264,12 +269,22 @@ const gcCommand = command(
       fail("--grace-minutes must be a non-negative integer");
       return;
     }
+    if (
+      argv.flags.inventorySeconds !== undefined &&
+      (!Number.isSafeInteger(argv.flags.inventorySeconds) ||
+        argv.flags.inventorySeconds < 1 ||
+        argv.flags.inventorySeconds > 2_147_483)
+    ) {
+      fail("--inventory-seconds must be an integer from 1 to 2147483");
+      return;
+    }
     const options = {
       dryRun: argv.flags.dryRun === true,
       includeUnrecorded: argv.flags.includeUnrecorded === true,
       legacy: argv.flags.legacy === true,
       abandoned: argv.flags.abandoned === true,
       graceMinutes: argv.flags.graceMinutes ?? 30,
+      inventorySeconds: argv.flags.inventorySeconds ?? 10,
     };
     const done = await (argv.flags.all === true
       ? gcAll(options)

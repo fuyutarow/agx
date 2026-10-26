@@ -19,7 +19,14 @@ import {
 } from "node:fs";
 import { tmpdir, hostname } from "node:os";
 import { join } from "node:path";
-import { mkdir, chmod, unlink, lstat, symlink } from "node:fs/promises";
+import {
+  mkdir,
+  chmod,
+  unlink,
+  lstat,
+  symlink,
+  truncate,
+} from "node:fs/promises";
 import { jsonOf, z } from "../../shared/src/zod.ts";
 import { rootFileFileset, untrackedContent } from "../src/workspace.ts";
 
@@ -216,6 +223,42 @@ describe("AGX-GC-UNTRACKED-KEEP-1024", () => {
       await Bun.file(join(home, "state/agx/workspace-verdicts.json")).text(),
     );
     expect(cache.success && cache.data.complete).toBe(false);
+  });
+
+  test("a timed-out inventory reports progress and a larger limit finishes", async () => {
+    const path = await repo('trunk = "main"\n');
+    setRecords([]);
+    expect((await ws(["add", "inventory-timeout"], path)).code).toBe(0);
+    const realJj = Bun.which("jj");
+    const slowBin = join(scratch, "inventory-slow-bin");
+    mkdirSync(slowBin);
+    const fake = join(slowBin, "jj");
+    await Bun.write(
+      fake,
+      `#!/usr/bin/env bun\nconst args = process.argv.slice(2); if (args.includes("list") && args.includes("file") && args.includes("-T")) await Bun.sleep(1250); const child = Bun.spawn([${JSON.stringify(realJj)}, ...args], { stdin: "ignore", stdout: "inherit", stderr: "inherit" }); process.exitCode = await child.exited;\n`,
+    );
+    chmodSync(fake, 0o755);
+    const env = baseEnv({ PATH: `${slowBin}:${bin}:${process.env.PATH}` });
+    const timedOut = await ws(
+      ["gc", "--include-unrecorded", "--dry-run", "--inventory-seconds", "1"],
+      path,
+      env,
+    );
+    expect(timedOut.code, timedOut.err).toBe(0);
+    expect(timedOut.out).toContain("\tunknown\t");
+    expect(timedOut.out).toContain("limit 1000ms");
+    expect(timedOut.out).toMatch(/elapsed \d+ms/u);
+    expect(timedOut.out).toMatch(/entries inventoried 0/u);
+    expect(existsSync(wsDir(path, "inventory-timeout"))).toBe(true);
+
+    const finished = await ws(
+      ["gc", "--include-unrecorded", "--dry-run", "--inventory-seconds", "2"],
+      path,
+      env,
+    );
+    expect(finished.code, finished.err).toBe(0);
+    expect(finished.out).toContain("\tempty\t");
+    expect(finished.out).not.toContain("\tunknown\t");
   });
 });
 
@@ -1125,6 +1168,8 @@ describe("agx ws gc", () => {
     expect(result.out).toContain(
       "Unreadable workspaces are reported as broken",
     );
+    expect(result.out).toContain("--inventory-seconds");
+    expect(result.out).toContain("default: 10");
   });
 
   test("reports narrowed sparse patterns even for an unrecorded workspace", async () => {
@@ -1772,6 +1817,15 @@ describe("gc integration branches", () => {
     );
     const escaped = await inventory();
     expect(escaped.ok && escaped.value.count).toBe(1);
+
+    const oversizedSource = join(path, "large.result.bin");
+    const oversizedCopy = join(runDir, "results", "large.result.bin");
+    await Bun.write(oversizedSource, "");
+    await Bun.write(oversizedCopy, "");
+    await truncate(oversizedSource, 16 * 1024 * 1024 + 1);
+    await truncate(oversizedCopy, 16 * 1024 * 1024 + 1);
+    const oversized = await inventory();
+    expect(oversized.ok && oversized.value.count).toBe(2);
   });
 
   test("fully rejected runs collect promptly only after landing and result preservation", async () => {
