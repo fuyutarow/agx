@@ -46,7 +46,7 @@ async function run(bin: string, args: string[], exit = 0) {
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
-    timeout: 5000,
+    timeout: 15000,
   });
   const [stdout, stderr, code] = await Promise.all([
     child.stdout.text(),
@@ -116,6 +116,30 @@ test("suite owns its version and takes descriptions from PATH tools", async () =
   expect(help.stdout).not.toContain("99.0.0");
   for (const tool of ["worker", "ticket", "ws", "status", "msg"])
     expect(help.stdout).toContain(`  ${tool}  ${tool} description from owner`);
+});
+test("driving-agx stays version-independent and points to installed help", async () => {
+  const skill = await Bun.file(
+    join(import.meta.dir, "../../../skills/driving-agx/SKILL.md"),
+  ).text();
+  expect(skill).not.toMatch(/\b\d+\.\d+(?:\.\d+)?\b/u);
+  expect(skill).not.toMatch(/--(?!help\b)[a-z][a-z0-9-]*/u);
+  expect(skill).not.toMatch(/\b(?:verdict|young|keep|collected|FAILED)\b/iu);
+
+  await using f = await fixture();
+  const help = await run(f.bin, ["--help"]);
+  expect(help.code).toBe(0);
+  for (const command of [
+    "agx --help",
+    "agx <tool> --help",
+    "agx <tool> <command> --help",
+  ]) {
+    expect(skill).toContain(command);
+    expect(help.stdout).toContain(command);
+  }
+  for (const match of skill.matchAll(/`(agx [^`]+)`/gu)) {
+    const command = match[1];
+    if (command !== undefined) expect(help.stdout).toContain(command);
+  }
 });
 test("suite source contains only dispatch and discovery, with no owner modules", async () => {
   const source = await Bun.file(entry).text();

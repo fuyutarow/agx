@@ -47,7 +47,15 @@ async function help(): Promise<void> {
     process.stdout.write(`  ${tool}  ${description?.trim() ?? ""}\n`);
   }
   process.stdout.write(
-    "\nOPTIONS:\n  -h, --help  Show help\n  -V, --version  Show version\n",
+    "\nCOMMAND GUIDE:\n" +
+      "  Read agx --help, then agx <tool> --help, then agx <tool> <command> --help.\n" +
+      "  Validate/start/run workers: agx worker check|dispatch|run.\n" +
+      "  Inspect and judge runs: agx worker ls|judge.\n" +
+      "  Issue/list/collect tickets: agx ticket new|ls|gc.\n" +
+      "  Create/adopt/refresh/remove/collect workspaces: agx ws add|adopt|refresh|rm|gc.\n" +
+      "  Discover/send/check messages: agx msg list|send|status.\n" +
+      "  Refresh/read suite health: agx doctor, agx status.\n" +
+      "\nOPTIONS:\n  -h, --help  Show help\n  -V, --version  Show version\n",
   );
 }
 
