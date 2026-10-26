@@ -36,7 +36,6 @@ import { route } from "./route.ts";
 import { pinContinuation } from "./continue.ts";
 import { resolveRunId } from "./run-id.ts";
 import { routeFilterLabel } from "../roster/index.ts";
-import { acquireWorkerSlot } from "./worker-capacity.ts";
 import {
   earlyQuitRows,
   preflight,
@@ -481,14 +480,6 @@ export async function run(flags: Flags): Promise<number> {
       2,
     );
   }
-  const capacityLock = await acquireWorkerSlot(
-    ctx.maxRunning,
-    flags.waitSlot === true,
-  );
-  if (!capacityLock.ok) {
-    await workspaceLock.release();
-    return fatal(capacityLock.reason, 2);
-  }
   // Also covers runs started by an older binary while this invocation was routing.
   await refuseRunningWorkspace(cwd);
   const unit = binding?.unit ?? actualUnit ?? `agt_${ticketName}`;
@@ -534,7 +525,6 @@ export async function run(flags: Flags): Promise<number> {
     pid: process.pid,
     lease: startedLease,
   });
-  await capacityLock.release();
 
   started = true;
 

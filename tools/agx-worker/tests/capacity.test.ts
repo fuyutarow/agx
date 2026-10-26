@@ -9,8 +9,6 @@ import { CAPACITY_COOLDOWN_MS, capacityRows } from "../src/next/capacity.ts";
 import { loadRoster } from "../src/roster/index.ts";
 import { prepareTicketRepo } from "./ticket-repo.ts";
 import { runHealth } from "../src/next/health.ts";
-import { append } from "../src/next/store.ts";
-import { acquireWorkerSlot } from "../src/next/worker-capacity.ts";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -135,60 +133,6 @@ test("vendor capacity errors are distinct from auth, rate limits, and quoted wor
       "codex",
     ),
   ).toBeUndefined();
-});
-
-test("max_running gates live records and wait-slot releases after an end event", async () => {
-  const root = await mkdtemp(
-    join(tmpdir(), `agx-test-${process.pid}-worker-limit-`),
-  );
-  roots.push(root);
-  const oldState = process.env.AGX_STATE_DIR;
-  using restoreState = new DisposableStack();
-  restoreState.defer(() => {
-    if (oldState === undefined) delete process.env.AGX_STATE_DIR;
-    else process.env.AGX_STATE_DIR = oldState;
-  });
-  process.env.AGX_STATE_DIR = join(root, "state");
-  const id = "live-worker";
-  const at = Temporal.Now.instant().toString();
-  append({
-    kind: "started",
-    id,
-    at,
-    ticket: "busy",
-    writes: [],
-    cwd: root,
-    workspace: root,
-    row: "fixture",
-    dispatcher_session: null,
-    vendor_session: null,
-    pid: process.pid,
-  });
-  const refused = await acquireWorkerSlot(1, false, () => {});
-  expect(refused.ok).toBe(false);
-  if (refused.ok) return;
-  expect(refused.reason).toContain("live-worker(busy)");
-  expect(refused.reason).toContain("1/1");
-
-  const waitingMessages: string[] = [];
-  const waiting = acquireWorkerSlot(1, true, (message) => {
-    waitingMessages.push(message);
-  });
-  await Bun.sleep(300);
-  append({
-    kind: "ended",
-    id,
-    at: Temporal.Now.instant().toString(),
-    exit: 0,
-    outcome: "ok",
-    report_path: null,
-    vendor_session: null,
-    verify: [],
-  });
-  const slot = await waiting;
-  expect(slot.ok).toBe(true);
-  expect(waitingMessages.join("\n")).toContain("waiting for a worker slot");
-  if (slot.ok) await slot.release();
 });
 
 test.each(["codex", "stderr", "stubborn", "wait", "claude", "claude-stderr"])(

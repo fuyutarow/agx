@@ -55,11 +55,6 @@ const LocalConfig = z.strictObject({
       command: z.array(z.string()).min(1),
     })
     .optional(),
-  worker: z
-    .strictObject({
-      max_running: z.number().int().positive().optional(),
-    })
-    .optional(),
   root: z
     .string()
     .refine(isAbsolute, "root must be an absolute main-checkout path"),
@@ -317,7 +312,6 @@ async function resolveConfig(repoRoot: string, options: { vcs?: Vcs }) {
     ready,
     keep,
     verifyAlways,
-    maxRunning: local.value?.worker?.max_running ?? 4,
   });
 }
 
@@ -332,7 +326,6 @@ export async function resolveAgxConfig(
     ready: string[];
     keep: string[];
     verifyAlways: string[];
-    maxRunning: number;
   }>
 > {
   const result = await attempt(() => resolveConfig(repoRoot, options));
