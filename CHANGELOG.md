@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.13.9 — 2026-10-26
+
+- Enforce a machine-wide live worker limit with bounded --wait-slot dispatch
+
 ## 1.13.8 — 2026-10-26
 
 - Remove workspace-specific mise tracked and trusted entries
