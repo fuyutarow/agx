@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.14.2 — 2026-10-26
+
+- Deliver Codex messages through the app-server immediately when possible
+- Isolate test config and dispatcher environment
+- Read roster prices from the canonical model catalog
+
 ## 1.14.1 — 2026-10-26
 
 - Revert the release machine step rewrite; it unlinked agx and failed, leaving no agx on PATH
