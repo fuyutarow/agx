@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.14.1 — 2026-10-26
+
+- Revert the release machine step rewrite; it unlinked agx and failed, leaving no agx on PATH
+
 ## 1.14.0 — 2026-10-26
 
 - Classify remote-reachable workspace changes as pushed and allow their removal
