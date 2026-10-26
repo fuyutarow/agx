@@ -92,6 +92,31 @@ const ws = (args: string[], cwd: string, env = baseEnv()) =>
   );
 const jj = (args: string[], cwd: string) => run(["jj", ...args], cwd);
 
+async function pushBookmark(path: string, name: string): Promise<void> {
+  const remote = join(scratch, `remote-${name}.git`);
+  const init = Bun.spawn(["git", "init", "--bare", remote], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, , initCode] = await Promise.all([
+    new Response(init.stdout).text(),
+    new Response(init.stderr).text(),
+    init.exited,
+  ]);
+  expect(initCode).toBe(0);
+  expect(
+    (await jj(["git", "remote", "add", "origin", remote], path)).code,
+  ).toBe(0);
+  expect((await jj(["bookmark", "create", name, "-r", "@-"], path)).code).toBe(
+    0,
+  );
+  const pushed = await jj(
+    ["git", "push", "--remote", "origin", "--bookmark", name],
+    path,
+  );
+  expect(pushed.code, pushed.err).toBe(0);
+}
+
 function shim(name: string, body: string): void {
   const path = join(bin, name);
   writeFileSync(path, `#!/bin/sh\n${body}\n`);
@@ -1169,6 +1194,18 @@ describe("agx ws rm", () => {
     );
   });
 
+  test("removes a workspace whose only non-trunk change is on a remote bookmark", async () => {
+    const path = await repo('trunk = "main"\n');
+    expect((await ws(["add", "pushed"], path)).code).toBe(0);
+    const dir = wsDir(path, "pushed");
+    await Bun.write(join(dir, "pushed.txt"), "remote has this\n");
+    expect((await jj(["commit", "-m", "pushed work"], dir)).code).toBe(0);
+    await pushBookmark(dir, "feature-pushed");
+    const removed = await ws(["rm", "pushed"], path);
+    expect(removed.code, removed.err).toBe(0);
+    expect(existsSync(dir)).toBe(false);
+  });
+
   test("refuses an unlanded commit and an uncommitted edit; nothing is lost", async () => {
     const path = await repo('trunk = "main"\n');
     await ws(["add", "dirty"], path);
@@ -1181,6 +1218,7 @@ describe("agx ws rm", () => {
     await jj(["commit", "-m", "work"], dir);
     const committed = await ws(["rm", "dirty"], path);
     expect(committed.code).toBe(1);
+    expect(committed.err).toContain("work");
     expect(existsSync(join(dir, "work.txt"))).toBe(true);
     expect((await jj(["workspace", "list"], path)).out).toContain("ws_dirty");
   });
@@ -1369,6 +1407,23 @@ describe("agx ws gc", () => {
     expect((await jj(["workspace", "list"], path)).out).toContain(
       "ws_missing-unpushed",
     );
+  });
+
+  test("reports the retaining remote bookmark and collects a pushed-only workspace", async () => {
+    const path = await repo('trunk = "main"\n');
+    setRecords([]);
+    expect((await ws(["add", "pushed-gc"], path)).code).toBe(0);
+    const dir = wsDir(path, "pushed-gc");
+    await Bun.write(join(dir, "pushed.txt"), "remote has this\n");
+    expect((await jj(["commit", "-m", "pushed work"], dir)).code).toBe(0);
+    await pushBookmark(dir, "feature-gc-pushed");
+    const dry = await ws(["gc", "--dry-run", "--include-unrecorded"], path);
+    expect(dry.code, dry.err).toBe(0);
+    expect(dry.out).toContain(`${dir}\tws\tpushed\t`);
+    expect(dry.out).toContain("feature-gc-pushed@origin");
+    const collected = await ws(["gc", "--include-unrecorded"], path);
+    expect(collected.code, collected.err).toBe(0);
+    expect(existsSync(dir)).toBe(false);
   });
 
   test("help explains where and how to declare kept workspaces", async () => {

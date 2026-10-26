@@ -166,7 +166,7 @@ const rmCommand = command(
     ignoreArgv: rejectPrototypeFlag,
     help: {
       description:
-        "Forget and rip ws_<slug>; refuses while it holds an unlanded change.",
+        "Forget and rip ws_<slug>; refuses only non-empty changes unreachable from trunk and every remote bookmark.",
     },
     flags: { repo: repoFlag },
   },

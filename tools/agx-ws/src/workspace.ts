@@ -443,7 +443,7 @@ async function workspaceNames(repo: Repo): Promise<Attempt<string[]>> {
   return out.ok ? good(out.value.split("\n").filter(Boolean)) : out;
 }
 
-/** Commits reachable from `tip` and not from trunk, ignoring empty ones: work that has not landed. */
+/** Non-empty changes reachable from tip but neither trunk nor a remote bookmark. */
 async function unlandedFrom(
   cwd: string,
   tip: string,
@@ -455,7 +455,7 @@ async function unlandedFrom(
       "log",
       "--no-graph",
       "-r",
-      `(::(${tip}) ~ ::(${trunk})) ~ empty()`,
+      `(::(${tip}) ~ ::((${trunk}) | remote_bookmarks())) ~ empty()`,
       "-T",
       'commit_id.short(12) ++ " " ++ description.first_line() ++ "\\n"',
     ],
@@ -463,6 +463,27 @@ async function unlandedFrom(
     readonly,
   );
   return out.ok ? good(out.value.split("\n").filter(Boolean)) : out;
+}
+
+async function pushedBookmarks(
+  cwd: string,
+  tip: string,
+  trunk: string,
+): Promise<Attempt<string[]>> {
+  const out = await jjOut(
+    [
+      "log",
+      "--no-graph",
+      "-r",
+      `remote_bookmarks() & ::((${tip}) ~ ::(${trunk}))`,
+      "-T",
+      'remote_bookmarks ++ "\\n"',
+    ],
+    cwd,
+    true,
+  );
+  if (!out.ok) return out;
+  return good([...new Set(out.value.split("\n").filter(Boolean))].toSorted());
 }
 
 /**
@@ -1823,6 +1844,7 @@ type ContentResult = {
   consumed: string[];
   integratedAt?: string;
   trunkDifferences?: string[];
+  pushed?: string[];
 };
 
 /** Release notes are evidence: a missing changeset alone never proves that it landed. */
@@ -2073,8 +2095,16 @@ export async function outstanding(
   if (conflicted.value.trim() === "true") return bad("workspace has conflicts");
   const pending = await unlandedFrom(repo.backing, tip, trunk, true);
   if (!pending.ok) return pending;
-  if (pending.value.length === 0)
-    return good({ differing: [], total: 0, consumed: [] });
+  if (pending.value.length === 0) {
+    const pushed = await pushedBookmarks(repo.backing, tip, trunk);
+    if (!pushed.ok) return pushed;
+    return good({
+      differing: [],
+      total: 0,
+      consumed: [],
+      ...(pushed.value.length === 0 ? {} : { pushed: pushed.value }),
+    });
+  }
   const base = `heads(::(${tip}) & ::(${trunk}))`;
   const paths = await jjOut(
     ["diff", "--from", base, "--to", tip, "--name-only"],
@@ -2291,6 +2321,12 @@ async function classify(
   for (const candidate of new Set(tips)) {
     const work = await outstanding(repo, candidate, trunk);
     if (!work.ok) return verdict("keep", `cannot judge: ${msg(work)}`);
+    if (work.value.pushed !== undefined)
+      return verdict(
+        "pushed",
+        `non-trunk changes reachable from remote bookmarks: ${work.value.pushed.join(", ")}`,
+        true,
+      );
     if (work.value.differing.length > 0)
       return verdict(
         "unlanded",
