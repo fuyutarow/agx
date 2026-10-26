@@ -134,8 +134,10 @@ const CONTINUE_ALL: Readonly<Record<RouteName, WindowExhaustion>> = {
 export async function readRouteUsage(
   nowMs = Temporal.Now.instant().epochMilliseconds,
   exhaustion = CONTINUE_ALL,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<RouteUsage> {
-  const snapshot = readSubscriptionUsageSnapshot();
+  const home = env.HOME !== undefined && env.HOME !== "" ? env.HOME : homedir();
+  const snapshot = readSubscriptionUsageSnapshot(env);
   const claude = snapshot?.routes.claude;
   const codex = snapshot?.routes.codex;
   const recovered =
@@ -143,7 +145,7 @@ export async function readRouteUsage(
     "fresh"
       ? { window: codex?.["7d"], reason: "fresh statusline snapshot" }
       : await readCodexSubscriptionUsage(
-          join(process.env.HOME ?? homedir(), ".codex", "sessions"),
+          join(home, ".codex", "sessions"),
           nowMs,
           MAX_AGE_MS,
         );

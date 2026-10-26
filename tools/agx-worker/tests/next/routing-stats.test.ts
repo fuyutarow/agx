@@ -5,15 +5,26 @@ import {
   readFileSync,
   rmSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { statsWindow } from "../../src/next/stats-window.ts";
 import { writeUsageSnapshot } from "./usage-snapshot.fixture.ts";
 
 const roots: string[] = [];
+const FIRST_NOW_MS = Temporal.Instant.from(
+  "2026-10-26T00:00:00Z",
+).epochMilliseconds;
+const SECOND_NOW_MS = Temporal.Instant.from(
+  "2026-10-26T00:01:00Z",
+).epochMilliseconds;
+const usageReader = fileURLToPath(
+  new URL("./fixtures/subscription-usage-reader.ts", import.meta.url),
+);
 afterEach(() => {
   for (const root of roots.splice(0))
     rmSync(root, { recursive: true, force: true });
@@ -49,6 +60,45 @@ const fixture = () => {
   Reflect.deleteProperty(env, "AGX_NEXT_STATE_DIR");
   Reflect.deleteProperty(env, "JEV_URL");
   return { root, env };
+};
+const usageFixture = () => {
+  const root = mkdtempSync(join(tmpdir(), "agx-subscription-clock-"));
+  roots.push(root);
+  const decoyHome = join(root, "decoy-home");
+  mkdirSync(join(root, ".codex", "sessions"), { recursive: true });
+  mkdirSync(join(decoyHome, ".codex", "sessions"), { recursive: true });
+  return { home: root, decoyHome, env: { HOME: root } };
+};
+const usageAt = (home: string, ambientHome: string, nowMs: number) =>
+  Bun.spawnSync([process.execPath, usageReader], {
+    env: {
+      HOME: ambientHome,
+      AGX_SUBSCRIPTION_TEST_HOME: home,
+      AGX_SUBSCRIPTION_TEST_NOW_MS: String(nowMs),
+    },
+    timeout: 5_000,
+  });
+const writeDecoyCodexRollout = (home: string, nowMs: number) => {
+  const path = join(home, ".codex", "sessions", "rollout-decoy.jsonl");
+  const measuredAt = nowMs - 30_000;
+  writeFileSync(
+    path,
+    `${JSON.stringify({
+      timestamp: Temporal.Instant.fromEpochMilliseconds(measuredAt).toString(),
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        rate_limits: {
+          primary: {
+            used_percent: 99,
+            window_minutes: 10080,
+            resets_at: nowMs / 1000 + 86400,
+          },
+        },
+      },
+    })}\n`,
+  );
+  utimesSync(path, measuredAt / 1000, measuredAt / 1000);
 };
 const args = [process.execPath, "tools/agx/src/agx.ts", "worker"];
 const stats = (
@@ -170,27 +220,77 @@ test("empty history has null share and unknown subscription is not capability fa
 });
 
 test("subscription freshness and exhaustion stay separate from capability", () => {
-  const { env } = fixture();
+  const { home, env, decoyHome } = usageFixture();
   for (const stale of [false, true]) {
-    const measured =
-      Temporal.Now.instant().epochMilliseconds - (stale ? 3_600_000 : 0);
+    const measured = FIRST_NOW_MS - (stale ? 3_600_000 : 60_000);
+    const reset = FIRST_NOW_MS / 1000 + 86400;
+    expect(
+      writeUsageSnapshot({ rl7: 100, rl7Reset: reset }, measured / 1000, env),
+    ).toBe(true);
     expect(
       writeUsageSnapshot(
         {
-          rl7: 100,
-          rl7Reset: Temporal.Now.instant().epochMilliseconds / 1000 + 86400,
+          rl7: stale ? 0 : 100,
+          rl7Reset: reset,
         },
-        measured / 1000,
-        env,
+        (FIRST_NOW_MS - (stale ? 60_000 : 3_600_000)) / 1000,
+        { HOME: decoyHome },
       ),
     ).toBe(true);
-    const data = report(stats(env));
-    expect(data.routes.claude.subscription?.usage_status).toBe(
-      stale ? "stale" : "fresh",
+    writeDecoyCodexRollout(decoyHome, FIRST_NOW_MS);
+
+    const result = usageAt(home, decoyHome, FIRST_NOW_MS);
+    expect(result.exitCode, result.stderr.toString()).toBe(0);
+    expect(result.stderr.toString()).toBe("");
+    expect(result.stdout.toString()).toBe(
+      `${JSON.stringify({
+        status: stale ? "stale" : "fresh",
+        exhausted: !stale,
+        available: stale,
+        codexSource: "no fresh Codex rollout source",
+      })}\n`,
     );
-    expect(data.routes.claude.state).toBe(stale ? "unknown" : "unavailable");
-    expect(data.routes.claude.subscription?.available).toBe(stale);
   }
+});
+
+test("timing contract: subscription clock", () => {
+  const { home, env, decoyHome } = usageFixture();
+  const measured = FIRST_NOW_MS - 60_000;
+  expect(
+    writeUsageSnapshot(
+      {
+        rl7: 100,
+        rl7Reset: FIRST_NOW_MS / 1000 + 86400,
+      },
+      measured / 1000,
+      env,
+    ),
+  ).toBe(true);
+  expect(
+    writeUsageSnapshot(
+      {
+        rl7: 0,
+        rl7Reset: FIRST_NOW_MS / 1000 + 86400,
+      },
+      measured / 1000,
+      { HOME: decoyHome },
+    ),
+  ).toBe(true);
+  writeDecoyCodexRollout(decoyHome, FIRST_NOW_MS);
+
+  const expected = `${JSON.stringify({
+    status: "fresh",
+    exhausted: true,
+    available: false,
+    codexSource: "no fresh Codex rollout source",
+  })}\n`;
+  const verdicts = [FIRST_NOW_MS, SECOND_NOW_MS].map((nowMs) => {
+    const result = usageAt(home, decoyHome, nowMs);
+    expect(result.exitCode, result.stderr.toString()).toBe(0);
+    expect(result.stderr.toString()).toBe("");
+    return result.stdout.toString();
+  });
+  expect(verdicts).toEqual([expected, expected]);
 });
 
 test("incomplete journal tail is explicit, malformed complete rows fail collection", () => {
