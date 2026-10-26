@@ -19,6 +19,33 @@ type CommandRunner = (
 
 const DEFAULT_BUDGET_MS = 5_000;
 
+export const PREMISE_KINDS = [
+  "file",
+  "symbol",
+  "bookmark",
+  "task",
+  "rev",
+  "ancestor",
+] as const;
+
+export const PREMISE_HELP: Record<(typeof PREMISE_KINDS)[number], string> = {
+  file: "file:README.md — a path exists in the worker tree",
+  symbol:
+    "symbol:routeWorker@src/** — tracked text contains a fixed string (optionally glob-scoped)",
+  bookmark:
+    "bookmark:main@origin — a bookmark exists (optionally remote-qualified)",
+  task: "task:check — a mise task exists",
+  rev: "rev:@ — a jj revision resolves",
+  ancestor:
+    "ancestor:60cfaa97@alpha@origin — a commit is an ancestor of (or equal to) a jj revision",
+};
+
+export const premiseHelp = (): string =>
+  [
+    "Ticket front matter may declare `premises = [...]`; every premise must hold in the --cd tree before a worker starts:",
+    ...PREMISE_KINDS.map((kind) => `  ${PREMISE_HELP[kind]}`),
+  ].join("\n");
+
 const runCommand: CommandRunner = (argv, cwd, timeoutMs) => {
   const invocation =
     argv[0] === "jj" || argv[0] === "git"
@@ -184,6 +211,86 @@ function simpleCommandExists(
   };
 }
 
+function ancestorPremise(
+  premise: string,
+  cwd: string,
+  vcs: "jj" | "git",
+  runner: CommandRunner,
+  startedAt: number,
+  budgetMs: number,
+): { status: "ok"; exists: boolean; detail: string } | { status: "timeout" } {
+  const value = premise.slice("ancestor:".length);
+  const separator = value.indexOf("@");
+  const commit = value.slice(0, separator);
+  const revision = value.slice(separator + 1);
+  if (separator < 0 || commit.length === 0 || revision.length === 0)
+    return {
+      status: "ok",
+      exists: false,
+      detail: `${premise}: invalid ancestor premise; expected ancestor:<commit>@<rev>`,
+    };
+
+  const resolveArg =
+    vcs === "jj"
+      ? ["jj", ...JJ_READ_ARGS, "log"]
+      : ["git", "rev-parse", "--verify"];
+  const resolveCommit =
+    vcs === "jj"
+      ? [...resolveArg, "-r", commit, "--no-graph", "-T", "commit_id"]
+      : [...resolveArg, `${commit}^{commit}`];
+  const resolveRevision =
+    vcs === "jj"
+      ? [...resolveArg, "-r", revision, "--no-graph", "-T", "commit_id"]
+      : [...resolveArg, `${revision}^{commit}`];
+  const target = commandResult(runner, resolveCommit, cwd, startedAt, budgetMs);
+  if (target === undefined) return { status: "timeout" };
+  const targetId = target.exitCode === 0 ? target.output.trim() : "";
+  const current = commandResult(
+    runner,
+    resolveRevision,
+    cwd,
+    startedAt,
+    budgetMs,
+  );
+  if (current === undefined) return { status: "timeout" };
+  const currentId = current.exitCode === 0 ? current.output.trim() : "";
+  const location =
+    currentId === ""
+      ? `revision ${revision} currently points to an unavailable commit`
+      : `revision ${revision} currently points to ${currentId}`;
+  if (targetId === "" || currentId === "")
+    return {
+      status: "ok",
+      exists: false,
+      detail: `${premise}: commit ${commit} could not be resolved; ${location}`,
+    };
+
+  const ancestry =
+    vcs === "jj"
+      ? [
+          "jj",
+          ...JJ_READ_ARGS,
+          "log",
+          "-r",
+          `ancestors(${currentId}) & ${targetId}`,
+          "--no-graph",
+          "-T",
+          "commit_id",
+        ]
+      : ["git", "merge-base", "--is-ancestor", targetId, currentId];
+  const result = commandResult(runner, ancestry, cwd, startedAt, budgetMs);
+  if (result === undefined) return { status: "timeout" };
+  const exists =
+    vcs === "jj"
+      ? result.exitCode === 0 && result.output.trim() === targetId
+      : result.exitCode === 0;
+  return {
+    status: "ok",
+    exists,
+    detail: `${premise}: commit ${targetId} is not an ancestor of revision ${revision}; ${location}`,
+  };
+}
+
 export function checkPremises(
   premises: string[] | undefined,
   cwd: string,
@@ -255,7 +362,7 @@ export function checkPremises(
   }
 
   const extra = premises.filter((premise) =>
-    /^(?:bookmark|task|rev):/u.test(premise),
+    /^(?:bookmark|task|rev|ancestor):/u.test(premise),
   );
   for (const premise of extra) {
     const colon = premise.indexOf(":");
@@ -276,7 +383,10 @@ export function checkPremises(
         startedAt,
         budgetMs,
       );
-    else continue;
+    else if (kind === "ancestor") {
+      const vcs = existsSync(resolve(cwd, ".jj")) ? "jj" : "git";
+      result = ancestorPremise(premise, cwd, vcs, runner, startedAt, budgetMs);
+    } else continue;
     if (result.status === "timeout") return { status: "timeout" };
     if (!result.exists) {
       missing.push(premise);

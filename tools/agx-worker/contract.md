@@ -1000,6 +1000,15 @@ assembled repository environment and per-run temporary directory.
 
 ## Model-free ticket intake
 
+Tickets may declare read-only launch premises in front matter, for example
+`premises = ["ancestor:60cfaa97@alpha@origin"]`. `agx worker check --help`
+lists every supported kind and an example. `ancestor:<commit>@<rev>` holds when
+the commit is an ancestor of or equal to the resolved revision in the selected
+worker tree. On failure, check, run and dispatch refuse before worker startup
+and report the premise, resolved commit, revision, and the commit the revision
+currently points to. Revision expressions may include `@`; the first `@`
+separates the commit from the revision.
+
 Before routing or worker startup, check, run and continuation enforce two intake
 rules. Dispatch applies the same parsed-ticket rules before workspace creation
 and runs the shared preflight before starting its unit. Per-ticket roster selection

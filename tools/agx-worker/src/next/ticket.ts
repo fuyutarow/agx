@@ -1,6 +1,10 @@
 import { fromThrowable } from "neverthrow";
 import { z } from "../../../shared/src/zod.ts";
 import { CapabilitySchema, capabilityTags } from "../ticket.ts";
+import { PREMISE_KINDS } from "../premises.ts";
+
+const premisePrefix = new RegExp(`^(?:${PREMISE_KINDS.join("|")}):.+$`, "u");
+const ancestorPremise = /^ancestor:[a-fA-F0-9]{8,64}@.+$/u;
 
 const oneLine = z
   .string()
@@ -26,7 +30,16 @@ const Ticket = z
     verify: z.array(z.string().trim().min(1)).default([]),
     timeout_s: z.number().int().min(60).max(14_400).optional(),
     premises: z
-      .array(z.string().regex(/^(?:file|symbol|bookmark|task|rev):.+$/u))
+      .array(
+        z
+          .string()
+          .regex(premisePrefix)
+          .refine(
+            (premise) =>
+              !premise.startsWith("ancestor:") || ancestorPremise.test(premise),
+            "ancestor premise must be ancestor:<commit>@<rev> with a hexadecimal commit ID",
+          ),
+      )
       .optional(),
     base_rev: z
       .string()

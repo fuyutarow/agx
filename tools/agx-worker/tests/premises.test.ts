@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkPremises } from "../src/premises.ts";
+import { checkPremises, PREMISE_KINDS, premiseHelp } from "../src/premises.ts";
 import { createTempTracker } from "./temp.ts";
 
 const tempDirs = createTempTracker();
@@ -47,6 +47,71 @@ const fakeRg = (argv: string[], cwd: string) => {
 };
 
 describe("premise checks", () => {
+  test("check help documents premises and every parser kind", () => {
+    const result = Bun.spawnSync(
+      ["bun", "tools/agx-worker/src/next/cli.ts", "check", "--help"],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+    );
+    expect(result.exitCode).toBe(0);
+    const help = result.stdout.toString();
+    expect(help).toContain("premises = [...]");
+    for (const kind of PREMISE_KINDS) expect(help).toContain(`  ${kind}:`);
+    expect(help).toContain(premiseHelp());
+  });
+
+  test("ancestor premise passes when the commit is an ancestor or equal", () => {
+    const repo = join(scratch, "ancestor-jj");
+    mkdirSync(join(repo, ".jj"), { recursive: true });
+    const commit = "60cfaa97abcdef01234567890123456789012345";
+    const revision = "abcdef0123456789012345678901234567890123";
+    const calls: string[][] = [];
+    const result = checkPremises(["ancestor:60cfaa97@alpha@origin"], repo, {
+      runner: (argv) => {
+        calls.push(argv);
+        if (argv.includes("-r")) {
+          const expression = argv[argv.indexOf("-r") + 1];
+          if (expression === "60cfaa97") return { exitCode: 0, output: commit };
+          if (expression === "alpha@origin")
+            return { exitCode: 0, output: revision };
+          if (expression === `ancestors(${revision}) & ${commit}`)
+            return { exitCode: 0, output: commit };
+        }
+        return { exitCode: 1, output: "unexpected revision" };
+      },
+    });
+    expect(result).toEqual({ status: "ok" });
+    expect(calls).toHaveLength(3);
+  });
+
+  test("an unlanded ancestor premise names its commit and current revision", () => {
+    const repo = join(scratch, "unlanded-ancestor-jj");
+    mkdirSync(join(repo, ".jj"), { recursive: true });
+    const commit = "60cfaa97abcdef01234567890123456789012345";
+    const revision = "abcdef0123456789012345678901234567890123";
+    expect(
+      checkPremises(["ancestor:60cfaa97@alpha@origin"], repo, {
+        runner: (argv) => {
+          if (argv.includes("-r")) {
+            const expression = argv[argv.indexOf("-r") + 1];
+            if (expression === "60cfaa97")
+              return { exitCode: 0, output: commit };
+            if (expression === "alpha@origin")
+              return { exitCode: 0, output: revision };
+            if (expression === `ancestors(${revision}) & ${commit}`)
+              return { exitCode: 0, output: "" };
+          }
+          return { exitCode: 1, output: "unexpected revision" };
+        },
+      }),
+    ).toEqual({
+      status: "missing",
+      premises: ["ancestor:60cfaa97@alpha@origin"],
+      details: [
+        `ancestor:60cfaa97@alpha@origin: commit ${commit} is not an ancestor of revision alpha@origin; revision alpha@origin currently points to ${revision}`,
+      ],
+    });
+  });
+
   test("tracked symbol selection uses imported enumeration and bounded VCS reads", () => {
     const repo = join(scratch, "tracked-repo");
     mkdirSync(join(repo, ".git"), { recursive: true });
@@ -122,7 +187,9 @@ describe("premise checks", () => {
     expect(checkPremises(["file:src/missing.ts"], scratch)).toEqual({
       status: "missing",
       premises: ["file:src/missing.ts"],
-      details: ["file:src/missing.ts: file does not exist"],
+      details: [
+        "file:src/missing.ts: file does not exist; check=file-exists expected=true observed=false",
+      ],
     });
   });
 
@@ -223,18 +290,22 @@ describe("premise checks", () => {
           status: "missing",
           premises: ["bookmark:unknown@origin"],
           details: [
-            "bookmark:unknown@origin: wip-u26-headroom: qzmvvrst 0a83339d wip(u26): ...\ndescription continuation\nfinal description line",
+            "bookmark:unknown@origin: check=bookmark-exists expected=true observed=false exit=0; main\nrelease@origin\nwip-u26-headroom: qzmvvrst 0a83339d wip(u26): ...\ndescription continuation\nfinal description line",
           ],
         });
         expect(checkPremises(["task:missing"], scratch, { runner })).toEqual({
           status: "missing",
           premises: ["task:missing"],
-          details: ['task:missing: [{"name":"land"},{"name":"check"}]'],
+          details: [
+            'task:missing: check=task-exists expected=true observed=false exit=0; [{"name":"land"},{"name":"check"}]',
+          ],
         });
         expect(checkPremises(["rev:missing()"], scratch, { runner })).toEqual({
           status: "missing",
           premises: ["rev:missing()"],
-          details: ["rev:missing(): No revisions match"],
+          details: [
+            "rev:missing(): check=rev-exists expected=true observed=false exit=1; No revisions match",
+          ],
         });
       },
     );

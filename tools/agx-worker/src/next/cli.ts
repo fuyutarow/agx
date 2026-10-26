@@ -8,6 +8,7 @@ import { standardCli } from "../../../shared/src/cli.ts";
 import { exitWithError } from "./exit.ts";
 import { flushRunPublications, stateDir } from "./store.ts";
 import packageJson from "../../package.json" with { type: "json" };
+import { premiseHelp } from "../premises.ts";
 
 const cliArgv = () => process.argv.slice(2);
 const cli = standardCli(cleyeCli, packageJson, cliArgv);
@@ -184,6 +185,7 @@ async function main(): Promise<void> {
     const parsed = cli(
       {
         name: "agx-worker check",
+        help: { description: premiseHelp() },
         parameters: ["<ticket>"],
         flags: {
           json: {
