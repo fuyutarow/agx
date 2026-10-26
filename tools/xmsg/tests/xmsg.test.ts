@@ -206,6 +206,7 @@ async function run(
     codexError?: boolean;
     replyAfterReads?: number;
     inventory?: string;
+    inventorySequence?: string[];
     inventoryDelay?: number;
     discoveryDelay?: number;
     env?: Record<string, string | undefined>;
@@ -356,6 +357,11 @@ const previous = await Bun.file(process.env.XMSG_FAKE_ARGS).exists() ? await Bun
 await Bun.write(process.env.XMSG_FAKE_ARGS, previous + JSON.stringify(args) + "\\n");
 const inventory = args[0] === "agents";
 let output = process.env.XMSG_FAKE_INVENTORY ?? process.env.XMSG_FAKE_OUTPUT ?? "";
+if (inventory && process.env.XMSG_FAKE_INVENTORY_SEQUENCE !== undefined) {
+  const sequence = JSON.parse(process.env.XMSG_FAKE_INVENTORY_SEQUENCE);
+  const reads = previous.trim().split("\\n").filter(Boolean).filter((line) => JSON.parse(line)[0] === "agents").length;
+  output = sequence[Math.min(reads, sequence.length - 1)] ?? "";
+}
 if (inventory && process.env.XMSG_FAKE_REGISTRY === "1") {
   const records = [];
   for await (const file of new Bun.Glob("*.json").scan(process.env.HOME + "/.claude/sessions"))
@@ -406,6 +412,10 @@ process.exit(Number(process.env.XMSG_FAKE_EXIT ?? 0));
         XMSG_RELAY_CAPTURE: undefined,
         ...options.env,
         XMSG_FAKE_INVENTORY: options.inventory,
+        XMSG_FAKE_INVENTORY_SEQUENCE:
+          options.inventorySequence === undefined
+            ? undefined
+            : JSON.stringify(options.inventorySequence),
         XMSG_FAKE_REGISTRY: options.registry === undefined ? undefined : "1",
         XMSG_FAKE_PEER: options.relayPeer,
         XMSG_FAKE_INVENTORY_DELAY: String(
@@ -1088,6 +1098,38 @@ test("Claude prefix queries only Claude, then relays to its native name once", a
   );
 });
 
+test("Claude inventory skips one malformed row and resolves a valid target", async () => {
+  const r = await run({
+    inventory: JSON.stringify([
+      { sessionId: uuidA, name: "peer", status: "idle" },
+      { sessionId: uuidB, name: "broken", status: 42 },
+    ]),
+    output: stream(uuidUse(uuidA), accepted),
+    args: sendArgs(`claude:${uuidA}`),
+  });
+  expect(r.exit).toBe(0);
+  expect(r.calls).toHaveLength(2);
+  expect(r.calls[0]).toEqual(["agents", "--json"]);
+  expect(r.calls[1]?.at(-1)).toContain('Target: "peer"');
+  expect(r.stderr).toContain("row 1; field status");
+  expect(r.stderr).toContain("skipped 1 malformed Claude inventory row(s)");
+});
+
+test("Claude inventory retries one empty read and resolves a valid target", async () => {
+  const r = await run({
+    inventorySequence: ["", globalAgents(uuidA, "peer")],
+    output: stream(uuidUse(uuidA), accepted),
+    args: sendArgs(`claude:${uuidA}`),
+  });
+  expect(r.exit).toBe(0);
+  expect(r.calls).toHaveLength(3);
+  expect(r.calls.slice(0, 2)).toEqual([
+    ["agents", "--json"],
+    ["agents", "--json"],
+  ]);
+  expect(r.calls.at(-1)?.at(-1)).toContain('Target: "peer"');
+});
+
 test.each([
   uuidA.toUpperCase(),
   uuidA.replaceAll("-", "").toUpperCase(),
@@ -1249,7 +1291,10 @@ test("unavailable Claude UUID inventory names the target and searched source wit
     args: sendArgs(`claude:${uuidB}`),
   });
   expect(r.exit).toBe(3);
-  expect(r.calls).toEqual([["agents", "--json"]]);
+  expect(r.calls).toEqual([
+    ["agents", "--json"],
+    ["agents", "--json"],
+  ]);
   expect(r.stderr).toContain(uuidB);
   expect(r.stderr).toContain("Invalid Claude inventory schema");
   expect(r.stderr).toContain("searched claude agents --json");

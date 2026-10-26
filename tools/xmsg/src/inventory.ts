@@ -16,17 +16,13 @@ const Id = z
   .string()
   .min(1)
   .refine((id) => id === id.trim());
-const ClaudeAgents = z
-  .array(
-    z.object({
-      sessionId: Id,
-      name: z.string().nullish(),
-      cwd: z.string().nullish(),
-      status: z.string(),
-      kind: z.string().optional(),
-    }),
-  )
-  .max(MAX_RECORDS);
+const ClaudeAgent = z.object({
+  sessionId: Id,
+  name: z.string().nullish(),
+  cwd: z.string().nullish(),
+  status: z.string(),
+  kind: z.string().optional(),
+});
 const Thread = z.object({
   id: Id,
   name: z.string().nullish(),
@@ -72,45 +68,106 @@ async function boundedText(
 export async function claudeInventory(
   timeoutMs: number,
 ): Promise<Recipient[] | Error> {
-  const signal = AbortSignal.timeout(timeoutMs);
-  const child = Bun.spawn(["claude", "agents", "--json"], {
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-    signal,
-    killSignal: "SIGKILL",
-  });
-  const operation = async (): Promise<Recipient[] | Error> => {
-    const [code, output, errors] = await Promise.all([
-      child.exited,
-      boundedText(child.stdout),
-      boundedText(child.stderr),
-    ]);
-    if (output instanceof Error) return output;
-    if (signal.aborted) return new Error("discovery deadline exceeded");
-    if (code !== 0)
-      return new Error(
-        `claude agents exited ${code}: ${typeof errors === "string" ? errors.slice(0, 500) : errors.message}`,
-      );
-    const parsed = jsonOf(ClaudeAgents).safeParse(output);
-    if (!parsed.success) return new Error("Invalid Claude inventory schema");
-    const agents = parsed.data;
-    const observedAt = Temporal.Now.instant().toString();
-    return agents.map((agent) => ({
-      address: `claude:${agent.sessionId}`,
-      vendor: "claude",
-      id: agent.sessionId,
-      name: agent.name ?? null,
-      cwd: agent.cwd ?? null,
-      state: agent.status,
-      availability: "active-native-registration",
-      source: "claude agents --json",
-      observedAt,
-    }));
+  const deadline = performance.now() + timeoutMs;
+  const read = async (): Promise<
+    | { ok: true; output: string }
+    | { ok: false; error: Error; retryable: boolean }
+  > => {
+    const remaining = deadline - performance.now();
+    if (remaining <= 0)
+      return {
+        ok: false,
+        error: new Error("discovery deadline exceeded"),
+        retryable: false,
+      };
+    const signal = AbortSignal.timeout(Math.max(1, Math.ceil(remaining)));
+    const child = Bun.spawn(["claude", "agents", "--json"], {
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      signal,
+      killSignal: "SIGKILL",
+    });
+    const operation = async (): Promise<
+      | { ok: true; output: string }
+      | { ok: false; error: Error; retryable: boolean }
+    > => {
+      const [code, output, errors] = await Promise.all([
+        child.exited,
+        boundedText(child.stdout),
+        boundedText(child.stderr),
+      ]);
+      if (output instanceof Error)
+        return { ok: false, error: output, retryable: false };
+      if (signal.aborted)
+        return {
+          ok: false,
+          error: new Error("discovery deadline exceeded"),
+          retryable: false,
+        };
+      if (code !== 0)
+        return {
+          ok: false,
+          error: new Error(
+            `claude agents exited ${code}: ${typeof errors === "string" ? errors.slice(0, 500) : errors.message}`,
+          ),
+          retryable: false,
+        };
+      return { ok: true, output };
+    };
+    return operation().finally(() => {
+      child.kill();
+    });
   };
-  return operation().finally(() => {
-    child.kill();
-  });
+  let result = await read();
+  if (!result.ok) return result.error;
+  const inventorySchema = z.array(z.unknown()).max(MAX_RECORDS);
+  let parsed = jsonOf(inventorySchema).safeParse(result.output);
+  const retryable =
+    !parsed.success &&
+    parsed.error.issues.some(
+      (issue) => issue.code === "invalid_format" && issue.format === "json",
+    );
+  if (retryable) {
+    if (performance.now() >= deadline)
+      return new Error("discovery deadline exceeded");
+    result = await read();
+    if (!result.ok) return result.error;
+    parsed = jsonOf(inventorySchema).safeParse(result.output);
+  }
+  if (!parsed.success) return new Error("Invalid Claude inventory schema");
+  const agents: Array<z.infer<typeof ClaudeAgent>> = [];
+  let skipped = 0;
+  for (const [index, row] of parsed.data.entries()) {
+    const agent = ClaudeAgent.safeParse(row);
+    if (!agent.success) {
+      skipped++;
+      const issue = agent.error.issues[0];
+      const path = issue?.path.map(String).join(".") ?? "";
+      const field = path.length === 0 ? "<row>" : path;
+      process.stderr.write(
+        `agx msg: skipping malformed Claude inventory row ${index}; field ${field}: ${issue?.message ?? "invalid row"}\n`,
+      );
+      continue;
+    }
+    agents.push(agent.data);
+  }
+  if (skipped > 0)
+    process.stderr.write(
+      `agx msg: skipped ${skipped} malformed Claude inventory row(s)\n`,
+    );
+  const observedAt = Temporal.Now.instant().toString();
+  return agents.map((agent) => ({
+    address: `claude:${agent.sessionId}`,
+    vendor: "claude",
+    id: agent.sessionId,
+    name: agent.name ?? null,
+    cwd: agent.cwd ?? null,
+    state: agent.status,
+    availability: "active-native-registration",
+    source: "claude agents --json",
+    observedAt,
+  }));
 }
 
 /** Existing daemon only. RFC6455 client framing; no daemon launch or agent input. */
