@@ -67,6 +67,12 @@ function fixture() {
   const wsArgs = join(root, "ws-args.txt");
   const home = join(root, "home");
   mkdirSync(home);
+  const machineRepos = join(home, "config", "agx", "repos");
+  mkdirSync(machineRepos, { recursive: true });
+  writeFileSync(
+    join(machineRepos, "repo.toml"),
+    `schema = 1\nroot = ${JSON.stringify(repo)}\n`,
+  );
   const rosterCheck = join(root, "roster-check.ts");
   writeFileSync(
     rosterCheck,
@@ -169,6 +175,12 @@ function fixture() {
   shim("systemd-run", ['exec bun "$FAKE_SYSTEMD_RUN_SCRIPT" "$@"']);
   shim("agx-worker", [
     'if [ "$1" = "ls" ]; then',
+    '  if [ "$FAKE_CAPACITY_RELEASE_AFTER" != "" ] && [ -s "$FAKE_RECORDS" ]; then',
+    '    count=0; if [ -f "$FAKE_CAPACITY_READS" ]; then count="$(cat "$FAKE_CAPACITY_READS")"; fi',
+    '    count="$((count + 1))"',
+    '    printf "%s" "$count" > "$FAKE_CAPACITY_READS"',
+    '    if [ "$count" -ge "$FAKE_CAPACITY_RELEASE_AFTER" ] && [ ! -e "$FAKE_CAPACITY_RELEASED" ]; then printf "[]\\n" > "$FAKE_RECORDS"; touch "$FAKE_CAPACITY_RELEASED"; fi',
+    "  fi",
     '  if [ "$FAKE_LATE_RECORD" = "yes" ]; then',
     '    if [ ! -e "$FAKE_LS_MARKER" ]; then touch "$FAKE_LS_MARKER"',
     '    elif [ -s "$FAKE_PENDING_RECORD" ]; then cp "$FAKE_PENDING_RECORD" "$FAKE_RECORDS"; : > "$FAKE_PENDING_RECORD"; fi',
@@ -196,6 +208,8 @@ function fixture() {
     FAKE_PREFLIGHT_ROSTER: join(root, "preflight-roster.json"),
     FAKE_REPO: repo,
     FAKE_RECORDS: records,
+    FAKE_CAPACITY_READS: join(root, "capacity-reads"),
+    FAKE_CAPACITY_RELEASED: join(root, "capacity-released"),
     FAKE_PENDING_RECORD: join(root, "pending-record.json"),
     FAKE_LS_MARKER: join(root, "ls-marker"),
     FAKE_UNIT_ARGS: unitArgs,
@@ -481,6 +495,43 @@ test("dispatch records its one ticket-derived binding", async () => {
   expect(args).toContain("KillMode=mixed\n-p\nTimeoutStopSec=60\n");
   expect(await Bun.file(f.wsArgs).text()).toContain("--reuse");
 });
+
+test("max_running refuses dispatch at the cap and wait-slot starts after a run ends", async () => {
+  const f = fixture();
+  const machineConfig = join(
+    f.env.XDG_CONFIG_HOME!,
+    "agx",
+    "repos",
+    "repo.toml",
+  );
+  writeFileSync(
+    machineConfig,
+    `schema = 1\nroot = ${JSON.stringify(f.repo)}\n[worker]\nmax_running = 1\n`,
+  );
+  const live = {
+    id: "already-running",
+    ticket: "busy",
+    cwd: f.repo,
+    workspace: f.repo,
+    unit: "agt_busy",
+    state: "running",
+  };
+  writeFileSync(f.records, `${JSON.stringify([live])}\n`);
+  const refused = await invoke(f);
+  expect(refused.exitCode).toBe(2);
+  expect(refused.stderr).toContain("running worker limit reached (1/1)");
+  expect(refused.stderr).toContain("already-running(busy)");
+  expect(await Bun.file(f.unitArgs).exists()).toBe(false);
+
+  writeFileSync(f.records, `${JSON.stringify([live])}\n`);
+  f.env.FAKE_CAPACITY_RELEASE_AFTER = "3";
+  f.env.FAKE_INVOKE_TIMEOUT_MS = "20000";
+  const waited = await invoke(f, "--wait-slot");
+  expect(waited.exitCode, waited.stderr).toBe(0);
+  expect(waited.stderr).toContain("waiting for a worker slot");
+  expect(await Bun.file(f.unitArgs).exists()).toBe(true);
+  expect(await Bun.file(f.records).text()).toContain('"state":"running"');
+}, 30_000);
 
 test("workspace and unit overrides are honored even when they differ from the ticket", async () => {
   const f = fixture();

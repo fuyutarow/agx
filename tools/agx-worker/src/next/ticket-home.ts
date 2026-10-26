@@ -209,6 +209,7 @@ export async function ticketContext(cwd: string) {
     revision,
     vcs,
     verifyAlways: config.value.verifyAlways,
+    maxRunning: config.value.maxRunning,
   } as const;
 }
 

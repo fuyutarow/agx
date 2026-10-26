@@ -18,8 +18,8 @@ agx-ticket use it. Workspace lifecycle commands still use the separate policy de
 | L3      | User policy, described below                                                        | Operator                                    | One user policy file, independent of repository          |
 | Catalog | Shipped model data                                                                  | agx maintainers                             | Installed agx version                                    |
 
-Defaults are `tickets = ".agents/tickets"`, no readiness commands, no keep entries and no
-repository verification commands. Merge order is defaults, L1, L2; later values replace each
+Defaults are `tickets = ".agents/tickets"`, no readiness commands, no keep entries, no
+repository verification commands and `worker.max_running = 4`. Merge order is defaults, L1, L2; later values replace each
 key, and arrays are replaced rather than concatenated. L1 is optional: local-only operation
 needs no tracked file or ignore rule. No repository working file supplies L2.
 
@@ -48,6 +48,9 @@ schema = 1
 root = "/srv/project"
 tickets = "/srv/project-tickets"
 
+[worker]
+max_running = 4
+
 [ws]
 ready = ["bun install --frozen-lockfile"]
 keep = ["/srv/project.ws/ws-reference"]
@@ -56,7 +59,8 @@ keep = ["/srv/project.ws/ws-reference"]
 always = []
 ```
 
-L2 requires absolute `root` and schema 1. It accepts the L1 keys plus `[ws].keep` and
+L2 requires absolute `root` and schema 1. It accepts the L1 keys plus `[ws].keep`,
+`[worker].max_running` (positive integer; machine-wide live agx worker limit), and
 `[usehooks]` with required `hooks`, `link_task`, `link_path` strings and nonempty `command`
 string array when present. Readiness, keep and verification arrays contain nonblank strings.
 Absolute ticket paths and `~/` expansion are allowed only here; relative paths still resolve
@@ -66,7 +70,7 @@ L2 `root` literally: operators must declare that real path, not a symlink alias.
 All regular or symlinked `.toml` entries in the L2 directory are parsed, in filename order.
 A malformed unrelated entry also fails the read. Duplicate literal roots fail, even if the
 duplicate is unrelated to the current repository. No match leaves defaults and L1 in effect.
-L2 has one operator as writer; machine-specific keep lists should stay local. The operator
+L2 has one operator as writer; machine-specific keep lists and worker limits should stay local. The operator
 chooses how declarations are deployed. Repository review/history records L1 decisions; local
 operator ownership is the record for L2. Neither layer has a separate exception format,
 canonicalization, signing input or decision ledger.

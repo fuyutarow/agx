@@ -2,19 +2,29 @@
 
 `agx-worker` owns worker runs. Its package bin points to `src/next/cli.ts`. The suite also accepts `agx worker`.
 
-| Command                                                                                        | Purpose                                                                                                                               |
-| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `agx worker run TICKET [--cd TREE] [--sandbox MODE] [--continue RUN_ID] [--session ID]`        | Route a ticket to a roster worker, run it, and append run records.                                                                    |
-| `agx worker check TICKET [--cd TREE]`                                                          | Validate a ticket and its premises without starting a worker.                                                                         |
-| `agx worker ls [SELECTOR] [--workspace PATH] [--json]`                                         | List runs and judgments; SELECTOR is a run id, unique run-id prefix, or exact ticket name. Ticket selections put the newest run last. |
-| `agx worker judge RUN_ID accept\|reject [--note TEXT]`                                         | Append an acceptance or rejection judgment.                                                                                           |
-| `agx worker stats [--import-legacy\|--routing\|--usage jev] [--window DURATION] [--host NAME]` | Report run counts, import legacy records, routing statistics, or Jev token usage.                                                     |
-| `agx worker probe --vendor codex --sandbox MODE --cd PATH --timeout-ms N --json`               | Run a bounded vendor diagnostic without a ticket or run record.                                                                       |
-| `agx worker dispatch TICKET [--ws SLUG] [--unit NAME] [--continue RUN_ID]`                     | Obtain a workspace through `agx ws`, or reuse a continuation's recorded workspace, and start a durable worker unit.                   |
-| `agx worker roster TICKET`                                                                     | Print one selected roster row. `roster --json` prints the full validated roster and routing objective.                                |
-| `agx worker doctor`                                                                            | Diagnose worker records as tool/object/finding/remedy JSON Lines.                                                                     |
+| Command                                                                                               | Purpose                                                                                                                               |
+| ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `agx worker run TICKET [--cd TREE] [--sandbox MODE] [--continue RUN_ID] [--session ID] [--wait-slot]` | Route a ticket to a roster worker, run it, and append run records.                                                                    |
+| `agx worker check TICKET [--cd TREE]`                                                                 | Validate a ticket and its premises without starting a worker.                                                                         |
+| `agx worker ls [SELECTOR] [--workspace PATH] [--json]`                                                | List runs and judgments; SELECTOR is a run id, unique run-id prefix, or exact ticket name. Ticket selections put the newest run last. |
+| `agx worker judge RUN_ID accept\|reject [--note TEXT]`                                                | Append an acceptance or rejection judgment.                                                                                           |
+| `agx worker stats [--import-legacy\|--routing\|--usage jev] [--window DURATION] [--host NAME]`        | Report run counts, import legacy records, routing statistics, or Jev token usage.                                                     |
+| `agx worker probe --vendor codex --sandbox MODE --cd PATH --timeout-ms N --json`                      | Run a bounded vendor diagnostic without a ticket or run record.                                                                       |
+| `agx worker dispatch TICKET [--ws SLUG] [--unit NAME] [--continue RUN_ID] [--wait-slot]`              | Obtain a workspace through `agx ws`, or reuse a continuation's recorded workspace, and start a durable worker unit.                   |
+| `agx worker roster TICKET`                                                                            | Print one selected roster row. `roster --json` prints the full validated roster and routing objective.                                |
+| `agx worker doctor`                                                                                   | Diagnose worker records as tool/object/finding/remedy JSON Lines.                                                                     |
 
 The top-level `objective` field in `roster --json` is the routing objective text used to select workers; the per-ticket `roster TICKET` output remains one selected row.
+
+## Machine worker limit
+
+The matching L2 machine repository file may declare `[worker].max_running`, a positive
+integer defaulting to 4. The value counts live agx worker run records across the machine's
+shared agx state, including runs from other repositories. `dispatch` refuses before starting
+systemd when the count is at the limit; `run` repeats the check under a machine-wide lock
+immediately before recording a start, closing concurrent-dispatch races. Refusal exits 2 and
+prints the live run IDs, ticket names and limit. `--wait-slot` prints the occupied slots and
+waits up to 60 seconds before refusing with exit 2.
 
 ## Sandbox capability preflight
 

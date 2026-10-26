@@ -162,6 +162,11 @@ async function main(): Promise<void> {
             type: String,
             description: "internal binding supplied by agx worker dispatch",
           },
+          waitSlot: {
+            type: Boolean,
+            description:
+              "wait up to 60s when L2 [worker].max_running (default 4) is reached",
+          },
         },
         strictFlags: true,
         ignoreArgv: rejectPrototypeFlag,
@@ -178,6 +183,7 @@ async function main(): Promise<void> {
       supersedes: parsed.flags.supersedes,
       session: parsed.flags.session,
       dispatchBinding: parsed.flags.dispatchBinding,
+      waitSlot: parsed.flags.waitSlot,
     } satisfies Flags;
     const { run } = await import("./run.ts");
     exit = await run(flags);

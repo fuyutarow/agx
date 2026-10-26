@@ -19,13 +19,21 @@ import {
 } from "../../shared/src/agx-dispatch-binding.ts";
 import { JJ_READ_ARGS } from "../../shared/src/jj-read.ts";
 import { readonlyCommand } from "../../shared/src/readonly-command.ts";
-import { InspectionTimeout } from "../../shared/src/agx-config.ts";
+import {
+  InspectionTimeout,
+  resolveAgxConfig,
+} from "../../shared/src/agx-config.ts";
 import { resolveSuiteTool } from "../../shared/src/path-dispatch.ts";
 
 import { selfCommand } from "./self-command.ts";
 import { parseNextTicket } from "./next/ticket.ts";
 import { recordedSandbox, resolveSandbox, Sandbox } from "./next/sandbox.ts";
 import { resolveRunId } from "./next/run-id.ts";
+import {
+  CAPACITY_WAIT_MS,
+  capacityMessage,
+  DEFAULT_MAX_RUNNING,
+} from "./next/worker-capacity.ts";
 
 export const DISPATCH_CHECK_TIMEOUT_MS = 60_000;
 export const DISPATCH_LIST_TIMEOUT_MS = 60_000;
@@ -61,6 +69,45 @@ const RunRow = z.looseObject({
 const Rows = jsonOf(z.array(RunRow));
 const WorkspaceResult = jsonOf(z.object({ workspace: z.string().min(1) }));
 type RunRow = z.output<typeof RunRow>;
+
+const runningRows = (rows: RunRow[]) =>
+  rows
+    .filter((row) => row.state === "running")
+    .map(({ id, ticket }) => ({ id, ticket }));
+
+async function waitForDispatchSlot(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  initial: RunRow[],
+  limit: number,
+): Promise<{ ok: true } | { ok: false; code: number; reason: string }> {
+  let active = runningRows(initial);
+  process.stderr.write(
+    `agx worker dispatch: waiting for a worker slot; limit=${limit}; running=${active.map((run) => `${run.id}(${run.ticket})`).join(", ")}\n`,
+  );
+  const deadline = Temporal.Now.instant().epochMilliseconds + CAPACITY_WAIT_MS;
+  while (
+    active.length >= limit &&
+    Temporal.Now.instant().epochMilliseconds < deadline
+  ) {
+    await Bun.sleep(250);
+    const refreshed = await listedRuns(cwd, env);
+    if (refreshed.rows === undefined)
+      return {
+        ok: false,
+        code: refreshed.code ?? 1,
+        reason: `cannot read run records while waiting: ${refreshed.error}`,
+      };
+    active = runningRows(refreshed.rows);
+  }
+  if (active.length >= limit)
+    return {
+      ok: false,
+      code: 2,
+      reason: `timed out waiting for a worker slot after ${CAPACITY_WAIT_MS}ms; ${capacityMessage(active, limit)}`,
+    };
+  return { ok: true };
+}
 
 export async function invoke(
   args: string[],
@@ -319,6 +366,7 @@ export async function dispatch(options: {
   unit?: string;
   sandbox?: string;
   continuation?: string;
+  waitSlot?: boolean;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
 }): Promise<number> {
@@ -388,6 +436,14 @@ export async function dispatch(options: {
     );
     return ticketRepo.code ?? 1;
   }
+  const agxConfig = await resolveAgxConfig(ticketRepo.root);
+  if (!agxConfig.ok) {
+    process.stderr.write(
+      `agx worker dispatch: cannot read machine worker limit: ${errorMessage(agxConfig.error)}\n`,
+    );
+    return 2;
+  }
+  const maxRunning = agxConfig.value.maxRunning ?? DEFAULT_MAX_RUNNING;
 
   const unitInput = options.unit ?? `agt_${slug}`;
   const unit = unitInput.endsWith(".service")
@@ -640,6 +696,18 @@ export async function dispatch(options: {
     );
     return before.code ?? 1;
   }
+  const currentRunning = runningRows(before.rows);
+  if (currentRunning.length >= maxRunning) {
+    if (options.waitSlot !== true) {
+      process.stderr.write(`${capacityMessage(currentRunning, maxRunning)}\n`);
+      return 2;
+    }
+    const waited = await waitForDispatchSlot(cwd, env, before.rows, maxRunning);
+    if (!waited.ok) {
+      process.stderr.write(`agx worker dispatch: ${waited.reason}\n`);
+      return waited.code;
+    }
+  }
   const args = [
     "systemd-run",
     "--user",
@@ -669,6 +737,7 @@ export async function dispatch(options: {
     "--sandbox-source",
     sandbox_source,
     ...(previous === undefined ? [] : ["--continue", previous.id]),
+    ...(options.waitSlot === true ? ["--wait-slot"] : []),
   ];
   const started = await invoke(args, cwd, env);
   if (started.code !== 0) {
@@ -739,6 +808,11 @@ export async function dispatchMain(commandArgs: string[]): Promise<void> {
           type: String,
           description: "previous agx worker run id to continue",
         },
+        waitSlot: {
+          type: Boolean,
+          description:
+            "wait up to 60s when L2 [worker].max_running (default 4) is reached",
+        },
       },
       strictFlags: true,
       ignoreArgv: rejectPrototypeFlag,
@@ -763,6 +837,7 @@ export async function dispatchMain(commandArgs: string[]): Promise<void> {
       ...(parsed.flags["continue"] === undefined
         ? {}
         : { continuation: parsed.flags["continue"] }),
+      ...(parsed.flags.waitSlot === true ? { waitSlot: true } : {}),
     }),
   );
   if (result.ok) process.exitCode = result.value;
