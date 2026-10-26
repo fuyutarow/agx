@@ -5,6 +5,14 @@ import { join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 
 import { jsonOf, z } from "../../../shared/src/zod.ts";
+const Receipt = jsonOf(
+  z.object({
+    id: z.string(),
+    verdict: z.string(),
+    note: z.string().optional(),
+    at: z.string(),
+  }),
+);
 const Judgment = jsonOf(
   z.object({
     decision: z.string(),
@@ -29,8 +37,8 @@ const base = `${JSON.stringify({ kind: "started", id, at: "2026-10-17T00:00:00Z"
 afterAll(async () => {
   await rm(root, { recursive: true, force: true });
 });
-async function judge(args: string[]) {
-  const child = Bun.spawn([process.execPath, cli, "judge", id, ...args], {
+async function judge(args: string[], runId = id) {
+  const child = Bun.spawn([process.execPath, cli, "judge", runId, ...args], {
     env: { ...process.env, AGX_STATE_DIR: root },
     stdout: "pipe",
     stderr: "pipe",
@@ -94,9 +102,21 @@ test("missing evidence appends no partial judgment", async () => {
   expect(result.exit).toBe(2);
   expect(await readFile(records, "utf8")).toBe(base);
 });
-test("judging without evidence retains existing behavior", async () => {
+test("judge success prints the recorded receipt", async () => {
   await writeFile(records, base);
-  expect((await judge(["reject", "--note", "manual"])).exit).toBe(0);
+  const result = await judge(["reject", "--note", "manual"]);
+  expect(result.exit).toBe(0);
+  expect(result.stderr).toBe("");
+  const parsedReceipt = Receipt.safeParse(result.stdout);
+  if (!parsedReceipt.success) expect.unreachable(parsedReceipt.error.message);
+  const receipt = parsedReceipt.data;
+  expect(receipt).toEqual({
+    id,
+    verdict: "reject",
+    note: "manual",
+    at: receipt.at,
+  });
+  expect(receipt.at.length).toBeGreaterThan(0);
   const judgmentLine = (await readFile(records, "utf8"))
     .trimEnd()
     .split("\n")[2];
@@ -105,4 +125,13 @@ test("judging without evidence retains existing behavior", async () => {
   const event = judgment(judgmentLine);
   expect(event.note).toBe("manual");
   expect(event.evidence).toBeUndefined();
+});
+
+test("judge failure reports an unknown run and prints no receipt", async () => {
+  await writeFile(records, base);
+  const result = await judge(["accept"], "missing");
+  expect(result.exit).not.toBe(0);
+  expect(result.stdout).toBe("");
+  expect(result.stderr).toContain("unknown run id 'missing'");
+  expect(await readFile(records, "utf8")).toBe(base);
 });

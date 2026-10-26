@@ -885,14 +885,19 @@ export async function judgeRun(flags: {
       content: decoded,
     });
   }
-  append({
+  const at = now();
+  const judgment = {
     kind: "judged",
     id: resolution.row.id,
-    at: now(),
+    at,
     decision,
     note: flags.note ?? "",
     ...(evidence.length === 0 ? {} : { evidence }),
-  });
+  } as const;
+  append(judgment);
+  process.stdout.write(
+    `${JSON.stringify({ id: judgment.id, verdict: judgment.decision, ...(judgment.note === "" ? {} : { note: judgment.note }), at: judgment.at })}\n`,
+  );
   return 0;
 }
 
