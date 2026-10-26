@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.13.0 — 2026-10-26
+
+- Add ws harvest to preserve ended runs' workspace results once and allow gc to reclaim rejected workspaces.
+- Complete suite releases through Homebrew
+- Explain workspace keep declarations in gc help and docs
+- Move agx command guidance into installed help and keep driving skill version independent
+- Protect newly created workspaces from gc for a configurable grace period
+- Report broken workspace paths without aborting gc
+- Skip malformed Claude inventory rows and retry transient reads
+- Skip mise install when workspace tools are already installed
+
 ## 1.12.1 — 2026-10-25
 
 - Resolve suite child commands beside the running binary
