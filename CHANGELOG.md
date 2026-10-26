@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.13.14 — 2026-10-26
+
+- Keep Homebrew agx commands available during upgrades
+- Make Jev maximize accepted results per cost
+- Preserve vendor sessions when stopping and continuing runs
+
 ## 1.13.13 — 2026-10-26
 
 - Handle missing workspace roots during gc
