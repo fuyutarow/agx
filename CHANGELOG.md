@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.16.1 — 2026-10-27
+
+- Use alpha@origin as workspace add trunk and warn on divergent local copies
+
 ## 1.16.0 — 2026-10-27
 
 - Reserve alpha pushes for agx change land with a pre-push hook
