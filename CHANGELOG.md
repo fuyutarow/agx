@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.13.2 — 2026-10-26
+
+- Attribute Codex callers from their nearest vendor process when proven.
+
 ## 1.13.1 — 2026-10-26
 
 - Keep workspace GC read-only and preserve unsnapshotted edits
