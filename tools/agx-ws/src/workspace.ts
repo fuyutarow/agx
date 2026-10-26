@@ -768,7 +768,8 @@ async function trunkBookmark(
     true,
   );
   if (!result.ok) return result;
-  return good(result.value.trim().split("\n").find(Boolean) ?? "");
+  const displayed = result.value.trim().split("\n").find(Boolean) ?? "";
+  return good(displayed.replace(/[*?]+$/u, ""));
 }
 
 async function remoteTrunk(
@@ -776,7 +777,11 @@ async function remoteTrunk(
   bookmark: string,
   remotes: string[],
 ): Promise<Attempt<{ ref: string; commit: string }>> {
-  for (const remote of remotes) {
+  const orderedRemotes = [
+    "origin",
+    ...remotes.filter((remote) => remote !== "origin"),
+  ];
+  for (const remote of orderedRemotes) {
     const ref = `${bookmark}@${remote}`;
     const commit = await commitId(repo, ref);
     if (commit.ok && commit.value !== "")
@@ -784,6 +789,26 @@ async function remoteTrunk(
   }
   return bad(
     `no remote-tracking trunk bookmark found for ${JSON.stringify(bookmark)}; fetch the trunk bookmark or set .ws.toml trunk`,
+  );
+}
+
+async function warnTrunkCopyDifferences(
+  repo: Repo,
+  bookmark: string,
+  remote: { ref: string; commit: string },
+): Promise<void> {
+  const [local, gitCopy] = await Promise.all([
+    commitId(repo, bookmark),
+    commitId(repo, `${bookmark}@git`),
+  ]);
+  const differing: string[] = [];
+  if (local.ok && local.value !== "" && local.value !== remote.commit)
+    differing.push(`local ${bookmark}`);
+  if (gitCopy.ok && gitCopy.value !== "" && gitCopy.value !== remote.commit)
+    differing.push(`${bookmark}@git`);
+  if (differing.length === 0) return;
+  process.stderr.write(
+    `ws: warning: ${differing.join(" and ")} ${differing.length === 1 ? "differs" : "differ"} from ${remote.ref}; using ${remote.ref}\n`,
   );
 }
 
@@ -842,6 +867,7 @@ async function resolveAddBase(
       );
     const remote = await remoteTrunk(repo, bookmark.value, remotes);
     if (!remote.ok) return remote;
+    await warnTrunkCopyDifferences(repo, bookmark.value, remote.value);
     baseRef = remote.value.ref;
     const ancestor = await jjOut(
       [

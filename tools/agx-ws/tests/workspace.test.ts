@@ -92,7 +92,7 @@ const ws = (args: string[], cwd: string, env = baseEnv()) =>
   );
 const jj = (args: string[], cwd: string) => run(["jj", ...args], cwd);
 
-async function pushBookmark(path: string, name: string): Promise<void> {
+async function pushBookmark(path: string, name: string): Promise<string> {
   const remote = join(scratch, `remote-${name}.git`);
   const init = Bun.spawn(["git", "init", "--bare", remote], {
     stdout: "pipe",
@@ -115,6 +115,7 @@ async function pushBookmark(path: string, name: string): Promise<void> {
     path,
   );
   expect(pushed.code, pushed.err).toBe(0);
+  return remote;
 }
 
 function shim(name: string, body: string): void {
@@ -128,11 +129,18 @@ const setRecords = (rows: object[]): void => {
 
 let counter = 0;
 /** A fresh repo `<scratch>/n/<name>` with one landed commit on bookmark `main`; returns its path. */
-async function repo(config?: string): Promise<string> {
+async function repo(config?: string, colocate = true): Promise<string> {
   const parent = join(scratch, `r${++counter}`);
   mkdirSync(parent);
   const path = join(parent, "proj");
-  expect((await jj(["git", "init", path], parent)).code).toBe(0);
+  expect(
+    (
+      await jj(
+        ["git", "init", ...(colocate ? [] : ["--no-colocate"]), path],
+        parent,
+      )
+    ).code,
+  ).toBe(0);
   writeFileSync(join(path, "a.txt"), "a\n");
   if (config !== undefined) writeFileSync(join(path, ".ws.toml"), config);
   await jj(["commit", "-m", "base"], path);
@@ -143,6 +151,70 @@ async function repo(config?: string): Promise<string> {
 }
 const wsDir = (path: string, slug: string): string =>
   join(path, "..", "proj.ws", `ws_${slug}`);
+
+describe("workspace contract: trunk marker", () => {
+  test("creates from alpha@origin when its git copy is behind local alpha", async () => {
+    const path = await repo(undefined, false);
+    const remote = await pushBookmark(path, "alpha");
+    expect(
+      (
+        await jj(
+          ["config", "set", "--repo", 'revset-aliases."trunk()"', "alpha"],
+          path,
+        )
+      ).code,
+    ).toBe(0);
+    const origin = await jj(
+      ["log", "--no-graph", "-r", "alpha@origin", "-T", "commit_id"],
+      path,
+    );
+    expect(origin.code, origin.err).toBe(0);
+    const exported = await jj(["git", "export"], path);
+    expect(exported.code, exported.err).toBe(0);
+    const remoteWriter = join(scratch, "remote-alpha-writer");
+    const cloned = await jj(["git", "clone", remote, remoteWriter], scratch);
+    expect(cloned.code, cloned.err).toBe(0);
+    expect((await jj(["new", "alpha"], remoteWriter)).code).toBe(0);
+    await Bun.write(join(remoteWriter, "ahead.txt"), "remote alpha is ahead\n");
+    expect(
+      (await jj(["commit", "-m", "advance remote alpha"], remoteWriter)).code,
+    ).toBe(0);
+    expect(
+      (await jj(["bookmark", "set", "alpha", "-r", "@-"], remoteWriter)).code,
+    ).toBe(0);
+    const pushed = await jj(
+      ["git", "push", "--remote", "origin", "--bookmark", "alpha"],
+      remoteWriter,
+    );
+    expect(pushed.code, pushed.err).toBe(0);
+    const fetched = await jj(["git", "fetch", "--remote", "origin"], path);
+    expect(fetched.code, fetched.err).toBe(0);
+    const [local, gitCopy, remoteNow] = await Promise.all([
+      jj(["log", "--no-graph", "-r", "alpha", "-T", "commit_id"], path),
+      jj(["log", "--no-graph", "-r", "alpha@git", "-T", "commit_id"], path),
+      jj(["log", "--no-graph", "-r", "alpha@origin", "-T", "commit_id"], path),
+    ]);
+    expect(local.code, local.err).toBe(0);
+    expect(gitCopy.code, gitCopy.err).toBe(0);
+    expect(remoteNow.code, remoteNow.err).toBe(0);
+    expect(gitCopy.out.trim()).toBe(origin.out.trim());
+    expect(local.out.trim()).toBe(remoteNow.out.trim());
+    expect(gitCopy.out.trim()).not.toBe(remoteNow.out.trim());
+
+    const added = await ws(["add", "trunk-marker"], path);
+    expect(added.code, added.err).toBe(0);
+    expect(added.err).toContain("ws: warning:");
+    expect(added.err).toContain("alpha@git");
+
+    const workspaceBase = await jj(
+      ["log", "--no-graph", "-r", "@-", "-T", "commit_id"],
+      wsDir(path, "trunk-marker"),
+    );
+    expect(workspaceBase.code, workspaceBase.err).toBe(0);
+    expect(workspaceBase.out.trim()).toBe(remoteNow.out.trim());
+    expect(workspaceBase.out.trim()).not.toBe(gitCopy.out.trim());
+  });
+});
 
 beforeAll(() => {
   mkdirSync(bin, { recursive: true });
