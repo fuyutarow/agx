@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.13.11 — 2026-10-26
+
+- Revert the machine-wide worker cap; it counted every coordinator's runs and refused all dispatches
+
 ## 1.13.10 — 2026-10-26
 
 - Send quantitative-only Jev roster criteria
