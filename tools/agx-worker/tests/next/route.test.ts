@@ -24,6 +24,11 @@ import {
 import { parseNextTicket } from "../../src/next/ticket.ts";
 import { prepareTicketRepo } from "../ticket-repo.ts";
 
+const routeObjective = ROUTING_OBJECTIVE.replace(
+  "Evidence: 'agx measured' is the acceptance and wall time of each option on this machine and is the primary evidence of whether an option is sufficient; published benchmarks are background only.",
+  "Evidence: 'agx measured' is the acceptance and wall time of each option on this machine and is the primary evidence of whether an option is sufficient; published benchmarks are background only. Prefer the cheaper option unless the more expensive one's acceptance interval lies entirely above the cheaper one's.",
+);
+
 const RoutingRequest = z.looseObject({
   state: z.looseObject({
     task: z.string(),
@@ -62,6 +67,29 @@ const RoutingRequest = z.looseObject({
     }),
   }),
 });
+
+function withoutMeasuredEvidence(request: z.output<typeof RoutingRequest>) {
+  return {
+    ...request,
+    questions: {
+      ...request.questions,
+      worker: {
+        ...request.questions.worker,
+        criteria: Object.fromEntries(
+          Object.entries(request.questions.worker.criteria).map(
+            ([key, text]) => [
+              key,
+              text.replace(
+                / agx measured:.*$/u,
+                " agx measured: <derived aggregate>",
+              ),
+            ],
+          ),
+        ),
+      },
+    },
+  };
+}
 
 const priorRoster = process.env.AGX_CONFIG;
 const priorUrl = process.env.JEV_URL;
@@ -400,7 +428,7 @@ describe("capability constrained routing", () => {
     }
   });
 
-  test("local accepted and rejected history cannot change the Jev request", async () => {
+  test("local judgments change only the measured evidence in the Jev request", async () => {
     const capture = async (decisions: readonly string[]) => {
       await isolateState();
       for (const decision of decisions) {
@@ -428,20 +456,39 @@ describe("capability constrained routing", () => {
       expect((await route("same frozen ticket")).id).toBe("sonnet-high");
       const request = server.request();
       expect(request).toBeDefined();
-      expect(request?.questions.worker.criteria["luna-high"]).not.toMatch(
-        /graded|accepted|rejected|history|recent|comparable/iu,
-      );
+      if (request === undefined)
+        expect.unreachable("route request was not captured");
+      expect(
+        request.questions.worker.criteria["luna-high"]?.replace(
+          / agx measured:.*$/u,
+          "",
+        ),
+      ).not.toMatch(/graded|accepted|rejected|history|recent|comparable/iu);
       return request;
     };
 
     const successSkew = await capture(["accept", "accept", "accept", "accept"]);
     const empty = await capture([]);
     const inverted = await capture(["reject", "reject", "reject", "reject"]);
-    expect(empty).toEqual(successSkew);
-    expect(inverted).toEqual(successSkew);
+
+    expect(withoutMeasuredEvidence(empty)).toEqual(
+      withoutMeasuredEvidence(successSkew),
+    );
+    expect(withoutMeasuredEvidence(inverted)).toEqual(
+      withoutMeasuredEvidence(successSkew),
+    );
+    expect(successSkew?.questions.worker.criteria["sol-medium"]).toEndWith(
+      "agx measured: 100% of 4 judged runs accepted (51–100%; 95% Wilson), median 0.0 min. Expected list-price cost: about 20.0x per accepted result.",
+    );
+    expect(empty?.questions.worker.criteria["sol-medium"]).toEndWith(
+      "agx measured: no judged runs",
+    );
+    expect(inverted?.questions.worker.criteria["sol-medium"]).toEndWith(
+      "agx measured: 0% of 4 judged runs accepted (0–49%; 95% Wilson), median 0.0 min. Expected list-price cost: about Infinityx per accepted result.",
+    );
   });
 
-  test("historical Sol 6.1 grades remain auditable and do not enter selection", async () => {
+  test("historical Sol 6.1 grades remain auditable and only measured aggregates enter routing", async () => {
     await isolateState();
     const started = appendStarted("sol-high");
     expect(started?.kind).toBe("started");
@@ -473,12 +520,21 @@ describe("capability constrained routing", () => {
     expect(server.request()?.questions.worker.criteria["sol-high"]).toContain(
       "SciCode 55.8%",
     );
-    expect(server.request()?.questions.worker.criteria["sol-high"]).not.toMatch(
+    const criterion = server.request()?.questions.worker.criteria["sol-high"];
+    expect(criterion?.replace(/ agx measured:.*$/u, "")).not.toMatch(
       /graded|history|recent|comparable|accepted|rejected/iu,
     );
+    expect(criterion).toEndWith(
+      "agx measured: 100% of 1 judged runs accepted (20–100%; 95% Wilson), median 0.0 min. Expected list-price cost: about 20.0x per accepted result.",
+    );
+    expect(criterion).not.toContain("historical Sol 6.1 acceptance");
     expect(
-      server.request()?.questions.worker.criteria["sol-high"],
-    ).not.toContain("historical Sol 6.1 acceptance");
+      events().some(
+        (event) =>
+          event.kind === "judged" &&
+          event.note === "historical Sol 6.1 acceptance",
+      ),
+    ).toBe(true);
   });
   test("ROUTER-PURPOSE: built request carries the exact purpose and subscription health", async () => {
     const { home } = await isolateState();
@@ -513,7 +569,7 @@ describe("capability constrained routing", () => {
     expect(request?.state.history).toBeUndefined();
     expect(request?.state.task.length).toBeLessThanOrEqual(2400);
     expect(request?.questions.worker.instructions).toBe(
-      `${ROUTING_OBJECTIVE} Pick a roster row for this ticket.`,
+      `${routeObjective} Pick a roster row for this ticket.`,
     );
     expect(ROUTING_OBJECTIVE).toBe(
       "Purpose: the owner pays for every token and waits for every minute until a result is accepted. Choose the option expected to produce an accepted result for this ticket at the lowest cost and in the shortest time. Evidence: 'agx measured' is the acceptance and wall time of each option on this machine and is the primary evidence of whether an option is sufficient; published benchmarks are background only. Return the ticket instead of choosing a model only when it cannot be done as written. Subscription health: weigh 7-day windows most; 5-hour windows are secondary; keep the intended bias toward the codex route; stale or unknown usage is neutral.",
@@ -541,7 +597,7 @@ describe("capability constrained routing", () => {
     );
     expect(request?.questions.worker.criteria["luna-high"]).toBeDefined();
     expect(request?.questions.worker.criteria["sonnet-high"]).toBeDefined();
-    expect(request?.questions.worker.instructions).toContain(ROUTING_OBJECTIVE);
+    expect(request?.questions.worker.instructions).toContain(routeObjective);
     expect(request?.questions.worker.instructions).toContain(
       "5-hour windows are secondary",
     );
@@ -698,7 +754,7 @@ describe("capability constrained routing", () => {
     });
     expect(codexWeek?.elapsed_fraction).toBeCloseTo(0.28, 5);
     expect(codexWeek?.pace).toBeCloseTo(0.17, 5);
-    expect(request?.questions.worker.instructions).toContain(ROUTING_OBJECTIVE);
+    expect(request?.questions.worker.instructions).toContain(routeObjective);
     expect(request?.questions.worker.instructions).toContain(
       "stale or unknown usage is neutral",
     );
@@ -929,7 +985,7 @@ test("one raw Choice blinds the entire injected payload and preserves every crit
   ]);
   ordered.forEach((row, i) => {
     expect(request.questions.worker.criteria[`model_${i}`]).toBe(
-      `${blindCriterion(criterionFor(roster, row), roster.choice)} agx measured: too few judged runs`,
+      `${blindCriterion(criterionFor(roster, row), roster.choice)} agx measured: no judged runs`,
     );
   });
   expect(server.calls()).toBe(1);
@@ -1118,7 +1174,7 @@ test("every shipped Jev option is readable and keeps its row measurements", asyn
   );
 });
 
-test("local record evidence follows each blinded option and survives the pick audit", async () => {
+test("Wilson and cost per accepted evidence plus Prefer the cheaper objective reach Jev", async () => {
   await isolateState();
   const fixture = (row: string, count: number, accepted: number) => {
     for (let i = 0; i < count; i++) {
@@ -1151,9 +1207,8 @@ test("local record evidence follows each blinded option and survives the pick au
         });
     }
   };
-  fixture("luna-high", 25, 21);
+  fixture("luna-high", 29, 24);
   fixture("sol-medium", 5, 3);
-  fixture("luna-medium", 4, 4);
   const stale = appendStarted("luna-high");
   if (stale?.kind !== "started") return;
   append({
@@ -1185,14 +1240,12 @@ test("local record evidence follows each blinded option and survives the pick au
     expect.unreachable("route request was not captured");
   const criteria = request.questions.worker.criteria;
   expect(criteria["luna-high"]).toEndWith(
-    "agx measured: 84% of 25 judged runs accepted, median 5.1 min.",
+    "agx measured: 83% of 29 judged runs accepted (65–93%; 95% Wilson), median 5.1 min. Expected list-price cost: about 1.2x per accepted result.",
   );
   expect(criteria["sol-medium"]).toEndWith(
-    "agx measured: 60% of 5 judged runs accepted, median 5.1 min.",
+    "agx measured: 60% of 5 judged runs accepted (23–89%; 95% Wilson), median 5.1 min. Expected list-price cost: about 33.3x per accepted result.",
   );
-  expect(criteria["luna-medium"]).toEndWith(
-    "agx measured: too few judged runs",
-  );
+  expect(criteria["luna-medium"]).toEndWith("agx measured: no judged runs");
   const loaded = await loadRoster();
   if (!loaded.ok) return;
   const rawRequest = server.rawRequest();
@@ -1207,6 +1260,14 @@ test("local record evidence follows each blinded option and survives the pick au
   expect(request.questions.worker.instructions).toContain(
     "published benchmarks are background only",
   );
+  expect(
+    request.questions.worker.instructions.match(
+      /Prefer the cheaper option unless the more expensive one's acceptance interval lies entirely above the cheaper one's\./gu,
+    ),
+  ).toHaveLength(1);
+  expect(request.questions.worker.instructions).toContain(
+    "published benchmarks are background only. Prefer the cheaper option unless the more expensive one's acceptance interval lies entirely above the cheaper one's. Return the ticket",
+  );
   expect(request.questions.worker.instructions).not.toContain(
     "A. Capability sufficiency (hard)",
   );
@@ -1216,12 +1277,12 @@ test("local record evidence follows each blinded option and survives the pick au
   if (lunaId === undefined)
     expect.unreachable("luna-high fixture wire ID is missing");
   expect(picked.pick_audit?.measured_evidence?.[lunaId]).toEqual({
-    judged_runs: 25,
-    accepted_runs: 21,
-    accepted_percent: 84,
-    ended_runs: 25,
+    judged_runs: 29,
+    accepted_runs: 24,
+    accepted_percent: 83,
+    ended_runs: 29,
     median_wall_minutes: 5.1,
-    text: "agx measured: 84% of 25 judged runs accepted, median 5.1 min.",
+    text: "agx measured: 83% of 29 judged runs accepted (65–93%; 95% Wilson), median 5.1 min. Expected list-price cost: about 1.2x per accepted result.",
   });
 });
 test("audit retains the exact request and replays the existing sampling guard", async () => {

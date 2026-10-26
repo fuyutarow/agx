@@ -7,6 +7,7 @@ import {
   loadRoster,
   routeFilterLabel,
   ROUTING_OBJECTIVE,
+  costMultiple,
   type Choice,
   criterionFor,
   type LoadRosterOptions,
@@ -74,6 +75,42 @@ const neutralSettings: Record<string, string> = {
   xhigh: "very intensive",
   max: "maximum",
 };
+
+const acceptanceObjectiveRule =
+  "Prefer the cheaper option unless the more expensive one's acceptance interval lies entirely above the cheaper one's.";
+const evidenceObjectiveSentence =
+  "Evidence: 'agx measured' is the acceptance and wall time of each option on this machine and is the primary evidence of whether an option is sufficient; published benchmarks are background only.";
+
+function intervalBounds(accepted: number, judged: number): [number, number] {
+  const zScore = 1.959963984540054;
+  const p = accepted / judged;
+  const zSquared = zScore * zScore;
+  const denominator = 1 + zSquared / judged;
+  const center = (p + zSquared / (2 * judged)) / denominator;
+  const halfWidth =
+    (zScore * Math.sqrt((p * (1 - p) + zSquared / (4 * judged)) / judged)) /
+    denominator;
+  return [
+    Math.max(0, Math.floor((center - halfWidth) * 100)),
+    Math.min(100, Math.ceil((center + halfWidth) * 100)),
+  ];
+}
+
+function measuredText(
+  judged: number,
+  accepted: number,
+  medianText: string,
+  multiple: number | undefined,
+): string {
+  if (judged === 0) return "agx measured: no judged runs";
+  const [lower, upper] = intervalBounds(accepted, judged);
+  const percent = Math.round((100 * accepted) / judged);
+  const evidence = `agx measured: ${percent}% of ${judged} judged runs accepted (${lower}–${upper}%; 95% Wilson), median ${medianText} min.`;
+  if (multiple === undefined)
+    return `${evidence} Expected list-price cost: unavailable.`;
+  const expected = multiple / (accepted / judged);
+  return `${evidence} Expected list-price cost: about ${expected.toFixed(1)}x per accepted result.`;
+}
 
 /** Blind identities with neutral prose; measured numbers and prices remain intact. */
 export function blindCriterion(text: string, rows: readonly Choice[]): string {
@@ -337,21 +374,24 @@ export async function route(
       const lower = minutes[Math.floor((minutes.length - 1) / 2)];
       const median =
         upper === undefined || lower === undefined ? null : (upper + lower) / 2;
-      const share =
-        judged.length < 5 ? null : Math.round((100 * accepted) / judged.length);
       const medianMinutes = median === null ? null : Number(median.toFixed(1));
       const medianText =
         medianMinutes === null ? "unknown" : medianMinutes.toFixed(1);
-      const text =
-        share === null
-          ? "agx measured: too few judged runs"
-          : `agx measured: ${share}% of ${judged.length} judged runs accepted, median ${medianText} min.`;
+      const text = measuredText(
+        judged.length,
+        accepted,
+        medianText,
+        costMultiple(roster, row),
+      );
       return [
         `model_${index}`,
         {
           judged_runs: judged.length,
           accepted_runs: accepted,
-          accepted_percent: share,
+          accepted_percent:
+            judged.length === 0
+              ? null
+              : Math.round((100 * accepted) / judged.length),
           ended_runs: minutes.length,
           median_wall_minutes: medianMinutes,
           text,
@@ -407,7 +447,10 @@ export async function route(
     questions: {
       worker: {
         type: "choice",
-        instructions: `${ROUTING_OBJECTIVE} Pick a roster row for this ticket.`,
+        instructions: `${ROUTING_OBJECTIVE.replace(
+          evidenceObjectiveSentence,
+          `${evidenceObjectiveSentence} ${acceptanceObjectiveRule}`,
+        )} Pick a roster row for this ticket.`,
         criteria,
       },
     },
