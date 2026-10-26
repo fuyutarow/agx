@@ -18,9 +18,10 @@ import {
 } from "./relay-status.ts";
 
 import { waitForReply } from "./wait.ts";
-
-const unknownSender =
-  "unknown (caller identity unavailable or inherited; use --from backend:<full-session-id>)";
+import {
+  resolveCallingThreadIdentity,
+  unknownSender,
+} from "./caller-identity.ts";
 
 function explicitSender(value: string): string | undefined {
   const match = /^(codex|claude):(.+)$/u.exec(value);
@@ -68,7 +69,7 @@ async function send(
   message = `from: ${sender}${destination}\n\n${message}`;
   // Known even if the child times out before its first frame.
   const relaySessionId = kind === "claude" ? crypto.randomUUID() : undefined;
-  const relaySender = sender === unknownSender ? "unknown" : sender;
+  const relaySender = sender;
   const args =
     kind === "codex"
       ? ["queue", "--thread", id, "--message", message]
@@ -219,7 +220,7 @@ async function main(): Promise<number> {
       },
       help: {
         description:
-          "Wait for exact reply input with agx msg wait --to codex:<full-UUID> --from backend:<full-UUID> --message TEXT [--timeout-ms N] (0 observed, 3 unobservable, 4 deadline; Claude inbox unsupported). List recipients with agx msg list [--json], send once with agx msg send, or inspect a Claude relay with agx msg status --relay <session-UUID>. Sender: --from > AGX_MSG_FROM > recorded AGX_RUN_ID session > unknown; never infer native session variables. The envelope from: line is caller attribution, not authentication. Claude from-name is relay transport, named agx msg relay from <sender or unknown>. List exits 0 complete, 3 incomplete. Send/status exit: 0 accepted, 1 rejected, 2 usage, 3 unreachable, 4 acceptance unknown.",
+          "Wait for exact reply input with agx msg wait --to codex:<full-UUID> --from backend:<full-UUID> --message TEXT [--timeout-ms N] (0 observed, 3 unobservable, 4 deadline; Claude inbox unsupported). List recipients with agx msg list [--json], send once with agx msg send, or inspect a Claude relay with agx msg status --relay <session-UUID>. Sender: --from > AGX_MSG_FROM > recorded AGX_RUN_ID session > proven CODEX_THREAD_ID from the nearest Codex vendor process's own environment > unknown. Never infer from unproven inherited native session variables. The envelope from: line is caller attribution, not authentication. Claude from-name is relay transport and includes the resolved sender diagnostic. List exits 0 complete, 3 incomplete. Send/status exit: 0 accepted, 1 rejected, 2 usage, 3 unreachable, 4 acceptance unknown.",
       },
     }),
   );
@@ -326,9 +327,21 @@ async function main(): Promise<number> {
           await import("../../agx-worker/src/next/message-sender.ts")
         ).runMessageSender(process.env.AGX_RUN_ID)
       : undefined;
+  const recordedSender = explicitSender(runSender ?? "");
+  const callerIdentity =
+    declaration === undefined && recordedSender === undefined
+      ? await resolveCallingThreadIdentity()
+      : undefined;
   const sender =
     declaration === undefined
-      ? (explicitSender(runSender ?? "") ?? unknownSender)
+      ? (recordedSender ??
+        callerIdentity?.sender ??
+        unknownSender(
+          callerIdentity ?? {
+            checked: ["--from", "AGX_MSG_FROM", "AGX_RUN_ID record"],
+            missing: ["no sender declaration or recorded run session"],
+          },
+        ))
       : explicitSender(declaration);
   if (sender === undefined) {
     process.stderr.write(

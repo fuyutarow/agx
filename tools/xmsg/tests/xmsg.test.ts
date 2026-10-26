@@ -15,15 +15,18 @@ import { chmod, mkdtemp, mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { jsonOf, z } from "../../shared/src/zod.ts";
+import {
+  resolveCallingThreadIdentity,
+  resolveNearestVendorIdentity,
+  unknownSender,
+} from "../src/caller-identity.ts";
 
 const cli = resolve(import.meta.dir, "../src/xmsg.ts");
 const roots: string[] = [];
 const message = "Literal ' $(touch nope)\n日本語";
-const envelope = (
-  body: string,
-  sender = "unknown (caller identity unavailable or inherited; use --from backend:<full-session-id>)",
-  target?: string,
-) =>
+const callerIdentity = await resolveCallingThreadIdentity();
+const callerSender = callerIdentity.sender ?? unknownSender(callerIdentity);
+const envelope = (body: string, sender = callerSender, target?: string) =>
   `from: ${sender}${target === undefined ? "" : `\nto: claude:${target}`}\n\n${body}`;
 const msgId = "de2d35d2-4ad8-4bd3-a28d-21184c0218ca";
 const relayId = "cc6e829c-128f-4836-a11b-21b83b11bf12";
@@ -462,7 +465,7 @@ test("Claude acceptance requires a correlated tool result and hard tool restrict
   expect(r.argv).toContain("stream-json");
   expect(r.argv).toContain("--verbose");
   expect(r.argv[r.argv.indexOf("--name") + 1]).toBe(
-    "agx msg relay from unknown",
+    `agx msg relay from ${callerSender}`,
   );
   expect(r.argv.at(-1)).toContain(JSON.stringify(envelope(message)));
 });
@@ -1599,15 +1602,116 @@ test.each([
   { route: "codex", session: "native-name", id: "worker-run" },
   { route: "unsupported", session: uuidA, id: "worker-run" },
   { route: undefined, session: uuidA, id: "worker-run" },
-])("unproven run sender stays unknown: %j", async ({ route, session, id }) => {
-  const r = await run({
-    kind: "codex",
-    args: sendArgs(`codex:${uuidB}`),
-    runRecord: { route, session },
-    env: { AGX_RUN_ID: id, CODEX_THREAD_ID: uuidA },
-  });
-  expect(r.exit).toBe(0);
-  expect(r.argv.at(-1)).toBe(envelope(message));
+])(
+  "unproven run sender falls through to the caller thread: %j",
+  async ({ route, session, id }) => {
+    const r = await run({
+      kind: "codex",
+      args: sendArgs(`codex:${uuidB}`),
+      runRecord: { route, session },
+      env: { AGX_RUN_ID: id, CODEX_THREAD_ID: uuidA },
+    });
+    expect(r.exit).toBe(0);
+    expect(r.argv.at(-1)).toBe(envelope(message));
+  },
+);
+
+test("nearest Codex process's own thread ID proves caller identity", () => {
+  const identity = resolveNearestVendorIdentity([
+    {
+      pid: 30,
+      ppid: 20,
+      comm: "bun",
+      argv: ["bun", "tools/xmsg/src/xmsg.ts"],
+      environment: new Map([["CODEX_THREAD_ID", uuidB]]),
+    },
+    {
+      pid: 20,
+      ppid: 10,
+      comm: "codex",
+      argv: ["codex"],
+      environment: new Map([["CODEX_THREAD_ID", uuidA]]),
+    },
+    {
+      pid: 10,
+      ppid: 1,
+      comm: "claude",
+      argv: ["claude"],
+      environment: new Map([["CLAUDE_CODE_SESSION_ID", uuidB]]),
+    },
+  ]);
+  expect(identity.sender).toBe(`codex:${uuidA}`);
+  expect(identity.missing).toEqual([]);
+});
+
+test("a shell argument naming Codex is not itself a vendor process", () => {
+  const identity = resolveNearestVendorIdentity([
+    {
+      pid: 30,
+      ppid: 20,
+      comm: "bash",
+      argv: ["bash", "-c", "codex"],
+      environment: new Map([["CODEX_THREAD_ID", uuidB]]),
+    },
+    {
+      pid: 20,
+      ppid: 1,
+      comm: "codex",
+      argv: ["codex"],
+      environment: new Map([["CODEX_THREAD_ID", uuidA]]),
+    },
+  ]);
+  expect(identity.sender).toBe(`codex:${uuidA}`);
+});
+
+test("nearest Claude process blocks an inherited outer Codex thread ID", () => {
+  const identity = resolveNearestVendorIdentity([
+    {
+      pid: 30,
+      ppid: 20,
+      comm: "bun",
+      argv: ["bun", "tools/xmsg/src/xmsg.ts"],
+      environment: new Map([["CODEX_THREAD_ID", uuidA]]),
+    },
+    {
+      pid: 20,
+      ppid: 10,
+      comm: "claude",
+      argv: ["claude"],
+      environment: new Map([["CLAUDE_CODE_SESSION_ID", uuidB]]),
+    },
+    {
+      pid: 10,
+      ppid: 1,
+      comm: "codex",
+      argv: ["codex"],
+      environment: new Map([["CODEX_THREAD_ID", uuidA]]),
+    },
+  ]);
+  expect(identity.sender).toBeUndefined();
+  const diagnostic = unknownSender(identity);
+  expect(diagnostic).toContain("nearest vendor process is not codex");
+  expect(diagnostic).toContain(
+    "checked: caller parent chain, nearest vendor process",
+  );
+});
+
+test("missing nearest vendor proof names checked and missing sources", () => {
+  const identity = resolveNearestVendorIdentity([
+    {
+      pid: 30,
+      ppid: 1,
+      comm: "bun",
+      argv: ["bun", "tools/xmsg/src/xmsg.ts"],
+    },
+  ]);
+  const diagnostic = unknownSender(identity);
+  expect(diagnostic).toContain(
+    "checked: caller parent chain, nearest vendor process",
+  );
+  expect(diagnostic).toContain(
+    "missing: nearest codex/claude process in caller ancestry",
+  );
 });
 
 test.each([false, true])(
@@ -1643,7 +1747,7 @@ test.each([
     CLAUDE_CODE_SESSION_ID: uuidB,
   },
 ])(
-  "absent or unproven native-looking environment never claims sender: %j",
+  "native-looking child environment cannot override the nearest vendor: %j",
   async (env) => {
     const r = await run({ kind: "codex", env });
     expect(r.exit).toBe(0);
@@ -1714,7 +1818,7 @@ test("sender help distinguishes declaration, authority and relay transport", asy
   const r = await run({ args: ["--help"] });
   expect(r.exit).toBe(0);
   expect(r.stdout).toContain("AGX_MSG_FROM");
-  expect(r.stdout).toContain("never infer native session variables");
+  expect(r.stdout).toContain("nearest Codex vendor process's own environment");
   expect(r.stdout).toContain("not authentication");
   expect(r.stdout).toContain("from-name is relay transport");
   expect(r.called).toBe(false);
