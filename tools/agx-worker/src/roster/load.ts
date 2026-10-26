@@ -15,6 +15,8 @@ const ChoiceSchema = z.strictObject({
   model: z.string(),
   effort: z.enum(["low", "medium", "high", "xhigh", "max"]),
   aa_index: z.number().optional(),
+  aa_cost_to_run_usd: z.number().positive().optional(),
+  aa_tokens_to_run_m: z.number().positive().optional(),
   tb4: z.number().optional(),
   tb4_source: z.url().optional(),
   scicode: z.number().optional(),
@@ -35,6 +37,7 @@ const CatalogSchema = z
   .strictObject({
     schema: z.literal(1),
     as_of: z.iso.date(),
+    as_of_cost: z.iso.date().optional(),
     jev: JevPricesSchema,
     sources: z.record(z.string(), z.url()),
     choice: z.array(ChoiceSchema).min(1),
@@ -116,6 +119,7 @@ const RosterSchema = z
   .strictObject({
     schema: z.literal(1),
     as_of: z.iso.date(),
+    as_of_cost: z.iso.date().optional(),
     default: z.string(),
     auto: AutoSchema,
     claude_run: PolicySchema.shape.claude_run,
@@ -222,6 +226,9 @@ export async function loadRoster(
     const value = {
       schema: catalog.schema,
       as_of: catalog.as_of,
+      ...(catalog.as_of_cost === undefined
+        ? {}
+        : { as_of_cost: catalog.as_of_cost }),
       default: policy.route.default,
       auto: {
         ...(policy.route.allow === undefined

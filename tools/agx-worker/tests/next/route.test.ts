@@ -133,7 +133,11 @@ function installUsage(
   expect(written).toBe(true);
 }
 
-function startServer(choice: string, probabilities?: Record<string, number>) {
+function startServer(
+  choice: string,
+  probabilities?: Record<string, number>,
+  catalogPath?: string,
+) {
   let requestBody: z.output<typeof RoutingRequest> | undefined;
   let wireBody: z.output<typeof RoutingRequest> | undefined;
   let rawBody: string | undefined;
@@ -147,7 +151,9 @@ function startServer(choice: string, probabilities?: Record<string, number>) {
       calls++;
       if (parsed.success) {
         wireBody = parsed.data;
-        const loaded = await loadRoster();
+        const loaded = await loadRoster(
+          catalogPath === undefined ? {} : { catalogPath },
+        );
         if (!loaded.ok) return new Response(loaded.error, { status: 500 });
         const roster = loaded.value;
         const criteria = parsed.data.questions.worker.criteria;
@@ -516,7 +522,7 @@ describe("capability constrained routing", () => {
       `${ROUTING_OBJECTIVE} Pick a roster row for this ticket.`,
     );
     expect(ROUTING_OBJECTIVE).toBe(
-      "Purpose: maximize productive throughput per cost: accepted results per unit of the owner's spend (list price × tokens) and per minute of waiting. For this ticket choose the cheapest option whose published scores indicate it can produce an accepted result; pay for a more expensive option only when the ticket's requirements exceed what the cheaper option's scores support. Evidence: judge each option by its published scores and price against what the ticket requires; agx does not feed its own run outcomes back into this choice. Return the ticket instead of choosing a model only when it cannot be done as written. Subscription health: weigh 7-day windows most; 5-hour windows are secondary; keep the intended bias toward the codex route; stale or unknown usage is neutral.",
+      "Purpose: maximize productive throughput per cost: accepted results per unit of the owner's spend (cost to complete the workload) and per minute of waiting. For this ticket choose the cheapest option whose published scores indicate it can produce an accepted result; pay for a more expensive option only when the ticket's requirements exceed what the cheaper option's scores support. Evidence: judge each option by its published scores and price against what the ticket requires; agx does not feed its own run outcomes back into this choice. Return the ticket instead of choosing a model only when it cannot be done as written. Subscription health: weigh 7-day windows most; 5-hour windows are secondary; keep the intended bias toward the codex route; stale or unknown usage is neutral.",
     );
     expect(request?.questions.worker.instructions).not.toContain(
       "A. Capability sufficiency (hard)",
@@ -549,6 +555,38 @@ describe("capability constrained routing", () => {
       "keep the intended bias toward the codex route",
     );
     expect(ROUTING_OBJECTIVE).toContain("7-day windows most");
+  });
+
+  test("route contract: cost per task", async () => {
+    await isolateState();
+    const catalogPath = new URL(
+      "./fixtures/roster-cost-per-task.toml",
+      import.meta.url,
+    ).pathname;
+    const server = startServer("luna-high", undefined, catalogPath);
+    const selected = await route("cost per task fixture", [], 600, [], {
+      catalogPath,
+    });
+    const criteria = server.request()?.questions.worker.criteria;
+    expect(selected.id).toBe("luna-high");
+    expect(server.calls()).toBe(1);
+    expect(criteria?.["luna-high"]).toContain(
+      "Price $0.10/$0.01/$0.50 per 1M tokens in/cache/out.",
+    );
+    expect(criteria?.["luna-max"]).toContain(
+      "Price $0.10/$0.01/$0.50 per 1M tokens in/cache/out.",
+    );
+    expect(criteria?.["luna-high"]).toContain(
+      "Cost to run AA index: $0.25 (1.8M tokens, AA 2026-10-25). Multiple 1x cheapest costed row.",
+    );
+    expect(criteria?.["luna-max"]).toContain(
+      "Cost to run AA index: $0.75 (5.4M tokens, AA 2026-10-25). Multiple 3x cheapest costed row.",
+    );
+    expect(criteria?.["luna-medium"]).toContain("per-token price only");
+    expect(criteria?.["luna-medium"]).toContain(
+      "Multiple unknownx cheapest costed row.",
+    );
+    expect(criteria?.["luna-high"]).not.toBe(criteria?.["luna-max"]);
   });
 
   test("fresh Codex source survives consecutive picks and empty statusline publication", async () => {
@@ -1211,7 +1249,7 @@ test("local record evidence stays in the pick audit and out of Jev criteria", as
     for (const row of loaded.value.choice) expect(text).not.toContain(row.id);
   }
   expect(request.questions.worker.instructions).toContain(
-    "Purpose: maximize productive throughput per cost: accepted results per unit of the owner's spend (list price × tokens) and per minute of waiting.",
+    "Purpose: maximize productive throughput per cost: accepted results per unit of the owner's spend (cost to complete the workload) and per minute of waiting.",
   );
   expect(request.questions.worker.instructions).toContain(
     "published scores and price against what the ticket requires",

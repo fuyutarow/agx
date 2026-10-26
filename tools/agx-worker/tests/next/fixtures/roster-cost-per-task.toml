@@ -1,0 +1,54 @@
+schema = 1
+as_of = "2026-10-08"
+as_of_cost = "2026-10-25"
+
+[jev]
+price_per_mtok_input = 0.042
+price_per_mtok_output = 0.0
+
+[sources]
+aa_releases = "https://artificialanalysis.ai/models/releases/"
+
+[[choice]]
+id = "luna-low"
+route = "codex"
+model = "gpt-6-luna"
+effort = "low"
+aa_index = 22
+price_in = 0.10
+price_cached_in = 0.01
+price_out = 0.50
+
+[[choice]]
+id = "luna-medium"
+route = "codex"
+model = "gpt-6-luna"
+effort = "medium"
+aa_index = 30
+price_in = 0.10
+price_cached_in = 0.01
+price_out = 0.50
+
+[[choice]]
+id = "luna-high"
+route = "codex"
+model = "gpt-6-luna"
+effort = "high"
+aa_index = 33
+aa_cost_to_run_usd = 0.25
+aa_tokens_to_run_m = 1.8
+price_in = 0.10
+price_cached_in = 0.01
+price_out = 0.50
+
+[[choice]]
+id = "luna-max"
+route = "codex"
+model = "gpt-6-luna"
+effort = "max"
+aa_index = 38
+aa_cost_to_run_usd = 0.75
+aa_tokens_to_run_m = 5.4
+price_in = 0.10
+price_cached_in = 0.01
+price_out = 0.50
