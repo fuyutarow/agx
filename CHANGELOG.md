@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.14.3 — 2026-10-27
+
+- Include continuation judgment notes and ticket diffs in worker prompts
+
 ## 1.14.2 — 2026-10-26
 
 - Deliver Codex messages through the app-server immediately when possible
