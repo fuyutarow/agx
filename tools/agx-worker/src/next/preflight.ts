@@ -21,7 +21,7 @@ import {
   runningWorkspaceRun,
 } from "./store.ts";
 import { verificationEnvironment } from "./verify.ts";
-import { pinContinuation } from "./continue.ts";
+import { pinContinuation, timeBoxUnchangedRefusal } from "./continue.ts";
 import { readRouteUsage } from "./usage.ts";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { DispatchBindingSchema } from "../../../shared/src/agx-dispatch-binding.ts";
@@ -108,6 +108,11 @@ export async function preflight(
     failures.push(`${reason.replaceAll(/[\r\n]+/gu, "; ")}; repair: ${repair}`);
   };
   const bytes = await readFile(path).catch(() => null);
+  const effectFreeRefusal = await timeBoxUnchangedRefusal(
+    value(flags, "continue"),
+    bytes,
+  );
+  if (effectFreeRefusal !== undefined) failures.push(effectFreeRefusal);
   const parsed =
     bytes === null ? undefined : parseNextTicket(bytes.toString("utf8"), true);
   const ticket = parsed?.success === true ? parsed.ticket : undefined;
@@ -122,8 +127,9 @@ export async function preflight(
       "correct the ticket front matter",
     );
   // Ticket-only intake must not be masked by an unavailable host inspection.
-  if ((parsed?.intake?.length ?? 0) > 0)
+  if (effectFreeRefusal !== undefined || (parsed?.intake?.length ?? 0) > 0)
     return {
+      effectFreeRefusal: effectFreeRefusal !== undefined,
       temporary: undefined,
       failures,
       ticket,

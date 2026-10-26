@@ -36,6 +36,7 @@ import { recordedSandbox, resolveSandbox, Sandbox } from "./next/sandbox.ts";
 import { append, now } from "./next/store.ts";
 import { leaseFor } from "./next/lease.ts";
 import { resolveRunId } from "./next/run-id.ts";
+import { timeBoxUnchangedRefusal } from "./next/continue.ts";
 
 export const DISPATCH_CHECK_TIMEOUT_MS = 60_000;
 export const DISPATCH_LIST_TIMEOUT_MS = 60_000;
@@ -436,6 +437,12 @@ export async function dispatch(options: {
   const env: NodeJS.ProcessEnv = { ...callerEnv };
   const ticketPath = resolve(cwd, options.ticketPath);
   const intakeBytes = await readFile(ticketPath).catch(() => null);
+  const unchanged = await timeBoxUnchangedRefusal(
+    options.continuation,
+    intakeBytes,
+    env,
+  );
+  if (unchanged !== undefined) return printPreflightFailures([unchanged]);
   const intakeTicket =
     intakeBytes === null
       ? undefined

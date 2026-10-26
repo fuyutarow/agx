@@ -1,11 +1,14 @@
 import { prepareTicketRepo } from "../ticket-repo.ts";
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
+  lstatSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -148,6 +151,104 @@ const fixture = async (ticketName = "pin") => {
       });
   return { root, state, ticket, resume, events, writeOriginal };
 };
+
+test.each([false, true])(
+  "dispatch contract: rule 2 (ticket amended=%s)",
+  async (amended) => {
+    const f = await fixture();
+    const original = readFileSync(f.ticket);
+    const priorDir = join(f.state, "runs", "codex-run");
+    mkdirSync(priorDir, { recursive: true });
+    writeFileSync(join(priorDir, "ticket.orig.md"), original);
+    writeFileSync(
+      join(priorDir, "ticket.orig.md.sha256"),
+      `${createHash("sha256").update(original).digest("hex")}  ticket.orig.md\n`,
+    );
+    writeFileSync(
+      join(f.state, "records.jsonl"),
+      `${f
+        .events()
+        .map((event) =>
+          JSON.stringify(
+            event.id === "codex-run" && event.kind === "ended"
+              ? { ...event, exit: 3, outcome: "timeout" }
+              : event,
+          ),
+        )
+        .join("\n")}\n`,
+    );
+    const marker = join(f.root, "service-called");
+    for (const [name, body] of [
+      ["systemctl", "process.exitCode = 3;"],
+      [
+        "systemd-run",
+        `
+const args = process.argv.slice(2);
+const binding = JSON.parse(args[args.indexOf("--dispatch-binding") + 1]);
+const started = { kind: "started", ...binding, at: "2026-10-25T00:00:00Z", cwd: binding.workspace, writes: [], row: "terra-high", dispatcher_session: null, vendor_session: "continued", pid: 0, continues: "codex-run" };
+const ended = { kind: "ended", id: binding.id, at: "2026-10-25T00:01:00Z", exit: 0, report_path: null, vendor_session: "continued", verify: [] };
+const { appendFileSync } = await import("node:fs");
+appendFileSync(${JSON.stringify(join(f.state, "records.jsonl"))}, JSON.stringify(started) + "\\n" + JSON.stringify(ended) + "\\n");
+`,
+      ],
+    ]) {
+      const path = join(f.root, "bin", name!);
+      writeFileSync(
+        path,
+        `#!/usr/bin/env bun\nawait Bun.write(${JSON.stringify(marker)}, "called");\n${body}\n`,
+      );
+      chmodSync(path, 0o755);
+    }
+    if (amended) writeFileSync(f.ticket, ticketText("amended time box plan"));
+    const snapshot = () =>
+      readdirSync(f.root, { recursive: true, encoding: "utf8" })
+        .toSorted((left, right) => left.localeCompare(right))
+        .map((path) => [
+          path,
+          lstatSync(join(f.root, path)).isFile()
+            ? readFileSync(join(f.root, path)).toString("base64")
+            : null,
+        ]);
+    const before = snapshot();
+    const result = f.resume(
+      "codex-",
+      {},
+      undefined,
+      false,
+      ["--sandbox", "none"],
+      "dispatch",
+    );
+    if (amended) {
+      expect(result.exitCode, result.stderr.toString()).toBe(0);
+      expect(existsSync(marker)).toBe(true);
+      expect(
+        f.events().filter((event) => event.kind === "started"),
+      ).toHaveLength(5);
+    } else {
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout.toString()).toBe("");
+      expect(result.stderr.toString()).toBe(
+        "agx: cannot continue run codex-run: time-box-unchanged: previous run ended by timeout and ticket sha256 is unchanged; repair: edit the ticket before continuing; check=launch-premises expected=satisfied observed=refused\n",
+      );
+      expect(snapshot()).toEqual(before);
+      // The shared check and direct run must also refuse without recording a refusal.
+      for (const command of ["check", "run"]) {
+        const checked = f.resume(
+          "codex-run",
+          {},
+          undefined,
+          false,
+          ["--sandbox", "none"],
+          command,
+        );
+        expect(checked.exitCode, checked.stderr.toString()).toBe(2);
+        expect(checked.stderr.toString()).toBe(result.stderr.toString());
+        expect(snapshot()).toEqual(before);
+      }
+    }
+  },
+  30_000,
+);
 
 test.each([false, true])(
   "sandbox precedence and receipts agree without adjacent source (compiled=%s)",

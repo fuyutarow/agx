@@ -283,7 +283,8 @@ export async function check(flags: Flags): Promise<number> {
   if (inspected.temporary !== undefined)
     return fatal(inspected.temporary.message, 75);
   if (inspected.failures.length > 0) {
-    recordRefusal(path, cwd, inspected.bytes, inspected.failures);
+    if (inspected.effectFreeRefusal !== true)
+      recordRefusal(path, cwd, inspected.bytes, inspected.failures);
     if (flags.json === true)
       process.stdout.write(
         `${JSON.stringify({ ok: false, violations: inspected.failures.map(String) })}\n`,
@@ -318,7 +319,10 @@ export async function run(flags: Flags): Promise<number> {
   const cwd = resolve(value(flags, "cd") ?? process.cwd());
   if (path === undefined) return fatal("run requires positional TICKET", 2);
   const inspected = await preflight(path, cwd, flags);
-  if (inspected.temporary !== undefined || inspected.failures.length > 0) {
+  if (
+    inspected.effectFreeRefusal !== true &&
+    (inspected.temporary !== undefined || inspected.failures.length > 0)
+  ) {
     const audit = newRoutingAudit(
       {
         path: resolve(path),
@@ -345,7 +349,8 @@ export async function run(flags: Flags): Promise<number> {
   if (inspected.temporary !== undefined)
     return fatal(inspected.temporary.message, 75);
   if (inspected.failures.length > 0) {
-    recordRefusal(path, cwd, inspected.bytes, inspected.failures);
+    if (inspected.effectFreeRefusal !== true)
+      recordRefusal(path, cwd, inspected.bytes, inspected.failures);
     return printPreflightFailures(inspected.failures);
   }
   const {

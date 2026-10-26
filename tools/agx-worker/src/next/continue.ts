@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { exhaustionPolicy, loadRoster, type Choice } from "../roster/index.ts";
 import { exitWithError } from "./exit.ts";
 import { foldedRuns, stateDir } from "./store.ts";
@@ -16,9 +16,34 @@ export type PinnedContinuation = Readonly<{
   ticketOrigPath: string;
 }>;
 
+/** Inspect the saved start checksum before any continuation reservation or refusal record. */
+export async function timeBoxUnchangedRefusal(
+  continuationId: string | undefined,
+  bytes: Uint8Array | null,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string | undefined> {
+  if (continuationId === undefined || bytes === null) return undefined;
+  const root = stateDir(env);
+  const selected = resolveRunId(await foldedRuns(root), continuationId);
+  if (selected.kind === "error") return undefined;
+  const previous = selected.row;
+  if (previous.state !== "ended" || previous.outcome !== "timeout")
+    return undefined;
+  const original =
+    previous.ticket_orig_path ??
+    join(root, "runs", previous.id, "ticket.orig.md");
+  const checksum = await Bun.file(`${original}.sha256`)
+    .text()
+    .catch(() => null);
+  const saved = /^([a-f0-9]{64})(?:\s|$)/u.exec(checksum ?? "")?.[1];
+  const current = createHash("sha256").update(bytes).digest("hex");
+  if (saved !== current) return undefined;
+  return `cannot continue run ${previous.id}: time-box-unchanged: previous run ended by timeout and ticket sha256 is unchanged; repair: edit the ticket before continuing`;
+}
+
 /**
  * Ordinary continuations pin their row. Capacity continuations route away from its model.
- * Every refusal happens here, before a run directory, a started event or a worker exists.
+ * Row and session refusals happen before a run directory, a started event or a worker exists.
  */
 export async function pinContinuation(
   continuationId: string,
