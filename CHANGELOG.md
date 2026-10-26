@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.13.3 — 2026-10-26
+
+- Add ancestor ticket premises and document all premise kinds in check help
+
 ## 1.13.2 — 2026-10-26
 
 - Attribute Codex callers from their nearest vendor process when proven.
