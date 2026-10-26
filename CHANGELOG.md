@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.16.0 — 2026-10-27
+
+- Reserve alpha pushes for agx change land with a pre-push hook
+
 ## 1.15.0 — 2026-10-27
 
 - Fetch remote trunk before creating workspaces and report the selected base.
