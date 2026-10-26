@@ -12,6 +12,7 @@ import {
   doctor as doctorWorkspaces,
   gc,
   gcAll,
+  harvest,
   refresh,
   remove,
 } from "./workspace.ts";
@@ -304,6 +305,62 @@ const gcCommand = command(
   },
 );
 
+const harvestCommand = command(
+  {
+    name: "harvest",
+    strictFlags: true,
+    ignoreArgv: rejectPrototypeFlag,
+    help: {
+      description:
+        "Copy ended runs' workspace results into their run directories without changing the workspace.",
+    },
+    flags: {
+      repo: repoFlag,
+      all: { type: Boolean, description: "use gc's repository discovery" },
+      dryRun: {
+        type: Boolean,
+        description: "list files and bytes; copy nothing",
+      },
+      json: {
+        type: Boolean,
+        description: "emit per-run file plans and totals",
+      },
+    },
+  },
+  async (argv) => {
+    const done = await harvest({
+      repo: argv.flags.repo,
+      all: argv.flags.all,
+      dryRun: argv.flags.dryRun,
+    });
+    if (!done.ok) {
+      fail(done.error);
+      return;
+    }
+    if (argv.flags.json === true)
+      process.stdout.write(JSON.stringify(done.value) + "\n");
+    else {
+      for (const run of done.value.runs) {
+        run.files.forEach((file) => {
+          process.stdout.write(
+            [run.id, run.workspace, file.path, file.bytes].join("\t") + "\n",
+          );
+        });
+        process.stdout.write(
+          [
+            run.id,
+            "summary",
+            run.files.length,
+            run.bytes,
+            "skipped",
+            run.skipped,
+          ].join("\t") + "\n",
+        );
+      }
+    }
+  },
+);
+
 const doctorCommand = command(
   {
     name: "doctor",
@@ -354,6 +411,7 @@ void cli({
     refreshCommand,
     rmCommand,
     gcCommand,
+    harvestCommand,
     doctorCommand,
   ],
 });

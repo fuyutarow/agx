@@ -222,3 +222,33 @@ and other untracked content retain their protections. Dry-run rows retain the ex
 and append `all runs judged reject; remaining results preserved in run directories
 (...); no age wait`. `collectable` counts classified candidates; layout and
 explicit opt-in rules still govern collection.
+
+## Harvest ended-run results
+
+Run `agx ws harvest [--repo PATH | --all] [--dry-run] [--json]` before gc to
+preserve results from older workspaces. `--all` uses gc's creation-state, run-record
+and L2 repository discovery. Harvest reads the same workspace policy as gc.
+It copies ordinary files from each ended run's `.agent-state/…` write globs,
+workspace-local `report_path` and `last_progress_path`, and untracked root files
+whose modification time falls within the run's recorded lifetime (missing times
+leave that bound open). Workspaces with any live or continuing run are skipped.
+Symlinks and paths outside the workspace are never copied.
+
+Copies retain their workspace-relative paths under `<AGX_RUN_DIR>/harvest/`.
+Identical copies are skipped on subsequent calls; conflicting copies cause an
+error and are never overwritten. Workspace files are never changed or deleted.
+Dry-run makes no result directories and lists each planned relative path and byte
+count per run. JSON includes `runs` (with planned/copied `files`, `bytes` and
+`skipped` identical-file counts), plus total `files` and `bytes`. Counts describe
+file copies, so a file attributed to multiple ended runs counts once per run.
+For example, a dry-run can report:
+
+```text
+run-id  /tmp/project.ws/ws_rejected  worker.result.md  11
+run-id  summary  1  11  skipped  0
+```
+
+GC recognizes identical ordinary-file copies in both `results/` and `harvest/`
+inside the workspace's runs. Its existing all-rejected, landing, live-run and
+other keep protections still apply. Harvest does not record a judgment or collect
+a workspace. Run `agx ws gc --dry-run` to inspect collection after harvesting.

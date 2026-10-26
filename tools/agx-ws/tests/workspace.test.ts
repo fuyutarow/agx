@@ -1500,6 +1500,89 @@ const recFor = (dir: string) => ({
 });
 
 describe("gc integration branches", () => {
+  test("AGX-WS-HARVEST-1025 copies once, leaves workspace bytes intact, and enables gc", async () => {
+    const env = baseEnv({
+      AGX_STATE_DIR: join(scratch, "harvest-state"),
+      XDG_CONFIG_HOME: join(scratch, "harvest-config"),
+    });
+    const fixtureWs = (args: string[], cwd: string) => ws(args, cwd, env);
+    const path = await repo('trunk = "main"\n');
+    await Bun.write(
+      join(path, ".gitignore"),
+      "*.result.md\n.agent-state/\nmetrics/\n",
+    );
+    await jj(["commit", "-m", "ignore results"], path);
+    await jj(["bookmark", "set", "main", "-r", "@-"], path);
+    expect((await fixtureWs(["add", "harvest-reject"], path)).code).toBe(0);
+    expect((await fixtureWs(["add", "harvest-running"], path)).code).toBe(0);
+    const dir = wsDir(path, "harvest-reject");
+    const live = wsDir(path, "harvest-running");
+    const files = [
+      "worker.result.md",
+      ".agent-state/harvest/result.md",
+      "metrics/result.json",
+    ];
+    for (const file of files) await Bun.write(join(dir, file), "measurement");
+    await Bun.write(join(live, "worker.result.md"), "still running");
+    setRecords([
+      {
+        ...recFor(dir),
+        id: "harvest-reject",
+        ticket: "harvest",
+        writes: [".agent-state/harvest/**"],
+        report_path: join(dir, "metrics/result.json"),
+      },
+      { ...recFor(live), id: "harvest-running", state: "running" },
+    ]);
+    const before = await fixtureWs(["gc", "--dry-run"], path);
+    expect(before.out).toContain("untracked content: 3 files");
+    const preview = await fixtureWs(
+      ["harvest", "--repo", path, "--dry-run", "--json"],
+      path,
+    );
+    expect(preview.code, preview.err).toBe(0);
+    expect(preview.out).toContain('"files":3,"bytes":33');
+    const target = join(
+      env.AGX_STATE_DIR!,
+      "runs",
+      "harvest-reject",
+      "harvest",
+    );
+    expect(existsSync(target)).toBe(false);
+    const first = await fixtureWs(["harvest", "--repo", path, "--json"], path);
+    expect(first.code, first.err).toBe(0);
+    expect(first.out).toContain('"files":3,"bytes":33');
+    for (const file of files) {
+      expect(await Bun.file(join(dir, file)).text()).toBe("measurement");
+      expect(await Bun.file(join(target, file)).text()).toBe("measurement");
+    }
+    expect(
+      existsSync(
+        join(env.AGX_STATE_DIR!, "runs", "harvest-running", "harvest"),
+      ),
+    ).toBe(false);
+    const second = await fixtureWs(["harvest", "--all", "--json"], path);
+    expect(second.code, second.err).toBe(0);
+    expect(second.out).toContain('"files":0,"bytes":0');
+    await Bun.write(join(dir, "worker.result.md"), "changed result");
+    const conflict = await fixtureWs(["harvest", "--repo", path], path);
+    expect(conflict.code).toBe(1);
+    expect(conflict.err).toContain("harvest conflict");
+    expect(await Bun.file(join(target, "worker.result.md")).text()).toBe(
+      "measurement",
+    );
+    expect(await Bun.file(join(dir, "worker.result.md")).text()).toBe(
+      "changed result",
+    );
+    await Bun.write(join(dir, "worker.result.md"), "measurement");
+    const collected = await fixtureWs(["gc"], path);
+    expect(collected.code, collected.err).toBe(0);
+    expect(existsSync(dir)).toBe(false);
+    expect(await Bun.file(join(live, "worker.result.md")).text()).toBe(
+      "still running",
+    );
+  });
+
   test("result preservation requires every file, equal bytes and no symlink escape", async () => {
     const path = await repo('trunk = "main"\n');
     const runDir = join(scratch, "preservation-run");

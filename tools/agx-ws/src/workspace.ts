@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import {
   readFile,
+  open,
   realpath,
   rename,
   writeFile,
@@ -742,6 +743,10 @@ export async function remove(options: {
 
 const RunRecord = z.looseObject({
   id: z.string(),
+  ticket: z.string().optional(),
+  writes: z.array(z.string()).optional(),
+  report_path: z.string().nullable().optional(),
+  last_progress_path: z.string().nullable().optional(),
   state: z.string(),
   started_at: z.string().optional(),
   cwd: z.string().nullable().optional(),
@@ -2110,9 +2115,12 @@ async function preservedResult(
 ): Promise<boolean> {
   const preserved = await attempt(async () => {
     const bytes = await readFile(join(dir, path));
-    for (const runDir of resultDirs) {
+    for (const runDir of resultDirs.flatMap((runRoot) => [
+      join(runRoot, "results"),
+      join(runRoot, "harvest"),
+    ])) {
       const root = resolve(runDir);
-      const copy = join(root, "results", path);
+      const copy = join(root, path);
       const equal = await attempt(async () => {
         const target = await realpath(copy);
         if (
@@ -2531,30 +2539,9 @@ export async function gcAll(
   options: Omit<GcOptions, "repo">,
   _root?: string,
 ): Promise<Attempt<GcResult>> {
-  const index = await indexedWorkspaces();
-  if (!index.ok) return index;
-  const registered = await registeredRepoPaths();
-  if (!registered.ok) return registered;
-  const records = await agxRecords(process.cwd());
-  if (!records.ok) return records;
-  const roots = new Map<string, Set<string>>();
-  const addRoot = (path: string, source: string) => {
-    const repo = resolveRepo(path);
-    const root = repo.ok ? repo.value.backing : resolve(path);
-    const sources = roots.get(root) ?? new Set<string>();
-    sources.add(source);
-    roots.set(root, sources);
-  };
-  for (const entry of index.value) addRoot(entry.root, "state");
-  for (const path of records.value.flatMap((record) => [
-    record.workspace,
-    record.cwd,
-  ])) {
-    if (path === undefined || path === null || path === "") continue;
-    const repo = resolveRepo(path);
-    if (repo.ok) addRoot(repo.value.backing, "record");
-  }
-  for (const root of registered.value) addRoot(root, "L2");
+  const discovered = await discoverRepos();
+  if (!discovered.ok) return discovered;
+  const roots = discovered.value;
   const lines: string[] = [];
   const failed: string[] = [];
   const seen = new Set<string>();
@@ -2697,4 +2684,238 @@ async function publishVerdicts(
   release();
   if (!done.ok)
     process.stderr.write("ws: cannot publish verdicts: " + msg(done) + "\n");
+}
+
+async function discoverRepos(): Promise<Attempt<Map<string, Set<string>>>> {
+  const index = await indexedWorkspaces();
+  if (!index.ok) return index;
+  const registered = await registeredRepoPaths();
+  if (!registered.ok) return registered;
+  const records = await agxRecords(process.cwd());
+  if (!records.ok) return records;
+  const roots = new Map<string, Set<string>>();
+  const addRoot = (path: string, source: string) => {
+    const repo = resolveRepo(path);
+    const root = repo.ok ? repo.value.backing : resolve(path);
+    const sources = roots.get(root) ?? new Set<string>();
+    sources.add(source);
+    roots.set(root, sources);
+  };
+  for (const entry of index.value) addRoot(entry.root, "state");
+  for (const path of records.value.flatMap((record) => [
+    record.workspace,
+    record.cwd,
+  ])) {
+    if (path === undefined || path === null || path === "") continue;
+    const repo = resolveRepo(path);
+    if (repo.ok) addRoot(repo.value.backing, "record");
+  }
+  for (const root of registered.value) addRoot(root, "L2");
+  return good(roots);
+}
+
+export type HarvestFile = { path: string; bytes: number };
+export type HarvestRun = {
+  id: string;
+  workspace: string;
+  files: HarvestFile[];
+  skipped: number;
+  bytes: number;
+};
+
+/** Copy ordinary result files only; exclusive creation never overwrites earlier evidence. */
+export async function harvest(options: {
+  repo?: string | undefined;
+  all?: boolean | undefined;
+  dryRun?: boolean | undefined;
+}): Promise<Attempt<{ runs: HarvestRun[]; files: number; bytes: number }>> {
+  if (options.all === true && options.repo !== undefined)
+    return bad("--all and --repo cannot be combined");
+  let roots: Attempt<Map<string, Set<string>>>;
+  if (options.all === true) roots = await discoverRepos();
+  else {
+    const repo = resolveRepo(options.repo ?? process.cwd());
+    if (!repo.ok) return repo;
+    roots = good(new Map([[repo.value.backing, new Set<string>()]]));
+  }
+  if (!roots.ok) return roots;
+  const records = await agxRecords(process.cwd());
+  if (!records.ok) return records;
+  const runs: HarvestRun[] = [];
+  for (const root of roots.value.keys()) {
+    const done = await harvestRepo(
+      root,
+      records.value,
+      options.dryRun === true,
+    );
+    if (!done.ok) return done;
+    runs.push(...done.value);
+  }
+  return good({
+    runs,
+    files: runs.reduce((sum, run) => sum + run.files.length, 0),
+    bytes: runs.reduce((sum, run) => sum + run.bytes, 0),
+  });
+}
+
+async function harvestRepo(
+  root: string,
+  records: RunRecord[],
+  dryRun: boolean,
+): Promise<Attempt<HarvestRun[]>> {
+  const repo = resolveRepo(root);
+  if (!repo.ok) return repo;
+  const config = await readConfig(repo.value);
+  if (!config.ok) return config;
+  const candidates = await workspaces(repo.value);
+  if (!candidates.ok) return candidates;
+  const rows: HarvestRun[] = [];
+  for (const ws of candidates.value) {
+    const done = await harvestWorkspace(ws.dir, records, dryRun);
+    if (!done.ok) return done;
+    rows.push(...done.value);
+  }
+  return good(rows);
+}
+
+async function harvestWorkspace(
+  dir: string,
+  records: RunRecord[],
+  dryRun: boolean,
+): Promise<Attempt<HarvestRun[]>> {
+  if (!existsSync(dir)) return good([]);
+  const lineage = lineageOf(records, realOr(dir));
+  if (lineage.some((run) => !TERMINAL_STATES.has(run.state))) return good([]);
+  const tracked = await jjOut(
+    ["file", "list", "-T", 'path ++ "\\0"'],
+    dir,
+    true,
+  );
+  if (!tracked.ok) return tracked;
+  const trackedPaths = new Set(tracked.value.split("\0").filter(Boolean));
+  const rows: HarvestRun[] = [];
+  for (const run of lineage) {
+    if (run.state !== "ended" || !/^[a-zA-Z0-9_-]+$/u.test(run.id)) continue;
+    const collected = await attempt(() => harvestPaths(dir, run, trackedPaths));
+    if (!collected.ok) return collected;
+    const copied = await attempt(() =>
+      harvestRun(dir, run, collected.value, dryRun),
+    );
+    if (!copied.ok) return copied;
+    if (!copied.value.ok) return copied.value;
+    rows.push(copied.value.value);
+  }
+  return good(rows);
+}
+
+async function harvestPaths(
+  dir: string,
+  run: RunRecord,
+  trackedPaths: Set<string>,
+): Promise<Set<string>> {
+  const paths = new Set<string>();
+  for (const pattern of run.writes ?? []) {
+    const local = pattern.startsWith("/") ? relative(dir, pattern) : pattern;
+    if (!local.startsWith(".agent-state/") || local.split("/").includes(".."))
+      continue;
+    for await (const path of new Bun.Glob(local).scan({
+      cwd: dir,
+      dot: true,
+      onlyFiles: true,
+      followSymlinks: false,
+    }))
+      paths.add(path);
+  }
+  for (const declared of [run.report_path, run.last_progress_path]) {
+    if (declared === undefined || declared === null) continue;
+    const local = relative(dir, resolve(dir, declared));
+    if (
+      local !== "" &&
+      !local.startsWith("../") &&
+      !local.split("/").some((part) => part === ".jj" || part === ".git")
+    )
+      paths.add(local);
+  }
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    if (
+      !entry.isFile() ||
+      trackedPaths.has(entry.name) ||
+      [".git", ".jj"].includes(entry.name)
+    )
+      continue;
+    const info = await lstat(join(dir, entry.name));
+    const started = fromThrowable(
+      () => Temporal.Instant.from(run.started_at ?? "").epochMilliseconds,
+    )().unwrapOr(Number.NaN);
+    const ended = fromThrowable(
+      () => Temporal.Instant.from(run.ended_at ?? "").epochMilliseconds,
+    )().unwrapOr(Number.NaN);
+    if (Number.isFinite(started) && info.mtimeMs < started) continue;
+    if (Number.isFinite(ended) && info.mtimeMs > ended) continue;
+    paths.add(entry.name);
+  }
+  return paths;
+}
+
+async function harvestRun(
+  dir: string,
+  run: RunRecord,
+  paths: Set<string>,
+  dryRun: boolean,
+): Promise<Attempt<HarvestRun>> {
+  const row: HarvestRun = {
+    id: run.id,
+    workspace: dir,
+    files: [],
+    skipped: 0,
+    bytes: 0,
+  };
+  const destination = join(stateDir(), "runs", run.id, "harvest");
+  for (const path of [...paths].toSorted()) {
+    const copied = await copyHarvestFile(dir, destination, path, dryRun);
+    if (!copied.ok) return copied;
+    if (copied.value === "skipped") row.skipped++;
+    if (typeof copied.value !== "number") continue;
+    row.files.push({ path, bytes: copied.value });
+    row.bytes += copied.value;
+  }
+  return good(row);
+}
+
+async function copyHarvestFile(
+  dir: string,
+  destination: string,
+  path: string,
+  dryRun: boolean,
+): Promise<Attempt<number | "ignored" | "skipped">> {
+  const source = join(dir, path);
+  if (!existsSync(source)) return good("ignored");
+  const info = await lstat(source);
+  if (!info.isFile() || (await realpath(source)) !== resolve(source))
+    return good("ignored");
+  const bytes = await readFile(source);
+  const target = join(destination, path);
+  if (existsSync(target)) {
+    if (
+      !(await lstat(target)).isFile() ||
+      (await realpath(target)) !== resolve(target)
+    )
+      return bad(`unsafe harvest target: ${target}`);
+    if (!bytes.equals(await readFile(target)))
+      return bad(`harvest conflict: ${target}`);
+    return good("skipped");
+  }
+  // Check every existing ancestor before mkdir/open; never write through a symlink.
+  let parent = dirname(target);
+  while (parent !== dirname(parent)) {
+    if (existsSync(parent) && (await lstat(parent)).isSymbolicLink())
+      return bad(`unsafe harvest parent: ${parent}`);
+    parent = dirname(parent);
+  }
+  if (!dryRun) {
+    await mkdir(dirname(target), { recursive: true });
+    await using file = await open(target, "wx", 0o600);
+    await file.writeFile(bytes);
+  }
+  return good(bytes.length);
 }
