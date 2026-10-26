@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.14.7 — 2026-10-27
+
+- Record dispatch runs before launch and preserve launch failures
+- Use one shared compiled binary for suite commands
+
 ## 1.14.6 — 2026-10-27
 
 - Make subscription usage tests deterministic across fixed clocks and temporary homes.
