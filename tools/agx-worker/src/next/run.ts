@@ -77,8 +77,11 @@ const invocationUnitFor = async (): Promise<string | undefined> => {
   const cgroup = await readFile("/proc/self/cgroup", "utf8").catch(() => null);
   return cgroup === null ? undefined : systemdUnitName(cgroup);
 };
-const refuseRunningWorkspace = async (cwd: string): Promise<void> => {
-  const holder = await runningWorkspaceRun(cwd);
+const refuseRunningWorkspace = async (
+  cwd: string,
+  exceptId?: string,
+): Promise<void> => {
+  const holder = await runningWorkspaceRun(cwd, exceptId);
   if (holder !== undefined)
     fatal(`workspace ${cwd} already has running run ${holder.id}`, 2);
 };
@@ -536,7 +539,7 @@ export async function run(flags: Flags): Promise<number> {
     // The winning process may be between flock and publishing its started event.
     // Only diagnostics wait (at most 100 ms); acquisition itself never waits or retries.
     for (let attempt = 0; attempt < 10; attempt += 1) {
-      await refuseRunningWorkspace(cwd);
+      await refuseRunningWorkspace(cwd, id);
       await Bun.sleep(10);
     }
     return fatal(
@@ -545,7 +548,7 @@ export async function run(flags: Flags): Promise<number> {
     );
   }
   // Also covers runs started by an older binary while this invocation was routing.
-  await refuseRunningWorkspace(cwd);
+  await refuseRunningWorkspace(cwd, id);
   const unit = binding?.unit ?? actualUnit ?? `agt_${ticketName}`;
   const workerName = unit;
   const startedLease = await leaseFor(

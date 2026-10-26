@@ -1,6 +1,7 @@
 import { prepareTicketRepo } from "../ticket-repo.ts";
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -367,7 +368,7 @@ describe("agx-worker run", () => {
     expect(await earlyQuitRows("other-ticket", root)).toEqual([]);
   });
 
-  test("routes through Jev, starts a worker, and records its report", async () => {
+  test("dispatch contract: fake vendor adopts the reserved id without a second run id", async () => {
     const root = await scratch("next-run-");
     const state = join(root, "state");
     const ticket = join(root, "ticket.md");
@@ -410,8 +411,14 @@ describe("agx-worker run", () => {
       `import { appendFileSync } from "node:fs";\nif (!process.env.AGX_RUN_ID || process.env.AGX_RUN_ID === "inherited-run" || !process.env.AGX_CODEX_PROGRESS_FILE.includes(process.env.AGX_RUN_ID)) throw new Error("worker run ID missing or inherited");\nconst resumeIndex = process.argv.indexOf("--resume");\nconst vendorSession = resumeIndex < 0 ? "vendor-1" : "continued-" + String(process.argv[resumeIndex + 1]);\nawait Bun.write(process.env.AGX_CODEX_PROGRESS_FILE, JSON.stringify({ schema: 1, at: "2026-10-24T00:00:00Z", last: "fixture activity", commands: 4, files: 2, session: vendorSession }));\nif (process.env.AGX_LATE_FIXTURE === "1") await Bun.sleep(1400);\nelse appendFileSync(process.env.AGX_INTERIM_REPORTS_FILE, JSON.stringify({ last_message: ${JSON.stringify(interimMessage)} }) + "\\n");\nprocess.stdout.write(JSON.stringify({ exit: 0, report: { summary: "fake done", changes: [], checks: [], for_coordinator: [], open: [] }, vendor_session: vendorSession }) + "\\n");\n`,
     );
 
+    const commandBin = join(root, "bin");
+    mkdirSync(commandBin);
+    const mise = join(commandBin, "mise");
+    writeFileSync(mise, '#!/usr/bin/env bun\nconsole.log("{}");\n');
+    chmodSync(mise, 0o755);
     const workerEnv = {
       ...process.env,
+      PATH: `${commandBin}:${process.env.PATH}`,
       AGX_STATE_DIR: state,
       XDG_STATE_HOME: join(root, "xdg-state"),
       AGX_TMP_ROOT: join(root, "agx-tmp"),
@@ -432,6 +439,35 @@ describe("agx-worker run", () => {
       workspace: root,
       unit: "agt_other-2",
     };
+    mkdirSync(state, { recursive: true });
+    writeFileSync(
+      join(state, "records.jsonl"),
+      `${JSON.stringify({
+        kind: "dispatching",
+        id: binding.id,
+        at: "2026-10-26T10:00:00Z",
+        ticket: binding.ticket,
+        writes: ["src/**"],
+        cwd: root,
+        workspace: root,
+        worker_name: binding.unit,
+        unit: binding.unit,
+        workspace_name: basename(root),
+        sandbox: "read-only",
+        sandbox_source: "flag",
+        dispatcher_session: "dispatcher-session",
+        vendor_session: null,
+        continues: null,
+        supersedes: null,
+        ticket_path: ticket,
+        pid: process.pid,
+        lease: {
+          pid: process.pid,
+          start: null,
+          unit: `${binding.unit}.service`,
+        },
+      })}\n`,
+    );
 
     const result = Bun.spawnSync(
       [
@@ -455,7 +491,10 @@ describe("agx-worker run", () => {
       },
     );
 
-    expect(result.stderr.toString().trim().split("\n")).toHaveLength(1);
+    expect(
+      result.stderr.toString().trim().split("\n"),
+      result.stderr.toString(),
+    ).toHaveLength(1);
     expect(result.stderr.toString()).toStartWith(
       "WARN ignored legacy ticket fields:",
     );
@@ -479,21 +518,31 @@ describe("agx-worker run", () => {
     expect(parsedLines.success).toBe(true);
     if (!parsedLines.success) return;
     const lines = parsedLines.data;
-    const started = lines[0];
+    const reservation = lines.find((line) => line.kind === "dispatching");
+    const started = lines.find((line) => line.kind === "started");
     const ended = lines.at(-1);
     if (started === undefined || ended === undefined) return;
     if (started.id === undefined) return;
+    expect(reservation?.id).toBe(binding.id);
+    expect(
+      new Set(
+        lines.flatMap((line) => (line.id === undefined ? [] : [line.id])),
+      ),
+    ).toEqual(new Set([binding.id]));
     const brief = readFileSync(
       join(state, "runs", started.id, "brief.md"),
       "utf8",
     );
     expect(brief).toContain("--from overrides AGX_MSG_FROM");
-    expect(brief).toContain("current thread ID reported by the vendor");
     expect(brief).toContain(
-      "If the vendor has not supplied your ID, leave sender unknown",
+      "accepts CODEX_THREAD_ID only from the nearest vendor process's own environment",
+    );
+    expect(brief).toContain(
+      "If no source proves the caller, leave sender unknown",
     );
     if (started.at === undefined || ended.at === undefined) return;
     expect(lines.map((line) => line.kind)).toEqual([
+      "dispatching",
       "started",
       "progress",
       "ended",

@@ -33,6 +33,8 @@ import { resolveSuiteTool } from "../../shared/src/path-dispatch.ts";
 import { selfCommand } from "./self-command.ts";
 import { parseNextTicket } from "./next/ticket.ts";
 import { recordedSandbox, resolveSandbox, Sandbox } from "./next/sandbox.ts";
+import { append, now } from "./next/store.ts";
+import { leaseFor } from "./next/lease.ts";
 import { resolveRunId } from "./next/run-id.ts";
 
 export const DISPATCH_CHECK_TIMEOUT_MS = 60_000;
@@ -337,16 +339,6 @@ async function waitForUnitEnd(
     );
     await Bun.sleep(Math.min(250, remaining));
   }
-}
-
-function matches(row: RunRow, binding: DispatchBinding): boolean {
-  return (
-    row.id === binding.id &&
-    row.ticket === binding.ticket &&
-    resolve(row.cwd) === binding.workspace &&
-    resolve(row.workspace ?? row.cwd) === binding.workspace &&
-    row.unit === binding.unit
-  );
 }
 
 async function ticketSlug(path: string): Promise<Attempt<string>> {
@@ -741,11 +733,20 @@ export async function dispatch(options: {
     );
     return 2;
   }
-  const { sandbox, sandbox_source } = resolveSandbox(
+  const resolvedSandbox = resolveSandbox(
     options.sandbox,
     parsedTicket.ticket.sandbox,
     recordedMode.value,
   );
+  const parsedSandbox = Sandbox.safeParse(resolvedSandbox.sandbox);
+  if (!parsedSandbox.success) {
+    process.stderr.write(
+      "agx worker dispatch: resolved sandbox mode is unsupported\n",
+    );
+    return 1;
+  }
+  const sandbox = parsedSandbox.data;
+  const { sandbox_source } = resolvedSandbox;
   const checked = await invoke(
     [
       ...workerCommand,
@@ -795,14 +796,60 @@ export async function dispatch(options: {
     return 1;
   }
   const binding: DispatchBinding = parsedBinding.data;
-
-  const before = await listedRuns(cwd, env);
-  if (before.rows === undefined) {
+  const recordsCheck = await listedRuns(cwd, env);
+  if (recordsCheck.rows === undefined) {
     process.stderr.write(
-      `agx worker dispatch: cannot read run records: ${before.error}\n`,
+      `agx worker dispatch: cannot read run records: ${recordsCheck.error}\n`,
     );
-    return before.code ?? 1;
+    return recordsCheck.code ?? 1;
   }
+  const recordBytes = intakeBytes ?? (await readFile(ticketPath));
+  const dispatcherSession =
+    [
+      env.AGX_DISPATCHER_SESSION,
+      env.CLAUDE_CODE_SESSION_ID,
+      env.CODEX_SESSION_ID,
+    ].find((session) => session !== undefined && session !== "") ?? null;
+  const lease = await leaseFor(process.pid, `${unit}.service`);
+  append({
+    kind: "dispatching",
+    id: binding.id,
+    at: now(),
+    ticket: slug,
+    writes: parsedTicket.ticket.writes,
+    cwd: workspace,
+    workspace,
+    worker_name: unit,
+    unit,
+    workspace_name: basename(workspace),
+    sandbox,
+    sandbox_source,
+    dispatcher_session: dispatcherSession,
+    vendor_session: null,
+    continues: previous?.id ?? null,
+    supersedes: null,
+    ticket_path: ticketPath,
+    ticket_sha256: createHash("sha256").update(recordBytes).digest("hex"),
+    pid: process.pid,
+    lease,
+  });
+  const receipt = {
+    id: binding.id,
+    workspace,
+    row: null,
+    route: null,
+    model: null,
+    effort: null,
+    sandbox,
+    sandbox_source,
+    sandbox_effective: null,
+    sandbox_effective_source: null,
+  };
+  process.stdout.write(
+    options.json === true
+      ? JSON.stringify(receipt) + "\n"
+      : `${binding.id} workspace=${JSON.stringify(workspace)} row=unknown route=unknown model=unknown effort=unknown sandbox=${sandbox} sandbox_source=${JSON.stringify(sandbox_source)} sandbox_effective=unknown sandbox_effective_source=null\n`,
+  );
   const args = [
     "systemd-run",
     "--user",
@@ -832,53 +879,29 @@ export async function dispatch(options: {
     sandbox_source,
     ...(previous === undefined ? [] : ["--continue", previous.id]),
   ];
-  const started = await invoke(args, cwd, env);
+  const launch = await attempt(() => invoke(args, cwd, env));
+  const started = launch.ok
+    ? launch.value
+    : { code: 127, out: "", err: errorMessage(launch.error) };
   if (started.code !== 0) {
+    append({
+      kind: "ended",
+      id: binding.id,
+      at: now(),
+      exit: started.code,
+      outcome: "launch-failed",
+      launch_stderr: started.err,
+      report_path: null,
+      vendor_session: null,
+      verify: [],
+    });
     const reason = started.err.trim();
     process.stderr.write(
       `agx worker dispatch: ${unit}.service did not start: ${reason !== "" ? reason : `systemd-run exited ${started.code}`}\n`,
     );
-    return started.code === 0 ? 1 : started.code;
+    return started.code;
   }
-
-  const configuredWaitMs = Number(env.AGX_DISPATCH_WAIT_MS ?? 60_000);
-  const waitMs = Number.isFinite(configuredWaitMs) ? configuredWaitMs : 60_000;
-  const deadline = Temporal.Now.instant().epochMilliseconds + waitMs;
-  let listError: string | undefined;
-  while (Temporal.Now.instant().epochMilliseconds <= deadline) {
-    const current = await listedRuns(cwd, env);
-    if (current.code === 75) {
-      process.stderr.write(`${current.error}\n`);
-      return 75;
-    }
-    listError = current.error;
-    const run = current.rows?.find((row) => matches(row, binding));
-    if (run !== undefined) {
-      const receipt = {
-        id: run.id,
-        workspace: run.workspace ?? run.cwd,
-        row: run.row ?? null,
-        route: run.route ?? null,
-        model: run.model ?? null,
-        effort: run.effort ?? null,
-        sandbox: run.sandbox ?? sandbox,
-        sandbox_source: run.sandbox_source ?? sandbox_source,
-        sandbox_effective: run.sandbox_effective ?? null,
-        sandbox_effective_source: run.sandbox_effective_source ?? null,
-      };
-      process.stdout.write(
-        options.json === true
-          ? JSON.stringify(receipt) + "\n"
-          : `${run.id} workspace=${JSON.stringify(receipt.workspace)} row=${receipt.row ?? "unknown"} route=${receipt.route ?? "unknown"} model=${receipt.model ?? "unknown"} effort=${receipt.effort ?? "unknown"} sandbox=${receipt.sandbox} sandbox_source=${JSON.stringify(receipt.sandbox_source)} sandbox_effective=${receipt.sandbox_effective ?? "unknown"} sandbox_effective_source=${JSON.stringify(receipt.sandbox_effective_source)}\n`,
-      );
-      return 0;
-    }
-    await Bun.sleep(100);
-  }
-  process.stderr.write(
-    `agx worker dispatch: ${unit}.service started but no matching run record appeared within ${waitMs}ms (AGX_DISPATCH_WAIT_MS=${waitMs}ms); command=${JSON.stringify([...workerCommand, "ls", "--json", "--all"])}; cwd=${cwd}${listError === undefined ? "" : `: ${listError}`}\n`,
-  );
-  return 75;
+  return 0;
 }
 
 export async function dispatchMain(commandArgs: string[]): Promise<void> {

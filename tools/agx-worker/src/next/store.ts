@@ -139,6 +139,41 @@ const EventSchema = z.discriminatedUnion("kind", [
     legacy: LegacyIdentity.optional(),
   }),
   z.looseObject({
+    kind: z.literal("dispatching"),
+    id: z.string(),
+    at: z.string(),
+    ticket: z.string(),
+    writes: z.array(z.string()),
+    cwd: z.string(),
+    workspace: z.string(),
+    worker_name: z.string().optional(),
+    unit: z.string().optional(),
+    workspace_name: z.string().optional(),
+    route: z.string().optional(),
+    model: z.string().optional(),
+    effort: z.string().optional(),
+    sandbox: Sandbox.optional(),
+    sandbox_source: SandboxSource.optional(),
+    sandbox_effective: z.string().optional(),
+    sandbox_effective_source: z.string().optional(),
+    dispatcher_session: z.string().nullable(),
+    vendor_session: z.string().nullable(),
+    continues: z.string().nullable().optional(),
+    supersedes: z.string().nullable().optional(),
+    base_rev: z.string().optional(),
+    premise_commits: z
+      .array(z.object({ premise: z.string(), commit: z.string() }))
+      .optional(),
+    ticket_path: z.string().optional(),
+    ticket_orig_path: z.string().optional(),
+    ticket_sha256: z.string().optional(),
+    pid: z.number(),
+    lease: Lease.optional(),
+    pick_audit: PickAuditSchema.optional(),
+    legacy_key: z.string().optional(),
+    legacy: LegacyIdentity.optional(),
+  }),
+  z.looseObject({
     kind: z.literal("stop-requested"),
     legacy_key: z.string().optional(),
     id: z.string(),
@@ -167,6 +202,7 @@ const EventSchema = z.discriminatedUnion("kind", [
     at: z.string(),
     exit: z.number(),
     outcome: Outcome.optional(),
+    launch_stderr: z.string().optional(),
     evidence: Evidence.optional(),
     signal: StopSignal.optional(),
     stopped_by: z.string().optional(),
@@ -244,10 +280,15 @@ export async function acquireWorkspaceLock(
   };
 }
 
-export const runningWorkspaceRun = async (workspace: string) =>
+export const runningWorkspaceRun = async (
+  workspace: string,
+  exceptId?: string,
+) =>
   (await foldedRuns()).find(
     (run) =>
-      run.state === "running" && resolve(run.workspace) === resolve(workspace),
+      run.id !== exceptId &&
+      run.state === "running" &&
+      resolve(run.workspace) === resolve(workspace),
   );
 
 export function append(
@@ -638,7 +679,7 @@ const SnapshotSchema = z
 /** Pure event fold, shared by full replay and incremental replay. */
 function foldInto(runs: Map<string, FoldedRun>, input: NextEvent[]): void {
   for (const event of input) {
-    if (event.kind === "started")
+    if (event.kind === "started" || event.kind === "dispatching")
       runs.set(event.id, {
         id: event.id,
         legacy:
@@ -653,7 +694,7 @@ function foldInto(runs: Map<string, FoldedRun>, input: NextEvent[]): void {
         lease: event.lease,
         exit: null,
         outcome: null,
-        row: event.row,
+        row: event.kind === "started" ? event.row : "dispatching",
         route: event.route,
         model: event.model,
         effort: event.effort,
@@ -688,6 +729,8 @@ function foldInto(runs: Map<string, FoldedRun>, input: NextEvent[]): void {
     const run = runs.get(event.id);
     if (run === undefined) continue;
     if (event.kind === "progress") run.last_progress_path = event.path;
+    if (event.kind === "ended" && event.launch_stderr !== undefined)
+      run.launch_stderr = event.launch_stderr;
     if (event.kind === "ended") {
       run.state = "ended";
       run.signal = event.signal;

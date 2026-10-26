@@ -142,6 +142,18 @@ export async function preflight(
       `WARN ignored legacy ticket fields: ${parsed.warnings.join(", ")}\n`,
     );
   const continuationId = value(flags, "continue");
+  const rawBinding = value(flags, "dispatchBinding");
+  const binding =
+    rawBinding === undefined
+      ? undefined
+      : jsonOf(DispatchBindingSchema).safeParse(rawBinding);
+  const reservedRunId =
+    binding?.success === true &&
+    ticket !== undefined &&
+    binding.data.ticket === (ticket.name ?? basename(path, ".md")) &&
+    resolve(binding.data.workspace) === cwd
+      ? binding.data.id
+      : undefined;
   for (const [index, glob] of (ticket?.writes ?? []).entries())
     if (!writeGlob.safeParse(glob).success)
       add(
@@ -279,7 +291,7 @@ export async function preflight(
       );
     else premise_commits.push({ premise, commit });
   }
-  const holder = await runningWorkspaceRun(cwd);
+  const holder = await runningWorkspaceRun(cwd, reservedRunId);
   if (holder !== undefined)
     add(
       `workspace ${cwd} already has running run ${holder.id}`,
@@ -342,11 +354,6 @@ export async function preflight(
       ctx?.verifyAlways,
     ))
       process.stderr.write(`${warning}\n`);
-  const rawBinding = value(flags, "dispatchBinding");
-  const binding =
-    rawBinding === undefined
-      ? undefined
-      : jsonOf(DispatchBindingSchema).safeParse(rawBinding);
   if (binding?.success === false)
     add(
       `invalid dispatch binding: ${binding.error.message}`,

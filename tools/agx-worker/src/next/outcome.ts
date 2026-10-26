@@ -16,6 +16,7 @@ export const Outcome = z.enum([
   "timeout",
   "capacity",
   "refused",
+  "launch-failed",
   "malformed",
 ]);
 export type Outcome = z.output<typeof Outcome>;

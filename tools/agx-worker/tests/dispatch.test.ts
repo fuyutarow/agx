@@ -71,22 +71,41 @@ function fixture() {
       'import { writeFileSync } from "node:fs";',
       "const args = Bun.argv.slice(2);",
       'writeFileSync(process.env.FAKE_UNIT_ARGS!, args.join("\\n") + "\\n");',
+      'const divider = args.indexOf("--");',
+      "const command = args.slice(divider + 1);",
+      'const bindingIndex = command.indexOf("--dispatch-binding");',
+      "const bindingText = command[bindingIndex + 1];",
+      "const binding = JSON.parse(bindingText!);",
+      "writeFileSync(process.env.FAKE_BINDING!, bindingText!);",
+      'if (process.env.FAKE_ASSERT_PRELAUNCH_RECORD === "yes") {',
+      '  const path = process.env.AGX_STATE_DIR! + "/records.jsonl";',
+      '  const events = (await Bun.file(path).text()).trim().split("\\n").map((line) => JSON.parse(line));',
+      '  if (!events.some((event: { kind?: string; id?: string }) => event.kind === "dispatching" && event.id === binding.id)) { process.stderr.write("dispatch reservation missing before systemd-run\\n"); process.exit(98); }',
+      "}",
       'if (process.env.FAKE_START_FAIL === "yes") {',
       '  process.stderr.write("fixture unit failure\\n");',
       "  process.exit(1);",
       "}",
       'if (process.env.FAKE_NO_RECORD === "yes") process.exit(0);',
-      'const divider = args.indexOf("--");',
-      "const command = args.slice(divider + 1);",
-      'const bindingIndex = command.indexOf("--dispatch-binding");',
-      "const bindingText = command[bindingIndex + 1];",
-      "writeFileSync(process.env.FAKE_BINDING!, bindingText!);",
-      "const binding = JSON.parse(bindingText!);",
+      'if (process.env.FAKE_ROSTER_CHECK === "yes") {',
+      "  const env: Record<string, string> = { HOME: process.env.HOME!, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME!, XDG_STATE_HOME: process.env.XDG_STATE_HOME! };",
+      "  for (let i = 0; i < divider; i++) {",
+      '    if (args[i] !== "-E") continue;',
+      "    const entry = args[++i]!;",
+      '    const equal = entry.indexOf("=");',
+      "    if (equal >= 0) env[entry.slice(0, equal)] = entry.slice(equal + 1);",
+      "    else if (process.env[entry] !== undefined) env[entry] = process.env[entry]!;",
+      "  }",
+      '  if (process.env.FAKE_STALE_ROSTER === "yes") await Bun.write(process.env.DISPATCH_ROSTER_PATH!, "invalid TOML [");',
+      '  const child = Bun.spawn([process.execPath, process.env.FAKE_ROSTER_SCRIPT!], { cwd: process.env.HOME!, env, stdout: "pipe", stderr: "pipe", timeout: 5000 });',
+      "  const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);",
+      "  if (code !== 0) { process.stderr.write(err); process.exit(code); }",
+      "  writeFileSync(process.env.FAKE_CHILD_ROSTER!, out);",
+      "}",
       'const cdIndex = command.indexOf("--cd");',
       "const workspace = command[cdIndex + 1];",
       'const record = JSON.stringify([{ ...binding, state: "running", cwd: workspace, row: "fixture-high", route: "codex", model: "fixture-model", effort: "high", sandbox: "workspace-write", sandbox_source: "built-in default", sandbox_effective: "workspace-write", sandbox_effective_source: "built-in default" }]) + "\\n";',
-      'if (process.env.FAKE_LATE_RECORD === "yes") writeFileSync(process.env.FAKE_PENDING_RECORD!, record);',
-      "else writeFileSync(process.env.FAKE_RECORDS!, record);",
+      "writeFileSync(process.env.FAKE_RECORDS!, record);",
     ].join("\n"),
   );
   const shim = (name: string, body: string[]) => {
@@ -137,10 +156,6 @@ function fixture() {
   shim("systemd-run", ['exec bun "$FAKE_SYSTEMD_RUN_SCRIPT" "$@"']);
   shim("agx-worker", [
     'if [ "$1" = "ls" ]; then',
-    '  if [ "$FAKE_LATE_RECORD" = "yes" ]; then',
-    '    if [ ! -e "$FAKE_LS_MARKER" ]; then touch "$FAKE_LS_MARKER"',
-    '    elif [ -s "$FAKE_PENDING_RECORD" ]; then cp "$FAKE_PENDING_RECORD" "$FAKE_RECORDS"; : > "$FAKE_PENDING_RECORD"; fi',
-    "  fi",
     '  cat "$FAKE_RECORDS"; exit 0',
     "fi",
     'if [ "$1" = "check" ]; then if [ "$FAKE_CHECK_FAIL" = "yes" ]; then printf "agx: invalid writes; repair: use relative globs\\nagx: untrusted mise.toml; repair: mise trust\\n" >&2; exit 2; fi; exit 0; fi',
@@ -159,13 +174,10 @@ function fixture() {
     FAKE_WORKER_COMMAND: join(bin, "agx-worker"),
     FAKE_REPO: repo,
     FAKE_RECORDS: records,
-    FAKE_PENDING_RECORD: join(root, "pending-record.json"),
-    FAKE_LS_MARKER: join(root, "ls-marker"),
     FAKE_UNIT_ARGS: unitArgs,
     FAKE_BINDING: bindingFile,
     FAKE_WS_ARGS: wsArgs,
     FAKE_SYSTEMD_RUN_SCRIPT: systemdRunner,
-    AGX_DISPATCH_WAIT_MS: "10",
   };
   return {
     root,
@@ -570,7 +582,7 @@ test("dispatch records its one ticket-derived binding", async () => {
   const [record] = recordResult.data;
   expect(result.stdout).toStartWith(`${bindingResult.data.id} workspace=`);
   expect(result.stdout).toContain(
-    `workspace=${JSON.stringify(workspace)} row=fixture-high route=codex model=fixture-model effort=high sandbox=workspace-write sandbox_source="built-in default"`,
+    `workspace=${JSON.stringify(workspace)} row=unknown route=unknown model=unknown effort=unknown sandbox=workspace-write sandbox_source="built-in default"`,
   );
   expect(bindingResult.data).toMatchObject({
     ticket: "foo-bar",
@@ -626,30 +638,71 @@ test("dispatch reports the cause when a unit does not start", async () => {
   expect(result.stderr).toContain("fixture unit failure");
 });
 
-test("dispatch refuses success when no run record appears", async () => {
+test("dispatch contract: launch failure is recorded before systemd-run and visible in ls", async () => {
   const f = fixture();
-  f.env.FAKE_NO_RECORD = "yes";
+  f.env.FAKE_START_FAIL = "yes";
+  f.env.FAKE_ASSERT_PRELAUNCH_RECORD = "yes";
   const result = await invoke(f);
   expect(result.exitCode).not.toBe(0);
-  expect(result.stdout).toBe("");
-  expect(result.stderr).toContain("agt_foo-bar.service");
-  expect(result.stderr).toContain(
-    "no matching run record appeared within 10ms",
+  const id = result.stdout.trim().split(/\s/u)[0];
+  if (id === undefined) expect.unreachable("dispatch printed no run id");
+  const listed = Bun.spawnSync(
+    [process.execPath, ENTRY, "ls", "--json", "--all"],
+    { cwd: f.repo, env: f.env, timeout: 5_000 },
   );
+  expect(listed.exitCode, listed.stderr.toString()).toBe(0);
+  const runs = jsonOf(
+    z.array(
+      z.looseObject({
+        id: z.string(),
+        state: z.string(),
+        outcome: z.string().nullable(),
+        exit: z.number().nullable(),
+        launch_stderr: z.string().optional(),
+      }),
+    ),
+  ).safeParse(listed.stdout.toString());
+  expect(runs.success).toBe(true);
+  if (!runs.success) return;
+  expect(runs.data.find((run) => run.id === id)).toMatchObject({
+    state: "ended",
+    outcome: "launch-failed",
+    exit: 1,
+    launch_stderr: "fixture unit failure\n",
+  });
+  expect(result.stderr).toContain("fixture unit failure");
 });
 
-test("dispatch finds a run record that appears after the first read", async () => {
+test("dispatch contract: --continue returns with its record before a child record", async () => {
   const f = fixture();
-  f.env.FAKE_LATE_RECORD = "yes";
-  f.env.AGX_DISPATCH_WAIT_MS = "1000";
-  const result = await invoke(f);
+  const workspace = priorRun(f, join(`${f.repo}.ws`, "ws_foo-bar"));
+  f.env.FAKE_NO_RECORD = "yes";
+  f.env.FAKE_ASSERT_PRELAUNCH_RECORD = "yes";
+  const result = await invoke(f, "--continue", "prior-run");
   expect(result.exitCode, result.stderr).toBe(0);
+  const id = result.stdout.trim().split(/\s/u)[0];
+  if (id === undefined) expect.unreachable("dispatch printed no run id");
   const parsedBinding = jsonOf(DispatchBindingSchema).safeParse(
     await Bun.file(f.bindingFile).text(),
   );
   expect(parsedBinding.success).toBe(true);
   if (!parsedBinding.success) return;
-  expect(result.stdout).toStartWith(`${parsedBinding.data.id} workspace=`);
+  expect(parsedBinding.data.id).toBe(id);
+  expect(parsedBinding.data.workspace).toBe(workspace);
+  const listed = Bun.spawnSync([process.execPath, ENTRY, "ls", id, "--json"], {
+    cwd: f.repo,
+    env: f.env,
+    timeout: 5_000,
+  });
+  expect(listed.exitCode, listed.stderr.toString()).toBe(0);
+  const rows = jsonOf(
+    z.array(
+      z.looseObject({ id: z.string(), continues: z.string().nullable() }),
+    ),
+  ).safeParse(listed.stdout.toString());
+  expect(rows.success).toBe(true);
+  if (!rows.success) return;
+  expect(rows.data).toMatchObject([{ id, continues: "prior-run" }]);
   expect(result.stderr).toBe("");
 });
 
@@ -812,7 +865,6 @@ test.each([
     f.env.AGX_CONFIG = fileURLToPath(
       new URL("../src/roster/policy.example.toml", import.meta.url),
     );
-    f.env.AGX_DISPATCH_WAIT_MS = "1000";
     f.env.FAKE_INVOKE_TIMEOUT_MS = "45000";
     const jj = Bun.which("jj");
     expect(jj).not.toBeNull();
@@ -1024,7 +1076,7 @@ cat "$FAKE_RECORDS"
 `,
     );
     const result = await invoke(f);
-    expect(result.exitCode).toBe(75);
+    expect(result.exitCode, result.stderr).toBe(75);
     expect(result.stderr).toContain("TEST_INSPECTION_MS=60000ms");
     expect(result.stderr).not.toContain("preflight failed");
     expect(await Bun.file(f.unitArgs).exists()).toBe(false);
@@ -1248,7 +1300,7 @@ test.each([undefined, ""])(
   },
 );
 
-test("dispatch --json exposes the recorded execution receipt", async () => {
+test("dispatch --json exposes the immediate dispatch receipt", async () => {
   const f = fixture();
   const result = await invoke(f, "--json", "--ws", "receipt");
   expect(result.exitCode, result.stderr).toBe(0);
@@ -1256,27 +1308,27 @@ test("dispatch --json exposes the recorded execution receipt", async () => {
     z.looseObject({
       id: z.string(),
       workspace: z.string(),
-      row: z.string(),
-      route: z.string(),
-      model: z.string(),
-      effort: z.string(),
+      row: z.string().nullable(),
+      route: z.string().nullable(),
+      model: z.string().nullable(),
+      effort: z.string().nullable(),
       sandbox: z.string(),
       sandbox_source: z.string(),
-      sandbox_effective: z.string(),
-      sandbox_effective_source: z.string(),
+      sandbox_effective: z.string().nullable(),
+      sandbox_effective_source: z.string().nullable(),
     }),
   ).safeParse(result.stdout);
   expect(receipt.success).toBe(true);
   if (!receipt.success) return;
   expect(receipt.data).toMatchObject({
     workspace: join(`${f.repo}.ws`, "ws_receipt"),
-    row: "fixture-high",
-    route: "codex",
-    model: "fixture-model",
-    effort: "high",
+    row: null,
+    route: null,
+    model: null,
+    effort: null,
     sandbox: "workspace-write",
     sandbox_source: "built-in default",
-    sandbox_effective: "workspace-write",
-    sandbox_effective_source: "built-in default",
+    sandbox_effective: null,
+    sandbox_effective_source: null,
   });
 });
