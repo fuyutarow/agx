@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.14.9 — 2026-10-27
+
+- Preserve unknown check exit statuses in readable worker reports
+
 ## 1.14.8 — 2026-10-27
 
 - Refuse unchanged tickets after a timed-out run before continuation effects.
