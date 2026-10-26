@@ -370,15 +370,29 @@ export async function preflight(
       "--sandbox must be none, read-only, or workspace-write",
       "choose a supported sandbox",
     );
-  if (ticket !== undefined && parsedSandbox.success)
-    for (const warning of await sandboxNeeds(
+  if (ticket !== undefined && parsedSandbox.success) {
+    const warnings = await sandboxNeeds(
       cwd,
       parsedSandbox.data,
       ticket.writes,
       ticket.verify,
       ctx?.verifyAlways,
-    ))
-      process.stderr.write(`${warning}\n`);
+    );
+    for (const warning of warnings) process.stderr.write(`${warning}\n`);
+    const jjVerify = [...ticket.verify, ...(ctx?.verifyAlways ?? [])].some(
+      (command) => /\bjj\b/u.test(command),
+    );
+    if (
+      jjVerify &&
+      warnings.some((warning) =>
+        warning.includes("capability=external-vcs-store-write"),
+      )
+    )
+      add(
+        "verification needs a writable worker VCS store inside the sandbox; capability=external-vcs-store-write",
+        "dispatch with agx ws add --worker-store or select an unsandboxed run",
+      );
+  }
   if (binding?.success === false)
     add(
       `invalid dispatch binding: ${binding.error.message}`,
