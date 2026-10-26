@@ -1,8 +1,16 @@
 import { recordRefusal, printPreflightFailures } from "./next/preflight.ts";
 import { randomUUID } from "node:crypto";
-import { lstat, realpath } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  realpath,
+  unlink,
+} from "node:fs/promises";
+import { rmSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { cli as cleyeCli } from "cleye";
 import { standardCli } from "../../shared/src/cli.ts";
 import cliPackage from "../package.json" with { type: "json" };
@@ -46,6 +54,7 @@ const RunRow = z.looseObject({
   id: z.string().min(1),
   ticket: z.string(),
   state: z.enum(["running", "ended"]),
+  continues: z.string().nullable().optional(),
   cwd: z.string(),
   workspace: z.string().optional(),
   unit: z.string().optional(),
@@ -229,6 +238,107 @@ async function listedRuns(
     : { error: "agx worker ls returned an invalid run list" };
 }
 
+async function reserveContinuation(
+  previous: RunRow,
+  unit: string,
+  env: NodeJS.ProcessEnv,
+): Promise<string | undefined> {
+  const lockRoot = join(
+    env.AGX_STATE_DIR ?? join(env.HOME ?? process.cwd(), ".local/state/agx"),
+    "continuations",
+  );
+  await mkdir(lockRoot, { recursive: true });
+  const path = join(
+    lockRoot,
+    `${createHash("sha256").update(previous.id).digest("hex")}.json`,
+  );
+  const writeLock = async () => {
+    const file = await open(path, "wx").catch(() => null);
+    if (file === null) return false;
+    await file.writeFile(
+      JSON.stringify({ pid: process.pid, unit, previous_id: previous.id }),
+    );
+    await file.close();
+    return true;
+  };
+  if (await writeLock()) {
+    process.once("exit", () => {
+      rmSync(path, { force: true });
+    });
+    return path;
+  }
+  const ownerText = await readFile(path, "utf8").catch(() => "");
+  const owner = jsonOf(
+    z.looseObject({
+      pid: z.number(),
+      unit: z.string(),
+      previous_id: z.string(),
+    }),
+  ).safeParse(ownerText);
+  const ownerAlive = owner.success
+    ? await Promise.try(() => process.kill(owner.data.pid, 0)).then(
+        () => true,
+        () => false,
+      )
+    : true;
+  if (ownerAlive) {
+    const detail = owner.success
+      ? `${owner.data.unit}.service, dispatcher pid ${owner.data.pid}`
+      : "owner state unavailable";
+    process.stderr.write(
+      `agx worker dispatch: cannot continue ${previous.id}: continuation of that run is already starting or running (${detail})\n`,
+    );
+    return undefined;
+  }
+  await unlink(path).catch(() => null);
+  if (!(await writeLock())) {
+    process.stderr.write(
+      `agx worker dispatch: cannot continue ${previous.id}: another continuation is starting\n`,
+    );
+    return undefined;
+  }
+  process.once("exit", () => {
+    rmSync(path, { force: true });
+  });
+  return path;
+}
+
+async function waitForUnitEnd(
+  runId: string,
+  unit: string,
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  waitMs: number,
+): Promise<number> {
+  const deadline = Temporal.Now.instant().epochMilliseconds + waitMs;
+  while (true) {
+    const status = await invoke(
+      ["systemctl", "--user", "is-active", "--quiet", `${unit}.service`],
+      cwd,
+      env,
+    );
+    if (status.code === 75) {
+      process.stderr.write(`${status.err}\n`);
+      return 75;
+    }
+    if (status.code !== 0) return 0;
+    const remaining = Math.max(
+      0,
+      deadline - Temporal.Now.instant().epochMilliseconds,
+    );
+    if (remaining === 0) {
+      process.stderr.write(
+        `agx worker dispatch: timed out waiting for run ${runId}, unit ${unit}.service; remaining state=running (waited ${waitMs}ms)\n`,
+      );
+      return 75;
+    }
+    process.stderr.write(
+      `agx worker dispatch: waiting for run ${runId}, unit ${unit}.service to end (remaining ${Math.ceil(remaining / 1000)}s)\n`,
+    );
+    await Bun.sleep(Math.min(250, remaining));
+  }
+}
+
 function matches(row: RunRow, binding: DispatchBinding): boolean {
   return (
     row.id === binding.id &&
@@ -389,8 +499,8 @@ export async function dispatch(options: {
     return ticketRepo.code ?? 1;
   }
 
-  const unitInput = options.unit ?? `agt_${slug}`;
-  const unit = unitInput.endsWith(".service")
+  let unitInput = options.unit ?? `agt_${slug}`;
+  let unit = unitInput.endsWith(".service")
     ? unitInput.slice(0, -".service".length)
     : unitInput;
   if (!/^[A-Za-z0-9][A-Za-z0-9:_.@-]*$/u.test(unit)) {
@@ -418,20 +528,22 @@ export async function dispatch(options: {
     );
     return 1;
   }
-  const active = await invoke(
-    ["systemctl", "--user", "is-active", "--quiet", `${unit}.service`],
-    cwd,
-    env,
-  );
   const failures: string[] = [];
-  if (active.code === 75) {
-    process.stderr.write(`${active.err}\n`);
-    return 75;
-  }
-  if (active.code === 0)
-    failures.push(
-      `agx worker dispatch: unit ${unit}.service is already running; repair: wait for it to end or choose --unit`,
+  if (options.continuation === undefined) {
+    const active = await invoke(
+      ["systemctl", "--user", "is-active", "--quiet", `${unit}.service`],
+      cwd,
+      env,
     );
+    if (active.code === 75) {
+      process.stderr.write(`${active.err}\n`);
+      return 75;
+    }
+    if (active.code === 0)
+      failures.push(
+        `agx worker dispatch: unit ${unit}.service is already running; repair: wait for it to end or choose --unit`,
+      );
+  }
   let workspace: string;
   let previous: RunRow | undefined;
   if (options.continuation !== undefined) {
@@ -448,6 +560,23 @@ export async function dispatch(options: {
       return 2;
     }
     previous = selected.row;
+    const ongoingContinuation = runs.rows.find(
+      (row) => row.continues === previous!.id && row.state === "running",
+    );
+    if (ongoingContinuation !== undefined) {
+      process.stderr.write(
+        `agx worker dispatch: cannot continue ${previous.id}: continuation ${ongoingContinuation.id} is already running in ${ongoingContinuation.unit ?? "unknown unit"}.service\n`,
+      );
+      return 2;
+    }
+    if (options.unit === undefined && previous.unit !== undefined) {
+      unitInput = previous.unit;
+      unit = unitInput.endsWith(".service")
+        ? unitInput.slice(0, -".service".length)
+        : unitInput;
+    }
+    const lock = await reserveContinuation(previous, unit, env);
+    if (lock === undefined) return 2;
     const recorded =
       previous?.workspace === ""
         ? previous.cwd
@@ -520,6 +649,48 @@ export async function dispatch(options: {
       return 1;
     }
     workspace = resolve(parsedWorkspace.data.workspace);
+  }
+
+  if (previous?.state === "running") {
+    const waitSetting = Number(env.AGX_DISPATCH_CONTINUE_WAIT_MS ?? 120_000);
+    const waitMs =
+      Number.isFinite(waitSetting) && waitSetting >= 0 ? waitSetting : 120_000;
+    const waitUnit = previous.unit ?? unit;
+    const waited = await waitForUnitEnd(
+      previous.id,
+      waitUnit,
+      cwd,
+      env,
+      waitMs,
+    );
+    if (waited !== 0) return waited;
+  }
+  const continuationUnitStatus =
+    previous === undefined
+      ? undefined
+      : await invoke(
+          ["systemctl", "--user", "is-active", "--quiet", `${unit}.service`],
+          cwd,
+          env,
+        );
+  if (continuationUnitStatus?.code === 75) {
+    process.stderr.write(`${continuationUnitStatus.err}\n`);
+    return 75;
+  }
+  if (continuationUnitStatus?.code === 0) {
+    const ongoing = (await listedRuns(cwd, env)).rows?.find(
+      (row) =>
+        row.continues === (previous?.id ?? "") && row.state === "running",
+    );
+    if (ongoing !== undefined) {
+      process.stderr.write(
+        `agx worker dispatch: cannot continue ${previous?.id ?? "unknown run"}: continuation ${ongoing.id} is already running in ${unit}.service\n`,
+      );
+      return 2;
+    }
+    failures.push(
+      `agx worker dispatch: unit ${unit}.service is already running; repair: wait for it to end or choose --unit`,
+    );
   }
 
   const jjWorkspace = await lstat(join(workspace, ".jj")).catch(() => null);
@@ -737,7 +908,8 @@ export async function dispatchMain(commandArgs: string[]): Promise<void> {
         },
         continue: {
           type: String,
-          description: "previous agx worker run id to continue",
+          description:
+            "previous run to continue; waits up to 120 seconds for its unit to end",
         },
       },
       strictFlags: true,

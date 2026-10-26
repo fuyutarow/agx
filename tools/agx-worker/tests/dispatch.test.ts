@@ -1,11 +1,13 @@
 import { afterEach, expect, test } from "bun:test";
 import {
+  existsSync,
   chmodSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -163,6 +165,13 @@ function fixture() {
     "esac",
   ]);
   shim("systemctl", [
+    'if [ "$FAKE_ACTIVE_POLLS" != "" ]; then',
+    '  active_count="$(cat "$FAKE_ACTIVE_COUNT" 2>/dev/null || echo 0)"',
+    '  if [ "$active_count" -lt "$FAKE_ACTIVE_POLLS" ]; then',
+    '    echo "$((active_count + 1))" > "$FAKE_ACTIVE_COUNT"',
+    "    exit 0",
+    "  fi",
+    "fi",
     'if [ "$FAKE_ACTIVE" = "yes" ]; then exit 0; fi',
     "exit 3",
   ]);
@@ -335,6 +344,146 @@ test("continuation resolves a unique run id prefix before reading its workspace"
   expect(await Bun.file(f.unitArgs).text()).toContain(
     "--continue\naa94ee5d12345678\n",
   );
+});
+
+test("continuation waits for an active prior unit, then reports timeout state", async () => {
+  const f = fixture();
+  const workspace = priorRun(f, join(`${f.repo}.ws`, "ws_foo-bar"));
+  writeFileSync(
+    f.records,
+    JSON.stringify([
+      {
+        id: "prior-run",
+        ticket: "foo-bar",
+        state: "running",
+        cwd: workspace,
+        workspace,
+        unit: "agt_prior-worker",
+      },
+    ]),
+  );
+  f.env.FAKE_ACTIVE = "yes";
+  f.env.AGX_DISPATCH_CONTINUE_WAIT_MS = "0";
+  const result = await invoke(f, "--continue", "prior-run");
+  expect(result.exitCode).toBe(75);
+  expect(result.stderr).toContain(
+    "waiting for run prior-run, unit agt_prior-worker.service",
+  );
+  expect(result.stderr).toContain(
+    "timed out waiting for run prior-run, unit agt_prior-worker.service",
+  );
+  expect(result.stderr).toContain("remaining state=running");
+  expect(await Bun.file(f.unitArgs).exists()).toBe(false);
+});
+
+test("continuation starts after its active prior unit ends", async () => {
+  const f = fixture();
+  const workspace = priorRun(f, join(`${f.repo}.ws`, "ws_foo-bar"));
+  writeFileSync(
+    f.records,
+    JSON.stringify([
+      {
+        id: "prior-run",
+        ticket: "foo-bar",
+        state: "running",
+        cwd: workspace,
+        workspace,
+        unit: "agt_prior-worker",
+      },
+    ]),
+  );
+  f.env.FAKE_ACTIVE_POLLS = "2";
+  f.env.FAKE_ACTIVE_COUNT = join(f.root, "active-polls");
+  f.env.AGX_DISPATCH_CONTINUE_WAIT_MS = "2500";
+  const result = await invoke(f, "--continue", "prior-run");
+  expect(result.exitCode, result.stderr).toBe(0);
+  expect(result.stderr).toContain(
+    "waiting for run prior-run, unit agt_prior-worker.service",
+  );
+  expect(await Bun.file(f.unitArgs).exists()).toBe(true);
+});
+
+test("a second continuation is refused with the existing continuation while the first waits", async () => {
+  const f = fixture();
+  const workspace = priorRun(f, join(`${f.repo}.ws`, "ws_foo-bar"));
+  writeFileSync(
+    f.records,
+    JSON.stringify([
+      {
+        id: "prior-run",
+        ticket: "foo-bar",
+        state: "running",
+        cwd: workspace,
+        workspace,
+        unit: "agt_prior-worker",
+      },
+    ]),
+  );
+  f.env.FAKE_ACTIVE = "yes";
+  f.env.AGX_DISPATCH_CONTINUE_WAIT_MS = "3000";
+  const first = Bun.spawn(
+    [
+      process.execPath,
+      f.entry,
+      "dispatch",
+      f.ticket,
+      "--continue",
+      "prior-run",
+    ],
+    { cwd: f.repo, env: f.env, stdout: "pipe", stderr: "pipe", timeout: 5000 },
+  );
+  const lock = join(
+    f.env.AGX_STATE_DIR!,
+    "continuations",
+    `${createHash("sha256").update("prior-run").digest("hex")}.json`,
+  );
+  const deadline = performance.now() + 1000;
+  while (!existsSync(lock) && performance.now() < deadline) await Bun.sleep(10);
+  const second = await invoke(f, "--continue", "prior-run");
+  expect(second.exitCode).toBe(2);
+  expect(second.stderr).toContain(
+    "continuation of that run is already starting or running",
+  );
+  expect(second.stderr).toContain("agt_prior-worker.service");
+  first.kill();
+  await Promise.all([
+    first.exited,
+    new Response(first.stdout).text(),
+    new Response(first.stderr).text(),
+  ]);
+});
+
+test("an already-running continuation is named and refused", async () => {
+  const f = fixture();
+  const workspace = priorRun(f, join(`${f.repo}.ws`, "ws_foo-bar"));
+  writeFileSync(
+    f.records,
+    JSON.stringify([
+      {
+        id: "prior-run",
+        ticket: "foo-bar",
+        state: "ended",
+        cwd: workspace,
+        workspace,
+      },
+      {
+        id: "active-continuation",
+        ticket: "foo-bar",
+        state: "running",
+        cwd: workspace,
+        workspace,
+        unit: "agt_active-continuation",
+        continues: "prior-run",
+      },
+    ]),
+  );
+  const result = await invoke(f, "--continue", "prior-run");
+  expect(result.exitCode).toBe(2);
+  expect(result.stderr).toContain(
+    "continuation active-continuation is already running",
+  );
+  expect(result.stderr).toContain("agt_active-continuation.service");
+  expect(await Bun.file(f.unitArgs).exists()).toBe(false);
 });
 
 test("continuation refuses ambiguous and unknown prefixes with run candidates", async () => {
