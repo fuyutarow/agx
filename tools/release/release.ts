@@ -1,7 +1,19 @@
 import { homedir } from "node:os";
-import { mkdir, rm, copyFile, link, realpath, stat } from "node:fs/promises";
-import { basename, dirname, join, relative, resolve } from "node:path";
-import { err, ok, fromPromise } from "neverthrow";
+import {
+  chmod,
+  copyFile,
+  link,
+  mkdir,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  stat,
+  symlink,
+} from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { err, ok, fromPromise, type Result } from "neverthrow";
 import { jsonOf, z } from "../zod.ts";
 
 export const repository = resolve(import.meta.dir, "../..");
@@ -38,6 +50,7 @@ export async function run(
     deadline?: number;
     progress?: boolean;
     completeOnExit?: boolean;
+    env?: Record<string, string>;
   } = {},
 ) {
   const started = performance.now();
@@ -50,7 +63,7 @@ export async function run(
   const readers: { cancel: () => Promise<void> }[] = [];
   const child = Bun.spawn(cmd, {
     cwd,
-    env: process.env,
+    env: { ...process.env, ...options.env },
     stdout: "pipe",
     stderr: "pipe",
     signal,
@@ -168,6 +181,136 @@ export async function build(
 ) {
   if (pkg === "suite") return buildSuite(target, root, runner);
   return buildMember(pkg, target, root, runner);
+}
+
+type ProtectedExecutable = {
+  directory: "bin" | "sbin";
+  name: string;
+  path: string;
+  oldTarget: string;
+};
+
+const errorText = (error: unknown) =>
+  error instanceof Error ? error.message : String(error);
+
+function inside(parent: string, child: string) {
+  const path = relative(parent, child);
+  return path === "" || (!path.startsWith(`..${sep}`) && path !== "..");
+}
+
+async function atomicSymlink(target: string, path: string) {
+  const temporary = join(dirname(path), `.agx-release-${randomUUID()}`);
+  const renamed = await Promise.try(async () => {
+    await symlink(relative(dirname(path), target), temporary);
+    await rename(temporary, path);
+  }).then(
+    () => null,
+    (error: unknown) => errorText(error),
+  );
+  await rm(temporary, { force: true }).catch(() => null);
+  return renamed;
+}
+
+async function atomicExecutableCopy(source: string, path: string) {
+  const temporary = join(dirname(path), `.agx-release-${randomUUID()}`);
+  const copied = await Promise.try(() => link(source, temporary)).then(
+    () => null,
+    async () =>
+      Promise.try(async () => {
+        const mode = (await stat(source)).mode & 0o777;
+        await copyFile(source, temporary);
+        await chmod(temporary, mode);
+      }).then(
+        () => null,
+        (error: unknown) => errorText(error),
+      ),
+  );
+  const renamed =
+    copied ??
+    (await Promise.try(() => rename(temporary, path)).then(
+      () => null,
+      (error: unknown) => errorText(error),
+    ));
+  await rm(temporary, { force: true }).catch(() => null);
+  return renamed;
+}
+
+async function executableAt(path: string) {
+  const details = await fromPromise(stat(path), errorText);
+  return details.match(
+    (value) => value.isFile() && (value.mode & 0o111) !== 0,
+    () => false,
+  );
+}
+
+async function protectBrewExecutables(
+  prefix: string,
+  keg: string,
+): Promise<Result<ProtectedExecutable[], string>> {
+  const protectedExecutables: ProtectedExecutable[] = [];
+  const directories = await Promise.all(
+    (["bin", "sbin"] as const).map(async (directory) => ({
+      directory,
+      entries: await readdir(join(keg, directory)).catch(() => []),
+    })),
+  );
+  const candidates = directories.flatMap(({ directory, entries }) =>
+    entries.map((name) => ({ directory, name })),
+  );
+  for (const candidate of candidates) {
+    const source = join(keg, candidate.directory, candidate.name);
+    if (!(await executableAt(source))) continue;
+    const oldTarget = await realpath(source).catch(() => null);
+    if (oldTarget === null || !inside(keg, oldTarget)) continue;
+    const path = join(prefix, candidate.directory, candidate.name);
+    const current = await realpath(path).catch(() => null);
+    if (current !== oldTarget) continue;
+    const staged = await atomicExecutableCopy(oldTarget, path);
+    if (staged !== null) return err(staged);
+    if (!(await executableAt(path)))
+      return err(`Homebrew executable became unavailable: ${path}`);
+    protectedExecutables.push({ ...candidate, path, oldTarget });
+  }
+  if (!protectedExecutables.some((executable) => executable.name === "agx"))
+    return err(`Homebrew agx command is not linked from ${keg}`);
+  return ok(protectedExecutables);
+}
+
+async function linkBrewExecutables(
+  prefix: string,
+  keg: string,
+  executables: ProtectedExecutable[],
+): Promise<string | null> {
+  const cellar = join(prefix, "Cellar", "agx");
+  if (!inside(cellar, keg) || keg === cellar)
+    return `Homebrew agx keg is outside ${cellar}: ${keg}`;
+  const sources = executables.map((executable) => {
+    const path = join(keg, executable.directory, executable.name);
+    return { ...executable, newTarget: path };
+  });
+  const missingSource = (
+    await Promise.all(
+      sources.map(async (executable) =>
+        (await executableAt(executable.newTarget))
+          ? null
+          : executable.newTarget,
+      ),
+    )
+  ).find((path) => path !== null);
+  if (missingSource !== undefined)
+    return `New Homebrew keg is missing executable ${missingSource}`;
+  const switchErrors = await Promise.all(
+    sources.map(async (executable) => {
+      const switched = await atomicSymlink(
+        executable.newTarget,
+        executable.path,
+      );
+      if (switched !== null) return switched;
+      if (await executableAt(executable.path)) return null;
+      return `Homebrew executable became unavailable: ${executable.path}`;
+    }),
+  );
+  return switchErrors.find((error) => error !== null) ?? null;
 }
 
 async function buildMember(
@@ -933,20 +1076,115 @@ export async function machineSwap(
   const updated = await execute([brew, "update"], home);
   if (updated.exit !== 0)
     return err(`brew update in ${home}: ${updated.stderr}${updated.stdout}`);
-  const installed = await execute([brew, "list", "--formula", "agx"], home);
-  const upgrading = installed.exit === 0;
-  const install = await execute(
-    [brew, upgrading ? "upgrade" : "install", "fuyutarow/tap/agx"],
-    home,
-  );
-  if (install.exit !== 0)
-    return err(
-      `brew ${upgrading ? "upgrade" : "install"} in ${home}: ${install.stderr}${install.stdout}`,
-    );
   const prefix = await execute([brew, "--prefix"], home);
   const brewPrefix = resolve(prefix.stdout.trim());
   if (prefix.exit !== 0 || prefix.stdout.trim() === "")
     return err(`brew prefix in ${home}: ${prefix.stderr}${prefix.stdout}`);
+  const installed = await execute([brew, "list", "--versions", "agx"], home);
+  const installedVersion = installed.stdout.trim().split(/\s+/u).at(-1);
+  const installedAgx = installed.exit === 0;
+  const upgrading = installedAgx && installedVersion !== version;
+  const noInstallCleanup = {
+    env: { HOMEBREW_NO_INSTALL_CLEANUP: "1" },
+  };
+  if (!installedAgx) {
+    const install = await execute(
+      [brew, "install", "fuyutarow/tap/agx"],
+      home,
+      noInstallCleanup,
+    );
+    if (install.exit !== 0)
+      return err(`brew install in ${home}: ${install.stderr}${install.stdout}`);
+  } else if (upgrading) {
+    const active = await execute([brew, "--prefix", "agx"], home);
+    const oldKegResult = await fromPromise(
+      realpath(active.stdout.trim()),
+      (error: unknown) =>
+        error instanceof Error ? error.message : String(error),
+    );
+    if (active.exit !== 0 || oldKegResult.isErr())
+      return err(
+        `brew prefix agx in ${home}: ${active.stderr}${active.stdout}${oldKegResult.isErr() ? oldKegResult.error : ""}`,
+      );
+    const oldKeg = oldKegResult.value;
+    const protectedResult = await protectBrewExecutables(brewPrefix, oldKeg);
+    if (protectedResult.isErr())
+      return err(
+        `protect Homebrew agx commands in ${brewPrefix}: ${protectedResult.error}`,
+      );
+    const protectedExecutables = protectedResult.value;
+    const restoreOldCommands = async () => {
+      const currentKeg = await realpath(join(brewPrefix, "opt", "agx")).catch(
+        () => null,
+      );
+      if (currentKeg !== oldKeg) return "";
+      const restoreErrors = await Promise.all(
+        protectedExecutables.map((executable) =>
+          atomicSymlink(executable.oldTarget, executable.path),
+        ),
+      );
+      const restoreError = restoreErrors.find((error) => error !== null);
+      if (restoreError !== undefined)
+        return `; old executable links could not be restored: ${restoreError}`;
+      const relinked = await execute([brew, "link", "agx"], home);
+      return relinked.exit === 0
+        ? ""
+        : `; brew link agx recovery failed: ${relinked.stderr}${relinked.stdout}`;
+    };
+    const unlinked = await execute([brew, "unlink", "agx"], home);
+    if (unlinked.exit !== 0) {
+      const recovery = await restoreOldCommands();
+      return err(
+        `brew unlink agx in ${home}: ${unlinked.stderr}${unlinked.stdout}${recovery}`,
+      );
+    }
+    const unavailable = (
+      await Promise.all(
+        protectedExecutables.map(async (executable) =>
+          (await executableAt(executable.path)) ? null : executable.path,
+        ),
+      )
+    ).find((path) => path !== null);
+    if (unavailable !== undefined) {
+      const recovery = await restoreOldCommands();
+      return err(
+        `Homebrew removed protected command ${unavailable}${recovery}`,
+      );
+    }
+    const install = await execute(
+      [brew, "install", "--skip-link", "fuyutarow/tap/agx"],
+      home,
+      noInstallCleanup,
+    );
+    if (install.exit !== 0) {
+      const recovery = await restoreOldCommands();
+      return err(
+        `brew install --skip-link in ${home}: ${install.stderr}${install.stdout}${recovery}`,
+      );
+    }
+    const linkedPrefix = await execute([brew, "--prefix", "agx"], home);
+    const newKegResult = await fromPromise(
+      realpath(linkedPrefix.stdout.trim()),
+      (error: unknown) =>
+        error instanceof Error ? error.message : String(error),
+    );
+    if (linkedPrefix.exit !== 0 || newKegResult.isErr())
+      return err(
+        `brew prefix agx after install in ${home}: ${linkedPrefix.stderr}${linkedPrefix.stdout}${newKegResult.isErr() ? newKegResult.error : ""}`,
+      );
+    const linkError = await linkBrewExecutables(
+      brewPrefix,
+      newKegResult.value,
+      protectedExecutables,
+    );
+    if (linkError !== null)
+      return err(
+        `link new Homebrew agx commands in ${brewPrefix}: ${linkError}`,
+      );
+    const linked = await execute([brew, "link", "agx"], home);
+    if (linked.exit !== 0)
+      return err(`brew link agx in ${home}: ${linked.stderr}${linked.stdout}`);
+  }
   const directories = [
     ...new Set([
       home,

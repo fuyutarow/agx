@@ -1,6 +1,14 @@
 // Test-only command boundary. Unknown commands fail before they can spawn.
-import { appendFile, chmod, mkdir } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import {
+  appendFile,
+  chmod,
+  mkdir,
+  realpath,
+  rm,
+  symlink,
+  unlink,
+} from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 
 const refused = (stderr: string) => ({ exit: 98, stdout: "", stderr });
 const success = { exit: 0, stdout: "", stderr: "" };
@@ -17,11 +25,151 @@ const gitCommands = new Set([
   "describe",
   "show",
 ]);
+const suiteCommands = [
+  "agx",
+  "agx-worker",
+  "agx-ws",
+  "agx-ticket",
+  "agx-status",
+  "agx-msg",
+  "xmsg",
+  "jex",
+];
+
+async function installFixtureKeg(
+  prefix: string,
+  version: string,
+  linkCommands: boolean,
+) {
+  const keg = join(prefix, "Cellar/agx", version);
+  const bin = join(keg, "bin");
+  await mkdir(bin, { recursive: true });
+  for (const name of suiteCommands) {
+    const source = join(bin, name);
+    await Bun.write(
+      source,
+      name === "agx"
+        ? `#!/bin/sh\nprintf "agx ${version}\\n"\n`
+        : "#!/bin/sh\nexit 0\n",
+    );
+    await chmod(source, 0o755);
+    if (linkCommands) {
+      const destination = join(prefix, "bin", name);
+      await rm(destination, { force: true });
+      await symlink(source, destination);
+    }
+  }
+  const opt = join(prefix, "opt/agx");
+  await rm(opt, { force: true });
+  await symlink(keg, opt);
+  if (linkCommands) {
+    const record = join(prefix, "var/homebrew/linked/agx");
+    await mkdir(join(prefix, "var/homebrew/linked"), { recursive: true });
+    await rm(record, { force: true });
+    await symlink(keg, record);
+  }
+}
+
+async function unlinkFixtureKeg(prefix: string) {
+  const keg = await realpath(join(prefix, "opt/agx"));
+  for (const name of suiteCommands) {
+    const destination = join(prefix, "bin", name);
+    const resolved = await realpath(destination).catch(() => null);
+    if (resolved === join(keg, "bin", name)) await unlink(destination);
+  }
+  await rm(join(prefix, "var/homebrew/linked/agx"), { force: true });
+}
+
+async function linkFixtureKeg(prefix: string) {
+  const keg = await realpath(join(prefix, "opt/agx"));
+  for (const name of suiteCommands) {
+    const destination = join(prefix, "bin", name);
+    const source = join(keg, "bin", name);
+    const resolved = await realpath(destination).catch(() => null);
+    if (resolved === source) continue;
+    await rm(destination, { force: true });
+    await symlink(source, destination);
+  }
+  const record = join(prefix, "var/homebrew/linked/agx");
+  await mkdir(dirname(record), { recursive: true });
+  await rm(record, { force: true });
+  await symlink(keg, record);
+}
+
+async function fixtureBrew(
+  args: string[],
+  cwd: string,
+  logRoot: string,
+  realGitOrOptions:
+    | boolean
+    | { deadline?: number; env?: Record<string, string> },
+) {
+  await appendFile(
+    join(logRoot, "calls"),
+    JSON.stringify(["/home/linuxbrew/.linuxbrew/bin/brew", ...args]) + "\n",
+  );
+  const prefix = process.env.RELEASE_TEST_BREW_PREFIX ?? cwd;
+  if (args[0] === "list") {
+    if (process.env.RELEASE_TEST_BREW_ABSENT === "1")
+      return { exit: 1, stdout: "", stderr: "not installed\n" };
+    return {
+      ...success,
+      stdout: `agx ${basename(await realpath(join(prefix, "opt/agx")))}\n`,
+    };
+  }
+  if (args[0] === "--prefix" && args[1] === "agx")
+    return { ...success, stdout: `${join(prefix, "opt/agx")}\n` };
+  if (args[0] === "--prefix") return { ...success, stdout: `${prefix}\n` };
+  if (args[0] === "update" && process.env.RELEASE_TEST_BREW_FAIL === "1")
+    return { exit: 1, stdout: "", stderr: "brew update failed\n" };
+  if (args[0] === "unlink" && args[1] === "agx") {
+    await unlinkFixtureKeg(prefix);
+    return success;
+  }
+  if (args[0] === "install") {
+    const env =
+      typeof realGitOrOptions === "object" ? realGitOrOptions.env : null;
+    if (env?.HOMEBREW_NO_INSTALL_CLEANUP !== "1")
+      return {
+        exit: 97,
+        stdout: "",
+        stderr: "HOMEBREW_NO_INSTALL_CLEANUP was not set\n",
+      };
+    if (args.includes("--skip-link"))
+      await Bun.sleep(
+        Number(process.env.RELEASE_TEST_BREW_INSTALL_DELAY_MS ?? 75),
+      );
+    await installFixtureKeg(prefix, "2.3.4", !args.includes("--skip-link"));
+    return success;
+  }
+  if (args[0] === "link" && args[1] === "agx") {
+    await linkFixtureKeg(prefix);
+    return success;
+  }
+  if (args[0] === "update") {
+    if (process.env.RELEASE_TEST_PIPE_CHILD_PID !== undefined) {
+      const child = Bun.spawn(
+        [process.execPath, "-e", "await Bun.sleep(300000)"],
+        { stdout: "inherit", stderr: "inherit" },
+      );
+      await Bun.write(
+        process.env.RELEASE_TEST_PIPE_CHILD_PID,
+        String(child.pid),
+      );
+      child.unref();
+    }
+    if (process.env.RELEASE_TEST_BREW_DELAY_MS !== undefined)
+      await Bun.sleep(Number(process.env.RELEASE_TEST_BREW_DELAY_MS));
+  }
+  return success;
+}
 
 export async function fixtureRun(
   cmd: string[],
   cwd: string,
-  realGitOrOptions: boolean | { deadline?: number } = process.env
+  realGitOrOptions:
+    | boolean
+    | { deadline?: number; env?: Record<string, string> } = process.env
     .RELEASE_TEST_REAL_GIT === "1",
   timeout = 10_000,
 ) {
@@ -58,19 +206,7 @@ export async function fixtureRun(
     process.env.RELEASE_TEST_GH_MODE !== undefined &&
     binary === "/home/linuxbrew/.linuxbrew/bin/brew"
   ) {
-    await appendFile(join(logRoot, "calls"), JSON.stringify(cmd) + "\n");
-    if (args[0] === "list")
-      return process.env.RELEASE_TEST_BREW_ABSENT === "1"
-        ? { exit: 1, stdout: "", stderr: "not installed\n" }
-        : { ...success, stdout: "agx\n" };
-    if (args[0] === "--prefix")
-      return {
-        ...success,
-        stdout: `${process.env.RELEASE_TEST_BREW_PREFIX}\n`,
-      };
-    if (args[0] === "update" && process.env.RELEASE_TEST_BREW_FAIL === "1")
-      return { exit: 1, stdout: "", stderr: "brew update failed\n" };
-    return success;
+    return fixtureBrew(args, cwd, logRoot, realGitOrOptions);
   }
   if (
     process.env.RELEASE_TEST_GH_MODE !== undefined &&
