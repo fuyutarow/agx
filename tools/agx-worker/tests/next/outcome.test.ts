@@ -1,10 +1,17 @@
 import { prepareTicketRepo } from "../ticket-repo.ts";
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { changedFiles, workspaceSnapshot } from "../../src/next/outcome.ts";
+import { WorkerReport } from "../../src/report.ts";
 
 const roots: string[] = [];
 const servers: ReturnType<typeof Bun.serve>[] = [];
@@ -188,3 +195,120 @@ test("workspace evidence detects added, deleted and edited files without countin
     expect(changedFiles(before.value, after.value)).toBe(3);
   }
 });
+
+test("outcome contract: malformed only when the returned report is unreadable", async () => {
+  const root = scratch();
+  await prepareTicketRepo(root);
+  const state = join(root, "state");
+  const server = Bun.serve({
+    port: 0,
+    fetch: () =>
+      Response.json({ answers: { worker: { choice: "luna-high" } } }),
+  });
+  servers.push(server);
+  const env = {
+    ...process.env,
+    AGX_STATE_DIR: state,
+    XDG_STATE_HOME: join(root, "xdg-state"),
+    AGX_CODEX_HOST_FILE: join(root, "absent-host.toml"),
+    AGX_TMP_ROOT: join(root, "agx-tmp"),
+    // This harness supplies a complete PATH and tests report outcomes, not mise trust.
+    AGX_WORKER_PATH_SOURCE: "dispatcher",
+    JEV_URL: `http://127.0.0.1:${server.port}/choice`,
+    AGX_WORKER_BIN: join(import.meta.dir, "fixtures/outcome-worker.ts"),
+    TYPESAFE_API_KEY: "test-key",
+    AGX_CONFIG: new URL("../../src/roster/policy.example.toml", import.meta.url)
+      .pathname,
+  };
+
+  const cases: [string, string][] = [
+    ["real-returned", "ok"],
+    ["unreadable-report", "malformed"],
+  ];
+  for (const [mode, outcome] of cases) {
+    const ticket = join(root, `${mode}.md`);
+    writeFileSync(
+      ticket,
+      `+++\nschema = 2\ntimeout_s = 60\nname = "${mode}"\nwrites = ["work.txt"]\noutcome = "fixture"\nverify = ["true"]\n[proposition]\nid = "OUTCOME"\nclaim = "readable returned reports"\nrefuted_by = "incorrect classification"\n+++\nFixture.\n`,
+    );
+    const child = Bun.spawn(
+      [
+        process.execPath,
+        "tools/agx-worker/src/next/cli.ts",
+        "run",
+        ticket,
+        "--cd",
+        root,
+      ],
+      {
+        env: { ...env, AGX_OUTCOME_FIXTURE: mode },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    const [stdout, stderr, exit] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
+    expect(exit, stderr).toBe(0);
+    const receipt = jsonOf(
+      z.looseObject({
+        id: z.string(),
+        outcome: z.string(),
+        report_path: z.string(),
+      }),
+    ).safeParse(stdout);
+    expect(receipt.success).toBe(true);
+    if (!receipt.success) continue;
+    expect(receipt.data.outcome).toBe(outcome);
+
+    const runDir = dirname(receipt.data.report_path);
+    expect(existsSync(join(runDir, "fixture.result.md"))).toBe(true);
+    const events = readFileSync(join(state, "records.jsonl"), "utf8")
+      .trim()
+      .split("\n");
+    const ended = events
+      .flatMap((line) => {
+        const parsed = jsonOf(
+          z.looseObject({
+            kind: z.string(),
+            id: z.string(),
+            outcome: z.string().optional(),
+            returned: z.boolean().optional(),
+          }),
+        ).safeParse(line);
+        return parsed.success &&
+          parsed.data.kind === "ended" &&
+          parsed.data.id === receipt.data.id
+          ? [parsed.data]
+          : [];
+      })
+      .at(-1);
+    expect(ended).toMatchObject({ kind: "ended", outcome, returned: true });
+
+    const reportText = readFileSync(receipt.data.report_path, "utf8");
+    if (mode === "real-returned") {
+      const report = jsonOf(WorkerReport).safeParse(reportText);
+      expect(report.success).toBe(true);
+      expect(report.success ? report.data.checks.length : 0).toBe(12);
+      expect(report.success ? report.data.checks[11]?.exit : undefined).toBe(
+        "unknown",
+      );
+      expect(
+        report.success ? report.data.checks[11]?.exit_text : undefined,
+      ).toBe("不明");
+      expect(report.success ? report.data.summary : undefined).toContain(
+        "パッケージを2611へコピー",
+      );
+    } else {
+      const report = jsonOf(z.looseObject({ error: z.string() })).safeParse(
+        reportText,
+      );
+      expect(report.success).toBe(true);
+      expect(report.success && report.data.error).toContain(
+        "the final message is not JSON",
+      );
+    }
+  }
+}, 180_000);

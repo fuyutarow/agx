@@ -1,4 +1,5 @@
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 const mode = process.env.AGX_OUTCOME_FIXTURE;
 const report = {
@@ -32,4 +33,36 @@ if (mode === "last-message") receipt = { last_message: JSON.stringify(report) };
 if (mode === "string-report") receipt = { report: JSON.stringify(report) };
 if (mode === "trailing-text")
   receipt = { last_message: `${JSON.stringify(report)}\nextra text` };
+const writeRunResult = (contents: string): boolean => {
+  const runDir = process.env.AGX_RUN_DIR;
+  if (runDir === undefined) {
+    process.stderr.write("AGX_RUN_DIR is missing\n");
+    process.exitCode = 1;
+    return false;
+  }
+  writeFileSync(join(runDir, "fixture.result.md"), contents);
+  return true;
+};
+if (mode === "real-returned") {
+  const resultFile = readFileSync(
+    join(import.meta.dir, "outcome-malformed-result.md"),
+    "utf8",
+  );
+  const lastMessage = readFileSync(
+    join(import.meta.dir, "outcome-malformed-final-message.txt"),
+    "utf8",
+  );
+  if (writeRunResult(resultFile)) receipt = { last_message: lastMessage };
+}
+if (mode === "unreadable-report") {
+  const returnRecord = {
+    findings: [],
+    evidence: [],
+    impact_on_brief: "the report could not be read",
+    proposed_next: "inspect the final message",
+    artifacts: ["fixture.result.md"],
+  };
+  const lastMessage = `unreadable report\n\n\`\`\`agx-return\n${JSON.stringify(returnRecord)}\n\`\`\``;
+  if (writeRunResult(lastMessage)) receipt = { last_message: lastMessage };
+}
 process.stdout.write(`${JSON.stringify(receipt)}\n`);

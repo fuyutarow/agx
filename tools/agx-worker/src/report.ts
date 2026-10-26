@@ -12,7 +12,12 @@ export const WorkerReport = z.object({
   summary: z.string(),
   changes: z.array(z.object({ path: z.string(), what: z.string() })),
   checks: z.array(
-    z.object({ cmd: z.string(), exit: z.number(), result: z.string() }),
+    z.object({
+      cmd: z.string(),
+      exit: z.union([z.number(), z.literal("unknown")]),
+      exit_text: z.string().optional(),
+      result: z.string(),
+    }),
   ),
   /** commands the coordinator should run, or decisions it must make */
   for_coordinator: z.array(z.string()),
@@ -40,7 +45,7 @@ export const reportJsonSchema = (): string =>
 
 const SHAPE = `{ "summary": string,
   "changes": [{ "path": string, "what": string }],
-  "checks": [{ "cmd": string, "exit": number, "result": string }],
+  "checks": [{ "cmd": string, "exit": number | "unknown", "exit_text"?: string, "result": string }],
   "for_coordinator": [string],
   "open": [string] }`;
 
@@ -63,7 +68,7 @@ Your final message must start with ONE JSON object and nothing else before it, o
 ${SHAPE}
 - summary: what you did and the outcome, in a few sentences.
 - changes: one entry per file you changed or created (path, what changed); [] if none.
-- checks: every command you ran to check your work (cmd, its exit code, one line on the result); [] if none.
+- checks: every command you ran to check your work (cmd, numeric exit code when available, otherwise set exit to "unknown" and preserve the original status in exit_text, plus one line on the result); [] if none.
 - for_coordinator: commands the coordinator should run, or decisions it must make; [] if none.
 - open: what is unfinished, uncertain or skipped; [] if nothing.
 
@@ -169,6 +174,33 @@ export function interimReturnWriter(path: string | undefined) {
 
 const FENCE = /^```(?:json)?\s*\n([\s\S]*?)\n```$/u;
 
+const originalExitText = (exit: unknown): string => {
+  if (typeof exit === "string") return exit;
+  if (exit === undefined) return "(missing)";
+  return JSON.stringify(exit) ?? String(exit);
+};
+
+/** Preserve a reported nonnumeric exit as text while keeping the report readable. */
+const normalizeReportCheckExits = (value: unknown): unknown => {
+  const report = z.record(z.string(), z.unknown()).safeParse(value);
+  if (!report.success || !Array.isArray(report.data.checks)) return value;
+  const checks = report.data.checks.map((check) => {
+    const parsed = z.record(z.string(), z.unknown()).safeParse(check);
+    if (!parsed.success || typeof parsed.data.exit === "number") return check;
+    if (
+      parsed.data.exit === "unknown" &&
+      typeof parsed.data.exit_text === "string"
+    )
+      return parsed.data;
+    return {
+      ...parsed.data,
+      exit: "unknown",
+      exit_text: originalExitText(parsed.data.exit),
+    };
+  });
+  return { ...report.data, checks };
+};
+
 /** The report in a worker's final message (a structured value from the vendor, else its text). */
 export function parseReport(
   structured: unknown,
@@ -185,7 +217,7 @@ export function parseReport(
       ? z.unknown().safeParse(structured)
       : jsonText.safeParse(candidateText);
   const parsed = candidate.success
-    ? WorkerReport.safeParse(candidate.data)
+    ? WorkerReport.safeParse(normalizeReportCheckExits(candidate.data))
     : undefined;
   if (parsed?.success === true) return { ok: true, report: parsed.data };
   if (structured === undefined) {
@@ -195,7 +227,9 @@ export function parseReport(
           candidateText.slice(span.start, span.end),
         );
         if (!decoded.success) return [];
-        const report = WorkerReport.safeParse(decoded.data);
+        const report = WorkerReport.safeParse(
+          normalizeReportCheckExits(decoded.data),
+        );
         return report.success ? [{ ...span, report: report.data }] : [];
       })
       .at(-1);
@@ -234,12 +268,19 @@ export function parseReport(
 const bullets = (items: string[], empty = "(none)"): string =>
   items.length === 0 ? `  ${empty}` : items.map((i) => `  - ${i}`).join("\n");
 
+const renderCheckExit = (check: WorkerReport["checks"][number]): string => {
+  if (typeof check.exit === "number") return String(check.exit);
+  return check.exit_text === undefined
+    ? check.exit
+    : `${check.exit} (${check.exit_text})`;
+};
+
 /** The worker report as readable sections for callers and run summaries. */
 export function renderReport(r: WorkerReport): string {
   return [
     `## Summary\n${r.summary}`,
     `## Changes\n${bullets(r.changes.map((c) => `${c.path}: ${c.what}`))}`,
-    `## Checks\n${bullets(r.checks.map((c) => `[exit ${c.exit}] ${c.cmd} — ${c.result}`))}`,
+    `## Checks\n${bullets(r.checks.map((c) => `[exit ${renderCheckExit(c)}] ${c.cmd} — ${c.result}`))}`,
     `## For the coordinator\n${bullets(r.for_coordinator)}`,
     `## Open\n${bullets(r.open)}`,
   ].join("\n\n");
