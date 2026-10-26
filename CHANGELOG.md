@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.13.4 — 2026-10-26
+
+- Include Wilson acceptance intervals and expected cost per accepted result in Jev routing evidence
+
 ## 1.13.3 — 2026-10-26
 
 - Add ancestor ticket premises and document all premise kinds in check help
