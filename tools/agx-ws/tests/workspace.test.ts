@@ -1223,6 +1223,270 @@ describe("agx ws rm", () => {
     expect((await jj(["workspace", "list"], path)).out).toContain("ws_dirty");
   });
 
+  test("uses the registered commit when the workspace-local @ cannot be read", async () => {
+    const path = await repo('trunk = "main"\n');
+    await ws(["add", "registered-fallback"], path);
+    const dir = wsDir(path, "registered-fallback");
+    const realJj = Bun.which("jj");
+    expect(realJj).not.toBeNull();
+    const wrapper = join(scratch, "jj-local-log-failure");
+    await mkdir(wrapper);
+    await Bun.write(
+      join(wrapper, "jj"),
+      `#!/usr/bin/env bun
+const args = process.argv.slice(2);
+if (process.cwd() === ${JSON.stringify(dir)} && args.includes("log")) {
+  process.stderr.write("injected missing workspace @\\n");
+  process.exit(1);
+}
+const child = Bun.spawn([${JSON.stringify(realJj)}, ...args], {stdout:"inherit",stderr:"inherit"});
+process.exitCode = await child.exited;
+`,
+    );
+    await chmod(join(wrapper, "jj"), 0o755);
+    const removed = await ws(
+      ["rm", "registered-fallback"],
+      path,
+      baseEnv({ PATH: `${wrapper}:${bin}:${process.env.PATH}` }),
+    );
+    expect(removed.code, removed.err).toBe(0);
+    expect(existsSync(dir)).toBe(false);
+  });
+
+  test("preserves disk edits when local @ fails but the registered revision resolves", async () => {
+    const path = await repo('trunk = "main"\n');
+    await ws(["add", "registered-disk-diff"], path);
+    const dir = wsDir(path, "registered-disk-diff");
+    await Bun.write(join(dir, "a.txt"), "unlanded disk edit\n");
+    const realJj = Bun.which("jj");
+    expect(realJj).not.toBeNull();
+    const wrapper = join(scratch, "jj-local-log-failure-with-diff");
+    await mkdir(wrapper);
+    await Bun.write(
+      join(wrapper, "jj"),
+      `#!/usr/bin/env bun
+const args = process.argv.slice(2);
+if (process.cwd() === ${JSON.stringify(dir)} && args.includes("log")) {
+  process.stderr.write("injected missing workspace @\\n");
+  process.exit(1);
+}
+const child = Bun.spawn([${JSON.stringify(realJj)}, ...args], {stdout:"inherit",stderr:"inherit"});
+process.exitCode = await child.exited;
+`,
+    );
+    await chmod(join(wrapper, "jj"), 0o755);
+    const refused = await ws(
+      ["rm", "registered-disk-diff"],
+      path,
+      baseEnv({ PATH: `${wrapper}:${bin}:${process.env.PATH}` }),
+    );
+    expect(refused.code).toBe(1);
+    expect(refused.err).toContain("tracked files differ from main: a.txt");
+    expect(existsSync(dir)).toBe(true);
+    expect(await Bun.file(join(dir, "a.txt")).text()).toBe(
+      "unlanded disk edit\n",
+    );
+  });
+
+  test("refuses broken-workspace removal when a trunk-tracked file differs on disk", async () => {
+    const path = await repo('trunk = "main"\n');
+    await ws(["add", "broken-diff"], path);
+    const dir = wsDir(path, "broken-diff");
+    await Bun.write(join(dir, "a.txt"), "changed on disk\n");
+    const realJj = Bun.which("jj");
+    expect(realJj).not.toBeNull();
+    const wrapper = join(scratch, "jj-broken-revision");
+    await mkdir(wrapper);
+    await Bun.write(
+      join(wrapper, "jj"),
+      `#!/usr/bin/env bun
+const args = process.argv.slice(2);
+const local = process.cwd() === ${JSON.stringify(dir)} && args.includes("log");
+const registered = args.includes("log") && args.some((arg) => arg.includes("broken-diff@"));
+if (local || registered) {
+  process.stderr.write("injected missing working-copy revision\\n");
+  process.exit(1);
+}
+const child = Bun.spawn([${JSON.stringify(realJj)}, ...args], {stdout:"inherit",stderr:"inherit"});
+process.exitCode = await child.exited;
+`,
+    );
+    await chmod(join(wrapper, "jj"), 0o755);
+    const refused = await ws(
+      ["rm", "broken-diff"],
+      path,
+      baseEnv({ PATH: `${wrapper}:${bin}:${process.env.PATH}` }),
+    );
+    expect(refused.code).toBe(1);
+    expect(refused.err).toContain("tracked files differ from main: a.txt");
+    expect(existsSync(dir)).toBe(true);
+    expect(await Bun.file(join(dir, "a.txt")).text()).toBe("changed on disk\n");
+    expect((await jj(["workspace", "list"], path)).out).toContain(
+      "ws_broken-diff",
+    );
+  });
+
+  test("forgets and buries a broken workspace when trunk-tracked files match", async () => {
+    const path = await repo('trunk = "main"\n');
+    await ws(["add", "broken-clean"], path);
+    const dir = wsDir(path, "broken-clean");
+    const realJj = Bun.which("jj");
+    expect(realJj).not.toBeNull();
+    const wrapper = join(scratch, "jj-broken-clean-revision");
+    await mkdir(wrapper);
+    await Bun.write(
+      join(wrapper, "jj"),
+      `#!/usr/bin/env bun
+const args = process.argv.slice(2);
+const local = process.cwd() === ${JSON.stringify(dir)} && args.includes("log");
+const registered = args.includes("log") && args.some((arg) => arg.includes("broken-clean@"));
+if (local || registered) {
+  process.stderr.write("injected missing working-copy revision\\n");
+  process.exit(1);
+}
+const child = Bun.spawn([${JSON.stringify(realJj)}, ...args], {stdout:"inherit",stderr:"inherit"});
+process.exitCode = await child.exited;
+`,
+    );
+    await chmod(join(wrapper, "jj"), 0o755);
+    const removed = await ws(
+      ["rm", "broken-clean"],
+      path,
+      baseEnv({ PATH: `${wrapper}:${bin}:${process.env.PATH}` }),
+    );
+    expect(removed.code, removed.err).toBe(0);
+    expect(existsSync(dir)).toBe(false);
+    expect((await jj(["workspace", "list"], path)).out).not.toContain(
+      "ws_broken-clean",
+    );
+  });
+
+  test("removes unregistered broken directories only when trunk files match", async () => {
+    const path = await repo();
+    const changed = wsDir(path, "orphan-changed");
+    const clean = wsDir(path, "orphan-clean");
+    await mkdir(changed, { recursive: true });
+    await mkdir(clean, { recursive: true });
+    await Bun.write(join(changed, "a.txt"), "unlanded disk edit\n");
+    await Bun.write(join(clean, "a.txt"), "a\n");
+    const refused = await ws(["rm", "orphan-changed"], path);
+    expect(refused.code).toBe(1);
+    expect(refused.err).toContain("tracked files differ from trunk(): a.txt");
+    expect(existsSync(changed)).toBe(true);
+    const removed = await ws(["rm", "orphan-clean"], path);
+    expect(removed.code, removed.err).toBe(0);
+    expect(existsSync(clean)).toBe(false);
+  });
+
+  test("gc gives a broken verdict when the local working-copy revision is missing", async () => {
+    const path = await repo('trunk = "main"\n');
+    await ws(["add", "missing-revision"], path);
+    setRecords([]);
+    const dir = wsDir(path, "missing-revision");
+    const realJj = Bun.which("jj");
+    expect(realJj).not.toBeNull();
+    const wrapper = join(scratch, "jj-missing-working-copy-revision");
+    await mkdir(wrapper);
+    await Bun.write(
+      join(wrapper, "jj"),
+      `#!/usr/bin/env bun
+const args = process.argv.slice(2);
+if (process.cwd() === ${JSON.stringify(dir)} && args.includes("log") && args.includes("@")) {
+  process.stderr.write("working copy revision missing\\n");
+  process.exit(1);
+}
+const child = Bun.spawn([${JSON.stringify(realJj)}, ...args], {stdout:"inherit",stderr:"inherit"});
+process.exitCode = await child.exited;
+`,
+    );
+    await chmod(join(wrapper, "jj"), 0o755);
+    const report = await ws(
+      ["gc", "--dry-run"],
+      path,
+      baseEnv({ PATH: `${wrapper}:${bin}:${process.env.PATH}` }),
+    );
+    expect(report.code, report.err).toBe(0);
+    expect(report.out).toContain(`${dir}\tws\tbroken\t`);
+    expect(report.out).toContain("working-copy revision is unavailable");
+    expect(report.out).not.toContain("cannot judge");
+  });
+
+  test("gc gives a broken verdict when status cannot read the working-copy revision", async () => {
+    const path = await repo('trunk = "main"\n');
+    await ws(["add", "status-missing-revision"], path);
+    setRecords([]);
+    const dir = wsDir(path, "status-missing-revision");
+    const realJj = Bun.which("jj");
+    expect(realJj).not.toBeNull();
+    const wrapper = join(scratch, "jj-status-missing-working-copy-revision");
+    await mkdir(wrapper);
+    await Bun.write(
+      join(wrapper, "jj"),
+      `#!/usr/bin/env bun
+const args = process.argv.slice(2);
+if (process.cwd() === ${JSON.stringify(dir)} && args.includes("status")) {
+  process.stderr.write("working copy revision missing\\n");
+  process.exit(1);
+}
+const child = Bun.spawn([${JSON.stringify(realJj)}, ...args], {stdout:"inherit",stderr:"inherit"});
+process.exitCode = await child.exited;
+`,
+    );
+    await chmod(join(wrapper, "jj"), 0o755);
+    const report = await ws(
+      ["gc", "--dry-run"],
+      path,
+      baseEnv({ PATH: `${wrapper}:${bin}:${process.env.PATH}` }),
+    );
+    expect(report.code, report.err).toBe(0);
+    expect(report.out).toContain(`${dir}\tws\tbroken\t`);
+    expect(report.out).toContain("working-copy state is unavailable");
+    expect(report.out).not.toContain("cannot judge");
+  });
+
+  test("gc reports broken metadata when jj no longer has the workspace checkout pointer", async () => {
+    const path = await repo('trunk = "main"\n');
+    await ws(["add", "missing-checkout-pointer"], path);
+    setRecords([]);
+    const dir = wsDir(path, "missing-checkout-pointer");
+    await unlink(join(dir, ".jj", "working_copy", "checkout"));
+    const report = await ws(["gc", "--dry-run"], path);
+    expect(report.code, report.err).toBe(0);
+    expect(report.out).toContain(`${dir}\tws\tbroken\t`);
+    expect(report.out).toContain("workspace metadata is invalid");
+  });
+
+  test("gc reports broken when jj cannot resolve a corrupted checkout id", async () => {
+    const path = await repo('trunk = "main"\n');
+    await ws(["add", "corrupt-checkout-id"], path);
+    setRecords([]);
+    const dir = wsDir(path, "corrupt-checkout-id");
+    await Bun.write(
+      join(dir, ".jj", "working_copy", "checkout"),
+      "not-a-jj-checkout-id\n",
+    );
+    const status = await jj(["--ignore-working-copy", "status"], dir);
+    expect(status.code).not.toBe(0);
+    const report = await ws(["gc", "--dry-run"], path);
+    expect(report.code, report.err).toBe(0);
+    expect(report.out).toContain(`${dir}\tws\tbroken\t`);
+    expect(report.out).toContain("Failed to read checkout state");
+    expect(report.out).toContain("invalid wire type value: 6");
+  });
+
+  test("rm forgets and buries a registered workspace with a missing checkout pointer", async () => {
+    const path = await repo('trunk = "main"\n');
+    await ws(["add", "missing-checkout-rm"], path);
+    const dir = wsDir(path, "missing-checkout-rm");
+    await unlink(join(dir, ".jj", "working_copy", "checkout"));
+    const removed = await ws(["rm", "missing-checkout-rm"], path);
+    expect(removed.code, removed.err).toBe(0);
+    expect(existsSync(dir)).toBe(false);
+    expect((await jj(["workspace", "list"], path)).out).not.toContain(
+      "ws_missing-checkout-rm",
+    );
+  });
+
   test("refuses when the graveyard is RAM-backed", async () => {
     const path = await repo('trunk = "main"\n');
     await ws(["add", "ram"], path);

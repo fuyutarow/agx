@@ -501,8 +501,24 @@ export async function unlanded(
   const here = existsSync(dir)
     ? await unlandedFrom(dir, "@", cfg.trunk, false)
     : await unlandedFrom(repo.backing, `${name}@`, cfg.trunk, true);
-  if (!here.ok) return bad(`cannot judge ${dir}: ${msg(here)}`);
-  const found = [...here.value];
+  // A registered workspace's working-copy view can be unavailable from its own
+  // directory (for example, an old layout or a damaged working-copy pointer).
+  // In that case, try the registered workspace commit from the backing checkout
+  // before reporting an unknown result.
+  const retried = !here.ok && existsSync(dir);
+  const resolved = retried
+    ? await unlandedFrom(repo.backing, `${name}@`, cfg.trunk, true)
+    : here;
+  if (!resolved.ok) return bad(`cannot judge ${dir}: ${msg(resolved)}`);
+  if (retried) {
+    const differences = await trackedDiskDifferences(repo, cfg, dir);
+    if (!differences.ok) return differences;
+    if (differences.value.length > 0)
+      return bad(
+        `cannot judge ${dir}: disk files differ from ${cfg.trunk}: ${differences.value.join(", ")}`,
+      );
+  }
+  const found = [...resolved.value];
   for (const id of endCommits) {
     const past = await unlandedFrom(repo.backing, id, cfg.trunk, true);
     if (!past.ok)
@@ -531,6 +547,19 @@ function busy(dir: string): string | undefined {
   return pids.length === 0
     ? undefined
     : `processes are working inside ${dir} (pid ${pids.join(", ")})`;
+}
+
+/** Recognize local metadata/revision loss without relabeling conflicts or ordinary query errors. */
+function brokenWorkspaceReason(error: unknown): string | undefined {
+  const reason = errorMessage(error);
+  if (reason.includes("is not a valid local jj workspace")) return reason;
+  const missing = z.object({ code: z.literal("ENOENT") }).safeParse(error);
+  if (missing.success) return reason;
+  return /no working copy|working copy (?:commit|revision).*(?:missing|not found|does not exist)|(?:revision|commit).*(?:doesn't exist|does not exist|not found|unknown)|failed to read checkout state|failed to decode protobuf message/iu.test(
+    reason,
+  )
+    ? reason
+    : undefined;
 }
 
 async function forgetAndBury(
@@ -854,14 +883,44 @@ export async function remove(options: {
     async () => {
       const names = await workspaceNames(repo.value);
       if (!names.ok) return names;
-      if (!names.value.includes(name.value))
-        return bad(
-          `${name.value} is not a registered jj workspace of ${repo.value.backing}`,
-        );
+      const registered = names.value.includes(name.value);
+      if (!registered && !existsSync(dir))
+        return bad(`${name.value} is not registered and ${dir} does not exist`);
       const occupied = busy(realOr(dir));
       if (occupied !== undefined) return bad(occupied);
+      const owner = jjWorkspace(dir);
+      const brokenMetadata = owner.ok
+        ? undefined
+        : brokenWorkspaceReason(owner.error);
+      if (brokenMetadata !== undefined) {
+        const removed = await removeBrokenWorkspace(
+          repo.value,
+          cfg.value,
+          graveyard.value,
+          name.value,
+          dir,
+          registered,
+        );
+        return removed.ok ? good(dir) : removed;
+      }
+      if (
+        owner.ok &&
+        (owner.value.root !== realOr(dir) ||
+          owner.value.backingRoot !== repo.value.backing)
+      )
+        return bad(`${dir} is not a local workspace of ${repo.value.backing}`);
       const work = await unlanded(repo.value, cfg.value, dir, name.value, []);
-      if (!work.ok) return work;
+      if (!work.ok) {
+        const broken = await removeBrokenWorkspace(
+          repo.value,
+          cfg.value,
+          graveyard.value,
+          name.value,
+          dir,
+          registered,
+        );
+        return broken.ok ? good(dir) : broken;
+      }
       if (work.value.length > 0)
         return bad(
           `${dir} has unlanded changes; land or abandon them first:\n${work.value.map((l) => `  ${l}`).join("\n")}`,
@@ -878,6 +937,106 @@ export async function remove(options: {
   if (result.ok)
     await gc({ repo: options.repo, dryRun: true, includeUnrecorded: false });
   return result;
+}
+
+/** A broken checkout is removable only when every trunk-tracked path still matches on disk. */
+async function trackedDiskDifferences(
+  repo: Repo,
+  cfg: Config,
+  dir: string,
+): Promise<Attempt<string[]>> {
+  const trunk = await trunkCommit(repo, cfg);
+  if (!trunk.ok) return trunk;
+  if (trunk.value === null)
+    return bad("cannot compare broken workspace without trunk");
+  const files = await jjOut(
+    ["file", "list", "-r", trunk.value, "-T", 'json(path) ++ "\\n"'],
+    repo.backing,
+    true,
+  );
+  if (!files.ok) return files;
+  const paths: string[] = [];
+  for (const line of files.value.split("\n").filter(Boolean)) {
+    const parsed = jsonOf(z.string().min(1)).safeParse(line);
+    if (!parsed.success) return bad(`invalid tracked path from trunk: ${line}`);
+    paths.push(parsed.data);
+  }
+  const differing: string[] = [];
+  for (const path of paths) {
+    const disk = await readDiskFile(join(dir, path));
+    if (!disk.ok) return bad(`cannot read tracked file ${path}: ${msg(disk)}`);
+    if (disk.value === undefined) {
+      differing.push(path);
+      continue;
+    }
+    const saved = await runStep(
+      [
+        "jj",
+        "--no-pager",
+        "--color=never",
+        "--ignore-working-copy",
+        "file",
+        "show",
+        "-r",
+        trunk.value,
+        "--",
+        path,
+      ],
+      repo.backing,
+    );
+    if (!saved.ok) return bad(`cannot read trunk file ${path}: ${msg(saved)}`);
+    if (saved.value.code !== 0)
+      return bad(`cannot read trunk file ${path}: ${saved.value.err.trim()}`);
+    if (!disk.value.equals(saved.value.out)) differing.push(path);
+  }
+  return good(differing);
+}
+
+async function readDiskFile(
+  path: string,
+): Promise<Attempt<Buffer | undefined>> {
+  const result = await attempt(() => readFile(path));
+  if (result.ok) return good(result.value);
+  const missing = z
+    .object({ code: z.literal("ENOENT") })
+    .safeParse(result.error);
+  return missing.success ? good(undefined) : bad(msg(result));
+}
+
+async function removeBrokenWorkspace(
+  repo: Repo,
+  cfg: Config,
+  graveyard: Graveyard,
+  name: string,
+  dir: string,
+  registered: boolean,
+): Promise<Attempt<void>> {
+  const differences = await trackedDiskDifferences(repo, cfg, dir);
+  if (!differences.ok) return differences;
+  if (differences.value.length > 0)
+    return bad(
+      `${dir} is broken; tracked files differ from ${cfg.trunk}: ${differences.value.join(", ")}; refusing removal`,
+    );
+  const guarded = await removalGuard(repo, dir);
+  if (!guarded.ok) return guarded;
+  if (registered) {
+    const forgotten = await jjOut(
+      ["workspace", "forget", name],
+      repo.backing,
+      false,
+    );
+    if (!forgotten.ok) return forgotten;
+  }
+  if (Bun.which("rip") === null)
+    return bad("rip is not on PATH: mise run install:tools");
+  const moved = await exec(["rip", dir], dirname(dir), {
+    GRAVEYARD: graveyard.path,
+    RIP_GRAVEYARD: graveyard.path,
+  });
+  if (!moved.ok) return bad(`rip ${dir}: ${msg(moved)}`);
+  return moved.value.code === 0
+    ? good(undefined)
+    : bad(`rip ${dir} failed: ${moved.value.err.trim()}`);
 }
 
 const RunRecord = z.looseObject({
@@ -2176,8 +2335,18 @@ async function classify(
   if (protectedWorkspace(repo, cfg, ws))
     return verdict("kept", "declared in .ws.toml keep");
   const owner = jjWorkspace(ws.dir);
+  if (!owner.ok) {
+    const broken = existsSync(ws.dir)
+      ? brokenWorkspaceReason(owner.error)
+      : undefined;
+    return broken === undefined
+      ? verdict(
+          "keep",
+          "missing or foreign workspace; never forget without a verified checkout",
+        )
+      : verdict("broken", `workspace metadata is invalid: ${broken}`);
+  }
   if (
-    !owner.ok ||
     owner.value.root !== realOr(ws.dir) ||
     owner.value.backingRoot !== repo.backing
   )
@@ -2207,8 +2376,12 @@ async function classify(
     inventoryTimeoutMs,
     resultDirs,
   );
-  if (!inventory.ok)
-    return verdict("unknown", `untracked inventory failed: ${msg(inventory)}`);
+  if (!inventory.ok) {
+    const broken = brokenWorkspaceReason(inventory.error);
+    return broken === undefined
+      ? verdict("unknown", `untracked inventory failed: ${msg(inventory)}`)
+      : verdict("broken", `working-copy inventory is unavailable: ${broken}`);
+  }
   if (inventory.value.count > 0)
     return verdict(
       "keep",
@@ -2227,15 +2400,21 @@ async function classify(
   if (!checkStatus) fresh = good(undefined);
   else if (readOnly) fresh = await jjOut(["status"], ws.dir, true);
   else fresh = await updateStale(ws.dir, allRejected);
-  if (!fresh.ok)
-    return verdict(
-      readOnly && msg(fresh).includes("working copy is stale")
-        ? "stale"
-        : "keep",
-      msg(fresh),
-    );
+  if (!fresh.ok) {
+    const broken = brokenWorkspaceReason(fresh.error);
+    if (broken !== undefined)
+      return verdict("broken", `working-copy state is unavailable: ${broken}`);
+    if (readOnly && msg(fresh).includes("working copy is stale"))
+      return verdict("stale", msg(fresh));
+    return verdict("keep", msg(fresh));
+  }
   const sparse = await jjOut(["sparse", "list"], ws.dir, true);
-  if (!sparse.ok) return verdict("keep", msg(sparse));
+  if (!sparse.ok) {
+    const broken = brokenWorkspaceReason(sparse.error);
+    return broken === undefined
+      ? verdict("keep", msg(sparse))
+      : verdict("broken", `working-copy metadata is invalid: ${broken}`);
+  }
   if (sparse.value.trim() !== ".")
     return verdict(
       "keep",
@@ -2259,7 +2438,12 @@ async function classify(
     ws.dir,
     true,
   );
-  if (!info.ok) return verdict("keep", msg(info));
+  if (!info.ok) {
+    const broken = brokenWorkspaceReason(info.error);
+    return broken === undefined
+      ? verdict("keep", msg(info))
+      : verdict("broken", `working-copy revision is unavailable: ${broken}`);
+  }
   const [id, since, empty] = info.value.split("\t");
   change = id ?? "?";
   age = since ?? "?";
@@ -2312,7 +2496,12 @@ async function classify(
     ws.dir,
     true,
   );
-  if (!tip.ok) return verdict("keep", msg(tip));
+  if (!tip.ok) {
+    const broken = brokenWorkspaceReason(tip.error);
+    return broken === undefined
+      ? verdict("keep", msg(tip))
+      : verdict("broken", `working-copy revision is unavailable: ${broken}`);
+  }
   // The current working-copy chain owns content. Recorded commits can be obsolete
   // after squash/rebase integration or a continuation in this same workspace.
   const tips = [tip.value.trim()];
@@ -2320,7 +2509,12 @@ async function classify(
   const releases = new Set<string>();
   for (const candidate of new Set(tips)) {
     const work = await outstanding(repo, candidate, trunk);
-    if (!work.ok) return verdict("keep", `cannot judge: ${msg(work)}`);
+    if (!work.ok) {
+      const broken = brokenWorkspaceReason(work.error);
+      return broken === undefined
+        ? verdict("keep", `landing comparison failed: ${msg(work)}`)
+        : verdict("broken", `landing revision is unavailable: ${broken}`);
+    }
     if (work.value.pushed !== undefined)
       return verdict(
         "pushed",
