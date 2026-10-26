@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.14.5 — 2026-10-27
+
+- Report invalid local workspace metadata with a broken verdict
+- Retry registered workspace revision when local @ cannot be resolved
+- Safely remove broken workspaces only when trunk files match
+
 ## 1.14.4 — 2026-10-27
 
 - Show fixed-workload Artificial Analysis cost in Jev routing criteria.
