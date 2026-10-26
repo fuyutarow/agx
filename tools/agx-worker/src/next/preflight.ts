@@ -22,6 +22,7 @@ import {
 } from "./store.ts";
 import { verificationEnvironment } from "./verify.ts";
 import { pinContinuation, timeBoxUnchangedRefusal } from "./continue.ts";
+import { timeboxLineageRefusal } from "./timebox-lineage.ts";
 import { readRouteUsage } from "./usage.ts";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { DispatchBindingSchema } from "../../../shared/src/agx-dispatch-binding.ts";
@@ -126,10 +127,29 @@ export async function preflight(
       `remand schema: "ticket" invalid ticket: ${reason}. Fix: correct the ticket front matter`,
       "correct the ticket front matter",
     );
-  // Ticket-only intake must not be masked by an unavailable host inspection.
-  if (effectFreeRefusal !== undefined || (parsed?.intake?.length ?? 0) > 0)
+  const continuationId = value(flags, "continue");
+  const lineageRefusal =
+    parsed?.success === true &&
+    (parsed.intake?.length ?? 0) === 0 &&
+    continuationId !== undefined
+      ? await timeboxLineageRefusal(
+          await foldedRuns(),
+          continuationId,
+          parsed.ticket,
+          parsed.prose,
+          stateDir(),
+        )
+      : undefined;
+  if (lineageRefusal !== undefined) failures.push(lineageRefusal);
+  // Intake and lineage refusals precede host inspection and all launch effects.
+  if (
+    effectFreeRefusal !== undefined ||
+    (parsed?.intake?.length ?? 0) > 0 ||
+    lineageRefusal !== undefined
+  )
     return {
       effectFreeRefusal: effectFreeRefusal !== undefined,
+      lineageRefusal,
       temporary: undefined,
       failures,
       ticket,
@@ -147,7 +167,6 @@ export async function preflight(
     process.stderr.write(
       `WARN ignored legacy ticket fields: ${parsed.warnings.join(", ")}\n`,
     );
-  const continuationId = value(flags, "continue");
   const rawBinding = value(flags, "dispatchBinding");
   const binding =
     rawBinding === undefined

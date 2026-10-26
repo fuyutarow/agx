@@ -283,6 +283,8 @@ export async function check(flags: Flags): Promise<number> {
   const cwd = resolve(value(flags, "cd") ?? process.cwd());
   if (path === undefined) return fatal("check requires positional TICKET", 2);
   const inspected = await preflight(path, cwd, flags);
+  if (inspected.lineageRefusal !== undefined)
+    return fatal(inspected.lineageRefusal, 2);
   if (inspected.temporary !== undefined)
     return fatal(inspected.temporary.message, 75);
   if (inspected.failures.length > 0) {
@@ -322,6 +324,8 @@ export async function run(flags: Flags): Promise<number> {
   const cwd = resolve(value(flags, "cd") ?? process.cwd());
   if (path === undefined) return fatal("run requires positional TICKET", 2);
   const inspected = await preflight(path, cwd, flags);
+  if (inspected.lineageRefusal !== undefined)
+    return fatal(inspected.lineageRefusal, 2);
   if (
     inspected.effectFreeRefusal !== true &&
     (inspected.temporary !== undefined || inspected.failures.length > 0)

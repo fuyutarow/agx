@@ -4,6 +4,8 @@ import {
   chmodSync,
   mkdirSync,
   mkdtempSync,
+  lstatSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -233,6 +235,116 @@ function priorRun(
   f.env.FAKE_REGISTERED_WORKSPACE = workspace;
   return workspace;
 }
+
+test.each([
+  { name: "refused without a change", body: "", timeout: 600, allowed: false },
+  {
+    name: "allowed after a split",
+    body: "Split into: child-one, child-two",
+    timeout: 600,
+    allowed: true,
+  },
+  {
+    name: "allowed after raising the time box",
+    body: "Time box raised: 600 to 1200 for verification",
+    timeout: 1200,
+    allowed: true,
+  },
+  {
+    name: "refused with only a raise claim",
+    body: "Time box raised: still 600",
+    timeout: 600,
+    allowed: false,
+  },
+  {
+    name: "refused with only a larger timeout",
+    body: "",
+    timeout: 1200,
+    allowed: false,
+  },
+  {
+    name: "refused with an empty split",
+    body: "Split into:\nNo child tickets",
+    timeout: 600,
+    allowed: false,
+  },
+])("dispatch contract: rule 3 $name", async ({ body, timeout, allowed }) => {
+  const f = fixture();
+  f.env.FAKE_INVOKE_TIMEOUT_MS = "15000";
+  const workspace = priorRun(f, join(`${f.repo}.ws`, "ws_foo-bar"));
+  const original = readFileSync(f.ticket, "utf8").replace(
+    "schema = 2",
+    "schema = 2\ntimeout_s = 600",
+  );
+  writeFileSync(
+    f.ticket,
+    original.replace("timeout_s = 600", `timeout_s = ${timeout}`) + body + "\n",
+  );
+  const state = f.env.AGX_STATE_DIR!;
+  const priorDirectory = join(state, "runs", "timeout-second");
+  mkdirSync(priorDirectory, { recursive: true });
+  writeFileSync(join(priorDirectory, "ticket.orig.md"), original);
+  writeFileSync(
+    f.records,
+    JSON.stringify([
+      {
+        id: "timeout-first",
+        ticket: "foo-bar",
+        state: "ended",
+        outcome: "timeout",
+        cwd: workspace,
+        workspace,
+        continues: null,
+      },
+      {
+        id: "timeout-second",
+        ticket: "foo-bar",
+        state: "ended",
+        outcome: "timeout",
+        cwd: workspace,
+        workspace,
+        continues: "timeout-first",
+      },
+    ]),
+  );
+  const snapshot = () =>
+    [
+      ...new Bun.Glob("**/*").scanSync({
+        cwd: f.root,
+        dot: true,
+        onlyFiles: false,
+      }),
+    ]
+      .toSorted()
+      .map((path) => {
+        const absolute = join(f.root, path);
+        const stat = lstatSync(absolute);
+        return {
+          path,
+          mode: stat.mode,
+          content: stat.isFile()
+            ? readFileSync(absolute).toString("base64")
+            : null,
+        };
+      });
+  const before = snapshot();
+  const result = await invoke(f, "--continue", "timeout-sec");
+  expect(result.exitCode, result.stderr).toBe(allowed ? 0 : 2);
+  expect(existsSync(f.wsArgs)).toBe(false);
+  expect(existsSync(f.unitArgs)).toBe(allowed);
+  if (allowed) {
+    expect(result.stderr).toBe("");
+    expect(readFileSync(f.unitArgs, "utf8")).toContain(
+      "--continue\ntimeout-second\n",
+    );
+  } else {
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe(
+      "agx worker dispatch: time-box-lineage: runs timeout-second, timeout-first timed out in one continuation lineage; repair: raise timeout_s above the last timed-out run and add a 'Time box raised:' line, or list split-off tickets on a 'Split into:' line\n",
+    );
+    expect(snapshot()).toEqual(before);
+  }
+});
 
 test("continuation ignores a deleted registered sibling but refuses its own missing workspace", async () => {
   const f = fixture();

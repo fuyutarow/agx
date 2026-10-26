@@ -37,6 +37,8 @@ import { append, now } from "./next/store.ts";
 import { leaseFor } from "./next/lease.ts";
 import { resolveRunId } from "./next/run-id.ts";
 import { timeBoxUnchangedRefusal } from "./next/continue.ts";
+import { timeboxLineageRefusal } from "./next/timebox-lineage.ts";
+import { stateDir } from "./state.ts";
 
 export const DISPATCH_CHECK_TIMEOUT_MS = 60_000;
 export const DISPATCH_LIST_TIMEOUT_MS = 60_000;
@@ -58,6 +60,7 @@ const RunRow = z.looseObject({
   ticket: z.string(),
   state: z.enum(["running", "ended"]),
   continues: z.string().nullable().optional(),
+  outcome: z.string().nullable().optional(),
   cwd: z.string(),
   workspace: z.string().optional(),
   unit: z.string().optional(),
@@ -551,6 +554,17 @@ export async function dispatch(options: {
       return 2;
     }
     previous = selected.row;
+    const lineageRefusal = await timeboxLineageRefusal(
+      runs.rows,
+      previous.id,
+      parsedTicket.ticket,
+      parsedTicket.prose,
+      stateDir(env),
+    );
+    if (lineageRefusal !== undefined) {
+      process.stderr.write(`agx worker dispatch: ${lineageRefusal}\n`);
+      return 2;
+    }
     const ongoingContinuation = runs.rows.find(
       (row) => row.continues === previous!.id && row.state === "running",
     );

@@ -152,6 +152,61 @@ const fixture = async (ticketName = "pin") => {
   return { root, state, ticket, resume, events, writeOriginal };
 };
 
+test.each(["check", "run"])(
+  "dispatch contract: rule 3 %s refuses before writing any state",
+  async (command) => {
+    const f = await fixture();
+    const records = ["timeout-first", "timeout-second"].flatMap((id, index) => [
+      {
+        kind: "started",
+        id,
+        at: "2026-10-14T01:00:00Z",
+        ticket: "pin",
+        writes: [],
+        cwd: f.root,
+        workspace: f.root,
+        row: "terra-high",
+        dispatcher_session: null,
+        vendor_session: "vendor-session",
+        continues: index === 0 ? null : "timeout-first",
+        pid: 0,
+      },
+      {
+        kind: "ended",
+        id,
+        at: "2026-10-14T01:10:00Z",
+        exit: 3,
+        outcome: "timeout",
+        report_path: null,
+        vendor_session: "vendor-session",
+        verify: [],
+      },
+    ]);
+    writeFileSync(
+      join(f.state, "records.jsonl"),
+      records.map((record) => JSON.stringify(record)).join("\n") + "\n",
+    );
+    const before = readFileSync(join(f.state, "records.jsonl"), "utf8");
+    const paths = () =>
+      [
+        ...new Bun.Glob("**/*").scanSync({
+          cwd: f.root,
+          dot: true,
+          onlyFiles: false,
+        }),
+      ].toSorted();
+    const beforePaths = paths();
+    const refused = f.resume("timeout-sec", {}, undefined, false, [], command);
+    expect(refused.exitCode, refused.stderr.toString()).toBe(2);
+    expect(refused.stdout.toString()).toBe("");
+    expect(refused.stderr.toString()).toBe(
+      "agx: time-box-lineage: runs timeout-second, timeout-first timed out in one continuation lineage; repair: raise timeout_s above the last timed-out run and add a 'Time box raised:' line, or list split-off tickets on a 'Split into:' line\n",
+    );
+    expect(readFileSync(join(f.state, "records.jsonl"), "utf8")).toBe(before);
+    expect(paths()).toEqual(beforePaths);
+  },
+);
+
 test.each([false, true])(
   "dispatch contract: rule 2 (ticket amended=%s)",
   async (amended) => {
