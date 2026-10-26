@@ -131,6 +131,12 @@ async function jjOut(
   args: string[],
   cwd: string,
   readonly: boolean,
+  missingWorkspace?: {
+    name: string;
+    dir: string;
+    commit: string;
+    trunk: string | null;
+  },
 ): Promise<Attempt<string>> {
   // All forget callers, including adoption and readiness rollback, cross this boundary.
   if (args[0] === "workspace" && args[1] === "forget") {
@@ -139,10 +145,12 @@ async function jjOut(
     const repo = resolveRepo(cwd);
     if (!repo.ok) return repo;
     const root = await jjOut(["workspace", "root", "--name", name], cwd, true);
-    if (!root.ok) return root;
-    const allowed = await removalGuard(
+    const allowed = await guardWorkspaceForget(
       repo.value,
-      resolve(cwd, root.value.trim()),
+      cwd,
+      name,
+      root,
+      missingWorkspace,
     );
     if (!allowed.ok) return allowed;
   }
@@ -318,6 +326,27 @@ function miseStateDir(): string {
       : stateHome,
     "mise",
   );
+}
+
+async function guardWorkspaceForget(
+  repo: Repo,
+  cwd: string,
+  name: string,
+  root: Attempt<string>,
+  missing?: { name: string; dir: string; commit: string; trunk: string | null },
+): Promise<Attempt<void>> {
+  if (missing === undefined) {
+    if (!root.ok) return root;
+    return removalGuard(repo, resolve(cwd, root.value.trim()));
+  }
+  if (missing.name !== name)
+    return bad("missing workspace proof does not match forget target");
+  if (
+    root.ok &&
+    realOr(resolve(cwd, root.value.trim())) !== realOr(missing.dir)
+  )
+    return bad("workspace registration changed before forgetting");
+  return verifyMissingWorkspaceForget(repo, missing);
 }
 
 function pathIsInside(root: string, target: string): boolean {
@@ -983,7 +1012,13 @@ export type GcOptions = {
   abandoned?: boolean;
 };
 
-type Workspace = { name: string; dir: string; change?: string; age?: string };
+type Workspace = {
+  name: string;
+  dir: string;
+  change?: string;
+  age?: string;
+  commit?: string;
+};
 type Classification = {
   verdict: string;
   change: string;
@@ -998,6 +1033,22 @@ const gcGraceMinutes = (options: GcOptions): number =>
 const gcInventoryTimeoutMs = (options: GcOptions): number =>
   (options.inventorySeconds ?? 10) * 1000;
 const MAX_PRESERVED_RESULT_BYTES = 16 * 1024 * 1024;
+
+async function registeredWorkspaceRoot(
+  repo: Repo,
+  name: string,
+  recordedRoot: string | null,
+): Promise<Attempt<string>> {
+  if (recordedRoot !== null) return good(recordedRoot);
+  const root = await jjOut(
+    ["-R", repo.backing, "workspace", "root", "--name", name],
+    repo.backing,
+    true,
+  );
+  return root.ok
+    ? good(root.value.trim())
+    : bad(`cannot resolve workspace ${name}: ${msg(root)}`);
+}
 
 async function applyGcGrace(
   ws: Workspace,
@@ -1057,7 +1108,7 @@ async function workspaces(repo: Repo): Promise<Attempt<Workspace[]>> {
       "workspace",
       "list",
       "-T",
-      'json(name) ++ "\\t" ++ target.change_id().short(12) ++ "\\t" ++ target.committer().timestamp().ago() ++ "\\n"',
+      'json(name) ++ "\\t" ++ json(self.root()) ++ "\\t" ++ target.change_id().short(12) ++ "\\t" ++ target.committer().timestamp().ago() ++ "\\t" ++ target.commit_id() ++ "\\n"',
     ],
     repo.backing,
     true,
@@ -1065,25 +1116,32 @@ async function workspaces(repo: Repo): Promise<Attempt<Workspace[]>> {
   if (!listed.ok) return listed;
   const found: Workspace[] = [];
   for (const line of listed.value.trim().split("\n").filter(Boolean)) {
-    const [encoded, change, age] = line.split("\t");
-    const parsed = jsonOf(z.string().min(1)).safeParse(encoded);
-    if (!parsed.success)
+    const [encodedName, encodedRoot, change, age, commit] = line.split("\t");
+    const parsedName = jsonOf(z.string().min(1)).safeParse(encodedName);
+    const parsedRoot = jsonOf(z.string().nullable()).safeParse(encodedRoot);
+    const parsedCommit = z.string().min(1).safeParse(commit);
+    if (!parsedName.success || !parsedRoot.success || !parsedCommit.success)
       return bad("invalid workspace name from jj workspace list");
-    const name = parsed.data;
-    const root = await jjOut(
-      ["-R", repo.backing, "workspace", "root", "--name", name],
-      repo.backing,
-      true,
+    const name = parsedName.data;
+    const resolvedRoot = await registeredWorkspaceRoot(
+      repo,
+      name,
+      parsedRoot.data,
     );
-    if (!root.ok) return bad(`cannot resolve workspace ${name}: ${msg(root)}`);
-    const resolvedRoot = root.value.trim();
-    if (resolvedRoot === "")
+    if (!resolvedRoot.ok) return resolvedRoot;
+    if (resolvedRoot.value === "")
       return bad(
         `no recorded path for workspace ${name}; refusing incomplete enumeration`,
       );
-    const dir = resolve(repo.backing, resolvedRoot);
+    const dir = resolve(repo.backing, resolvedRoot.value);
     if (realOr(dir) !== realOr(repo.backing))
-      found.push({ name, dir, change: change ?? "?", age: age ?? "?" });
+      found.push({
+        name,
+        dir,
+        change: change ?? "?",
+        age: age ?? "?",
+        commit: parsedCommit.data,
+      });
   }
   const siblings = await attempt(() =>
     readdir(repo.wsRoot, { withFileTypes: true }),
@@ -1106,6 +1164,66 @@ async function workspaces(repo: Repo): Promise<Attempt<Workspace[]>> {
       found.push({ name: entry.name, dir, change: "?", age: "?" });
   }
   return good(found);
+}
+
+async function workspaceCommitReachable(
+  repo: Repo,
+  commit: string,
+  trunk: string | null,
+): Promise<Attempt<boolean>> {
+  const reachableFrom = [
+    ...(trunk === null ? [] : [`::(${trunk})`]),
+    "::remote_bookmarks()",
+  ];
+  const found = await jjOut(
+    [
+      "log",
+      "--no-graph",
+      "-r",
+      `${commit} & (${reachableFrom.join(" | ")})`,
+      "-T",
+      "commit_id",
+    ],
+    repo.backing,
+    true,
+  );
+  if (!found.ok) return found;
+  return good(found.value.trim() === commit);
+}
+
+async function verifyMissingWorkspaceForget(
+  repo: Repo,
+  missing: { name: string; dir: string; commit: string; trunk: string | null },
+): Promise<Attempt<void>> {
+  const directory = await attempt(() => lstat(missing.dir));
+  if (directory.ok)
+    return bad("workspace directory reappeared before forgetting");
+  if (
+    !z.object({ code: z.literal("ENOENT") }).safeParse(directory.error).success
+  )
+    return bad(`cannot confirm missing workspace directory: ${msg(directory)}`);
+
+  const current = await workspaces(repo);
+  if (!current.ok) return current;
+  const record = current.value.find(
+    (workspace) => workspace.name === missing.name,
+  );
+  if (
+    record === undefined ||
+    realOr(record.dir) !== realOr(missing.dir) ||
+    record.commit !== missing.commit
+  )
+    return bad("workspace registration changed before forgetting");
+
+  const reachable = await workspaceCommitReachable(
+    repo,
+    missing.commit,
+    missing.trunk,
+  );
+  if (!reachable.ok) return reachable;
+  return reachable.value
+    ? good(undefined)
+    : bad("workspace commit is not reachable from trunk or a remote bookmark");
 }
 
 function keepEntries(repo: Repo, cfg: Config, ws: Workspace): string[] {
@@ -2422,6 +2540,14 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
           ? "ws"
           : "legacy";
       const readable = await attempt(() => readdir(ws.dir));
+      const directoryInfo = readable.ok
+        ? undefined
+        : await attempt(() => lstat(ws.dir));
+      const missingDirectory =
+        directoryInfo !== undefined &&
+        !directoryInfo.ok &&
+        z.object({ code: z.literal("ENOENT") }).safeParse(directoryInfo.error)
+          .success;
       let c: Classification;
       if (!readable.ok) {
         broken.push(ws.dir);
@@ -2429,7 +2555,9 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
           verdict: "broken",
           change: ws.change ?? "?",
           age: ws.age ?? "?",
-          reason: `workspace unavailable: ${ws.dir}: ${msg(readable)}`,
+          reason: missingDirectory
+            ? `directory missing: ${ws.dir}`
+            : `workspace unavailable: ${ws.dir}: ${msg(readable)}`,
           collect: false,
         };
       } else {
@@ -2463,6 +2591,51 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
             : "; unrecorded; pass --include-unrecorded to collect";
       if (c.verdict === "abandoned" && options.abandoned !== true)
         reason += "; report only; pass --abandoned to collect";
+      if (missingDirectory && !options.dryRun) {
+        const forgotten = await withLock<string>(
+          repo,
+          `agx ws gc ${ws.name}`,
+          async () => {
+            const currentConfig = await readConfig(repo);
+            if (!currentConfig.ok) return currentConfig;
+            if (protectedWorkspace(repo, currentConfig.value, ws))
+              return good("workspace is kept by .ws.toml; record retained");
+            const currentTrunk = await trunkCommit(repo, currentConfig.value);
+            if (!currentTrunk.ok) return currentTrunk;
+            const currentRecords = await agxRecords(repo.backing);
+            if (!currentRecords.ok) return currentRecords;
+            const blocked = runRemovalReason(ws.dir, currentRecords.value);
+            if (blocked !== undefined)
+              return good(`record retained: ${blocked}`);
+            const occupied = busy(realOr(ws.dir));
+            if (occupied !== undefined)
+              return good(`record retained: ${occupied}`);
+            if (ws.commit === undefined)
+              return good(
+                "record retained: workspace target commit is unavailable",
+              );
+            const forgetResult = await jjOut(
+              ["workspace", "forget", ws.name],
+              repo.backing,
+              false,
+              {
+                name: ws.name,
+                dir: ws.dir,
+                commit: ws.commit,
+                trunk: currentTrunk.value,
+              },
+            );
+            return forgetResult.ok
+              ? good("workspace record forgotten after reachability check")
+              : good(`record retained: ${msg(forgetResult)}`);
+          },
+          (busyReason) =>
+            good(`record retained: collection skipped: ${busyReason}`),
+        );
+        reason += forgotten.ok
+          ? `; ${forgotten.value}`
+          : `; record retained: ${msg(forgotten)}`;
+      }
       if (c.collect && allowed && !options.dryRun) {
         const done = await withLock<Classification>(
           repo,

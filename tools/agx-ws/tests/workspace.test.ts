@@ -22,7 +22,14 @@ import {
 } from "node:fs";
 import { tmpdir, hostname } from "node:os";
 import { delimiter, join } from "node:path";
-import { mkdir, chmod, unlink, lstat, symlink, truncate } from "node:fs/promises";
+import {
+  mkdir,
+  chmod,
+  unlink,
+  lstat,
+  symlink,
+  truncate,
+} from "node:fs/promises";
 import { jsonOf, z } from "../../shared/src/zod.ts";
 import { rootFileFileset, untrackedContent } from "../src/workspace.ts";
 
@@ -1215,8 +1222,7 @@ describe("agx ws gc", () => {
     const dryBroken = dryResult.data.rows.filter((row) => row[2] === "broken");
     expect(dryBroken).toHaveLength(1);
     expect(dryBroken[0]?.[0]).toBe(missing);
-    expect(dryBroken[0]?.[5]).toContain(missing);
-    expect(dryBroken[0]?.[5]).toContain("ENOENT");
+    expect(dryBroken[0]?.[5]).toContain(`directory missing: ${missing}`);
     expect(dryResult.data.broken).toEqual([missing]);
     expect(dryResult.data.complete).toBe(false);
     expect(
@@ -1242,6 +1248,127 @@ describe("agx ws gc", () => {
     ).toBe(true);
     expect(realResult.data.broken).toEqual([missing]);
     expect(existsSync(healthy)).toBe(false);
+  });
+
+  test("multiple missing directories stay as broken rows while real gc forgets reachable records", async () => {
+    const path = await repo('trunk = "main"\n');
+    setRecords([]);
+    const missing = [
+      wsDir(path, "missing-a"),
+      wsDir(path, "missing-b"),
+    ] as const;
+    const healthy = wsDir(path, "healthy");
+    mkdirSync(join(path, "..", "proj.ws"), { recursive: true });
+    for (const [slug, dir] of [
+      ["missing-a", missing[0]],
+      ["missing-b", missing[1]],
+      ["healthy", healthy],
+    ] as const) {
+      expect(
+        (
+          await jj(
+            ["workspace", "add", "--name", `ws_${slug}`, "-r", "main", dir],
+            path,
+          )
+        ).code,
+      ).toBe(0);
+    }
+    expect(
+      (await jj(["new", "ws_missing-a@", "ws_missing-b@"], path)).code,
+    ).toBe(0);
+    expect((await jj(["bookmark", "set", "main", "-r", "@"], path)).code).toBe(
+      0,
+    );
+    for (const dir of missing) rmSync(dir, { recursive: true, force: true });
+
+    const dry = await ws(
+      ["gc", "--dry-run", "--include-unrecorded", "--json"],
+      path,
+    );
+    expect(dry.code, dry.err).toBe(1);
+    const dryResult = gcRows.safeParse(dry.out);
+    expect(dryResult.success, dry.out).toBe(true);
+    if (!dryResult.success) return;
+    expect(dryResult.data.rows).toHaveLength(3);
+    expect(
+      dryResult.data.rows.filter((row) => row[2] === "broken"),
+    ).toHaveLength(2);
+    for (const dir of missing)
+      expect(dryResult.data.rows.find((row) => row[0] === dir)?.[5]).toContain(
+        `directory missing: ${dir}`,
+      );
+    expect(
+      dryResult.data.rows.some(
+        (row) =>
+          row[0] === healthy && ["empty", "landed"].includes(row[2] ?? ""),
+      ),
+    ).toBe(true);
+
+    const real = await ws(["gc", "--include-unrecorded", "--json"], path);
+    expect(real.code, real.err).toBe(1);
+    const realResult = gcRows.safeParse(real.out);
+    expect(realResult.success, real.out).toBe(true);
+    if (!realResult.success) return;
+    expect(realResult.data.rows).toHaveLength(3);
+    expect(
+      realResult.data.rows.filter((row) => row[2] === "broken"),
+    ).toHaveLength(2);
+    expect(
+      realResult.data.rows.find((row) => row[0] === missing[0])?.[5],
+    ).toContain("workspace record forgotten");
+    expect(
+      realResult.data.rows.some(
+        (row) => row[0] === healthy && row[2] === "collected",
+      ),
+    ).toBe(true);
+    expect((await jj(["workspace", "list"], path)).out).not.toContain(
+      "ws_missing-a",
+    );
+    expect((await jj(["workspace", "list"], path)).out).not.toContain(
+      "ws_missing-b",
+    );
+    expect(existsSync(healthy)).toBe(false);
+  });
+
+  test("a missing workspace with an unpushed commit keeps its jj record", async () => {
+    const path = await repo('trunk = "main"\n');
+    setRecords([]);
+    const missing = wsDir(path, "missing-unpushed");
+    mkdirSync(join(path, "..", "proj.ws"), { recursive: true });
+    expect(
+      (
+        await jj(
+          [
+            "workspace",
+            "add",
+            "--name",
+            "ws_missing-unpushed",
+            "-r",
+            "main",
+            missing,
+          ],
+          path,
+        )
+      ).code,
+    ).toBe(0);
+    await Bun.write(join(missing, "unpushed.txt"), "keep this commit\n");
+    expect((await jj(["commit", "-m", "unpushed"], missing)).code).toBe(0);
+    rmSync(missing, { recursive: true, force: true });
+
+    const real = await ws(["gc", "--include-unrecorded", "--json"], path);
+    expect(real.code, real.err).toBe(1);
+    const result = gcRows.safeParse(real.out);
+    expect(result.success, real.out).toBe(true);
+    if (!result.success) return;
+    const row = result.data.rows.find((candidate) => candidate[0] === missing);
+    expect(row?.[2]).toBe("broken");
+    expect(row?.[5]).toContain(`directory missing: ${missing}`);
+    expect(row?.[5]).toContain(
+      "workspace commit is not reachable from trunk or a remote bookmark",
+    );
+    expect((await jj(["workspace", "list"], path)).out).toContain(
+      "ws_missing-unpushed",
+    );
   });
 
   test("help explains where and how to declare kept workspaces", async () => {
