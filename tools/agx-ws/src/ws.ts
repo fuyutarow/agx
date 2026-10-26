@@ -216,7 +216,7 @@ const gcCommand = command(
     ignoreArgv: rejectPrototypeFlag,
     help: {
       description:
-        'Enumerate jj workspaces. Print TSV: path, kind, verdict, change id, age, reason. Legacy workspaces are report-only until --legacy. Keep a workspace by setting `keep = ["ws_<name>"]` in the main checkout root `.ws.toml` (example: `keep = ["ws_reference"]`). The working file takes precedence; when absent, GC reads that file from the parent revision. agx ws add is the only creator.',
+        'Enumerate jj workspaces. Print TSV: path, kind, verdict, change id, age, reason. Unreadable workspaces are reported as broken; the command exits nonzero while preserving the other rows. Legacy workspaces are report-only until --legacy. Keep a workspace by setting `keep = ["ws_<name>"]` in the main checkout root `.ws.toml` (example: `keep = ["ws_reference"]`). The working file takes precedence; when absent, GC reads that file from the parent revision. agx ws add is the only creator.',
     },
     flags: {
       dryRun: { type: Boolean, description: "report only; remove nothing" },
@@ -284,6 +284,7 @@ const gcCommand = command(
         JSON.stringify({
           rows,
           counts: done.value.counts,
+          broken: done.value.broken,
           complete: done.value.complete,
           repositories: done.value.repositories,
           discovery: done.value.discovery,
@@ -302,6 +303,8 @@ const gcCommand = command(
     }
     if (done.value.failed.length > 0)
       fail(`could not collect: ${done.value.failed.join(", ")}`);
+    if (done.value.broken.length > 0)
+      fail(`broken workspaces: ${done.value.broken.join(", ")}`);
   },
 );
 

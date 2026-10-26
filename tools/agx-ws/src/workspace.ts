@@ -2124,10 +2124,12 @@ function gcCounts(lines: string[]) {
     legacy: rows.filter((row) => row[1] === "legacy").length,
   };
 }
+
 type GcResult = {
   lines: string[];
   failed: string[];
   counts: ReturnType<typeof gcCounts>;
+  broken: string[];
   complete: boolean;
   repositories?: Array<{
     root: string;
@@ -2174,7 +2176,12 @@ export async function untrackedContent(
   regenerable: string[],
   timeoutMs = 10_000,
   resultDirs: string[] = [],
-): Promise<Attempt<{ count: number; paths: string[] }>> {
+): Promise<
+  Attempt<{
+    count: number;
+    paths: string[];
+  }>
+> {
   const tracked = await runStep(
     [
       "jj",
@@ -2231,7 +2238,10 @@ export async function untrackedContent(
     return good(undefined);
   };
   const walk = async (): Promise<
-    Attempt<{ count: number; paths: string[] }>
+    Attempt<{
+      count: number;
+      paths: string[];
+    }>
   > => {
     while (pending.length > 0) {
       if (timedOut()) return bad("inventory timed out");
@@ -2273,21 +2283,35 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
     if (!records.ok) return records;
     const lines: string[] = [];
     const failed: string[] = [];
+    const broken: string[] = [];
     for (const ws of candidates.value) {
       const kind =
         dirname(resolve(ws.dir)) === resolve(repo.wsRoot) &&
         basename(resolve(ws.dir)).startsWith("ws_")
           ? "ws"
           : "legacy";
-      let c = await classify(
-        repo,
-        cfg.value,
-        ws,
-        records.value,
-        trunk.value.commit,
-        true,
-      );
-      c = await applyGcGrace(ws, c, gcGraceMinutes(options));
+      const readable = await attempt(() => readdir(ws.dir));
+      let c: Classification;
+      if (!readable.ok) {
+        broken.push(ws.dir);
+        c = {
+          verdict: "broken",
+          change: ws.change ?? "?",
+          age: ws.age ?? "?",
+          reason: `workspace unavailable: ${ws.dir}: ${msg(readable)}`,
+          collect: false,
+        };
+      } else {
+        c = await classify(
+          repo,
+          cfg.value,
+          ws,
+          records.value,
+          trunk.value.commit,
+          true,
+        );
+        c = await applyGcGrace(ws, c, gcGraceMinutes(options));
+      }
       let label = c.verdict;
       let reason = c.reason;
       const recorded = lineageOf(records.value, realOr(ws.dir)).length > 0;
@@ -2394,9 +2418,13 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
       lines,
       failed,
       counts: gcCounts(lines),
+      broken,
       complete:
         failed.length === 0 &&
-        !lines.some((line) => line.split("\t")[2] === "unknown"),
+        broken.length === 0 &&
+        !lines.some((line) =>
+          ["unknown", "broken"].includes(line.split("\t")[2] ?? ""),
+        ),
     };
     if (!options.dryRun && failed.length === 0)
       await publishVerdicts(repo.backing, result);
@@ -2576,6 +2604,7 @@ export async function gcAll(
   const failed: string[] = [];
   const seen = new Set<string>();
   const repositories: NonNullable<GcResult["repositories"]> = [];
+  const broken: string[] = [];
   for (const [path, sources] of [...roots].toSorted(([a], [b]) =>
     a.localeCompare(b),
   )) {
@@ -2611,6 +2640,7 @@ export async function gcAll(
     });
     lines.push(...done.value.lines);
     failed.push(...done.value.failed);
+    broken.push(...done.value.broken);
   }
   const discovery = {
     state: repositories.filter((repo) => repo.sources.includes("state")).length,
@@ -2625,9 +2655,13 @@ export async function gcAll(
     repositories,
     discovery,
     counts: gcCounts(lines),
+    broken,
     complete:
       failed.length === 0 &&
-      !lines.some((line) => line.split("\t")[2] === "unknown"),
+      broken.length === 0 &&
+      !lines.some((line) =>
+        ["unknown", "broken"].includes(line.split("\t")[2] ?? ""),
+      ),
   };
   if (!options.dryRun && failed.length === 0)
     await publishVerdicts(undefined, result, seen);

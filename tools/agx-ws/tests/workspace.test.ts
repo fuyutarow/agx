@@ -127,6 +127,13 @@ const pathExists = (dir: string): Promise<boolean> =>
     () => true,
     () => false,
   );
+const gcRows = jsonOf(
+  z.object({
+    rows: z.array(z.array(z.string())),
+    broken: z.array(z.string()),
+    complete: z.boolean(),
+  }),
+);
 
 describe("AGX-GC-UNTRACKED-KEEP-1024", () => {
   test("counts every entry, samples five paths and refuses expired inventories", async () => {
@@ -1051,6 +1058,62 @@ describe("agx ws rm", () => {
 });
 
 describe("agx ws gc", () => {
+  test("broken workspace rows do not stop dry-run or real gc", async () => {
+    const path = await repo('trunk = "main"\n');
+    setRecords([]);
+    await ws(["add", "broken"], path);
+    await ws(["add", "healthy"], path);
+    const missing = wsDir(path, "broken");
+    const healthy = wsDir(path, "healthy");
+    rmSync(missing, { recursive: true, force: true });
+
+    const dry = await ws(["gc", "--dry-run", "--json"], path);
+    const plain = await ws(["gc", "--dry-run"], path);
+    expect(plain.code, plain.err).toBe(1);
+    const plainRows = plain.out
+      .trim()
+      .split("\n")
+      .map((line) => line.split("\t"));
+    expect(plainRows.filter((row) => row[2] === "broken")).toHaveLength(1);
+    expect(
+      plainRows.some((row) => row[0] === healthy && row[2] === "empty"),
+    ).toBe(true);
+    expect(dry.code, dry.err).toBe(1);
+    const dryResult = gcRows.safeParse(dry.out);
+    expect(dryResult.success, dry.out).toBe(true);
+    if (!dryResult.success) return;
+    const dryBroken = dryResult.data.rows.filter((row) => row[2] === "broken");
+    expect(dryBroken).toHaveLength(1);
+    expect(dryBroken[0]?.[0]).toBe(missing);
+    expect(dryBroken[0]?.[5]).toContain(missing);
+    expect(dryBroken[0]?.[5]).toContain("ENOENT");
+    expect(dryResult.data.broken).toEqual([missing]);
+    expect(dryResult.data.complete).toBe(false);
+    expect(
+      dryResult.data.rows.some(
+        (row) => row[0] === healthy && row[2] === "empty",
+      ),
+    ).toBe(true);
+
+    const real = await ws(["gc", "--include-unrecorded", "--json"], path);
+    expect(real.code, real.err).toBe(1);
+    const realResult = gcRows.safeParse(real.out);
+    expect(realResult.success, real.out).toBe(true);
+    if (!realResult.success) return;
+    expect(
+      realResult.data.rows.some(
+        (row) => row[0] === missing && row[2] === "broken",
+      ),
+    ).toBe(true);
+    expect(
+      realResult.data.rows.some(
+        (row) => row[0] === healthy && row[2] === "collected",
+      ),
+    ).toBe(true);
+    expect(realResult.data.broken).toEqual([missing]);
+    expect(existsSync(healthy)).toBe(false);
+  });
+
   test("help explains where and how to declare kept workspaces", async () => {
     const path = await repo();
     const result = await ws(["gc", "--help"], path);
@@ -1059,6 +1122,9 @@ describe("agx ws gc", () => {
     expect(result.out).toContain('keep = ["ws_reference"]');
     expect(result.out).toContain("main checkout root `.ws.toml`");
     expect(result.out).toContain("parent revision");
+    expect(result.out).toContain(
+      "Unreadable workspaces are reported as broken",
+    );
   });
 
   test("reports narrowed sparse patterns even for an unrecorded workspace", async () => {
