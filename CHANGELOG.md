@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.13.5 — 2026-10-26
+
+- Revert Jev acceptance intervals, cost per accepted result and the cheaper-option rule; Jev requests no longer depend on local run history
+
 ## 1.13.4 — 2026-10-26
 
 - Include Wilson acceptance intervals and expected cost per accepted result in Jev routing evidence
