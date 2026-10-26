@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.13.12 — 2026-10-26
+
+- Print a receipt after recording a worker judgment
+- Wait for active runs before continuing and refuse duplicate continuations
+
 ## 1.13.11 — 2026-10-26
 
 - Revert the machine-wide worker cap; it counted every coordinator's runs and refused all dispatches
