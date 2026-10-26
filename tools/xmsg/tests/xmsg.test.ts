@@ -207,6 +207,7 @@ async function run(
       }>;
     }>;
     codexError?: boolean;
+    codexDelivery?: "active" | "idle";
     replyAfterReads?: number;
     inventory?: string;
     inventorySequence?: string[];
@@ -281,11 +282,23 @@ async function run(
   }
   let server: ReturnType<typeof Bun.serve> | undefined;
   let readCount = 0;
-  if (options.threads !== undefined || options.codexError === true) {
+  let sawLoadedList = false;
+  let deliveryUnavailable = false;
+  const rpcCalls: Array<{ method: string; params: Record<string, unknown> }> =
+    [];
+  if (
+    options.threads !== undefined ||
+    options.codexError === true ||
+    options.codexDelivery !== undefined
+  ) {
     await mkdir(join(root, "app-server-control"));
     server = Bun.serve({
       unix: join(root, "app-server-control", "app-server-control.sock"),
       fetch(request, endpoint) {
+        if (deliveryUnavailable) {
+          void endpoint.stop(true);
+          return;
+        }
         if (!endpoint.upgrade(request, { data: undefined }))
           void endpoint.stop(true);
       },
@@ -295,12 +308,24 @@ async function run(
             z.object({
               id: z.number(),
               method: z.string(),
-              params: z.object({ threadId: z.string().optional() }).loose(),
+              params: z
+                .object({
+                  threadId: z.string().optional(),
+                  includeTurns: z.boolean().optional(),
+                })
+                .loose(),
             }),
           ).safeParse(String(raw));
           if (!parsedRequest.success) return;
           const request = parsedRequest.data;
-          const methods = ["initialize", "thread/loaded/list", "thread/read"];
+          rpcCalls.push({ method: request.method, params: request.params });
+          const methods = [
+            "initialize",
+            "thread/loaded/list",
+            "thread/read",
+            "turn/steer",
+            "turn/start",
+          ];
           expect(methods).toContain(request.method);
           if (options.codexError === true) {
             ws.send(
@@ -312,31 +337,73 @@ async function run(
             return;
           }
           let response: unknown = {};
-          if (request.method === "thread/loaded/list")
+          if (request.method === "thread/loaded/list") {
+            sawLoadedList = true;
             response = {
               data: options.threads?.map((t) => t.id),
               nextCursor: null,
             };
+          }
           if (request.method === "thread/read") {
             readCount++;
-            response = {
-              thread: options.threads
-                ?.map((t) =>
-                  readCount < (options.replyAfterReads ?? 0)
-                    ? { ...t, turns: [] }
-                    : t,
-                )
-                .find((t) => t.id === request.params.threadId),
-            };
+            const selectedThread = options.threads?.find(
+              (t) => t.id === request.params.threadId,
+            );
+            const statusType =
+              options.codexDelivery ?? selectedThread?.status.type;
+            let turns: unknown[] = [];
+            const shouldLoadReadTurns =
+              options.codexDelivery === undefined &&
+              request.params.includeTurns === true;
+            if (options.codexDelivery === "active")
+              turns = [{ id: "turn-active", status: "inProgress" }];
+            else if (shouldLoadReadTurns)
+              turns =
+                readCount < (options.replyAfterReads ?? 0)
+                  ? []
+                  : (selectedThread?.turns ?? []);
+            const activeTurnMissing =
+              shouldLoadReadTurns &&
+              turns.length === 0 &&
+              selectedThread?.status.type === "active";
+            if (activeTurnMissing)
+              turns = [{ id: "turn-fixture", status: "inProgress" }];
+            let thread: unknown;
+            if (selectedThread !== undefined) {
+              thread = {
+                ...selectedThread,
+                status: { type: statusType ?? selectedThread.status.type },
+                ...(request.params.includeTurns === true ? { turns } : {}),
+              };
+            }
+            response = { thread };
           }
+          if (request.method === "turn/steer")
+            response = { turnId: "turn-active" };
+          if (request.method === "turn/start")
+            response = { turn: { id: "turn-started" } };
           await Bun.sleep(options.discoveryDelay ?? 0);
           ws.send(JSON.stringify({ id: request.id, result: response }));
+          if (
+            options.codexDelivery === undefined &&
+            options.replyAfterReads === undefined &&
+            sawLoadedList &&
+            request.method === "thread/read" &&
+            request.params.includeTurns !== true &&
+            readCount >= (options.threads?.length ?? 0)
+          )
+            deliveryUnavailable = true;
         },
       },
     });
   }
   const kind = options.kind ?? "claude";
-  if (options.threads !== undefined || options.codexError === true) {
+  if (
+    (options.kind === "codex" && options.missing !== true) ||
+    options.threads !== undefined ||
+    options.codexError === true ||
+    options.codexDelivery !== undefined
+  ) {
     const codex = join(root, "codex");
     await Bun.write(
       codex,
@@ -453,6 +520,7 @@ process.exit(Number(process.env.XMSG_FAKE_EXIT ?? 0));
     called,
     calls: parsed?.success === true ? parsed.data : [],
     argv: parsed?.success === true ? (parsed.data.at(-1) ?? []) : [],
+    rpcCalls,
   };
 }
 
@@ -1003,6 +1071,97 @@ test("listing rejects record overflow without inventing a partial vendor invento
 
 const uuidA = "deadbeef-1234-4abc-8def-0123456789ab";
 const uuidB = "deadbeef-2234-4abc-8def-0123456789ab";
+const codexDeliveryArgs = (id: string) => [
+  "send",
+  "--to",
+  `codex:${id}`,
+  "--message",
+  message,
+];
+
+test("Codex active turn is delivered with turn/steer", async () => {
+  const r = await run({
+    kind: "codex",
+    codexDelivery: "active",
+    threads: [{ id: uuidA, status: { type: "active" } }],
+    args: codexDeliveryArgs(uuidA),
+  });
+  expect(r.exit).toBe(0);
+  expect(r.stdout).toContain("path=steered");
+  expect(r.rpcCalls.map((call) => call.method)).toEqual([
+    "initialize",
+    "thread/read",
+    "turn/steer",
+  ]);
+  expect(r.rpcCalls.at(-1)?.params).toEqual({
+    threadId: uuidA,
+    expectedTurnId: "turn-active",
+    input: [{ type: "text", text: envelope(message) }],
+  });
+});
+
+test("Codex immediate turn start delivers to an idle thread", async () => {
+  const r = await run({
+    kind: "codex",
+    codexDelivery: "idle",
+    threads: [{ id: uuidA, status: { type: "idle" } }],
+    args: codexDeliveryArgs(uuidA),
+  });
+  expect(r.exit).toBe(0);
+  expect(r.stdout).toContain("path=started");
+  expect(r.rpcCalls.map((call) => call.method)).toEqual([
+    "initialize",
+    "thread/read",
+    "turn/start",
+  ]);
+  expect(r.rpcCalls.at(-1)?.params).toEqual({
+    threadId: uuidA,
+    input: [{ type: "text", text: envelope(message) }],
+  });
+});
+
+test("Codex resolves an opaque thread ID before immediate turn start", async () => {
+  const id = "desktop-thread-1026";
+  const r = await run({
+    kind: "codex",
+    codexDelivery: "idle",
+    threads: [{ id, name: "worker", status: { type: "idle" } }],
+    args: codexDeliveryArgs(id),
+  });
+  expect(r.exit).toBe(0);
+  expect(r.stdout).toContain("path=started");
+  expect(r.rpcCalls.map((call) => call.method)).toEqual([
+    "initialize",
+    "thread/loaded/list",
+    "thread/read",
+    "initialize",
+    "thread/read",
+    "turn/start",
+  ]);
+  expect(r.rpcCalls.at(-1)?.params).toEqual({
+    threadId: id,
+    input: [{ type: "text", text: envelope(message) }],
+  });
+});
+
+test("Codex queue fallback runs only when the app-server socket is absent", async () => {
+  const r = await run({
+    kind: "codex",
+    args: codexDeliveryArgs(uuidA),
+    output: "Queued message for thread\n",
+  });
+  expect(r.exit).toBe(0);
+  expect(r.stdout).toContain("path=queued");
+  expect(r.rpcCalls).toEqual([]);
+  expect(r.argv).toEqual([
+    "queue",
+    "--thread",
+    uuidA,
+    "--message",
+    envelope(message),
+  ]);
+});
+
 const firstUuidThread = {
   id: uuidA,
   name: "first",
@@ -1181,16 +1340,16 @@ test.each(
 );
 
 test.each(["review (v2)", "dead*", "^dead[beef]$", "review? | {v2} \\ done"])(
-  "opaque native name is forwarded literally once, never matched as a prefix: %s",
+  "opaque native name resolves exactly before delivery: %s",
   async (name) => {
     const r = await run({
       kind: "codex",
-      threads: uuidThreads,
+      threads: [{ id: uuidA, name, status: { type: "idle" } }],
       args: sendArgs(`codex:${name}`),
     });
     expect(r.exit).toBe(0);
     expect(r.calls).toEqual([
-      ["queue", "--thread", name, "--message", envelope(message)],
+      ["queue", "--thread", uuidA, "--message", envelope(message)],
     ]);
   },
 );

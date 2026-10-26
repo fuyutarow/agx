@@ -555,3 +555,225 @@ export async function codexInputs(
 ): Promise<ThreadInput[]> {
   return (await codexRead(timeoutMs, threadId)).inputs;
 }
+
+export type CodexDelivery =
+  | { kind: "delivered"; path: "steered" | "started" }
+  | { kind: "unreachable"; error: Error }
+  | { kind: "rejected"; error: Error };
+
+/** Send through the already-running local app-server; only a pre-upgrade failure is queueable. */
+export async function codexDeliver(
+  threadId: string,
+  text: string,
+  timeoutMs: number,
+): Promise<CodexDelivery> {
+  const socketPath = join(
+    process.env.CODEX_HOME ?? join(homedir(), ".codex"),
+    "app-server-control",
+    "app-server-control.sock",
+  );
+  return new Promise((resolve) => {
+    let finished = false;
+    let upgraded = false;
+    let pending = Buffer.alloc(0);
+    let nextId = 1;
+    let stage: "initialize" | "read" | "deliver" = "initialize";
+    let activeTurnId: string | undefined;
+    const requestIds = new Map<number, string>();
+    const req = request({
+      socketPath,
+      path: "/",
+      headers: {
+        Connection: "Upgrade",
+        Upgrade: "websocket",
+        "Sec-WebSocket-Version": "13",
+        "Sec-WebSocket-Key": randomBytes(16).toString("base64"),
+      },
+    });
+    const timer = setTimeout(() => {
+      fail(new Error("Codex delivery deadline exceeded"));
+    }, timeoutMs);
+    let close: () => void = () => {
+      req.destroy();
+    };
+    function finish(result: CodexDelivery) {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      close();
+      resolve(result);
+    }
+    function fail(error: Error) {
+      finish(
+        upgraded ? { kind: "rejected", error } : { kind: "unreachable", error },
+      );
+    }
+    req.on("error", fail);
+    req.on("response", () => {
+      fail(new Error("Codex control socket did not upgrade"));
+    });
+    req.on("upgrade", (response, socket, head) => {
+      upgraded = true;
+      close = () => {
+        socket.destroy();
+        req.destroy();
+      };
+      if (response.statusCode !== 101) {
+        fail(new Error("Codex upgrade rejected"));
+        return;
+      }
+      function send(method: string, params: unknown) {
+        const id = nextId++;
+        requestIds.set(id, method);
+        const payload = Buffer.from(JSON.stringify({ id, method, params }));
+        const mask = randomBytes(4);
+        let headerLength = 14;
+        if (payload.length < 126) headerLength = 6;
+        else if (payload.length <= 0xffff) headerLength = 8;
+        const header = Buffer.alloc(headerLength);
+        header[0] = 0x81;
+        if (payload.length < 126) {
+          header[1] = 0x80 | payload.length;
+          mask.copy(header, 2);
+        } else if (payload.length <= 0xffff) {
+          header[1] = 0xfe;
+          header.writeUInt16BE(payload.length, 2);
+          mask.copy(header, 4);
+        } else {
+          header[1] = 0xff;
+          header.writeBigUInt64BE(BigInt(payload.length), 2);
+          mask.copy(header, 10);
+        }
+        for (let i = 0; i < payload.length; i++)
+          payload[i] = payload.readUInt8(i) ^ mask.readUInt8(i % 4);
+        socket.write(Buffer.concat([header, payload]));
+      }
+      function handleResponse(data: Buffer) {
+        const parsed = jsonOf(
+          z.object({
+            id: z.number().optional(),
+            result: z.unknown().optional(),
+            error: z.unknown().optional(),
+          }),
+        ).safeParse(data.toString());
+        if (!parsed.success) {
+          fail(new Error("Invalid Codex delivery RPC schema"));
+          return;
+        }
+        const rpc = parsed.data;
+        if (rpc.id === undefined) return;
+        const method = requestIds.get(rpc.id);
+        if (method === undefined) return;
+        requestIds.delete(rpc.id);
+        if (rpc.error !== undefined) {
+          fail(
+            new Error(
+              `Codex ${method}: ${JSON.stringify(rpc.error).slice(0, 500)}`,
+            ),
+          );
+          return;
+        }
+        if (method === "initialize") {
+          stage = "read";
+          send("thread/read", { threadId, includeTurns: true });
+          return;
+        }
+        if (method === "thread/read") {
+          const parsedThread = z
+            .object({
+              thread: z.object({
+                id: Id,
+                status: z.object({ type: z.string() }),
+                turns: z.array(
+                  z.object({ id: Id, status: z.string() }).loose(),
+                ),
+              }),
+            })
+            .safeParse(rpc.result);
+          if (
+            !parsedThread.success ||
+            parsedThread.data.thread.id !== threadId
+          ) {
+            fail(new Error("Invalid Codex delivery thread response"));
+            return;
+          }
+          const thread = parsedThread.data.thread;
+          const active = thread.turns.findLast(
+            (turn) => turn.status === "inProgress",
+          );
+          if (thread.status.type === "active" && active === undefined) {
+            fail(
+              new Error(
+                "Codex thread is active but has no readable active turn ID",
+              ),
+            );
+            return;
+          }
+          activeTurnId = active?.id;
+          stage = "deliver";
+          send(
+            activeTurnId === undefined ? "turn/start" : "turn/steer",
+            activeTurnId === undefined
+              ? { threadId, input: [{ type: "text", text }] }
+              : {
+                  threadId,
+                  expectedTurnId: activeTurnId,
+                  input: [{ type: "text", text }],
+                },
+          );
+          return;
+        }
+        if (stage === "deliver")
+          finish({
+            kind: "delivered",
+            path: activeTurnId === undefined ? "started" : "steered",
+          });
+      }
+      function consume(data: Buffer) {
+        pending = Buffer.concat([pending, data]);
+        while (pending.length >= 2) {
+          const first = pending[0] ?? 0;
+          const second = pending[1] ?? 0;
+          let length = second & 127;
+          let offset = 2;
+          if (length === 126 && pending.length < 4) return;
+          if (length === 126) {
+            length = pending.readUInt16BE(2);
+            offset = 4;
+          }
+          if (length === 127 && pending.length < 10) return;
+          const oversized =
+            length === 127 && pending.readBigUInt64BE(2) > BigInt(MAX_BYTES);
+          if (oversized) {
+            fail(new Error("Codex delivery frame exceeds 4 MiB limit"));
+            return;
+          }
+          if (length === 127) {
+            const big = pending.readBigUInt64BE(2);
+            length = Number(big);
+            offset = 10;
+          }
+          if (pending.length < offset + length) return;
+          if ((first & 128) === 0 || (second & 128) !== 0) {
+            fail(new Error("Unsupported fragmented/masked Codex frame"));
+            return;
+          }
+          const payload = pending.subarray(offset, offset + length);
+          pending = pending.subarray(offset + length);
+          if ((first & 15) === 1) handleResponse(payload);
+        }
+      }
+      socket.on("data", consume);
+      socket.on("error", fail);
+      socket.on("close", () => {
+        if (!finished) fail(new Error("Codex delivery connection closed"));
+      });
+      send("initialize", {
+        clientInfo: { name: "xmsg", version: "0.2.0" },
+        capabilities: { experimentalApi: true },
+      });
+      if (head.length > 0) consume(head);
+    });
+    req.end();
+  });
+}

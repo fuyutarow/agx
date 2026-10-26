@@ -3,7 +3,11 @@ import { cli } from "cleye";
 import packageJson from "../package.json" with { type: "json" };
 import { attempt, errorMessage } from "../../shared/src/attempt.ts";
 import { standardCli } from "../../shared/src/cli.ts";
-import { listRecipients, selectedInventory } from "./inventory.ts";
+import {
+  codexDeliver,
+  listRecipients,
+  selectedInventory,
+} from "./inventory.ts";
 import {
   canonicalUuid,
   resolveGlobalRecipientSelector,
@@ -61,6 +65,7 @@ async function send(
   sender: string,
   relayTarget = id,
 ): Promise<number> {
+  const transportStarted = performance.now();
   // Headers precede the blank line; never parse or strip the caller's body.
   const destination =
     kind === "claude" && canonicalUuid(id) !== undefined
@@ -70,26 +75,82 @@ async function send(
   // Known even if the child times out before its first frame.
   const relaySessionId = kind === "claude" ? crypto.randomUUID() : undefined;
   const relaySender = sender;
-  const args =
-    kind === "codex"
-      ? ["queue", "--thread", id, "--message", message]
-      : [
-          "--print",
-          "--name",
-          `agx msg relay from ${relaySender}`,
-          "--session-id",
-          relaySessionId ?? "",
-          "--model",
-          "haiku",
-          "--effort",
-          "low",
-          "--tools=ListAgents,SendMessage",
-          "--allowedTools=ListAgents,SendMessage",
-          "--output-format",
-          "stream-json",
-          "--verbose",
-          claudePrompt(relayTarget, message),
-        ];
+  if (kind === "codex") {
+    const delivered = await codexDeliver(id, message, timeoutMs);
+    if (delivered.kind === "delivered") {
+      process.stdout.write(
+        `agx msg: delivered for codex:${id} path=${delivered.path}\n`,
+      );
+      return 0;
+    }
+    if (delivered.kind === "rejected") {
+      process.stderr.write(
+        `agx msg: Codex app-server rejected delivery: ${errorMessage(delivered.error)}\n`,
+      );
+      return 1;
+    }
+    const remaining = Math.floor(
+      timeoutMs - (performance.now() - transportStarted),
+    );
+    if (delivered.error.message.includes("deadline") || remaining <= 0) {
+      process.stderr.write(
+        `agx msg: Codex app-server unavailable and send deadline exhausted: ${errorMessage(delivered.error)}\n`,
+      );
+      return 3;
+    }
+    process.stderr.write(
+      `agx msg: Codex app-server unreachable; using codex queue fallback: ${errorMessage(delivered.error)}\n`,
+    );
+    const timeout = AbortSignal.timeout(remaining);
+    const spawned = await attempt(() =>
+      Bun.spawn(["codex", "queue", "--thread", id, "--message", message], {
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "inherit",
+        signal: timeout,
+        killSignal: "SIGKILL",
+      }),
+    );
+    if (!spawned.ok) {
+      process.stderr.write(
+        `agx msg: transport unreachable: cannot start codex queue: ${errorMessage(spawned.error)}\n`,
+      );
+      return 3;
+    }
+    const queued = await attempt(() =>
+      Promise.all([spawned.value.exited, spawned.value.stdout.text()]),
+    );
+    if (!queued.ok) return unknown(errorMessage(queued.error));
+    const [code, output] = queued.value;
+    if (timeout.aborted) return unknown(`timed out after ${timeoutMs} ms`);
+    if (code !== 0) {
+      process.stderr.write(
+        `agx msg: codex queue fallback rejected the request (exit ${code})\n`,
+      );
+      return 1;
+    }
+    process.stdout.write(
+      `agx msg: delivered for codex:${id} path=queued${output === "" ? "" : `\n${output.trimEnd()}`}\n`,
+    );
+    return 0;
+  }
+  const args = [
+    "--print",
+    "--name",
+    `agx msg relay from ${relaySender}`,
+    "--session-id",
+    relaySessionId ?? "",
+    "--model",
+    "haiku",
+    "--effort",
+    "low",
+    "--tools=ListAgents,SendMessage",
+    "--allowedTools=ListAgents,SendMessage",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    claudePrompt(relayTarget, message),
+  ];
   const timeout = AbortSignal.timeout(timeoutMs);
   const spawned = await attempt(() =>
     Bun.spawn([kind, ...args], {
@@ -123,18 +184,6 @@ async function send(
   }
   if (timeout.aborted)
     return unknown(`timed out after ${timeoutMs} ms`, output, relaySessionId);
-  if (kind === "codex") {
-    if (code !== 0) {
-      process.stderr.write(
-        `agx msg: codex transport rejected the request (exit ${code})\n`,
-      );
-      return 1;
-    }
-    process.stdout.write(
-      output === "" ? `agx msg: accepted for codex:${id}\n` : output,
-    );
-    return 0;
-  }
   const receipt = claudeReceipt(output, message);
   if (code !== 0)
     return unknown(
@@ -409,6 +458,37 @@ async function main(): Promise<number> {
       return evidence.available ? 2 : 3;
     }
     target = canonicalUuid(resolution.recipient.id) ?? resolution.recipient.id;
+  } else if (
+    kind === "codex" &&
+    canonicalUuid(id) === undefined &&
+    !/^[0-9a-f-]+$/iu.test(id)
+  ) {
+    const inventory = await selectedInventory(
+      "codex",
+      Math.max(1, Math.floor(deadline - performance.now())),
+    );
+    const resolution = resolveRecipientSelector(
+      `codex:${id}`,
+      inventory.recipients,
+      inventory.evidence,
+    );
+    if (resolution.ok) {
+      target = resolution.recipient.id;
+    } else if (!inventory.evidence.available) {
+      target = id;
+    } else {
+      process.stderr.write(`agx msg: ${resolution.reason}\n`);
+      process.stderr.write(
+        resolution.candidates
+          .toSorted((a, b) => a.address.localeCompare(b.address))
+          .map(
+            (candidate) =>
+              `${candidate.address}\tname=${JSON.stringify(candidate.name)}\n`,
+          )
+          .join(""),
+      );
+      return 2;
+    }
   }
   let relayTarget = target;
   const uuid = canonicalUuid(target);

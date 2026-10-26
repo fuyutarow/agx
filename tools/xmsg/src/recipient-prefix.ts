@@ -34,7 +34,7 @@ export type RecipientResolution<R> =
 const UUID_SHAPE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 const UUID_INPUT_CHARS = /^[0-9a-f-]+$/iu;
-const WILDCARD_OR_PATTERN = "*?[]{}()^$|\\";
+const PATTERN_CHARS = "*?[]{}()^$|\\";
 
 export function canonicalUuid(value: string): string | undefined {
   const lower = value.toLowerCase();
@@ -206,8 +206,7 @@ export function resolveRecipientSelector<R extends RecipientCandidate>(
     separator < 1 ||
     vendor === undefined ||
     value.length === 0 ||
-    value.trim() !== value ||
-    value.split("").some((character) => WILDCARD_OR_PATTERN.includes(character))
+    value.trim() !== value
   )
     return failed(
       "invalid",
@@ -232,6 +231,24 @@ export function resolveRecipientSelector<R extends RecipientCandidate>(
       );
   }
 
+  const exactOpaqueIds = known.filter((candidate) => candidate.id === value);
+  if (exactOpaqueIds.length > 0) {
+    if (exactOpaqueIds.length > 1)
+      return failed(
+        "ambiguous",
+        exactOpaqueIds,
+        `More than one ${vendor} record has ID ${JSON.stringify(value)}.`,
+      );
+    if (evidence.vendor !== vendor || !evidence.available || !evidence.complete)
+      return failed(
+        "discovery-unavailable",
+        exactOpaqueIds,
+        "Cannot prove exact-ID uniqueness without complete selected-vendor inventory.",
+      );
+    const exactId = exactOpaqueIds.at(0);
+    if (exactId !== undefined) return resolved(exactId);
+  }
+
   const exactNames = known.filter((candidate) => candidate.name === value);
   if (exactNames.length > 0) {
     if (evidence.vendor !== vendor || !evidence.available || !evidence.complete)
@@ -249,6 +266,13 @@ export function resolveRecipientSelector<R extends RecipientCandidate>(
       `The exact ${vendor} name ${JSON.stringify(value)} belongs to multiple recipients.`,
     );
   }
+
+  if (value.split("").some((character) => PATTERN_CHARS.includes(character)))
+    return failed(
+      "invalid",
+      [],
+      "Use an exact registered name or a UUID selector; wildcard expansion is not supported.",
+    );
 
   const prefix = canonicalPrefix(value);
   const malformedUuid =
