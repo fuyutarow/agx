@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.14.0 — 2026-10-26
+
+- Classify remote-reachable workspace changes as pushed and allow their removal
+
 ## 1.13.14 — 2026-10-26
 
 - Keep Homebrew agx commands available during upgrades
