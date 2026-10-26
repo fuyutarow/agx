@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { mkdir, rm, copyFile, link, stat } from "node:fs/promises";
+import { mkdir, rm, copyFile, link, realpath, stat } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { err, ok, fromPromise } from "neverthrow";
 import { jsonOf, z } from "../zod.ts";
@@ -766,10 +766,10 @@ export type MachineOptions = {
   verifyIn?: string[] | undefined;
   waitSeconds?: number | undefined;
   pollSeconds?: number | undefined;
-  installSeconds?: number | undefined;
+  formulaSeconds?: number | undefined;
 };
 
-/** Start the tap-owned formula refresh, then keep this machine on its mise install. */
+/** Wait for the tap formula, install through Homebrew, and verify PATH consumers. */
 export async function machineSwap(
   version: string,
   options: MachineOptions = {},
@@ -788,14 +788,14 @@ export async function machineSwap(
     );
   const waitSeconds = options.waitSeconds ?? 900;
   const pollSeconds = options.pollSeconds ?? 5;
-  const installSeconds = options.installSeconds ?? 900;
+  const formulaSeconds = options.formulaSeconds ?? 900;
   if (
-    !Number.isFinite(installSeconds) ||
-    installSeconds <= 0 ||
-    installSeconds * 1000 > 2_147_483_647
+    !Number.isFinite(formulaSeconds) ||
+    formulaSeconds <= 0 ||
+    formulaSeconds * 1000 > 2_147_483_647
   )
     return err(
-      `install in ${home}: invalid install interval (expected positive seconds, at most 2147483.647)`,
+      `formula-wait in ${root}: invalid formula interval (expected positive seconds, at most 2147483.647)`,
     );
   if (
     !Number.isFinite(waitSeconds) ||
@@ -897,17 +897,56 @@ export async function machineSwap(
         `WARNING: tap formula workflow started, but its run URL was unavailable: ${listed.stderr}${listed.stdout}\n`,
       );
   }
+  const branch = await execute(
+    ["gh", "api", "repos/fuyutarow/homebrew-tap", "--jq", ".default_branch"],
+    root,
+  );
+  const defaultBranch = branch.stdout.trim();
+  if (branch.exit !== 0 || !/^[\w.-]+$/u.test(defaultBranch))
+    return err(
+      `formula-wait in ${root}: cannot resolve tap default branch: ${branch.stderr}${branch.stdout}`,
+    );
+  const formulaUrl = `https://raw.githubusercontent.com/fuyutarow/homebrew-tap/${defaultBranch}/Formula/agx.rb`;
+  const formulaDeadline = performance.now() + formulaSeconds * 1000;
+  while (true) {
+    const fetched = await execute(
+      ["curl", "--fail", "--silent", "--show-error", formulaUrl],
+      root,
+      { deadline: formulaDeadline },
+    );
+    const formulaVersion = fetched.stdout.match(
+      /^\s*version\s+"([^"]+)"/mu,
+    )?.[1];
+    if (fetched.exit === 0 && formulaVersion === version) break;
+    if (performance.now() >= formulaDeadline)
+      return err(
+        `formula-wait in ${root}: Formula/agx.rb on ${defaultBranch} did not name ${version} within ${formulaSeconds * 1000} ms; ${fetched.stderr}${fetched.stdout}`,
+      );
+    await Bun.sleep(
+      Math.min(
+        pollSeconds * 1000,
+        Math.max(0, formulaDeadline - performance.now()),
+      ),
+    );
+  }
+  const brew = "/home/linuxbrew/.linuxbrew/bin/brew";
+  const updated = await execute([brew, "update"], home);
+  if (updated.exit !== 0)
+    return err(`brew update in ${home}: ${updated.stderr}${updated.stdout}`);
+  const installed = await execute([brew, "list", "--formula", "agx"], home);
+  const upgrading = installed.exit === 0;
   const install = await execute(
-    ["mise", "install", `github:fuyutarow/agx@${version}`],
+    [brew, upgrading ? "upgrade" : "install", "fuyutarow/tap/agx"],
     home,
-    {
-      deadline: performance.now() + installSeconds * 1000,
-      progress: true,
-      completeOnExit: true,
-    },
   );
   if (install.exit !== 0)
-    return err(`install in ${home}: ${install.stderr}${install.stdout}`);
+    return err(
+      `brew ${upgrading ? "upgrade" : "install"} in ${home}: ${install.stderr}${install.stdout}`,
+    );
+  const prefix = await execute([brew, "--prefix"], home);
+  const brewPrefix = resolve(prefix.stdout.trim());
+  if (prefix.exit !== 0 || prefix.stdout.trim() === "")
+    return err(`brew prefix in ${home}: ${prefix.stderr}${prefix.stdout}`);
   const directories = [
     ...new Set([
       home,
@@ -915,10 +954,31 @@ export async function machineSwap(
     ]),
   ];
   for (const dir of directories) {
-    const checked = await execute(
-      ["mise", "exec", "-C", dir, "--", "agx", "-V"],
-      home,
+    const located = await execute(["which", "agx"], dir);
+    const executable = located.stdout.trim();
+    if (
+      located.exit !== 0 ||
+      executable === "" ||
+      !resolve(executable).startsWith(`${brewPrefix}/`)
+    )
+      return err(
+        `verify in ${dir}: PATH resolves agx to non-Homebrew location ${executable.length > 0 ? executable : "<missing>"} (Homebrew prefix ${brewPrefix})`,
+      );
+    const resolved = await fromPromise(
+      realpath(executable),
+      (error: unknown) =>
+        error instanceof Error ? error.message : String(error),
     );
+    if (resolved.isErr())
+      return err(
+        `verify in ${dir}: PATH resolves agx to ${executable}, which Homebrew cannot resolve: ${resolved.error}`,
+      );
+    const resolvedExecutable = resolved.value;
+    if (!resolvedExecutable.startsWith(`${brewPrefix}/`))
+      return err(
+        `verify in ${dir}: PATH resolves agx to non-Homebrew location ${resolvedExecutable} (Homebrew prefix ${brewPrefix})`,
+      );
+    const checked = await execute(["agx", "-V"], dir);
     if (
       checked.exit !== 0 ||
       checked.stderr !== "" ||

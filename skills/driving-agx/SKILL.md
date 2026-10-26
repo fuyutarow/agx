@@ -13,9 +13,9 @@ read `agx <tool> --help`, then `agx <tool> <command> --help`. Help describes
 the installed version; this skill intentionally does not duplicate its command
 inventory or behavior.
 
-Install or upgrade with `brew install fuyutarow/tap/agx` or
+Install the suite with `brew install fuyutarow/tap/agx`; upgrade it with
 `brew upgrade fuyutarow/tap/agx`.
 
-After every worker run ends, inspect its state and artifacts and make an explicit
+After each worker run ends, inspect its state and artifacts and make an explicit
 acceptance judgment. A running worker does not read later edits to its brief; stop
 it and continue the run when its instructions need to change.

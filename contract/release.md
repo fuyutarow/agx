@@ -47,18 +47,15 @@ start that workflow is a warning. The workflow in the tap repository owns
 formula updates. `release:publish -- suite --yes` runs this same completion
 step at the end.
 
-This machine keeps its suite install through its user-global mise pin:
-
-```toml
-[tools]
-"github:fuyutarow/agx" = "latest"
-```
-
-The machine step installs the exact released version through mise and checks
-home plus each requested consumer with `mise exec -C DIR -- agx -V`.
+The machine step waits for the tap's default-branch `Formula/agx.rb` to name the
+release version, then runs `brew update` and `brew upgrade fuyutarow/tap/agx`
+(or `brew install fuyutarow/tap/agx` when absent). The formula is fetched from
+the raw file with an independent 900-second default deadline. Home and each
+requested consumer are checked by running `agx -V` through `PATH` in that
+directory. A resolved path outside Homebrew fails and names the path.
 
 Repeatable `--verify-in DIR` adds consumer checks to the mandatory home check.
-Each check runs `mise exec -C DIR -- agx -V` and requires exactly `agx <suite>`.
+Each check requires exactly `agx <suite>`.
 The step prints one success line per distinct directory and exits 1 naming the
 step and directory on failure. `--wait-seconds` and `--poll-seconds` control
-the bounded asset wait; `--install-seconds` bounds mise installation.
+the bounded asset wait; `--formula-seconds` bounds waiting for the tap formula.

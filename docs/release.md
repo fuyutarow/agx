@@ -204,20 +204,16 @@ concurrent writer compatibility.
 
 ## Complete the release on this machine
 
-The machine keeps agx in the user-global mise configuration, exactly once:
-
-```toml
-[tools]
-"github:fuyutarow/agx" = "latest"
-```
-
-Repositories must not declare this pin. `release:publish -- suite --yes`
-finishes by running `release:machine`; after the published release lists all
-four uploaded assets, that step starts the tap repository's
-`update-formulas.yml` workflow with `tool=agx` and prints its run URL. A dispatch
-failure is reported as a warning. It then installs the exact suite version
-through mise and verifies home plus every requested consumer with
-`mise exec -C DIR -- agx -V`.
+`release:publish -- suite --yes` finishes by running `release:machine`; after
+the published release lists all four uploaded assets, that step starts the tap
+repository's `update-formulas.yml` workflow with `tool=agx` and prints its run
+URL. A dispatch failure is reported as a warning. It then waits for
+`Formula/agx.rb` on the tap's default branch to name the released version,
+polling the raw file for up to 900 seconds by default, and runs `brew update`
+followed by `brew upgrade fuyutarow/tap/agx` (or `brew install` if absent).
+It verifies home plus every requested consumer by running `agx -V` through
+`PATH` in each directory and requires exactly `agx <suite>`. A PATH result
+outside Homebrew fails with the resolved path.
 
 A release is complete only after this step passes. Each distinct directory
 gets one `OK DIR: agx <suite>` line. An unexpected version, install failure,
@@ -231,11 +227,5 @@ mise run release:machine -- --verify-in /path/to/consumer --verify-in /another/r
 
 The asset wait defaults to 900 seconds with 5-second polling; override with
 `--wait-seconds N --poll-seconds N`. This deadline also bounds each
-`gh release view` probe. Exact-version installation runs from home through
-mise; consumer checks use the requested working directory.
-
-Mise installation has a separate 900-second deadline. Both `release:publish`
-and `release:machine` accept `--install-seconds N` (positive
-seconds) to override it. Timeout diagnostics include the command, elapsed time,
-and limit. Existing limits for other commands, including asset probes and
-uploads, are unchanged.
+`gh release view` probe. The independent formula wait also defaults to 900
+seconds and can be changed with `--formula-seconds N`.

@@ -30,23 +30,72 @@ export async function fixtureRun(
       ? realGitOrOptions
       : process.env.RELEASE_TEST_REAL_GIT === "1";
   const [binary, ...args] = cmd;
-  if (binary === "mise" && process.env.RELEASE_TEST_GH_MODE !== undefined) {
-    const child = Bun.spawn(
-      [process.execPath, join(import.meta.dir, "fake-mise.ts"), ...args],
-      {
-        cwd,
-        env: process.env,
-        stdout: "pipe",
-        stderr: "pipe",
-        timeout,
-      },
-    );
-    const [exit, stdout, stderr] = await Promise.all([
-      child.exited,
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-    ]);
-    return { exit, stdout, stderr };
+  const logRoot = process.env.RELEASE_TEST_LOG_ROOT ?? cwd;
+  if (
+    process.env.RELEASE_TEST_GH_MODE !== undefined &&
+    binary === "gh" &&
+    args[0] === "api"
+  ) {
+    await appendFile(join(logRoot, "calls"), JSON.stringify(args) + "\n");
+    return { ...success, stdout: "alpha\n" };
+  }
+  if (process.env.RELEASE_TEST_GH_MODE !== undefined && binary === "curl") {
+    await appendFile(join(logRoot, "calls"), JSON.stringify(args) + "\n");
+    const old = Number(process.env.RELEASE_TEST_FORMULA_OLD_COUNT ?? 0);
+    if (old > 0) {
+      process.env.RELEASE_TEST_FORMULA_OLD_COUNT = String(old - 1);
+      await Bun.write(join(logRoot, "polled"), "formula not ready\n");
+      return {
+        ...success,
+        stdout: 'class Agx < Formula\n  version "2.3.3"\nend\n',
+      };
+    }
+    return process.env.RELEASE_TEST_FORMULA_FAIL === "1"
+      ? { exit: 1, stdout: "", stderr: "formula fetch failed\n" }
+      : { ...success, stdout: 'class Agx < Formula\n  version "2.3.4"\nend\n' };
+  }
+  if (
+    process.env.RELEASE_TEST_GH_MODE !== undefined &&
+    binary === "/home/linuxbrew/.linuxbrew/bin/brew"
+  ) {
+    await appendFile(join(logRoot, "calls"), JSON.stringify(cmd) + "\n");
+    if (args[0] === "list")
+      return process.env.RELEASE_TEST_BREW_ABSENT === "1"
+        ? { exit: 1, stdout: "", stderr: "not installed\n" }
+        : { ...success, stdout: "agx\n" };
+    if (args[0] === "--prefix")
+      return {
+        ...success,
+        stdout: `${process.env.RELEASE_TEST_BREW_PREFIX}\n`,
+      };
+    if (args[0] === "update" && process.env.RELEASE_TEST_BREW_FAIL === "1")
+      return { exit: 1, stdout: "", stderr: "brew update failed\n" };
+    return success;
+  }
+  if (
+    process.env.RELEASE_TEST_GH_MODE !== undefined &&
+    binary === "which" &&
+    args[0] === "agx"
+  ) {
+    await appendFile(join(logRoot, "calls"), JSON.stringify(cmd) + "\n");
+    return {
+      ...success,
+      stdout: `${process.env.RELEASE_TEST_NON_BREW_PATH === "1" ? "/usr/local/bin/agx" : `${process.env.RELEASE_TEST_BREW_PREFIX}/bin/agx`}\n`,
+    };
+  }
+  if (
+    process.env.RELEASE_TEST_GH_MODE !== undefined &&
+    binary === "agx" &&
+    args[0] === "-V"
+  ) {
+    await appendFile(join(logRoot, "calls"), JSON.stringify(cmd) + "\n");
+    return {
+      ...success,
+      stdout:
+        cwd === process.env.RELEASE_TEST_STALE_DIR
+          ? "agx 2.3.3\n"
+          : "agx 2.3.4\n",
+    };
   }
   if (
     binary === "git" &&
@@ -56,6 +105,17 @@ export async function fixtureRun(
   ) {
     await appendFile(join(cwd, "calls"), JSON.stringify(args) + "\n");
     return success;
+  }
+  if (
+    binary === "gh" &&
+    args[0] === "workflow" &&
+    args[1] === "run" &&
+    process.env.RELEASE_TEST_GH_MODE !== undefined
+  ) {
+    await appendFile(join(cwd, "calls"), JSON.stringify(args) + "\n");
+    return process.env.RELEASE_TEST_WORKFLOW_FAIL === "1"
+      ? { exit: 1, stdout: "", stderr: "workflow dispatch fixture failure\n" }
+      : success;
   }
   if (
     binary === "gh" &&

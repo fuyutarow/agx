@@ -18,9 +18,9 @@ const args = cli({
       type: Number,
       description: "Poll interval (seconds; default 5)",
     },
-    installSeconds: {
+    formulaSeconds: {
       type: Number,
-      description: "Suite install limit (seconds; default 900)",
+      description: "Tap formula wait limit (seconds; default 900)",
     },
   },
   strictFlags: true,

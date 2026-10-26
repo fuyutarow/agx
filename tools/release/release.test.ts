@@ -10,7 +10,7 @@ import {
 } from "node:fs/promises";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { writeChangeset } from "../changeset/changeset.ts";
 import { applyChangesets } from "../changeset/apply.ts";
 import { jsonOf, z } from "../zod.ts";
@@ -80,7 +80,6 @@ async function fixture(pkg = "agx-status") {
     "release.ts",
     "fixture-runner.ts",
     "fake-gh.ts",
-    "fake-mise.ts",
     "machine.ts",
   ])
     await Bun.write(
@@ -182,14 +181,14 @@ const fakeGhProductionRun: typeof productionRun = (cmd, cwd, options) =>
 const completionRun: typeof productionRun = (cmd, cwd, options) =>
   cmd[0] === "gh" && cmd[1] === "release"
     ? fakeGhProductionRun(cmd, cwd, options)
-    : fixtureRun(cmd, cwd);
+    : installProductionRun(cmd, cwd, options);
 const installProductionRun: typeof productionRun = async (
   cmd,
   cwd,
   options,
 ) => {
   const record = async (args: string[]) => {
-    const path = join(cwd, "calls");
+    const path = join(process.env.RELEASE_TEST_LOG_ROOT ?? cwd, "calls");
     await Bun.write(
       path,
       `${await Bun.file(path)
@@ -216,6 +215,87 @@ const installProductionRun: typeof productionRun = async (
           stderr: "",
         };
   }
+  if (cmd[0] === "gh" && cmd[1] === "api") {
+    await record(cmd.slice(1));
+    return { exit: 0, stdout: "alpha\n", stderr: "" };
+  }
+  if (cmd[0] === "curl") {
+    await record(cmd.slice(1));
+    const previous = Number(process.env.RELEASE_TEST_FORMULA_OLD_COUNT ?? 0);
+    if (previous > 0) {
+      process.env.RELEASE_TEST_FORMULA_OLD_COUNT = String(previous - 1);
+      await Bun.write(
+        join(process.env.RELEASE_TEST_LOG_ROOT ?? cwd, "polled"),
+        "formula not ready\n",
+      );
+      return {
+        exit: 0,
+        stdout: 'class Agx < Formula\n  version "2.3.3"\nend\n',
+        stderr: "",
+      };
+    }
+    if (process.env.RELEASE_TEST_FORMULA_FAIL === "1")
+      return { exit: 1, stdout: "", stderr: "formula fetch failed\n" };
+    return {
+      exit: 0,
+      stdout: `class Agx < Formula\n  version "2.3.4"\nend\n`,
+      stderr: "",
+    };
+  }
+  if (cmd[0] === "/home/linuxbrew/.linuxbrew/bin/brew") {
+    await record(cmd);
+    if (cmd[1] === "list")
+      return process.env.RELEASE_TEST_BREW_ABSENT === "1"
+        ? { exit: 1, stdout: "", stderr: "not installed\n" }
+        : { exit: 0, stdout: "agx\n", stderr: "" };
+    if (cmd[1] === "--prefix")
+      return {
+        exit: 0,
+        stdout: `${process.env.RELEASE_TEST_BREW_PREFIX}\n`,
+        stderr: "",
+      };
+    if (
+      cmd[1] === "update" &&
+      process.env.RELEASE_TEST_PIPE_CHILD_PID !== undefined
+    ) {
+      const child = Bun.spawn(
+        [process.execPath, "-e", "await Bun.sleep(300000)"],
+        { stdout: "inherit", stderr: "inherit" },
+      );
+      await Bun.write(
+        process.env.RELEASE_TEST_PIPE_CHILD_PID,
+        String(child.pid),
+      );
+      child.unref();
+    }
+    if (
+      cmd[1] === "update" &&
+      process.env.RELEASE_TEST_BREW_DELAY_MS !== undefined
+    )
+      await Bun.sleep(Number(process.env.RELEASE_TEST_BREW_DELAY_MS));
+    if (cmd[1] === "update" && process.env.RELEASE_TEST_BREW_FAIL === "1")
+      return { exit: 1, stdout: "", stderr: "brew update failed\n" };
+    return { exit: 0, stdout: "", stderr: "" };
+  }
+  if (cmd[0] === "which" && cmd[1] === "agx") {
+    await record(cmd);
+    return {
+      exit: 0,
+      stdout: `${process.env.RELEASE_TEST_NON_BREW_PATH === "1" ? "/usr/local/bin/agx" : `${process.env.RELEASE_TEST_BREW_PREFIX}/bin/agx`}\n`,
+      stderr: "",
+    };
+  }
+  if (cmd[0] === "agx" && cmd[1] === "-V") {
+    await record(cmd);
+    return {
+      exit: 0,
+      stdout:
+        cwd === process.env.RELEASE_TEST_STALE_DIR
+          ? "agx 2.3.3\n"
+          : "agx 2.3.4\n",
+      stderr: "",
+    };
+  }
   if (cmd[0] === "gh" && cmd[1] === "workflow" && cmd[2] === "run") {
     await record(cmd.slice(1));
     return process.env.RELEASE_TEST_WORKFLOW_FAIL === "1"
@@ -238,22 +318,12 @@ const installProductionRun: typeof productionRun = async (
       stderr: "",
     };
   }
-  if (cmd[0] === "mise")
-    return productionRun(
-      [
-        process.execPath,
-        join(import.meta.dir, "fake-mise.ts"),
-        ...cmd.slice(1),
-      ],
-      cwd,
-      options,
-    );
   return cmd[0] === "gh" && cmd[1] === "release"
     ? fakeGhProductionRun(cmd, cwd, options)
     : fixtureRun(cmd, cwd);
 };
 
-test("mise exit completes while a descendant holds output pipes for five minutes", async () => {
+test("brew update completes while a descendant holds output pipes for five minutes", async () => {
   const f = await suiteFixture();
   const pidPath = join(f.root, "pipe-child.pid");
   const previous = process.env.RELEASE_TEST_PIPE_CHILD_PID;
@@ -262,17 +332,7 @@ test("mise exit completes while a descendant holds output pipes for five minutes
   process.env.RELEASE_TEST_GH_MODE = "success";
   await (async () => {
     for (const complete of [
-      () =>
-        publish("suite", true, undefined, f.root, installProductionRun, {
-          installSeconds: 2,
-        }),
-      () =>
-        machineSwap(
-          "2.3.4",
-          { installSeconds: 2 },
-          f.root,
-          installProductionRun,
-        ),
+      () => machineSwap("2.3.4", {}, f.root, installProductionRun),
     ]) {
       await (async () => {
         const started = performance.now();
@@ -297,18 +357,12 @@ test("mise exit completes while a descendant holds output pipes for five minutes
   });
 }, 10_000);
 
-test("publish and machine survive a three-minute fake suite install", async () => {
+test("publish and machine survive a three-minute fake brew update", async () => {
   const f = await suiteFixture();
   const realTime = process.env.RELEASE_TEST_SLOW_INSTALL === "1";
-  const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
-  const limits: number[] = [];
-  const timeout = spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
-    limits.push(ms);
-    return originalTimeout(realTime ? ms : Math.ceil(ms / 100));
-  });
-  const oldDelay = process.env.RELEASE_TEST_INSTALL_DELAY_MS;
+  const oldDelay = process.env.RELEASE_TEST_BREW_DELAY_MS;
   const oldMode = process.env.RELEASE_TEST_GH_MODE;
-  process.env.RELEASE_TEST_INSTALL_DELAY_MS = realTime ? "180000" : "180";
+  process.env.RELEASE_TEST_BREW_DELAY_MS = realTime ? "180000" : "180";
   process.env.RELEASE_TEST_GH_MODE = "success";
   await (async () => {
     const started = performance.now();
@@ -316,7 +370,7 @@ test("publish and machine survive a three-minute fake suite install", async () =
       publish("suite", true, undefined, f.root, installProductionRun),
       machineSwap(
         "2.3.4",
-        { installSeconds: 300 },
+        { formulaSeconds: 300 },
         f.root,
         installProductionRun,
       ),
@@ -324,55 +378,49 @@ test("publish and machine survive a three-minute fake suite install", async () =
     for (const result of results)
       expect(result.isOk(), result.isErr() ? result.error : "").toBe(true);
     if (realTime) expect(performance.now() - started).toBeGreaterThan(120_000);
-    expect(limits.some((ms) => ms > 899_000 && ms <= 900_000)).toBe(true);
-    expect(limits.some((ms) => ms > 299_000 && ms <= 300_000)).toBe(true);
-    expect(limits.filter((ms) => ms === 120_000)).toHaveLength(2);
   })().finally(() => {
-    timeout.mockRestore();
-    if (oldDelay === undefined)
-      delete process.env.RELEASE_TEST_INSTALL_DELAY_MS;
-    else process.env.RELEASE_TEST_INSTALL_DELAY_MS = oldDelay;
+    if (oldDelay === undefined) delete process.env.RELEASE_TEST_BREW_DELAY_MS;
+    else process.env.RELEASE_TEST_BREW_DELAY_MS = oldDelay;
     if (oldMode === undefined) delete process.env.RELEASE_TEST_GH_MODE;
     else process.env.RELEASE_TEST_GH_MODE = oldMode;
   });
 }, 200_000);
 
-test("install timeout reports command, limit and elapsed time before verification", async () => {
+test("formula timeout reports the target version before Homebrew", async () => {
   const f = await suiteFixture();
-  const previous = process.env.RELEASE_TEST_INSTALL_DELAY_MS;
+  const previous = process.env.RELEASE_TEST_FORMULA_FAIL;
   const mode = process.env.RELEASE_TEST_GH_MODE;
-  process.env.RELEASE_TEST_INSTALL_DELAY_MS = "180";
+  process.env.RELEASE_TEST_FORMULA_FAIL = "1";
   process.env.RELEASE_TEST_GH_MODE = "success";
   await (async () => {
     const result = await machineSwap(
       "2.3.4",
-      { installSeconds: 0.05 },
+      { formulaSeconds: 0.05 },
       f.root,
       installProductionRun,
     );
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
-      expect(result.error).toContain("Command timed out after");
-      expect(result.error).toContain("ms (limit 50 ms)");
-      expect(result.error).toContain("'install' 'github:fuyutarow/agx@2.3.4'");
+      expect(result.error).toContain(
+        "Formula/agx.rb on alpha did not name 2.3.4 within 50 ms",
+      );
     }
-    for (const installSeconds of [0, -1, NaN, Infinity, 3_000_000]) {
+    for (const formulaSeconds of [0, -1, NaN, Infinity, 3_000_000]) {
       const invalid = await machineSwap(
         "2.3.4",
-        { installSeconds },
+        { formulaSeconds },
         f.root,
         () => {
           expect.unreachable("invalid input must not spawn");
         },
       );
       expect(invalid.isErr() && invalid.error).toContain(
-        "invalid install interval",
+        "invalid formula interval",
       );
     }
   })().finally(() => {
-    if (previous === undefined)
-      delete process.env.RELEASE_TEST_INSTALL_DELAY_MS;
-    else process.env.RELEASE_TEST_INSTALL_DELAY_MS = previous;
+    if (previous === undefined) delete process.env.RELEASE_TEST_FORMULA_FAIL;
+    else process.env.RELEASE_TEST_FORMULA_FAIL = previous;
     if (mode === undefined) delete process.env.RELEASE_TEST_GH_MODE;
     else process.env.RELEASE_TEST_GH_MODE = mode;
   });
@@ -422,22 +470,16 @@ test("publish and machine allow three-minute fake CI with a scaled command clock
   });
 });
 
-test("fake gh starts the tap formula workflow after assets exist; this machine stays on mise", async () => {
+test("fake gh starts the tap formula workflow before brew and PATH checks", async () => {
   const f = await suiteFixture();
   const consumer = join(f.root, "consumer with spaces");
   await mkdir(consumer);
-  const log = join(f.root, "mise-calls");
-  const previousLog = process.env.RELEASE_TEST_MISE_LOG;
-  process.env.RELEASE_TEST_MISE_LOG = log;
   const result = await machineSwap(
     "2.3.4",
     { waitSeconds: 0, verifyIn: [consumer] },
     f.root,
     installProductionRun,
-  ).finally(() => {
-    if (previousLog === undefined) delete process.env.RELEASE_TEST_MISE_LOG;
-    else process.env.RELEASE_TEST_MISE_LOG = previousLog;
-  });
+  );
   expect(result.isOk(), result.isErr() ? result.error : "").toBe(true);
   const calls = (await Bun.file(join(f.root, "calls")).text())
     .trim()
@@ -462,23 +504,20 @@ test("fake gh starts the tap formula workflow after assets exist; this machine s
       "tool=agx",
     ]),
   );
-  const miseCallSchema = z.object({
-    args: z.array(z.string()),
-    cwd: z.string(),
-  });
-  const parsedMiseCalls = (await Bun.file(log).text())
-    .trim()
-    .split("\n")
-    .map((line) => jsonOf(miseCallSchema).safeParse(line));
-  expect(parsedMiseCalls.every((call) => call.success)).toBe(true);
-  const miseCalls = parsedMiseCalls.flatMap((call) =>
-    call.success ? [call.data] : [],
+  const callsText = calls.join("\n");
+  expect(callsText).toContain(
+    JSON.stringify(["/home/linuxbrew/.linuxbrew/bin/brew", "update"]),
   );
-  expect(miseCalls[0]?.args).toEqual(["install", "github:fuyutarow/agx@2.3.4"]);
-  expect(miseCalls.slice(1).map((call) => call.args)).toEqual([
-    ["exec", "-C", homedir(), "--", "agx", "-V"],
-    ["exec", "-C", consumer, "--", "agx", "-V"],
-  ]);
+  expect(callsText).toContain(
+    JSON.stringify([
+      "/home/linuxbrew/.linuxbrew/bin/brew",
+      "upgrade",
+      "fuyutarow/tap/agx",
+    ]),
+  );
+  expect(callsText).toContain(JSON.stringify(["which", "agx"]));
+  expect(callsText).toContain(JSON.stringify(["agx", "-V"]));
+  expect(callsText).not.toContain("mise");
 });
 
 test("asset deadline bounds a stuck fake gh and names the command", async () => {
@@ -1125,6 +1164,14 @@ test("single member publishing refuses with suite pointer", async () => {
 
 async function suiteFixture() {
   const f = await libraryFixture();
+  process.env.RELEASE_TEST_LOG_ROOT = f.root;
+  const brewPrefix = join(f.root, "homebrew");
+  const formulaBin = join(brewPrefix, "Cellar/agx/2.3.4/bin");
+  await mkdir(formulaBin, { recursive: true });
+  await mkdir(join(brewPrefix, "bin"), { recursive: true });
+  await Bun.write(join(formulaBin, "agx"), "fake Homebrew agx\n");
+  await symlink(join(formulaBin, "agx"), join(brewPrefix, "bin/agx"));
+  process.env.RELEASE_TEST_BREW_PREFIX = brewPrefix;
   for (const pkg of packages) {
     if (pkg === "agx-usehooks") continue;
     const dir = join(f.root, "tools", pkg);
@@ -1419,12 +1466,10 @@ test("CI suite release fails if any platform upload is missing", async () => {
   );
 });
 
-test("tap workflow dispatch failure warns but does not fail machine mise completion", async () => {
+test("tap workflow dispatch failure warns but does not fail machine brew completion", async () => {
   const f = await suiteFixture();
   const priorFailure = process.env.RELEASE_TEST_WORKFLOW_FAIL;
-  const priorMiseLog = process.env.RELEASE_TEST_MISE_LOG;
   process.env.RELEASE_TEST_WORKFLOW_FAIL = "1";
-  process.env.RELEASE_TEST_MISE_LOG = join(f.root, "mise-calls");
   const result = await machineSwap(
     "2.3.4",
     { waitSeconds: 0 },
@@ -1434,8 +1479,6 @@ test("tap workflow dispatch failure warns but does not fail machine mise complet
     if (priorFailure === undefined)
       delete process.env.RELEASE_TEST_WORKFLOW_FAIL;
     else process.env.RELEASE_TEST_WORKFLOW_FAIL = priorFailure;
-    if (priorMiseLog === undefined) delete process.env.RELEASE_TEST_MISE_LOG;
-    else process.env.RELEASE_TEST_MISE_LOG = priorMiseLog;
   });
   expect(result.isOk(), result.isErr() ? result.error : "").toBe(true);
   const calls = (await Bun.file(join(f.root, "calls")).text())
@@ -1447,8 +1490,8 @@ test("tap workflow dispatch failure warns but does not fail machine mise complet
     ),
   ).toBe(true);
   expect(calls.some((line) => line.startsWith('["run","list"'))).toBe(false);
-  expect(await Bun.file(join(f.root, "mise-calls")).text()).toContain(
-    '"install","github:fuyutarow/agx@2.3.4"',
+  expect(calls).toContain(
+    JSON.stringify(["/home/linuxbrew/.linuxbrew/bin/brew", "update"]),
   );
 });
 
@@ -1457,7 +1500,9 @@ for (const mode of [
   "machine-delayed",
   "machine-missing",
   "stale",
-  "install-failure",
+  "brew-failure",
+  "non-brew-path",
+  "brew-absent",
 ]) {
   test(`machine completion: ${mode}`, async () => {
     const f = await suiteFixture();
@@ -1472,7 +1517,6 @@ for (const mode of [
     const content = await Promise.all(
       before.map((name) => Bun.file(join(consumer, name)).text()),
     );
-    const log = join(f.root, "mise-calls");
     const result = await preview(
       f,
       [
@@ -1488,9 +1532,11 @@ for (const mode of [
       ],
       {
         RELEASE_TEST_GH_MODE: mode.startsWith("machine-") ? mode : "success",
-        RELEASE_TEST_MISE_LOG: log,
+        RELEASE_TEST_FORMULA_OLD_COUNT: mode === "machine-delayed" ? "1" : "0",
         RELEASE_TEST_STALE_DIR: mode === "stale" ? consumer : "",
-        RELEASE_TEST_INSTALL_FAIL: mode === "install-failure" ? "1" : "0",
+        RELEASE_TEST_BREW_FAIL: mode === "brew-failure" ? "1" : "0",
+        RELEASE_TEST_BREW_ABSENT: mode === "brew-absent" ? "1" : "0",
+        RELEASE_TEST_NON_BREW_PATH: mode === "non-brew-path" ? "1" : "0",
       },
     );
     expect(await readdir(consumer, { recursive: true })).toEqual(before);
@@ -1504,34 +1550,42 @@ for (const mode of [
       expect(result.exit).toBe(1);
       expect(result.stderr).toContain("asset-wait in");
       expect(result.stderr).toContain("agx-2.3.4-linux-x64.tar.gz");
-      expect(await Bun.file(log).exists()).toBe(false);
+      expect(calls).not.toContain('"update"');
       expect(calls).not.toContain('"workflow","run","update-formulas.yml"');
     } else {
-      const parsed = jsonOf(
-        z.object({ args: z.array(z.string()), cwd: z.string() }),
-      ).safeParse((await Bun.file(log).text()).trim().split("\n")[0]);
-      expect(parsed.success).toBe(true);
-      const first = parsed.success ? parsed.data : { args: [], cwd: "invalid" };
-      expect(first.args).toEqual(["install", "github:fuyutarow/agx@2.3.4"]);
-      const home = first.cwd;
-      expect(home).not.toBe(f.root);
       const trigger = calls.indexOf('"workflow","run","update-formulas.yml"');
       expect(trigger).toBeGreaterThan(-1);
       if (mode === "stale") {
         expect(result.exit).toBe(1);
         expect(result.stderr).toContain(`verify in ${consumer}`);
         expect(result.stderr).toContain("agx 2.3.3");
-      } else if (mode === "install-failure") {
+      } else if (mode === "brew-failure") {
         expect(result.exit).toBe(1);
-        expect(result.stderr).toContain(`install in ${home}`);
-        expect((await Bun.file(log).text()).trim().split("\n")).toHaveLength(1);
+        expect(result.stderr).toContain("brew update in");
+      } else if (mode === "non-brew-path") {
+        expect(result.exit).toBe(1);
+        expect(result.stderr).toContain("/usr/local/bin/agx");
       } else {
         expect(result.exit, result.stderr).toBe(0);
-        expect(result.stdout).toContain(`OK ${home}: agx 2.3.4`);
+        const okLines = result.stdout
+          .split("\n")
+          .filter((line) => line.startsWith("OK "));
+        expect(okLines).toHaveLength(2);
+        expect(okLines.some((line) => line.includes(consumer))).toBe(true);
         expect(result.stdout.split(`OK ${consumer}: agx 2.3.4`)).toHaveLength(
           2,
         );
-        expect((await Bun.file(log).text()).trim().split("\n")).toHaveLength(3);
+        expect(calls).toContain(JSON.stringify(["agx", "-V"]));
+        expect(
+          mode !== "brew-absent" ||
+            calls.includes(
+              JSON.stringify([
+                "/home/linuxbrew/.linuxbrew/bin/brew",
+                "install",
+                "fuyutarow/tap/agx",
+              ]),
+            ),
+        ).toBe(true);
         expect(
           mode !== "machine-delayed" ||
             (await Bun.file(join(f.root, "polled")).exists()),

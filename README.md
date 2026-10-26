@@ -22,16 +22,9 @@ Install the released suite with Homebrew:
 brew install fuyutarow/tap/agx
 ```
 
-Release completion keeps this machine on its user-global mise pin and verifies
-that exact suite version. Homebrew formula updates are triggered in the tap
-repository after the release assets are available.
-
-This machine's user-global mise configuration keeps the moving release pin:
-
-```toml
-[tools]
-"github:fuyutarow/agx" = "latest"
-```
+Release completion waits for the tap formula to name the new version, upgrades
+this machine through Homebrew, and verifies that Homebrew's `agx` is selected
+through `PATH` in the home directory and each requested consumer.
 
 ## Agent skill
 
