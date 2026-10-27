@@ -7,8 +7,6 @@ import { cli as cleyeCli, command } from "cleye";
 import { standardCli } from "../../../shared/src/cli.ts";
 import { exitWithError } from "./exit.ts";
 import { flushRunPublications, stateDir } from "./store.ts";
-import { jsonOf } from "../../../shared/src/zod.ts";
-import { completeEndNotice, EndNoticeRequest } from "./end-notice.ts";
 import packageJson from "../../package.json" with { type: "json" };
 import { premiseHelp } from "../premises.ts";
 
@@ -31,16 +29,6 @@ export const COMMANDS = COMMAND_NAMES.map((name) => ({
 
 async function main(): Promise<void> {
   const rawArgs = cliArgv();
-  if (rawArgs[0] === "--internal-end-notice") {
-    const request = jsonOf(EndNoticeRequest).safeParse(rawArgs[1] ?? "");
-    if (!request.success) {
-      process.stderr.write("agx worker: invalid internal end notice request\n");
-      process.exitCode = 1;
-      return;
-    }
-    await completeEndNotice(request.data);
-    return;
-  }
   if (rawArgs[0] === "--internal-codex") {
     process.argv.splice(2, 1);
     await import("../workers/codex.ts");
