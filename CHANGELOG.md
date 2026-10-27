@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.20.0 — 2026-10-27
+
+- Collect workspaces whose changes are already present on trunk
+
 ## 1.19.1 — 2026-10-27
 
 - Normalize TOML integer values before config validation
