@@ -49,7 +49,7 @@ import { createRunTemp } from "../temp.ts";
 import { exitWithError } from "./exit.ts";
 import {
   Outcome,
-  changedFiles,
+  changedPaths,
   deriveOutcome,
   workspaceSnapshot,
 } from "./outcome.ts";
@@ -745,7 +745,7 @@ export async function run(flags: Flags): Promise<number> {
         : ["--resume", currentResumeSession]),
     ];
   };
-  const before = workspaceSnapshot(cwd, ticket.writes);
+  const before = workspaceSnapshot(cwd);
   const baseEnv = verificationEnvironment(cwd, process.env, temp.env);
   if (baseEnv instanceof InspectionUnavailable)
     return fatal(baseEnv.message, 75);
@@ -970,16 +970,15 @@ export async function run(flags: Flags): Promise<number> {
   // A capacity receipt is terminal only after the active run exhausted its eligible rows.
   const capacity = capacityExhausted && endedOnCapacity;
   const skipVerification = endedOnCapacity;
-  const after = skipVerification
-    ? undefined
-    : workspaceSnapshot(cwd, ticket.writes);
-  const changed =
-    before.isOk() && after?.isOk() === true
-      ? changedFiles(before.value, after.value)
-      : undefined;
   const verify = skipVerification
     ? []
     : await runVerify(ticket.verify, cwd, runDir, runEnv, ctx.verifyAlways);
+  const after = workspaceSnapshot(cwd);
+  const changedPathsMeasured =
+    before.isOk() && after.isOk()
+      ? changedPaths(before.value, after.value)
+      : undefined;
+  const changed = changedPathsMeasured?.length;
   const parsedReport = parseReport(
     workerReceipt.structured_output ?? workerReceipt.report,
     workerReceipt.last_message ?? receiptLine,
@@ -1046,6 +1045,14 @@ export async function run(flags: Flags): Promise<number> {
     execution,
     sandbox,
     sandbox_source,
+    ...(changedPathsMeasured === undefined
+      ? {}
+      : {
+          workspace_changes: {
+            changed_files: changedPathsMeasured.length,
+            changed_paths: changedPathsMeasured,
+          },
+        }),
   };
   writeFileSync(reportPath, `${JSON.stringify(report)}\n`);
   const vendorSession = latestVendorSession;

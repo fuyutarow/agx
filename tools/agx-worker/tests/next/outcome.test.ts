@@ -2,6 +2,7 @@ import { prepareTicketRepo } from "../ticket-repo.ts";
 import { afterEach, expect, test } from "bun:test";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -10,7 +11,12 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
-import { changedFiles, workspaceSnapshot } from "../../src/next/outcome.ts";
+import {
+  changedFiles,
+  changedPaths,
+  deriveOutcome,
+  workspaceSnapshot,
+} from "../../src/next/outcome.ts";
 import { WorkerReport } from "../../src/report.ts";
 
 const roots: string[] = [];
@@ -28,7 +34,9 @@ const scratch = () => {
 
 test("ended fixtures retain measured outcomes while routing omits ungraded raw history", async () => {
   const root = scratch();
-  await prepareTicketRepo(root);
+  const workspace = join(root, "workspace");
+  mkdirSync(workspace, { recursive: true });
+  await prepareTicketRepo(workspace);
   const state = join(root, "state");
   const Request = z.looseObject({
     state: z.looseObject({}),
@@ -75,7 +83,7 @@ test("ended fixtures retain measured outcomes while routing omits ungraded raw h
       .pathname,
   };
   for (const [mode, outcome] of cases) {
-    const ticket = join(root, `${mode}.md`);
+    const ticket = join(workspace, `${mode}.md`);
     writeFileSync(
       ticket,
       `+++\nschema = 2\ntimeout_s = 60\nname = "${mode}"\nwrites = ["work.txt"]\noutcome = "fixture"\nverify = ["${mode === "verify-failed" ? "false" : "true"}"]\n[proposition]\nid = "OUTCOME"\nclaim = "derived outcomes"\nrefuted_by = "incorrect classification"\n+++\nFixture.\n`,
@@ -87,7 +95,7 @@ test("ended fixtures retain measured outcomes while routing omits ungraded raw h
         "run",
         ticket,
         "--cd",
-        root,
+        workspace,
       ],
       {
         env: { ...env, AGX_OUTCOME_FIXTURE: mode },
@@ -138,19 +146,7 @@ test("ended fixtures retain measured outcomes while routing omits ungraded raw h
   if (rows.success) {
     expect(rows.data.map((row) => row.outcome)).toEqual(expected);
     expect(rows.data.map((row) => row.changed_files)).toEqual([
-      0,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      undefined,
+      0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
     ]);
   }
   const events = readFileSync(join(state, "records.jsonl"), "utf8")
@@ -184,21 +180,69 @@ test("workspace evidence detects added, deleted and edited files without countin
   const root = scratch();
   writeFileSync(join(root, "dirty.txt"), "preexisting dirt");
   writeFileSync(join(root, "delete.txt"), "remove me");
-  const before = workspaceSnapshot(root, ["*.txt"]);
+  const before = workspaceSnapshot(root);
   writeFileSync(join(root, "dirty.txt"), "edited dirt");
   writeFileSync(join(root, "added.txt"), "new");
   rmSync(join(root, "delete.txt"));
-  const after = workspaceSnapshot(root, ["*.txt"]);
+  const after = workspaceSnapshot(root);
   expect(before.isOk() && after.isOk()).toBe(true);
   if (before.isOk() && after.isOk()) {
     expect(changedFiles(before.value, before.value)).toBe(0);
     expect(changedFiles(before.value, after.value)).toBe(3);
+    expect(changedPaths(before.value, after.value)).toEqual([
+      "added.txt",
+      "delete.txt",
+      "dirty.txt",
+    ]);
   }
+});
+
+test("outcome contract: a continuation that edits outside writes is not no-change", () => {
+  const root = scratch();
+  mkdirSync(join(root, "packages", "heritage"), { recursive: true });
+  const before = workspaceSnapshot(root);
+  writeFileSync(join(root, "packages", "heritage", "source.ts"), "export {}\n");
+  const after = workspaceSnapshot(root);
+  expect(before.isOk() && after.isOk()).toBe(true);
+  if (!before.isOk() || !after.isOk()) return;
+  const paths = changedPaths(before.value, after.value);
+  expect(paths).toEqual(["packages/heritage/source.ts"]);
+  expect(
+    deriveOutcome({
+      timedOut: false,
+      refused: false,
+      verify: [],
+      reportValid: true,
+      changed: paths.length,
+    }),
+  ).toBe("ok");
+});
+
+test("outcome contract: a run whose tree is unchanged is no-change", () => {
+  const root = scratch();
+  writeFileSync(join(root, "existing.txt"), "stable\n");
+  const before = workspaceSnapshot(root);
+  const after = workspaceSnapshot(root);
+  expect(before.isOk() && after.isOk()).toBe(true);
+  if (!before.isOk() || !after.isOk()) return;
+  const paths = changedPaths(before.value, after.value);
+  expect(paths).toEqual([]);
+  expect(
+    deriveOutcome({
+      timedOut: false,
+      refused: false,
+      verify: [],
+      reportValid: true,
+      changed: paths.length,
+    }),
+  ).toBe("no-change");
 });
 
 test("outcome contract: malformed only when the returned report is unreadable", async () => {
   const root = scratch();
-  await prepareTicketRepo(root);
+  const workspace = join(root, "workspace");
+  mkdirSync(workspace, { recursive: true });
+  await prepareTicketRepo(workspace);
   const state = join(root, "state");
   const server = Bun.serve({
     port: 0,
@@ -226,7 +270,7 @@ test("outcome contract: malformed only when the returned report is unreadable", 
     ["unreadable-report", "malformed"],
   ];
   for (const [mode, outcome] of cases) {
-    const ticket = join(root, `${mode}.md`);
+    const ticket = join(workspace, `${mode}.md`);
     writeFileSync(
       ticket,
       `+++\nschema = 2\ntimeout_s = 60\nname = "${mode}"\nwrites = ["work.txt"]\noutcome = "fixture"\nverify = ["true"]\n[proposition]\nid = "OUTCOME"\nclaim = "readable returned reports"\nrefuted_by = "incorrect classification"\n+++\nFixture.\n`,
@@ -238,7 +282,7 @@ test("outcome contract: malformed only when the returned report is unreadable", 
         "run",
         ticket,
         "--cd",
-        root,
+        workspace,
       ],
       {
         env: { ...env, AGX_OUTCOME_FIXTURE: mode },
@@ -276,6 +320,7 @@ test("outcome contract: malformed only when the returned report is unreadable", 
             id: z.string(),
             outcome: z.string().optional(),
             returned: z.boolean().optional(),
+            changed_files: z.number().optional(),
           }),
         ).safeParse(line);
         return parsed.success &&
@@ -285,9 +330,28 @@ test("outcome contract: malformed only when the returned report is unreadable", 
           : [];
       })
       .at(-1);
-    expect(ended).toMatchObject({ kind: "ended", outcome, returned: true });
+    expect(ended).toMatchObject({
+      kind: "ended",
+      outcome,
+      returned: true,
+      changed_files: 1,
+    });
 
     const reportText = readFileSync(receipt.data.report_path, "utf8");
+    const workspaceChanges = jsonOf(
+      z.looseObject({
+        workspace_changes: z.object({
+          changed_files: z.number(),
+          changed_paths: z.array(z.string()),
+        }),
+      }),
+    ).safeParse(reportText);
+    expect(workspaceChanges.success).toBe(true);
+    if (workspaceChanges.success)
+      expect(workspaceChanges.data.workspace_changes).toEqual({
+        changed_files: 1,
+        changed_paths: ["work.txt"],
+      });
     if (mode === "real-returned") {
       const report = jsonOf(WorkerReport).safeParse(reportText);
       expect(report.success).toBe(true);

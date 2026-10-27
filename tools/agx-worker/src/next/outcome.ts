@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, readlinkSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import { fromThrowable } from "neverthrow";
 import { z } from "../../../shared/src/zod.ts";
+import { stateDir } from "../state.ts";
 import { verifyKind, type VerifyKind } from "./verify.ts";
 
 export const Outcome = z.enum([
@@ -21,18 +22,44 @@ export const Outcome = z.enum([
 ]);
 export type Outcome = z.output<typeof Outcome>;
 
-/** Compare actual contents and modes in the promised write surface, even after a commit. */
-export const workspaceSnapshot = (cwd: string, writes: readonly string[]) =>
+const isWithin = (root: string, path: string): boolean => {
+  const pathFromRoot = relative(root, path);
+  return (
+    pathFromRoot === "" ||
+    (!isAbsolute(pathFromRoot) &&
+      pathFromRoot !== ".." &&
+      !pathFromRoot.startsWith(`..${sep}`))
+  );
+};
+
+/** Compare workspace files, excluding VCS, dependencies, and worker-owned scratch. */
+export const workspaceSnapshot = (cwd: string) =>
   fromThrowable(() => {
+    const workspaceRoot = resolve(cwd);
+    const internalDirectories = [
+      stateDir(),
+      ...(process.env.AGX_TMP_ROOT === undefined
+        ? []
+        : [resolve(cwd, process.env.AGX_TMP_ROOT)]),
+    ]
+      .map((path) => resolve(path))
+      .filter(
+        (path) => path !== workspaceRoot && isWithin(workspaceRoot, path),
+      );
+    const capacityLog = process.env.AGX_CAPACITY_LOG;
+    const internalFiles =
+      capacityLog === undefined
+        ? []
+        : [resolve(cwd, capacityLog)].filter(
+            (path) => path !== workspaceRoot && isWithin(workspaceRoot, path),
+          );
     const files = new Map<string, string>();
-    const paths = writes.flatMap((pattern) => [
-      ...new Bun.Glob(pattern).scanSync({
-        cwd,
-        dot: true,
-        onlyFiles: false,
-        followSymlinks: false,
-      }),
-    ]);
+    const paths = new Bun.Glob("**").scanSync({
+      cwd,
+      dot: true,
+      onlyFiles: false,
+      followSymlinks: false,
+    });
     for (const path of new Set(paths)) {
       if (
         path
@@ -40,7 +67,14 @@ export const workspaceSnapshot = (cwd: string, writes: readonly string[]) =>
           .some((part) => [".git", ".jj", "node_modules"].includes(part))
       )
         continue;
-      const absolute = join(cwd, path);
+      const absolute = resolve(workspaceRoot, path);
+      if (
+        internalDirectories.some((directory) =>
+          isWithin(directory, absolute),
+        ) ||
+        internalFiles.includes(absolute)
+      )
+        continue;
       const stat = lstatSync(absolute);
       if (stat.isDirectory()) continue;
       const content = stat.isSymbolicLink()
@@ -58,9 +92,16 @@ export function changedFiles(
   before: Map<string, string>,
   after: Map<string, string>,
 ): number {
-  return [...new Set([...before.keys(), ...after.keys()])].filter(
-    (path) => before.get(path) !== after.get(path),
-  ).length;
+  return changedPaths(before, after).length;
+}
+
+export function changedPaths(
+  before: Map<string, string>,
+  after: Map<string, string>,
+): string[] {
+  return [...new Set([...before.keys(), ...after.keys()])]
+    .filter((path) => before.get(path) !== after.get(path))
+    .toSorted();
 }
 
 export function deriveOutcome(input: {
