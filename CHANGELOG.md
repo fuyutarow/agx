@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.17.2 — 2026-10-27
+
+- Refuse unchanged continuations after two lineage timeouts before dispatch effects
+
 ## 1.17.1 — 2026-10-27
 
 - Reroute vendor capacity within one worker run
