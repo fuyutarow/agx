@@ -17,11 +17,13 @@ import {
   append,
   flushRunPublications,
   acquireWorkspaceLock,
+  acquireWorkspaceLockUntilAvailable,
   events,
   foldedRuns,
   importLegacyRecords,
   now,
   overlapWarnings,
+  publishCurrentRuns,
   recordPath,
   runningWorkspaceRun,
   stateDir,
@@ -999,7 +1001,21 @@ export async function judgeRun(flags: {
     note: flags.note ?? "",
     ...(evidence.length === 0 ? {} : { evidence }),
   } as const;
-  append(judgment);
+  const root = stateDir();
+  const lock = await acquireWorkspaceLockUntilAvailable(
+    join(root, "current-runs.json"),
+    root,
+    30_000,
+  );
+  if (!lock.ok) return fatal(`cannot publish current runs: ${lock.error}`);
+  try {
+    // Persist by run id even if the end record is still arriving from its owner.
+    // foldInto keeps this judgment when the later `ended` event is replayed.
+    append(judgment, root, false);
+    await publishCurrentRuns(root, lock);
+  } finally {
+    await lock.release();
+  }
   process.stdout.write(
     `${JSON.stringify({ id: judgment.id, verdict: judgment.decision, ...(judgment.note === "" ? {} : { note: judgment.note }), at: judgment.at })}\n`,
   );

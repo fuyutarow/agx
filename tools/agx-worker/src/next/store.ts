@@ -9,6 +9,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { createHash } from "node:crypto";
@@ -236,13 +237,96 @@ export const recordPath = (root = stateDir()): string =>
   join(root, "records.jsonl");
 export const now = (): string => Temporal.Now.instant().toString();
 
+type AcquiredWorkspaceLock = Readonly<{
+  ok: true;
+  release: () => Promise<void>;
+}>;
+type WorkspaceLock =
+  | AcquiredWorkspaceLock
+  | Readonly<{ ok: false; error: string }>;
+const WORKSPACE_LOCK_BUSY = "workspace lock is busy or unavailable";
+const workspaceLockPath = (workspace: string, root: string) => {
+  const key = createHash("sha256").update(resolve(workspace)).digest("hex");
+  return join(root, "locks", key);
+};
+
+function linuxDeviceNumbers(device: bigint) {
+  return {
+    major: Number(
+      ((device & 0x00000000000fff00n) >> 8n) |
+        ((device & 0xfffff00000000000n) >> 32n),
+    ),
+    minor: Number(
+      (device & 0x00000000000000ffn) | ((device & 0x00000ffffff00000n) >> 12n),
+    ),
+  };
+}
+
+function processCommand(pid: number): string {
+  let fromProc = "";
+  try {
+    fromProc = readFileSync(`/proc/${pid}/cmdline`, "utf8")
+      .replaceAll("\0", " ")
+      .trim();
+  } catch {
+    // /proc is Linux-only and the holder may exit between lookup and inspection.
+  }
+  if (fromProc !== "") return fromProc.slice(0, 300);
+  const result = Bun.spawnSync({
+    cmd: ["ps", "-p", String(pid), "-o", "command="],
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  return result.stdout.toString("utf8").trim().slice(0, 300);
+}
+
+function lockHolder(
+  path: string,
+): { pid: number; command: string } | undefined {
+  if (process.platform === "linux") {
+    const info = statSync(path, { bigint: true });
+    const { major, minor } = linuxDeviceNumbers(info.dev);
+    const lines = readFileSync("/proc/locks", "utf8").split("\n");
+    for (const line of lines) {
+      const fields = line.trim().split(/\s+/u);
+      if (
+        fields[1] !== "FLOCK" ||
+        fields[2] !== "ADVISORY" ||
+        fields[3] !== "WRITE"
+      )
+        continue;
+      const pid = Number(fields[4]);
+      const [lockMajor, lockMinor, inode] = (fields[5] ?? "").split(":");
+      if (
+        !Number.isInteger(pid) ||
+        lockMajor === undefined ||
+        lockMinor === undefined ||
+        inode === undefined ||
+        Number.parseInt(lockMajor, 16) !== major ||
+        Number.parseInt(lockMinor, 16) !== minor ||
+        BigInt(inode) !== info.ino
+      )
+        continue;
+      return { pid, command: processCommand(pid) || "(unavailable)" };
+    }
+    return undefined;
+  }
+
+  const result = Bun.spawnSync({
+    cmd: ["lsof", "-t", path],
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const pid = Number(result.stdout.toString("utf8").trim().split("\n")[0]);
+  if (!Number.isInteger(pid) || pid <= 0) return undefined;
+  return { pid, command: processCommand(pid) || "(unavailable)" };
+}
+
 /** The file is only a stable inode; ownership lives in the kernel, never in its contents. */
 export async function acquireWorkspaceLock(
   workspace: string,
   root = stateDir(),
-): Promise<
-  { ok: true; release: () => Promise<void> } | { ok: false; error: string }
-> {
+): Promise<WorkspaceLock> {
   const library = fromThrowable(() =>
     dlopen(process.platform === "darwin" ? "libSystem.B.dylib" : "libc.so.6", {
       flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
@@ -250,11 +334,9 @@ export async function acquireWorkspaceLock(
   )();
   if (library.isErr())
     return { ok: false, error: `cannot load flock: ${String(library.error)}` };
-  const directory = join(root, "locks");
-  const key = createHash("sha256").update(resolve(workspace)).digest("hex");
   const opened = await fromPromise(
-    mkdir(directory, { recursive: true }).then(() =>
-      open(join(directory, key), "a"),
+    mkdir(join(root, "locks"), { recursive: true }).then(() =>
+      open(workspaceLockPath(workspace, root), "a"),
     ),
     String,
   );
@@ -268,7 +350,7 @@ export async function acquireWorkspaceLock(
   if (library.value.symbols.flock(file.fd, 2 | 4) !== 0) {
     await file.close();
     library.value.close();
-    return { ok: false, error: "workspace lock is busy or unavailable" };
+    return { ok: false, error: WORKSPACE_LOCK_BUSY };
   }
   return {
     ok: true,
@@ -277,6 +359,38 @@ export async function acquireWorkspaceLock(
       library.value.close();
       // Never unlink: another process may already have opened this same inode.
     },
+  };
+}
+
+/** Retry a workspace lock without blocking the event loop; return its owner at the bound. */
+export async function acquireWorkspaceLockUntilAvailable(
+  workspace: string,
+  root = stateDir(),
+  timeoutMs = 30_000,
+): Promise<WorkspaceLock> {
+  const path = workspaceLockPath(workspace, root);
+  const deadline = performance.now() + timeoutMs;
+  let lock = await acquireWorkspaceLock(workspace, root);
+  while (!lock.ok && lock.error === WORKSPACE_LOCK_BUSY) {
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) break;
+    await Bun.sleep(Math.min(5, remaining));
+    lock = await acquireWorkspaceLock(workspace, root);
+  }
+  if (lock.ok || lock.error !== WORKSPACE_LOCK_BUSY) return lock;
+
+  // Make one last attempt at the deadline so a lock released at the boundary wins.
+  lock = await acquireWorkspaceLock(workspace, root);
+  if (lock.ok || lock.error !== WORKSPACE_LOCK_BUSY) return lock;
+  let owner: { pid: number; command: string } | undefined;
+  try {
+    owner = lockHolder(path);
+  } catch {
+    owner = undefined;
+  }
+  return {
+    ok: false,
+    error: `workspace lock stayed busy past ${timeoutMs}ms; ${owner === undefined ? "holder pid and command unavailable" : `holder pid=${owner.pid} command=${JSON.stringify(owner.command)}`}`,
   };
 }
 
@@ -294,6 +408,7 @@ export const runningWorkspaceRun = async (
 export function append(
   event: z.input<typeof EventSchema>,
   root = stateDir(),
+  publish = true,
 ): void {
   const path = recordPath(root);
   mkdirSync(dirname(path), { recursive: true });
@@ -327,7 +442,7 @@ export function append(
         root,
       );
   }
-  schedulePublication(root);
+  if (publish) schedulePublication(root);
 }
 
 export function events(root = stateDir()): NextEvent[] {
@@ -1328,13 +1443,19 @@ async function sealWorkspaceLosses(
   }
 }
 
-export async function publishCurrentRuns(root = stateDir()): Promise<void> {
+export async function publishCurrentRuns(
+  root = stateDir(),
+  ownership?: AcquiredWorkspaceLock,
+): Promise<void> {
   const path = join(root, "current-runs.json");
-  const deadline = performance.now() + 5000;
-  let lock = await acquireWorkspaceLock(path, root);
-  while (!lock.ok && performance.now() < deadline) {
-    await Bun.sleep(5);
-    lock = await acquireWorkspaceLock(path, root);
+  let lock: WorkspaceLock =
+    ownership ?? (await acquireWorkspaceLock(path, root));
+  if (ownership === undefined) {
+    const deadline = performance.now() + 5000;
+    while (!lock.ok && performance.now() < deadline) {
+      await Bun.sleep(5);
+      lock = await acquireWorkspaceLock(path, root);
+    }
   }
   if (!lock.ok) {
     process.stderr.write(
@@ -1373,7 +1494,7 @@ export async function publishCurrentRuns(root = stateDir()): Promise<void> {
     })(),
     String,
   );
-  await held.release();
+  if (ownership === undefined) await held.release();
   if (result.isErr())
     process.stderr.write(
       "agx: cannot publish current runs: " + result.error + "\n",
