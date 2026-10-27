@@ -18,7 +18,6 @@ setDefaultTimeout(60_000);
 const scratch = await mkdtemp(join(tmpdir(), "ws-gc-lock-scope-"));
 const ws = join(import.meta.dir, "../src/ws.ts");
 const realJj = Bun.which("jj");
-const realRip = Bun.which("rip");
 afterAll(() => rm(scratch, { recursive: true, force: true }));
 let count = 0;
 
@@ -137,7 +136,7 @@ for (const existingState of [false, true])
     await f.shim(
       "jj",
       `
-const args = process.argv.slice(2).map(arg => arg.replaceAll('target.committer().timestamp().ago()', '"fixture age"').replaceAll('committer.timestamp().ago()', '"fixture age"'));
+const args = process.argv.slice(2).map(arg => arg.replaceAll('self.target().committer().timestamp().ago()', '"fixture age"'));
 ${delegateJj}`,
     );
     const state = join(f.root, "state/agx");
@@ -161,7 +160,7 @@ ${delegateJj}`,
     for (const scope of [["--repo", f.repo], ["--all"]]) {
       const result = await f.command([...args, ...scope]);
       expect(result.code, result.err).toBe(0);
-      expect(result.out).toContain("empty");
+      expect(result.out).toContain("removable");
       writable.push(result);
       expect(await snapshot(f.root)).toEqual(before);
     }
@@ -227,7 +226,7 @@ ${delegateJj}`,
   );
 });
 
-test("WS-GC-LOCK-SCOPE: add acquires during many slow read-only classifications", async () => {
+test("WS-GC-LOCK-SCOPE: add acquires while the aggregate read-only classification is delayed", async () => {
   const f = await fixture(["a", "b", "c", "d", "e", "f"]);
   for (const slug of ["a", "b", "c", "d", "e", "f"]) {
     await Bun.write(join(f.dir(slug), "a.txt"), `${slug} has pending work\n`);
@@ -238,7 +237,7 @@ test("WS-GC-LOCK-SCOPE: add acquires during many slow read-only classifications"
     "jj",
     `
 const args = process.argv.slice(2);
-if (args.includes("status") && args.includes("--ignore-working-copy")) {
+if (args.includes("log") && args.includes("::working_copies()")) {
   const holder = Bun.file(${JSON.stringify(join(f.lock, "owner.json"))});
   if (await holder.exists() && (await holder.text()).includes('"what":"agx ws gc')) { process.stderr.write("classification holds store lock"); process.exit(9); }
   await Bun.write(${JSON.stringify(gate)}, "started");
@@ -259,7 +258,7 @@ ${delegateJj}`,
 });
 
 test("WS-GC-LOCK-SCOPE: waiting add gets the next turn after one removal; wait names holder and time", async () => {
-  const f = await fixture(["a", "b"]);
+  const f = await fixture(["a"]);
   const gate = join(f.root, "removing");
   const events = join(f.root, "events.jsonl");
   await Bun.write(events, "");
@@ -271,22 +270,23 @@ if (args.includes("add")) {
   const file = Bun.file(${JSON.stringify(events)});
   await Bun.write(file, await file.text() + JSON.stringify("add acquired") + "\\n");
 }
-${delegateJj}`,
-  );
-  await f.shim(
-    "rip",
-    `
-import {readdir} from "node:fs/promises";
-const file = Bun.file(${JSON.stringify(events)});
-await Bun.write(file, await file.text() + JSON.stringify("removal") + "\\n");
-const first = !(await Bun.file(${JSON.stringify(gate)}).exists());
-await Bun.write(${JSON.stringify(gate)}, "started");
-if (first) {
+if (args.includes("forget") && args.includes("ws_a")) {
+  const file = Bun.file(${JSON.stringify(events)});
+  await Bun.write(file, await file.text() + JSON.stringify("removal") + "\\n");
+  await Bun.write(${JSON.stringify(gate)}, "started");
+  const {readdir} = await import("node:fs/promises");
+  const {join} = await import("node:path");
+  const waiterDir = ${JSON.stringify(`${f.lock}.waiters`)};
   const deadline = performance.now() + 15_000;
-  while ((await readdir(${JSON.stringify(`${f.lock}.waiters`)}).catch(() => [])).length === 0 && performance.now() < deadline) await Bun.sleep(20);
+  while (performance.now() < deadline) {
+    const entries = await readdir(waiterDir).catch(() => []);
+    const queued = await Promise.all(entries.map(entry => Bun.file(join(waiterDir, entry)).text().catch(() => "")));
+    if (queued.some(owner => owner.includes('"what":"agx ws add admitted"'))) break;
+    await Bun.sleep(20);
+  }
   await Bun.sleep(6_200);
 }
-const child = Bun.spawn([${JSON.stringify(realRip)}, ...process.argv.slice(2)], {stdout:"inherit",stderr:"inherit"}); process.exitCode = await child.exited;`,
+${delegateJj}`,
   );
   const gc = f.command(["gc", "--include-unrecorded"]);
   await waitFor(gate);
@@ -294,7 +294,10 @@ const child = Bun.spawn([${JSON.stringify(realRip)}, ...process.argv.slice(2)], 
   const added = await f.command(["add", "admitted"]);
   const elapsed = performance.now() - started;
   expect(added.code, added.err).toBe(0);
-  expect(elapsed).toBeLessThan(13_000);
+  expect(
+    elapsed,
+    `${added.err}\n${await Bun.file(events).text()}`,
+  ).toBeLessThan(13_000);
   expect(added.err).toMatch(
     /waiting [5-9]\d*s for agx ws gc ws_a \(pid \d+, host .+, since .+\) on /u,
   );
@@ -340,10 +343,14 @@ process.stdout.write(JSON.stringify(recheck ? ${JSON.stringify(row)} : []));`,
         "jj",
         `
 const args = process.argv.slice(2);
-if (args.includes("status") && args.includes("--ignore-working-copy")) await Bun.write(${JSON.stringify(initial)}, "first classification seen");
-if (args.includes("root") && args.includes("ws_changed") && await Bun.file(${JSON.stringify(initial)}).exists() && await Bun.file(${JSON.stringify(join(f.lock, "owner.json"))}).exists()) {
+if (args.includes("log") && args.includes("::working_copies()")) {
+  const previouslyClassified = await Bun.file(${JSON.stringify(initial)}).exists();
+  const locked = await Bun.file(${JSON.stringify(join(f.lock, "owner.json"))}).exists();
+  if (!previouslyClassified) await Bun.write(${JSON.stringify(initial)}, "first classification seen");
+  else if (locked) {
   await Bun.write(${JSON.stringify(join(f.dir("changed"), change === "file" ? "a.txt" : "pending.txt"))}, "keep this work\\n");
   await Bun.write(${JSON.stringify(gate)}, "under lock");
+  }
 }
 ${delegateJj}`,
       );
