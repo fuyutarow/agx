@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.19.1 — 2026-10-27
+
+- Normalize TOML integer values before config validation
+
 ## 1.19.0 — 2026-10-27
 
 - Use agx.toml for workspace policy and refuse .ws.toml
