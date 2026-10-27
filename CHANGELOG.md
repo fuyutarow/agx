@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.17.0 — 2026-10-27
+
+- Make workspace cleanup constant cost
+
 ## 1.16.2 — 2026-10-27
 
 - Judge waits for the current-runs publication lock before recording judgments
