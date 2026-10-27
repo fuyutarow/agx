@@ -910,7 +910,7 @@ describe("agx-worker run", () => {
     // Four run subprocesses retain their own 10s limits; this case also checks judgment, listing and validation.
   }, 60_000);
 
-  test("runs ticket verification in order and records every exit and log", async () => {
+  test("worker contract: verify log keeps failures", async () => {
     const root = await scratch("next-verify-");
     const state = join(root, "state");
     const ticket = join(root, "ticket.md");
@@ -935,9 +935,18 @@ describe("agx-worker run", () => {
       if (ready !== null) break;
       await Bun.sleep(25);
     }
+    const failureCommand =
+      'echo OUT; i=1; while [ "$i" -le 21 ]; do echo "MIDDLE-$i"; i=$((i + 1)); done; echo ERR-DETAIL >&2; exit 1';
+    const commands = ["true", "sh -c 'exit 3'", failureCommand];
+    const expectedFailureLog = [
+      "OUT",
+      ...Array.from({ length: 21 }, (_, index) => `MIDDLE-${index + 1}`),
+      "ERR-DETAIL",
+      "",
+    ].join("\n");
     writeFileSync(
       ticket,
-      `+++\nschema = 2\nname = "verify-fixture"\nwrites = []\noutcome = "verify fixture"\nverify = ["true", "sh -c 'exit 3'"]\n[proposition]\nid = "VERIFY-1"\nclaim = "verification runs"\nrefuted_by = "verification does not run"\n+++\nRun the fixture.\n`,
+      `+++\nschema = 2\nname = "verify-fixture"\nwrites = []\noutcome = "verify fixture"\nverify = ${JSON.stringify(commands)}\n[proposition]\nid = "VERIFY-1"\nclaim = "verification runs"\nrefuted_by = "verification does not run"\n+++\nRun the fixture.\n`,
     );
     writeFileSync(
       worker,
@@ -969,6 +978,9 @@ describe("agx-worker run", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stderr.toString()).toContain("VERIFY exit=0 true");
     expect(result.stderr.toString()).toContain("VERIFY exit=3 sh -c 'exit 3'");
+    expect(result.stderr.toString()).toContain(
+      `VERIFY exit=1 ${failureCommand} kind=failed`,
+    );
     const listed = Bun.spawnSync(
       [process.execPath, "tools/agx-worker/src/next/cli.ts", "ls", "--json"],
       { cwd: process.cwd(), env },
@@ -977,6 +989,7 @@ describe("agx-worker run", () => {
       z.array(
         z.looseObject({
           exit: z.number().nullable(),
+          outcome: z.string(),
           verify: z.array(
             z.strictObject({
               cmd: z.string(),
@@ -994,12 +1007,14 @@ describe("agx-worker run", () => {
     const row = rows.data[0];
     if (row === undefined) return;
     expect(row.exit).toBe(0);
-    expect(row.verify.map(({ exit }) => exit)).toEqual([0, 3]);
-    expect(row.verify.map(({ cmd }) => cmd)).toEqual([
-      "true",
-      "sh -c 'exit 3'",
-    ]);
+    expect(row.outcome).toBe("verify-failed");
+    expect(row.verify.map(({ exit }) => exit)).toEqual([0, 3, 1]);
+    expect(row.verify.map(({ cmd }) => cmd)).toEqual(commands);
     expect(row.verify.every(({ log_path }) => existsSync(log_path))).toBe(true);
+    const failure = row.verify.at(-1);
+    expect(failure?.cmd).toBe(failureCommand);
+    if (failure === undefined) return;
+    expect(readFileSync(failure.log_path, "utf8")).toBe(expectedFailureLog);
   });
 
   test("validation refusal exits 2", async () => {

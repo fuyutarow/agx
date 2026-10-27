@@ -207,13 +207,6 @@ const persistInterim = (id: string, path: string, message: string): boolean => {
 
 export { earlyQuitRows } from "./preflight.ts";
 
-const lastLines = (output: string, count: number): string => {
-  const lines = output.split(/\r?\n/u);
-  if (lines.at(-1) === "") lines.pop();
-  const tail = lines.slice(-count);
-  return tail.length === 0 ? "" : `${tail.join("\n")}\n`;
-};
-
 const runVerify = async (
   commands: string[],
   cwd: string,
@@ -248,21 +241,18 @@ const runVerify = async (
         cwd,
         stdin: "ignore",
         stdout: "pipe",
-        stderr: "pipe",
+        stderr: "ignore",
         env,
       },
     );
-    const stdout =
+    // Merge stderr into stdout before running the command so one pipe preserves
+    // the order in which the verification command writes both streams.
+    const output =
       child.stdout === null
         ? Promise.resolve("")
         : new Response(child.stdout).text();
-    const stderr =
-      child.stderr === null
-        ? Promise.resolve("")
-        : new Response(child.stderr).text();
     const exit = await child.exited;
-    const output = `${await stdout}${await stderr}`;
-    writeFileSync(logPath, lastLines(output, 20));
+    writeFileSync(logPath, await output);
     const kind = verifyKind(exit, child.signalCode);
     process.stderr.write(
       `VERIFY exit=${exit} ${cmd} kind=${kind}${source === undefined ? "" : ` source=${source}`}\n`,
