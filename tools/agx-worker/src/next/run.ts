@@ -453,6 +453,12 @@ export async function run(flags: Flags): Promise<number> {
     ).safeParse(progress.value);
     return parsed.success ? parsed.data.session : undefined;
   };
+  let recordedVendorSession = resumeSession;
+  const persistVendorSession = (session = vendorSessionFromProgress()): void => {
+    if (session === undefined || session === recordedVendorSession) return;
+    append({ kind: "session", id, at: now(), vendor_session: session });
+    recordedVendorSession = session;
+  };
   const stop = (signal: StopSignal, code: number): void => {
     if (stopTask !== undefined) return;
     const requested = events().findLast(
@@ -466,6 +472,7 @@ export async function run(flags: Flags): Promise<number> {
       currentResumeSession ??
       vendorSessionFromProgress() ??
       null;
+    persistVendorSession(vendorSession ?? undefined);
     killWorker?.();
     if (started && !ended) {
       ended = true;
@@ -827,6 +834,7 @@ export async function run(flags: Flags): Promise<number> {
   process.on("exit", killWorker);
   const progressWatcher = setInterval(() => {
     observeInterim();
+    persistVendorSession();
     const elapsed = (performance.now() - runStartedAt) / 1000;
     if (!progressSeen && !lateRecorded && elapsed >= firstReturnS) {
       append({

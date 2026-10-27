@@ -44,6 +44,7 @@ export async function timeBoxUnchangedRefusal(
 /**
  * Ordinary continuations pin their row. Capacity continuations route away from its model.
  * Row and session refusals happen before a run directory, a started event or a worker exists.
+ * A lost run with no reported session is the exception: continue it as a fresh vendor session.
  */
 export async function pinContinuation(
   continuationId: string,
@@ -70,12 +71,18 @@ export async function pinContinuation(
   if (selected.kind === "error")
     return refuse(selected.error.replace(/^unknown run id /u, "unknown run "));
   const previous = selected.row;
-  if (previous.vendor_session === null && previous.outcome !== "capacity")
-    return refuse(
-      previous.outcome === "stopped"
-        ? "it ended stopped and has no vendor session to continue"
-        : "it has no vendor session to continue",
-    );
+  if (previous.vendor_session === null && previous.outcome !== "capacity") {
+    if (previous.outcome !== "lost")
+      return refuse(
+        previous.outcome === "stopped"
+          ? "it ended stopped and has no vendor session to continue"
+          : "it has no vendor session to continue",
+      );
+    if (onFailure === undefined)
+      process.stderr.write(
+        `agx: run ${previous.id} was lost before the vendor reported a session; continuing with a fresh session\n`,
+      );
+  }
   const loaded = await loadRoster();
   if (!loaded.ok) return refuse(`cannot read dispatch roster: ${loaded.error}`);
   const row = loaded.value.choice.find((entry) => entry.id === previous.row);

@@ -175,6 +175,13 @@ const EventSchema = z.discriminatedUnion("kind", [
     legacy: LegacyIdentity.optional(),
   }),
   z.looseObject({
+    kind: z.literal("session"),
+    legacy_key: z.string().optional(),
+    id: z.string(),
+    at: z.string(),
+    vendor_session: z.string(),
+  }),
+  z.looseObject({
     kind: z.literal("stop-requested"),
     legacy_key: z.string().optional(),
     id: z.string(),
@@ -864,6 +871,7 @@ function foldInto(runs: Map<string, FoldedRun>, input: NextEvent[]): void {
     const run = runs.get(event.id);
     if (run === undefined) continue;
     if (event.kind === "progress") run.last_progress_path = event.path;
+    if (event.kind === "session") run.vendor_session = event.vendor_session;
     if (event.kind === "ended" && event.launch_stderr !== undefined)
       run.launch_stderr = event.launch_stderr;
     if (event.kind === "ended") {
