@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.17.4 — 2026-10-27
+
+- Remove release archives from other versions before building
+
 ## 1.17.3 — 2026-10-27
 
 - Keep complete ordered stdout and stderr in verify logs
