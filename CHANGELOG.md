@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.17.3 — 2026-10-27
+
+- Keep complete ordered stdout and stderr in verify logs
+
 ## 1.17.2 — 2026-10-27
 
 - Refuse unchanged continuations after two lineage timeouts before dispatch effects
