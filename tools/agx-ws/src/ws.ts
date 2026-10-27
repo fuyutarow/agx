@@ -50,7 +50,7 @@ const addCommand = command(
     ignoreArgv: rejectPrototypeFlag,
     help: {
       description:
-        "Create <repo>.ws/ws_<slug>, trust its mise.toml or .mise.toml, then run readiness commands (.ws.toml). --worker-store creates an isolated jj store for a sandboxed worker.",
+        "The only workspace creator: create <repo>.ws/ws_<slug>, trust its mise.toml or .mise.toml, then run readiness commands (.ws.toml).",
     },
     flags: {
       rev: {
@@ -73,11 +73,6 @@ const addCommand = command(
         description:
           "return an already registered workspace without changing it",
       },
-      workerStore: {
-        type: Boolean,
-        description:
-          "create an isolated jj store with only the shared checkout as remote and default push disabled",
-      },
     },
   },
   async (argv) =>
@@ -88,7 +83,6 @@ const addCommand = command(
         noFetch: argv.flags.noFetch === true,
         repo: argv.flags.repo ?? process.cwd(),
         reuse: argv.flags.reuse === true,
-        workerStore: argv.flags.workerStore === true,
         json: argv.flags.json === true,
       });
       if (!done.ok) {

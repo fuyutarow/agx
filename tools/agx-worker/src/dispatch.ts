@@ -627,7 +627,6 @@ export async function dispatch(options: {
         await resolveSuiteTool("agx-ws"),
         "add",
         wsSlug,
-        "--worker-store",
         "--repo",
         ticketRepo.root,
         "--reuse",

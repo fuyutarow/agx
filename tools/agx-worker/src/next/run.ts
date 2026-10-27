@@ -37,7 +37,6 @@ import { leaseFor, type StopSignal } from "./lease.ts";
 import { route, type CapacityRetryRouteResult } from "./route.ts";
 import { pinContinuation } from "./continue.ts";
 import { resolveRunId } from "./run-id.ts";
-import { publishAcceptedWorker } from "./worker-store.ts";
 import { routeFilterLabel } from "../roster/index.ts";
 import {
   earlyQuitRows,
@@ -1124,14 +1123,6 @@ export async function judgeRun(flags: {
     return fatal("judge decision must be accept or reject", 2);
   const resolution = resolveRunId(await foldedRuns(), id);
   if (resolution.kind === "error") return fatal(resolution.error, 2);
-  if (decision === "accept") {
-    const published = await publishAcceptedWorker(resolution.row);
-    if (!published.ok)
-      return fatal(
-        `cannot publish accepted worker changes: ${published.error}`,
-        2,
-      );
-  }
   const evidence = [];
   for (const path of flags.evidence ?? []) {
     const bytes = await readFile(path).catch(() =>

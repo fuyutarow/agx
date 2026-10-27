@@ -7,11 +7,9 @@ import {
   constants,
   existsSync,
   readdirSync,
-  readFileSync,
   readlinkSync,
   realpathSync,
 } from "node:fs";
-import { randomUUID } from "node:crypto";
 import {
   readFile,
   open,
@@ -722,130 +720,8 @@ export type AddOptions = {
   noFetch?: boolean | undefined;
   repo: string;
   reuse?: boolean | undefined;
-  workerStore?: boolean | undefined;
   json?: boolean | undefined;
 };
-
-function workerGitSource(repo: Repo): string | undefined {
-  const colocated = join(repo.backing, ".git");
-  if (existsSync(colocated)) return repo.backing;
-  const workspace = jjWorkspace(repo.backing);
-  if (!workspace.ok) return undefined;
-  const store = join(workspace.value.repo, "store");
-  const target = join(store, "git_target");
-  if (existsSync(target))
-    return realpathSync(resolve(store, readFileSync(target, "utf8").trim()));
-  const git = join(store, "git");
-  return existsSync(git) ? git : undefined;
-}
-
-async function isOwnedWorkerStore(repo: string, dir: string): Promise<boolean> {
-  const owner = jjWorkspace(dir);
-  if (
-    !owner.ok ||
-    owner.value.root !== realOr(dir) ||
-    owner.value.backingRoot !== realOr(dir)
-  )
-    return false;
-  const history = await indexedWorkspaces();
-  return (
-    history.ok &&
-    history.value.some(
-      (entry) =>
-        realOr(entry.root) === realOr(repo) &&
-        realOr(entry.workspace) === realOr(dir),
-    )
-  );
-}
-
-async function ripNewWorkerStore(
-  graveyard: Graveyard,
-  dir: string,
-): Promise<Attempt<void>> {
-  if (!existsSync(dir)) return good(undefined);
-  if (Bun.which("rip") === null)
-    return bad("rip is not on PATH: mise run install:tools");
-  const removed = await exec(["rip", dir], dirname(dir), {
-    GRAVEYARD: graveyard.path,
-    RIP_GRAVEYARD: graveyard.path,
-  });
-  if (!removed.ok) return bad(`rip ${dir}: ${msg(removed)}`);
-  if (removed.value.code !== 0)
-    return bad(`rip ${dir} failed: ${removed.value.err.trim()}`);
-  return good(undefined);
-}
-
-/** Create an independent store. Its only remote is this source checkout. */
-async function createWorkerStore(
-  repo: Repo,
-  slug: string,
-  dir: string,
-  graveyard: Graveyard,
-  rev?: string,
-): Promise<Attempt<void>> {
-  const source = workerGitSource(repo);
-  if (source === undefined)
-    return bad(
-      `cannot create an isolated worker store: ${repo.backing} has no local Git store`,
-    );
-  const base = `agx-worker-base-${slug}-${randomUUID().replaceAll("-", "")}`;
-  const marked = await jjOut(
-    ["bookmark", "set", base, "-r", rev ?? "@"],
-    repo.backing,
-    false,
-  );
-  if (!marked.ok) return bad(`mark worker store base: ${msg(marked)}`);
-  const exported = await jjOut(["git", "export"], repo.backing, false);
-  if (!exported.ok) {
-    await jjOut(["bookmark", "delete", base], repo.backing, false);
-    return bad(`export worker store base: ${msg(exported)}`);
-  }
-  const cloned = await jjOut(
-    [
-      "git",
-      "clone",
-      "--no-colocate",
-      "--remote",
-      "origin",
-      "--branch",
-      base,
-      "--branch",
-      "*",
-      source,
-      dir,
-    ],
-    repo.backing,
-    false,
-  );
-  const unmarked = await jjOut(
-    ["bookmark", "delete", base],
-    repo.backing,
-    false,
-  );
-  const reexported = unmarked.ok
-    ? await jjOut(["git", "export"], repo.backing, false)
-    : unmarked;
-  if (!cloned.ok || !unmarked.ok || !reexported.ok) {
-    const reason = [
-      cloned.ok ? undefined : `clone: ${msg(cloned)}`,
-      unmarked.ok ? undefined : `remove base bookmark: ${msg(unmarked)}`,
-      reexported.ok ? undefined : `export cleanup: ${msg(reexported)}`,
-    ]
-      .filter((part): part is string => part !== undefined)
-      .join("; ");
-    const cleanup = await ripNewWorkerStore(graveyard, dir);
-    return bad(
-      `${reason}${cleanup.ok ? "" : `; cleanup failed: ${msg(cleanup)}`}`,
-    );
-  }
-  const disabled = await jjOut(
-    ["config", "set", "--repo", "git.push", "agx-worker-push-disabled"],
-    dir,
-    false,
-  );
-  if (!disabled.ok) return bad(`disable default worker push: ${msg(disabled)}`);
-  return good(undefined);
-}
 
 async function installMissingMiseTools(dir: string): Promise<Attempt<void>> {
   const missing = await exec(["mise", "install", "--dry-run-code"], dir);
@@ -1136,24 +1012,17 @@ export async function add(options: AddOptions): Promise<Attempt<AddResult>> {
     `agx ws add ${options.slug}`,
     async () => {
       enterStep("check workspace registration");
-      const names = options.workerStore
-        ? good<string[]>([])
-        : await workspaceNames(repo.value);
+      const names = await workspaceNames(repo.value);
       if (!names.ok) return names;
       const present = existsSync(dir);
       if (present) {
-        if (
-          options.reuse === true &&
-          (options.workerStore === true
-            ? await isOwnedWorkerStore(repo.value.backing, dir)
-            : names.value.includes(name))
-        ) {
+        if (options.reuse === true && names.value.includes(name)) {
           const recorded = await recordWorkspace(repo.value.backing, dir);
           return recorded.ok ? good({ workspace: dir }) : recorded;
         }
         return bad(`${dir} already exists`);
       }
-      if (!options.workerStore && names.value.includes(name))
+      if (names.value.includes(name))
         return bad(`jj workspace ${name} is already registered`);
       const source = jjWorkspace(options.repo);
       if (!source.ok) return source;
@@ -1200,47 +1069,6 @@ export async function add(options: AddOptions): Promise<Attempt<AddResult>> {
       }
       enterStep("create workspace");
       await mkdir(repo.value.wsRoot, { recursive: true });
-      if (options.workerStore === true) {
-        const created = await createWorkerStore(
-          repo.value,
-          options.slug,
-          dir,
-          graveyard.value,
-          selectedRev,
-        );
-        if (!created.ok) {
-          if (existsSync(dir)) await ripNewWorkerStore(graveyard.value, dir);
-          return created;
-        }
-        const recorded = await recordWorkspace(repo.value.backing, dir);
-        if (!recorded.ok) {
-          const removed = await ripNewWorkerStore(graveyard.value, dir);
-          return bad(
-            `record worker store ${dir}: ${msg(recorded)}${removed.ok ? "" : `; cleanup failed: ${msg(removed)}`}`,
-          );
-        }
-        const ready = await readyWorkspace(
-          dir,
-          cfg.value,
-          options.json === true,
-        );
-        if (!ready.ok) {
-          enterStep("roll back worker store readiness failure");
-          const removed = await ripNewWorkerStore(graveyard.value, dir);
-          return {
-            ok: false,
-            error: new StepFailure(
-              `${msg(ready)}; ${removed.ok ? "the new worker store was removed" : `rollback also failed: ${msg(removed)} (remove ${dir} by hand)`}`,
-              ready.error instanceof StepFailure ? ready.error.code : 1,
-            ),
-          };
-        }
-        enterStep("release workspace store lock");
-        return good({
-          workspace: dir,
-          ...(base === undefined ? {} : { base }),
-        });
-      }
       const made = await jjOut(
         [
           "workspace",
