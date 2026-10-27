@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.18.0 — 2026-10-27
+
+- Create isolated JJ stores for sandboxed workers
+- Publish isolated worker commits on acceptance
+
 ## 1.17.5 — 2026-10-27
 
 - Add test-only timing seams for agx-ws integration tests
