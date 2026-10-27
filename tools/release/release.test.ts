@@ -9,7 +9,7 @@ import {
   stat,
 } from "node:fs/promises";
 import { existsSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { writeChangeset } from "../changeset/changeset.ts";
 import { applyChangesets } from "../changeset/apply.ts";
@@ -1198,6 +1198,40 @@ async function suiteFixture() {
   }
   return { ...f, pkg: "suite", dir: join(f.root, "tools/agx") };
 }
+
+test("release contract: dist holds only the built version", async () => {
+  const f = await suiteFixture();
+  const dist = join(f.root, "dist");
+  await mkdir(dist, { recursive: true });
+  const staleSuite = join(dist, "agx-2.3.3-linux-x64.tar.gz");
+  const staleLibrary = join(dist, "agx-usehooks-2.3.3.tgz");
+  const currentMember = join(dist, "agx-worker-2.3.4-linux-x64.tar.gz");
+  const note = join(dist, "release-notes.txt");
+  await Bun.write(staleSuite, "older suite archive");
+  await Bun.write(staleLibrary, "older library archive");
+  await Bun.write(currentMember, "current version archive");
+  await Bun.write(note, "keep non-archive files");
+
+  const result = await build("suite", undefined, f.root);
+  expect(result.isOk(), result.isErr() ? result.error : "").toBe(true);
+  if (result.isErr()) return;
+
+  const archives = (await readdir(dist, { withFileTypes: true }))
+    .filter(
+      (entry) =>
+        entry.isFile() &&
+        (entry.name.endsWith(".tar.gz") || entry.name.endsWith(".tgz")),
+    )
+    .map((entry) => entry.name)
+    .toSorted();
+  expect(archives).toEqual(
+    [basename(result.value.archive), basename(currentMember)].toSorted(),
+  );
+  expect(await Bun.file(staleSuite).exists()).toBe(false);
+  expect(await Bun.file(staleLibrary).exists()).toBe(false);
+  expect(await Bun.file(currentMember).text()).toBe("current version archive");
+  expect(await Bun.file(note).text()).toBe("keep non-archive files");
+}, 30_000);
 
 test("release contract: size", async () => {
   const root = await mkdtemp(join(tmpdir(), "release-size-"));

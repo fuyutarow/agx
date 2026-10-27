@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import {
   mkdir,
   rm,
+  readdir,
   copyFile,
   cp,
   link,
@@ -179,6 +180,36 @@ export async function build(
   return buildMember(pkg, target, root, runner);
 }
 
+function isArchiveForVersion(name: string, version: string) {
+  return [...packages].some((pkg) => {
+    const prefix = `${pkg}-${version}`;
+    if (!name.startsWith(prefix)) return false;
+    const suffix = name.slice(prefix.length);
+    if (pkg === "agx-usehooks") return suffix === ".tgz";
+    return /^-(?:linux|darwin|win32)-(?:x64|arm64)\.tar\.gz$/u.test(suffix);
+  });
+}
+
+async function removeOtherVersionArchives(root: string, version: string) {
+  const dist = join(root, "dist");
+  const entries = await readdir(dist, { withFileTypes: true }).catch(
+    (error: unknown) => {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT")
+        return [];
+      throw error;
+    },
+  );
+  for (const entry of entries) {
+    if (
+      (!entry.isFile() && !entry.isSymbolicLink()) ||
+      (!entry.name.endsWith(".tar.gz") && !entry.name.endsWith(".tgz")) ||
+      isArchiveForVersion(entry.name, version)
+    )
+      continue;
+    await rm(join(dist, entry.name), { force: true });
+  }
+}
+
 async function buildMember(
   pkg: string,
   target?: string,
@@ -193,6 +224,7 @@ async function buildMember(
   const host = platform(target);
   if (host.isErr()) return host;
   const { dir, version, commands } = info.value;
+  await removeOtherVersionArchives(root, version);
   const stage = join(root, "dist", pkg);
   const bin = suiteBin ?? join(stage, "bin");
   await rm(stage, { recursive: true, force: true });
@@ -252,6 +284,7 @@ async function buildSuite(
   const host = platform(target);
   if (host.isErr()) return host;
   const stage = join(root, "dist", "suite");
+  await removeOtherVersionArchives(root, suite.value.version);
   await rm(stage, { recursive: true, force: true });
   const bin = join(stage, "bin");
   await mkdir(bin, { recursive: true });
@@ -385,6 +418,7 @@ async function buildLibrary(
   const { pkg, dir, version, source } = info;
   if (source === undefined)
     return err(`Package ${pkg} has no library source entry`);
+  await removeOtherVersionArchives(root, version);
   const stage = join(root, "dist", pkg);
   await rm(stage, { recursive: true, force: true });
   await mkdir(stage, { recursive: true });
