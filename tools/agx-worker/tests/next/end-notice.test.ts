@@ -1,4 +1,4 @@
-import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
 import { chmod, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -12,7 +12,6 @@ const EndedRecord = z.object({
   outcome: z.string(),
   end_notice: z.object({ exit: z.number().nullable(), receipt: z.string() }),
 });
-setDefaultTimeout(15_000);
 afterEach(async () => {
   for (const child of children.splice(0)) child.kill("SIGKILL");
   await Promise.all(
@@ -50,24 +49,27 @@ async function runCase(input: {
     `#!${process.execPath}\nimport { appendFileSync } from "node:fs"; appendFileSync(process.env.NOTICES_PATH, JSON.stringify(process.argv.slice(2)) + "\\n"); console.log("fake transport accepted"); process.exit(Number(process.env.SENDER_EXIT));\n`,
   );
   await chmod(agx, 0o755);
-  const portProbe = Bun.serve({ port: 0, fetch: () => new Response() });
-  const port = portProbe.port;
-  await portProbe.stop(true);
   const jevPath = join(root, "jev.ts");
   await Bun.write(
     jevPath,
-    `Bun.serve({ hostname: "127.0.0.1", port: ${port}, fetch: () => Response.json({ answers: { worker: { choice: "luna-high", confidence: 0.9 } } }) });\n`,
+    `const jev = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => Response.json({ answers: { worker: { choice: "luna-high", confidence: 0.9 } } }) });\nconsole.log("ready:" + jev.port);\n`,
   );
   const jev = Bun.spawn([process.execPath, jevPath], {
-    stdout: "ignore",
+    stdout: "pipe",
     stderr: "ignore",
   });
   children.push(jev);
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    if ((await fetch(`http://127.0.0.1:${port}`).catch(() => null)) !== null)
-      break;
-    await Bun.sleep(25);
+  if (jev.stdout === null) throw new Error("JEV fixture stdout is unavailable");
+  const reader = jev.stdout.getReader();
+  let readyLine = "";
+  const decoder = new TextDecoder();
+  while (!readyLine.includes("\n")) {
+    const chunk = await reader.read();
+    if (chunk.done) throw new Error("JEV fixture exited before becoming ready");
+    readyLine += decoder.decode(chunk.value);
   }
+  reader.releaseLock();
+  const port = Number(readyLine.split(":")[1]?.trim());
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     PATH: `${root}:${process.env.PATH ?? ""}`,
@@ -94,7 +96,7 @@ async function runCase(input: {
       "--cd",
       root,
     ],
-    { cwd: process.cwd(), env, timeout: 10_000 },
+    { cwd: process.cwd(), env, timeout: 5_000 },
   );
   expect(
     result.exitCode,
