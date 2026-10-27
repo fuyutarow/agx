@@ -13,6 +13,7 @@ import {
   gc,
   gcAll,
   harvest,
+  LegacyWorkspaceConfigError,
   refresh,
   remove,
 } from "./workspace.ts";
@@ -24,6 +25,12 @@ await checkState();
 const cliArgv = () => process.argv.slice(2);
 const cli = standardCli(cleyeCli, packageJson, cliArgv);
 
+const failureExitCode = (error: unknown): number => {
+  if (error instanceof LegacyWorkspaceConfigError) return 2;
+  if (error instanceof StepFailure) return error.code;
+  return 1;
+};
+
 const rejectPrototypeFlag = (type: string, flag: string): void => {
   if (type === "unknown-flag" && flag === "__proto__") {
     process.stderr.write("ws: unknown option '--__proto__'\n");
@@ -33,7 +40,7 @@ const rejectPrototypeFlag = (type: string, flag: string): void => {
 
 const fail = (error: unknown): void => {
   process.stderr.write(`ws: ${errorMessage(error)}\n`);
-  process.exitCode = error instanceof StepFailure ? error.code : 1;
+  process.exitCode = failureExitCode(error);
 };
 
 const repoFlag = {
@@ -50,7 +57,7 @@ const addCommand = command(
     ignoreArgv: rejectPrototypeFlag,
     help: {
       description:
-        "The only workspace creator: create <repo>.ws/ws_<slug>, trust its mise.toml or .mise.toml, then run readiness commands (.ws.toml).",
+        "The only workspace creator: create <repo>.ws/ws_<slug>, trust its mise.toml or .mise.toml, then run readiness commands from agx.toml [ws].ready.",
     },
     flags: {
       rev: {
@@ -92,8 +99,7 @@ const addCommand = command(
             resolve();
           });
         });
-        process.exitCode =
-          done.error instanceof StepFailure ? done.error.code : 1;
+        process.exitCode = failureExitCode(done.error);
         return;
       }
       enterStep("write workspace result");
@@ -146,7 +152,7 @@ const adoptCommand = command(
       },
       includeKept: {
         type: Boolean,
-        description: "include .ws.toml keep entries and print required updates",
+        description: "include [ws].keep entries and print required updates",
       },
     },
   },
@@ -228,7 +234,7 @@ const gcCommand = command(
     ignoreArgv: rejectPrototypeFlag,
     help: {
       description:
-        'Enumerate jj workspaces. Print TSV: path, kind, verdict, change id, age, reason. Unreadable workspaces are reported as broken; the command exits nonzero while preserving the other rows. Legacy workspaces are report-only until --legacy. Keep a workspace by setting `keep = ["ws_<name>"]` in the main checkout root `.ws.toml` (example: `keep = ["ws_reference"]`). The working file takes precedence; when absent, GC reads that file from the parent revision. agx ws add is the only creator.',
+        'Enumerate jj workspaces. Print TSV: path, kind, verdict, change id, age, reason. Unreadable workspaces are reported as broken; the command exits nonzero while preserving the other rows. Legacy workspaces are report-only until --legacy. Keep a workspace by setting `keep = ["ws_<name>"]` under `[ws]` in the main checkout root `agx.toml` (example: `keep = ["ws_reference"]`). Machine-local keep entries live under `[ws]` in `$XDG_CONFIG_HOME/agx/repos/<name>.toml`. agx ws add is the only creator.',
     },
     flags: {
       dryRun: { type: Boolean, description: "report only; remove nothing" },
@@ -312,6 +318,7 @@ const gcCommand = command(
           rows,
           counts: done.value.counts,
           broken: done.value.broken,
+          refused: done.value.refused ?? [],
           complete: done.value.complete,
           repositories: done.value.repositories,
           discovery: done.value.discovery,
@@ -323,15 +330,17 @@ const gcCommand = command(
           `discovery\t${JSON.stringify(done.value.discovery)}\n`,
         );
       for (const repo of done.value.repositories ?? [])
-        process.stdout.write(
-          `${repo.root}\trepo\t${repo.status}\t${repo.sources.join(",")}\t${JSON.stringify(repo.counts)}\n`,
-        );
+        if (repo.status !== "refused")
+          process.stdout.write(
+            `${repo.root}\trepo\t${repo.status}\t${repo.sources.join(",")}\t${JSON.stringify(repo.counts)}\n`,
+          );
       for (const line of done.value.lines) process.stdout.write(`${line}\n`);
     }
     if (done.value.failed.length > 0)
       fail(`could not collect: ${done.value.failed.join(", ")}`);
     if (done.value.broken.length > 0)
       fail(`broken workspaces: ${done.value.broken.join(", ")}`);
+    if (done.value.refused?.length) process.exitCode = 2;
   },
 );
 
@@ -412,7 +421,10 @@ const doctorCommand = command(
     const done = await doctorWorkspaces();
     if (!done.ok) {
       fail(done.error);
-      if (argv.flags.quiet !== true)
+      if (
+        argv.flags.quiet !== true &&
+        !(done.error instanceof LegacyWorkspaceConfigError)
+      )
         process.stderr.write("agx ws doctor: error\n");
       return;
     }

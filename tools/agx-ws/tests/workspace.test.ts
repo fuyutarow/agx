@@ -2,6 +2,7 @@
 // shim whose answer decides whether the graveyard looks RAM-backed.
 import {
   afterAll,
+  afterEach,
   beforeAll,
   describe,
   expect,
@@ -36,6 +37,8 @@ import { rootFileFileset, untrackedContent } from "../src/workspace.ts";
 setDefaultTimeout(60_000);
 const WS = join(import.meta.dir, "../src/ws.ts");
 const scratch = mkdtempSync(join(tmpdir(), "ws-test-"));
+const localPolicyFiles: string[] = [];
+mkdirSync(join(scratch, "config", "jj", "repos"), { recursive: true });
 const bin = join(scratch, "bin");
 const graveyard = join(scratch, "graveyard");
 const records = join(scratch, "agx.json");
@@ -45,6 +48,7 @@ const baseEnv = (
   extra: Record<string, string> = {},
 ): Record<string, string | undefined> => ({
   ...stateTestEnv(),
+  JJ_CONFIG: "",
   PATH: `${bin}:${process.env.PATH}`,
   HOME: home,
   XDG_STATE_HOME: join(home, "state"),
@@ -127,6 +131,10 @@ const setRecords = (rows: object[]): void => {
   writeFileSync(records, JSON.stringify(rows));
 };
 
+afterEach(async () => {
+  await Promise.all(localPolicyFiles.splice(0).map((path) => unlink(path)));
+});
+
 let counter = 0;
 /** A fresh repo `<scratch>/n/<name>` with one landed commit on bookmark `main`; returns its path. */
 async function repo(config?: string, colocate = true): Promise<string> {
@@ -141,8 +149,23 @@ async function repo(config?: string, colocate = true): Promise<string> {
       )
     ).code,
   ).toBe(0);
+  expect(
+    (
+      await jj(
+        [
+          "config",
+          "set",
+          "--repo",
+          'revset-aliases."trunk()"',
+          "bookmarks(main)",
+        ],
+        path,
+      )
+    ).code,
+  ).toBe(0);
   writeFileSync(join(path, "a.txt"), "a\n");
-  if (config !== undefined) writeFileSync(join(path, ".ws.toml"), config);
+  if (config !== undefined)
+    writeFileSync(join(path, "agx.toml"), `schema = 1\n[ws]\n${config}`);
   await jj(["commit", "-m", "base"], path);
   expect(
     (await jj(["bookmark", "create", "main", "-r", "@-"], path)).code,
@@ -311,15 +334,31 @@ describe("AGX-GC-UNTRACKED-KEEP-1024", () => {
     const fake = join(errorBin, "jj");
     await Bun.write(
       fake,
-      `#!/usr/bin/env bun\nconst args = process.argv.slice(2); if (args.includes("list") && args.includes("file")) { await Bun.write(${JSON.stringify(trace)}, "called"); process.stderr.write("unexpected per-workspace inventory"); process.exit(1); } const child = Bun.spawn([${JSON.stringify(realJj)}, ...args], { stdin: "ignore", stdout: "inherit", stderr: "inherit" }); process.exitCode = await child.exited;\n`,
+      `#!/usr/bin/env bun\nconst args = process.argv.slice(2); const perWorkspaceInventory = process.cwd() !== ${JSON.stringify(path)} && args.includes("list") && args.includes("file"); if (perWorkspaceInventory) { await Bun.write(${JSON.stringify(trace)}, "called"); process.stderr.write("unexpected per-workspace inventory"); process.exit(1); } const child = Bun.spawn([${JSON.stringify(realJj)}, ...args], { stdin: "ignore", stdout: "inherit", stderr: "inherit" }); process.exitCode = await child.exited;\n`,
     );
     chmodSync(fake, 0o755);
+    const workspaceList = await run(
+      [
+        "jj",
+        "--ignore-working-copy",
+        "--at-operation=@",
+        "-R",
+        path,
+        "workspace",
+        "list",
+        "-T",
+        'json({"name" => self.name(), "root" => self.root(), "target" => self.target().commit_id(), "change" => self.target().change_id().short(12), "age" => self.target().committer().timestamp().ago()}) ++ "\\n"',
+      ],
+      path,
+      baseEnv({ PATH: `${errorBin}:${bin}:${process.env.PATH}` }),
+    );
+    console.log(`workspace list debug: ${JSON.stringify(workspaceList)}`);
     const result = await ws(
       ["gc", "--include-unrecorded", "--dry-run", "--json"],
       path,
       baseEnv({ PATH: `${errorBin}:${bin}:${process.env.PATH}` }),
     );
-    expect(result.code, result.err).toBe(0);
+    expect(result.code, result.err + result.out).toBe(0);
     expect(result.out).toContain('"removable"');
     expect(result.out).toContain('"complete":true');
     expect(await Bun.file(trace).exists()).toBe(false);
@@ -337,7 +376,7 @@ describe("AGX-GC-UNTRACKED-KEEP-1024", () => {
     const fake = join(slowBin, "jj");
     await Bun.write(
       fake,
-      `#!/usr/bin/env bun\nconst args = process.argv.slice(2); if (args.includes("list") && args.includes("file")) { await Bun.write(${JSON.stringify(trace)}, "called"); await Bun.sleep(1250); } const child = Bun.spawn([${JSON.stringify(realJj)}, ...args], { stdin: "ignore", stdout: "inherit", stderr: "inherit" }); process.exitCode = await child.exited;\n`,
+      `#!/usr/bin/env bun\nconst args = process.argv.slice(2); const perWorkspaceInventory = process.cwd() !== ${JSON.stringify(path)} && args.includes("list") && args.includes("file"); if (perWorkspaceInventory) { await Bun.write(${JSON.stringify(trace)}, "called"); await Bun.sleep(1250); } const child = Bun.spawn([${JSON.stringify(realJj)}, ...args], { stdin: "ignore", stdout: "inherit", stderr: "inherit" }); process.exitCode = await child.exited;\n`,
     );
     chmodSync(fake, 0o755);
     const env = baseEnv({ PATH: `${slowBin}:${bin}:${process.env.PATH}` });
@@ -353,71 +392,72 @@ describe("AGX-GC-UNTRACKED-KEEP-1024", () => {
   });
 });
 
-describe("WS-CONFIG-ONE-SOURCE-1023", () => {
-  for (const source of [
-    "untracked-only",
-    "committed-only",
-    "working-over-committed",
-  ]) {
-    test(`${source}: add, rm, gc and doctor share readiness, trunk and keep policy`, async () => {
-      const policy =
-        'trunk = "main"\nready = ["printf chosen-ready"]\nkeep = ["ws_safe"]\n';
-      const committed = source === "committed-only" ? policy : undefined;
-      const path = await repo(
-        source === "working-over-committed"
-          ? 'trunk = "missing-trunk"\nready = ["printf wrong-ready"]\nkeep = ["ws_other"]\n'
-          : committed,
-      );
-      if (source === "untracked-only")
-        await Bun.write(join(path, ".gitignore"), "/.ws.toml\n");
-      if (source === "committed-only") await unlink(join(path, ".ws.toml"));
-      else await Bun.write(join(path, ".ws.toml"), policy);
+describe("ws contract: shared agx.toml [ws] policy", () => {
+  const writeL2 = async (path: string, name: string, policy: string) => {
+    const directory = join(scratch, "config", "agx", "repos");
+    await mkdir(directory, { recursive: true });
+    const configPath = join(directory, `${name}.toml`);
+    await Bun.write(
+      configPath,
+      `schema = 1\nroot = ${JSON.stringify(path)}\n[ws]\n${policy}`,
+    );
+    localPolicyFiles.push(configPath);
+  };
+
+  for (const source of ["L1", "L2 ready override and keep union"]) {
+    test(`${source}: add, rm, gc and doctor use the shared policy`, async () => {
+      const l1 =
+        source === "L1"
+          ? 'trunk = "main"\nready = ["printf chosen-ready"]\nkeep = ["ws_safe"]\n'
+          : 'trunk = "main"\nready = ["printf wrong-ready"]\nkeep = ["ws_other"]\n';
+      const path = await repo(l1);
+      if (source === "L2 ready override and keep union")
+        await writeL2(
+          path,
+          "shared-policy-l2",
+          'ready = ["printf chosen-ready"]\nkeep = ["ws_safe"]\n',
+        );
 
       const added = await ws(["add", "safe"], path);
       expect(added.code, added.err).toBe(0);
       expect(added.out).toContain("chosen-ready");
       expect(added.out).not.toContain("wrong-ready");
-      if (source === "untracked-only") {
-        const tracked = await jj(["file", "list"], path);
-        expect(tracked.code, tracked.err).toBe(0);
-        expect(tracked.out).not.toContain(".ws.toml");
-      }
-      if (source === "committed-only")
-        expect(existsSync(join(path, ".ws.toml"))).toBe(false);
+      const tracked = await jj(["file", "list"], path);
+      expect(tracked.code, tracked.err).toBe(0);
+      expect(tracked.out).toContain("agx.toml");
+      expect(tracked.out).not.toContain(".ws.toml");
+
       const safe = wsDir(path, "safe");
-      // Doctor discovers checkout gitdir files; advertise the secondary fixture.
-      await Bun.write(join(safe, ".git"), `gitdir: ${join(path, ".git")}\n`);
-      // A secondary checkout's file is never the policy source, even when invoked there.
       await Bun.write(
-        join(safe, ".ws.toml"),
-        'trunk = "wrong-checkout"\nkeep = []\n',
+        join(safe, "agx.toml"),
+        'schema = 1\n[ws]\ntrunk = "wrong-checkout"\nkeep = []\n',
       );
       const refused = await ws(["rm", "safe"], safe);
       expect(refused.code, refused.err).toBe(1);
-      expect(refused.err).toContain("is kept by .ws.toml");
+      expect(refused.err).toContain("is kept by [ws].keep");
       const dry = await ws(["gc", "--dry-run", "--include-unrecorded"], safe);
       expect(dry.code, dry.err).toBe(0);
       expect(dry.out).toContain(`${safe}\tws\tkeep\t`);
 
+      const safeGit = join(safe, ".git");
+      await Bun.write(safeGit, `gitdir: ${join(path, ".git")}\n`);
       const inventory = `import { doctorInventory } from ${JSON.stringify(join(import.meta.dir, "../src/workspace.ts"))}; console.log(JSON.stringify(await doctorInventory()));`;
       const doctor = await run(
         ["bun", "-e", inventory],
         safe,
-        baseEnv({
-          AGX_REPOS_ROOT: join(path, "..", "proj.ws"),
-        }),
+        baseEnv({ AGX_REPOS_ROOT: join(path, "..", "proj.ws") }),
       );
       expect(doctor.code, doctor.err).toBe(0);
       expect(doctor.out).toContain('"ok":true');
       expect(doctor.out).toContain('"name":"ws_safe"');
       expect(doctor.out).toContain('"verdict":"kept"');
+      await unlink(safeGit);
 
-      // Include an eligible candidate so real GC also exercises its locked config refresh.
       const spare = await ws(["add", "spare"], path);
       expect(spare.code, spare.err).toBe(0);
       expect(spare.out).toContain("chosen-ready");
       const collected = await ws(["gc", "--include-unrecorded"], safe);
-      expect(collected.code, collected.err).toBe(0);
+      expect(collected.code, collected.err + collected.out).toBe(0);
       expect(collected.out).toContain(`${safe}\tws\tkeep\t`);
       expect(collected.out).toContain(
         `${wsDir(path, "spare")}\tws\tremovable\t`,
@@ -427,32 +467,138 @@ describe("WS-CONFIG-ONE-SOURCE-1023", () => {
     });
   }
 
-  test("invalid working policy fails closed instead of using committed policy", async () => {
+  test("rejects invalid L2 policy instead of using L1", async () => {
     const path = await repo('trunk = "main"\n');
     expect((await ws(["add", "safe"], path)).code).toBe(0);
+    const directory = join(scratch, "config", "agx", "repos");
+    await mkdir(directory, { recursive: true });
+    const policyPath = join(
+      directory,
+      `invalid-${path.split("/").at(-2)}.toml`,
+    );
     await Bun.write(
-      join(wsDir(path, "safe"), ".git"),
-      `gitdir: ${join(path, ".git")}\n`,
+      policyPath,
+      `schema = 1\nroot = ${JSON.stringify(path)}\n[ws]\nkeep = "invalid"\n`,
     );
-    await Bun.write(join(path, ".ws.toml"), 'keep = "invalid"\n');
-    for (const args of [
-      ["add", "other"],
-      ["rm", "safe"],
-      ["gc", "--include-unrecorded"],
-    ]) {
-      const result = await ws(args, path);
-      expect(result.code, result.err).toBe(1);
-      expect(result.err).toContain(".ws.toml");
+    try {
+      for (const args of [
+        ["add", "other"],
+        ["rm", "safe"],
+        ["gc", "--include-unrecorded"],
+      ]) {
+        const result = await ws(args, path);
+        expect(result.code, result.err).toBe(1);
+        expect(result.err).toContain(policyPath);
+      }
+      const safeGit = join(wsDir(path, "safe"), ".git");
+      await Bun.write(safeGit, `gitdir: ${join(path, ".git")}\n`);
+      const doctor = await ws(
+        ["doctor"],
+        path,
+        baseEnv({ AGX_REPOS_ROOT: join(path, "..", "proj.ws") }),
+      );
+      expect(doctor.code, doctor.err).toBe(1);
+      expect(doctor.err).toContain(policyPath);
+      expect(existsSync(wsDir(path, "safe"))).toBe(true);
+      await unlink(safeGit);
+    } finally {
+      await unlink(policyPath);
     }
-    const doctor = await ws(
-      ["doctor"],
-      path,
-      baseEnv({ AGX_REPOS_ROOT: join(path, "..", "proj.ws") }),
-    );
-    expect(doctor.code, doctor.err).toBe(1);
-    expect(doctor.err).toContain(".ws.toml");
-    expect(existsSync(wsDir(path, "safe"))).toBe(true);
   });
+});
+
+test("ws contract: .ws.toml is refused with its [ws] table", async () => {
+  const path = await repo('trunk = "main"\nkeep = ["ws_safe"]\n');
+  expect((await ws(["add", "safe"], path)).code).toBe(0);
+  const legacy =
+    'ready = ["printf old-ready"]\ntrunk = "main"\nkeep = ["ws_safe"]\nregenerable = ["build/generated"]\n';
+  await Bun.write(join(path, ".ws.toml"), legacy);
+  const renderedTable = Bun.TOML.stringify({ ws: Bun.TOML.parse(legacy) });
+  expect(renderedTable).toBeDefined();
+  if (renderedTable === undefined) return;
+  const table = renderedTable.trimEnd();
+  const expected = `ws: ${join(path, ".ws.toml")} is retired; move its policy to agx.toml as ${JSON.stringify(table)}; delete .ws.toml\n`;
+  const commands = [
+    ["add", "blocked"],
+    ["refresh", "safe"],
+    ["rm", "safe"],
+    ["adopt", "--all", "--repo", path, "--dry-run"],
+    ["gc", "--dry-run", "--repo", path],
+    ["harvest", "--repo", path, "--dry-run"],
+  ];
+  for (const args of commands) {
+    const result = await ws(args, path);
+    expect(result.code, `${args.join(" ")}: ${result.err}`).toBe(2);
+    expect(result.out).toBe("");
+    expect(result.err).toBe(expected);
+  }
+  const safeGit = join(wsDir(path, "safe"), ".git");
+  await Bun.write(safeGit, `gitdir: ${join(path, ".git")}\n`);
+  const doctor = await ws(
+    ["doctor"],
+    path,
+    baseEnv({ AGX_REPOS_ROOT: join(path, "..", "proj.ws") }),
+  );
+  expect(doctor.code, doctor.err).toBe(2);
+  expect(doctor.out).toBe("");
+  expect(doctor.err).toBe(expected);
+  expect(existsSync(wsDir(path, "safe"))).toBe(true);
+  await unlink(safeGit);
+});
+
+test("ws contract: gc --all reports one refused row and continues", async () => {
+  const legacyRepo = await repo('trunk = "main"\n');
+  const normalRepo = await repo('trunk = "main"\n');
+  await Bun.write(join(legacyRepo, ".ws.toml"), 'trunk = "main"\n');
+
+  const directory = join(scratch, "config", "agx", "repos");
+  await mkdir(directory, { recursive: true });
+  for (const [name, root] of [
+    ["legacy", legacyRepo],
+    ["normal", normalRepo],
+  ]) {
+    const configPath = join(directory, `${name}.toml`);
+    await Bun.write(configPath, `schema = 1\nroot = ${JSON.stringify(root)}\n`);
+    localPolicyFiles.push(configPath);
+  }
+
+  setRecords([]);
+  const result = await ws(
+    [
+      "gc",
+      "--all",
+      "--dry-run",
+      "--include-unrecorded",
+      "--grace-minutes",
+      "0",
+      "--json",
+    ],
+    normalRepo,
+    baseEnv({ AGX_STATE_DIR: join(scratch, "gc-all-state") }),
+  );
+  expect(result.code, result.err).toBe(2);
+  expect(result.err, result.out).toBe("");
+  const parsed = jsonOf(
+    z.object({
+      rows: z.array(z.array(z.string())),
+      refused: z.array(z.string()),
+      complete: z.boolean(),
+      repositories: z.array(z.object({ root: z.string(), status: z.string() })),
+    }),
+  ).safeParse(result.out);
+  expect(parsed.success, result.out).toBe(true);
+  if (!parsed.success) return;
+  expect(parsed.data.refused).toEqual([legacyRepo]);
+  expect(parsed.data.complete).toBe(false);
+  expect(
+    parsed.data.rows.filter(
+      (row) =>
+        row[0] === legacyRepo && row[1] === "repo" && row[2] === "refused",
+    ),
+  ).toHaveLength(1);
+  expect(
+    parsed.data.repositories.find((row) => row.root === normalRepo)?.status,
+  ).toBe("complete");
 });
 
 describe("agx ws adopt", () => {
@@ -706,11 +852,11 @@ process.exitCode = stage === "add" && args.includes("add") && code === 0 ? 1 : c
     expect(dry.code, dry.err).toBe(0);
     expect(dry.out.split("\n").filter(Boolean)).toHaveLength(4);
     expect(dry.out).toContain("would-adopt");
-    expect(dry.out).toContain('kept by .ws.toml keep: "../Legacy_Kept"');
+    expect(dry.out).toContain('kept by [ws].keep: "../Legacy_Kept"');
     expect(dry.out).toContain("processes are working inside");
     expect(moved.code).toBe(1);
     expect(moved.out).toContain("processes are working inside");
-    expect(moved.out).toContain("kept by .ws.toml");
+    expect(moved.out).toContain("kept by [ws].keep");
     const registered = await jj(["workspace", "list"], path);
     for (const [i, slug] of [
       [0, "legacy-unlanded"],
@@ -749,7 +895,7 @@ process.exitCode = stage === "add" && args.includes("add") && code === 0 ? 1 : c
     );
     expect(kept.code, kept.err).toBe(0);
     expect(kept.out).toContain(
-      'update .ws.toml keep "../Legacy_Kept" to "../proj.ws/ws_chosen-name"',
+      'remove the matching entry from agx.toml [ws].keep or L2 [ws].keep: "../Legacy_Kept"',
     );
     expect((await jj(["status"], wsDir(path, "chosen-name"))).code).toBe(0);
   });
@@ -863,9 +1009,12 @@ describe("agx ws add", () => {
       (await git([...gitUser, "-C", seed, "switch", "-c", "alpha"])).code,
     ).toBe(0);
     await Bun.write(join(seed, "base.txt"), "base\n");
-    await Bun.write(join(seed, ".ws.toml"), 'trunk = "alpha"\n');
+    await Bun.write(
+      join(seed, "agx.toml"),
+      'schema = 1\n[ws]\ntrunk = "alpha"\n',
+    );
     expect((await git(["-C", seed, "add", "base.txt"])).code).toBe(0);
-    expect((await git(["-C", seed, "add", "-f", ".ws.toml"])).code).toBe(0);
+    expect((await git(["-C", seed, "add", "-f", "agx.toml"])).code).toBe(0);
     expect(
       (await git([...gitUser, "-C", seed, "commit", "-m", "base"])).code,
     ).toBe(0);
@@ -884,8 +1033,19 @@ describe("agx ws add", () => {
       ).code,
     ).toBe(0);
     expect((await jj(["git", "clone", bare, path], root)).code).toBe(0);
-    expect(await Bun.file(join(path, ".ws.toml")).text()).toBe(
-      'trunk = "alpha"\n',
+    expect(
+      (
+        await jjIn([
+          "config",
+          "set",
+          "--repo",
+          'revset-aliases."trunk()"',
+          "bookmarks(alpha)",
+        ])
+      ).code,
+    ).toBe(0);
+    expect(await Bun.file(join(path, "agx.toml")).text()).toBe(
+      'schema = 1\n[ws]\ntrunk = "alpha"\n',
     );
     expect(
       (await jjIn(["bookmark", "untrack", "alpha", "--remote", "origin"])).code,
@@ -971,7 +1131,7 @@ describe("agx ws add", () => {
     expect(
       (
         await jj(
-          ["sparse", "set", "--clear", "--add", "a.txt", "--add", ".ws.toml"],
+          ["sparse", "set", "--clear", "--add", "a.txt", "--add", "agx.toml"],
           path,
         )
       ).code,
@@ -995,11 +1155,22 @@ describe("agx ws add", () => {
     const dir = wsDir(path, "source");
     expect((await jj(["new", "root()"], path)).code).toBe(0);
     await Bun.write(join(path, "destination.txt"), "destination\n");
-    await Bun.write(
-      join(path, ".ws.toml"),
-      'ready = ["jj status > ready.out"]\n',
-    );
-    expect((await jj(["rebase", "-s", "main", "-d", "@"], path)).code).toBe(0);
+    expect(
+      (
+        await jj(
+          [
+            "config",
+            "set",
+            "--repo",
+            'revset-aliases."immutable_heads()"',
+            "root()",
+          ],
+          path,
+        )
+      ).code,
+    ).toBe(0);
+    const rebased = await jj(["rebase", "-s", "main", "-d", "@"], path);
+    expect(rebased.code, rebased.err).toBe(0);
     const stale = await jj(["status"], dir);
     expect(stale.code).toBe(1);
     expect(stale.err).toContain("working copy is stale");
@@ -1222,7 +1393,13 @@ describe("agx ws add", () => {
       (await ws(["add", "x"], path, baseEnv({ FAKE_FS: "tmpfs" }))).err,
     ).toContain("RAM-backed");
     expect(existsSync(join(path, "..", "proj.ws"))).toBe(false);
-    writeFileSync(join(path, ".ws.toml"), "ready = 3\n");
+    writeFileSync(join(path, "agx.toml"), "schema = 1\n[ws]\nready = 3\n");
+    expect(
+      (await jj(["commit", "-m", "invalid workspace policy"], path)).code,
+    ).toBe(0);
+    expect((await jj(["bookmark", "set", "main", "-r", "@-"], path)).code).toBe(
+      0,
+    );
     expect((await ws(["add", "x"], path)).code).toBe(1);
     expect(existsSync(join(path, "..", "proj.ws"))).toBe(false);
     expect((await ws(["add", "x"], tmpdir())).code).toBe(1);
@@ -1277,7 +1454,22 @@ describe("agx ws refresh", () => {
     ).toBe(0);
     expect((await jj(["new", "root()"], path)).code).toBe(0);
     await Bun.write(join(path, "destination.txt"), "destination\n");
-    expect((await jj(["rebase", "-s", "main", "-d", "@"], path)).code).toBe(0);
+    expect(
+      (
+        await jj(
+          [
+            "config",
+            "set",
+            "--repo",
+            'revset-aliases."immutable_heads()"',
+            "root()",
+          ],
+          path,
+        )
+      ).code,
+    ).toBe(0);
+    const rebased = await jj(["rebase", "-s", "main", "-d", "@"], path);
+    expect(rebased.code, rebased.err).toBe(0);
     expect((await jj(["status"], dir)).err).toContain("working copy is stale");
     const r = await ws(["refresh", "stale"], path);
     expect(r.code, r.err).toBe(0);
@@ -1898,8 +2090,8 @@ describe("agx ws gc", () => {
     expect(result.code, result.err).toBe(0);
     expect(result.out).toContain('keep = ["ws_<name>"]');
     expect(result.out).toContain('keep = ["ws_reference"]');
-    expect(result.out).toContain("main checkout root `.ws.toml`");
-    expect(result.out).toContain("parent revision");
+    expect(result.out).toContain("main checkout root `agx.toml`");
+    expect(result.out).toContain("$XDG_CONFIG_HOME/agx/repos/<name>.toml");
     expect(result.out).toContain(
       "Unreadable workspaces are reported as broken",
     );
@@ -2273,8 +2465,8 @@ const child = Bun.spawn([${JSON.stringify(rip)}, ...process.argv.slice(2)], {std
     ).toBe(true);
   });
 
-  test("uses jj trunk(), keeps root-only repos unclassified, and reads working keep paths", async () => {
-    const path = await repo('keep = ["../proj.ws/ws_safe"]\n');
+  test("uses jj trunk(), keeps root-only repos unclassified, and unions L2 keep paths", async () => {
+    const path = await repo();
     const configured = await jj(
       ["config", "set", "--repo", 'revset-aliases."trunk()"', "main"],
       path,
@@ -2282,7 +2474,14 @@ const child = Bun.spawn([${JSON.stringify(rip)}, ...process.argv.slice(2)], {std
     expect(configured.code, configured.err).toBe(0);
     expect((await ws(["add", "safe"], path)).code).toBe(0);
     expect((await ws(["add", "ancestor"], path)).code).toBe(0);
-    await Bun.write(join(path, ".ws.toml"), 'keep = ["ws_ancestor"]\n');
+    const directory = join(scratch, "config", "agx", "repos");
+    await mkdir(directory, { recursive: true });
+    const l2Path = join(directory, `keep-${path.split("/").at(-2)}.toml`);
+    await Bun.write(
+      l2Path,
+      `schema = 1\nroot = ${JSON.stringify(path)}\n[ws]\nkeep = ["ws_ancestor"]\n`,
+    );
+    localPolicyFiles.push(l2Path);
     const dry = await ws(
       ["gc", "--dry-run", "--include-unrecorded", "--legacy"],
       path,
@@ -2351,7 +2550,7 @@ describe("AGX-GC-LOCAL-TRUNK-1025", () => {
         expect(dry.out).toContain("\tkeep\t");
         expect(dry.out).toContain(`${names.length} local candidate bookmarks`);
         expect(dry.out).toContain(
-          `missing trunk setting; set trunk in .ws.toml: trunk = "alpha"`,
+          `missing trunk setting; set [ws].trunk in agx.toml: trunk = "alpha"`,
         );
       }
       expect(
@@ -2383,7 +2582,16 @@ describe("AGX-GC-LOCAL-TRUNK-1025", () => {
     expect(dry.code, dry.err).toBe(0);
     expect(dry.out).toContain("\tws\tremovable\t");
     expect(dry.out).toContain("trunk source: jj trunk()");
-    await Bun.write(join(path, ".ws.toml"), 'trunk = "root()"\n');
+    await Bun.write(
+      join(path, "agx.toml"),
+      'schema = 1\n[ws]\ntrunk = "root()"\n',
+    );
+    expect((await jj(["commit", "-m", "explicit root trunk"], path)).code).toBe(
+      0,
+    );
+    expect((await jj(["bookmark", "set", "main", "-r", "@-"], path)).code).toBe(
+      0,
+    );
     const explicit = await ws(
       ["gc", "--dry-run", "--include-unrecorded"],
       path,
@@ -2391,7 +2599,7 @@ describe("AGX-GC-LOCAL-TRUNK-1025", () => {
     expect(explicit.code, explicit.err).toBe(0);
     expect(explicit.out).toContain("\tkeep\t");
     expect(explicit.out).toContain(
-      'trunk source: .ws.toml trunk = "root()" resolves to root',
+      'trunk source: agx.toml [ws].trunk = "root()" resolves to root',
     );
   });
 });
@@ -2407,10 +2615,7 @@ const recFor = (dir: string) => ({
 
 describe("gc integration branches", () => {
   test("AGX-WS-HARVEST-1025 copies once, leaves workspace bytes intact, and enables gc", async () => {
-    const env = baseEnv({
-      AGX_STATE_DIR: join(scratch, "harvest-state"),
-      XDG_CONFIG_HOME: join(scratch, "harvest-config"),
-    });
+    const env = baseEnv({ AGX_STATE_DIR: join(scratch, "harvest-state") });
     const fixtureWs = (args: string[], cwd: string) => ws(args, cwd, env);
     const path = await repo('trunk = "main"\n');
     await Bun.write(
@@ -2825,7 +3030,22 @@ describe("gc integration branches", () => {
     const path = await repo('trunk = "main"\n');
     expect((await ws(["add", "immutable-abandoned"], path)).code).toBe(0);
     const dir = wsDir(path, "immutable-abandoned");
-    expect((await jj(["edit", "main"], dir)).code).toBe(0);
+    expect(
+      (
+        await jj(
+          [
+            "config",
+            "set",
+            "--repo",
+            'revset-aliases."immutable_heads()"',
+            "root()",
+          ],
+          path,
+        )
+      ).code,
+    ).toBe(0);
+    const edited = await jj(["edit", "main"], dir);
+    expect(edited.code, edited.err).toBe(0);
     const tip = (
       await jj(["log", "--no-graph", "-r", "@", "-T", "commit_id"], dir)
     ).out.trim();
@@ -3074,7 +3294,7 @@ describe("gc integration branches", () => {
     for (const dir of [landed, partial]) {
       await Bun.write(join(dir, "a.txt"), "changed\n");
       await Bun.write(join(dir, "second.txt"), "new\n");
-      await unlink(join(dir, ".ws.toml"));
+      await unlink(join(dir, "agx.toml"));
     }
     await Bun.write(join(partial, "second.txt"), "outstanding\n");
     await Bun.write(join(path, "a.txt"), "changed\n");
@@ -3093,7 +3313,7 @@ describe("gc integration branches", () => {
     const before = await ws(["gc", "--dry-run"], path);
     expect(before.out).toContain(`${landed}\tws\tkeep\t`);
     expect(before.out).toContain("unlanded change");
-    await unlink(join(path, ".ws.toml"));
+    await unlink(join(path, "agx.toml"));
     expect((await jj(["commit", "-m", "land deletion"], path)).code).toBe(0);
     expect((await jj(["bookmark", "set", "main", "-r", "@-"], path)).code).toBe(
       0,
@@ -3311,12 +3531,17 @@ describe("gc integration branches", () => {
           )
         ).code,
       ).toBe(0);
-    const configHome = join(scratch, "all-config");
-    for (const [index, path] of [primary, consumer, pending].entries())
+    const configDirectory = join(scratch, "config", "agx", "repos");
+    await mkdir(configDirectory, { recursive: true });
+    for (const [index, path] of [primary, consumer, pending].entries()) {
+      const configPath = join(configDirectory, `repo-${index}.toml`);
       await Bun.write(
-        join(configHome, "agx/repos", `repo-${index}.toml`),
+        configPath,
         `schema = 1\nroot = ${JSON.stringify(path)}\n`,
       );
+      localPolicyFiles.push(configPath);
+    }
+    setRecords([]);
     const module = join(import.meta.dir, "../src/workspace.ts");
     const result = await run(
       [
@@ -3325,7 +3550,7 @@ describe("gc integration branches", () => {
         `import {gcAll} from ${JSON.stringify(module)};const r=await gcAll({dryRun:true,includeUnrecorded:true,legacy:true,graceMinutes:0},${JSON.stringify(primary)});process.stdout.write(JSON.stringify(r));`,
       ],
       primary,
-      { ...allEnv, XDG_CONFIG_HOME: configHome },
+      allEnv,
     );
     expect(result.code, result.err).toBe(0);
     const parsed = jsonOf(
@@ -3493,8 +3718,14 @@ describe("SEP-WS-FORGET-UNJUDGED-1023", () => {
     const path = await repo('trunk = "main"\n');
     const dir = wsDir(path, "rollback");
     await Bun.write(
-      join(path, ".ws.toml"),
-      `trunk = "main"\nready = [${JSON.stringify(command.replace("PLACEHOLDER", dir))}]\n`,
+      join(path, "agx.toml"),
+      `schema = 1\n[ws]\ntrunk = "main"\nready = [${JSON.stringify(command.replace("PLACEHOLDER", dir))}]\n`,
+    );
+    expect(
+      (await jj(["commit", "-m", "rollback readiness policy"], path)).code,
+    ).toBe(0);
+    expect((await jj(["bookmark", "set", "main", "-r", "@-"], path)).code).toBe(
+      0,
     );
     setRecords([]);
     const result = await ws(["add", "rollback"], path);
@@ -3655,10 +3886,7 @@ describe("AGX-GC-DISCOVER-REPOS-1025", () => {
     const stateRepo = await repo('trunk = "main"\nkeep = ["ws_protected"]\n');
     const recordRepo = await repo('trunk = "main"\n');
     const missingRepo = await repo('trunk = "main"\n');
-    const env = baseEnv({
-      AGX_STATE_DIR: join(scratch, "discover-state"),
-      XDG_CONFIG_HOME: join(scratch, "discover-config"),
-    });
+    const env = baseEnv({ AGX_STATE_DIR: join(scratch, "discover-state") });
     setRecords([]);
     expect((await ws(["add", "protected"], stateRepo, env)).code).toBe(0);
     expect((await ws(["add", "missing"], missingRepo, env)).code).toBe(0);

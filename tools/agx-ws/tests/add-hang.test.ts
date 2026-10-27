@@ -7,7 +7,7 @@ import { attempt } from "../../shared/src/attempt.ts";
 const ws = join(import.meta.dir, "../src/ws.ts");
 
 // One long-lived parent drains both pipes, as the example-learner launcher does.
-// Count external jj process starts, excluding repository setup and readiness commands.
+// Count workspace-operation jj starts, excluding setup, readiness and fixed read-only policy probes.
 test("WS-ADD-HANG-2: three piped adds have a fixed jj budget as history and workspace counts grow", async () => {
   const root = await mkdtemp(join(tmpdir(), "ws-add-sequence-"));
   const repo = join(root, "repo");
@@ -32,7 +32,10 @@ test("WS-ADD-HANG-2: three piped adds have a fixed jj budget as history and work
       "jj",
       `import {appendFile} from "node:fs/promises";
 const args = process.argv.slice(2);
-await appendFile(${JSON.stringify(calls)}, JSON.stringify(args) + "\\n");
+const sharedConfigRead = process.cwd() === ${JSON.stringify(repo)} && args.includes("--at-operation=@") && (
+  (args.includes("workspace") && args.includes("root") && args.includes("default")) ||
+  (args.includes("file") && (args.includes("list") || args.includes("show")) && (args.includes("agx.toml") || args.includes(".agx.toml"))));
+if (!sharedConfigRead) await appendFile(${JSON.stringify(calls)}, JSON.stringify(args) + "\\n");
 const child = Bun.spawn([${JSON.stringify(realJj)}, ...args], {stdin:"ignore", stdout:"inherit", stderr:"inherit", timeout: 20000});
 process.exitCode = await child.exited;`,
     ],
@@ -92,9 +95,20 @@ process.exitCode = await child.exited;`,
   };
   const checked = await attempt(async () => {
     await run([realJj, "git", "init", repo]);
+    await run(
+      [
+        realJj,
+        "config",
+        "set",
+        "--repo",
+        'revset-aliases."trunk()"',
+        "bookmarks(main)",
+      ],
+      repo,
+    );
     await Bun.write(
-      join(repo, ".ws.toml"),
-      'trunk = "main"\nready = ["echo ready-finished"]\n',
+      join(repo, "agx.toml"),
+      'schema = 1\n[ws]\ntrunk = "main"\nready = ["echo ready-finished"]\n',
     );
     await run([realJj, "commit", "-m", "base"], repo);
     await run([realJj, "bookmark", "create", "main", "-r", "@-"], repo);
@@ -131,5 +145,6 @@ process.exitCode = await child.exited;`,
 function stateTestEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env };
   delete env.AGX_NEXT_STATE_DIR;
+  env.JJ_CONFIG = "";
   return env;
 }

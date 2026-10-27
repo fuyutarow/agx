@@ -72,11 +72,13 @@ async function fixture(
   mkdirSync(parent, { recursive: true });
   mkdirSync(bin);
   mkdirSync(home);
+  mkdirSync(join(home, ".config", "jj", "repos"), { recursive: true });
   const statShim = join(bin, "stat");
   writeFileSync(statShim, "#!/bin/sh\nprintf 'ext4\\n'\n");
   chmodSync(statShim, 0o755);
   const baseEnv = {
     ...process.env,
+    JJ_CONFIG: "",
     PATH: `${bin}:${process.env.PATH}`,
     HOME: home,
     XDG_STATE_HOME: state,
@@ -95,7 +97,12 @@ async function fixture(
   };
   const initialized = await run([jj, "git", "init", repo], parent, baseEnv);
   expect(initialized.code, initialized.err).toBe(0);
-  writeFileSync(join(repo, ".ws.toml"), config);
+  await jjRun(
+    ["config", "set", "--repo", 'revset-aliases."trunk()"', "bookmarks(main)"],
+    repo,
+    baseEnv,
+  );
+  writeFileSync(join(repo, "agx.toml"), `schema = 1\n[ws]\n${config}`);
   writeFileSync(join(repo, "tracked.txt"), "base\n");
   await jjRun(["commit", "-m", "base"], repo, baseEnv);
   await jjRun(["bookmark", "create", "main", "-r", "@-"], repo, baseEnv);
@@ -208,7 +215,7 @@ function addJjCounter(f: Fixture) {
   const wrapper = join(f.bin, "jj");
   writeFileSync(
     wrapper,
-    `#!/usr/bin/env bun\nimport { appendFileSync } from "node:fs";\nappendFileSync(process.env.GC_CALLS_FILE ?? ${JSON.stringify(trace)}, JSON.stringify({cwd:process.cwd(),args:process.argv.slice(2)}) + "\\n");\nconst child = Bun.spawn([${JSON.stringify(jj)}, ...process.argv.slice(2)], { stdin: "ignore", stdout: "inherit", stderr: "inherit" });\nprocess.exitCode = await child.exited;\n`,
+    `#!/usr/bin/env bun\nimport { appendFileSync } from "node:fs";\nconst args = process.argv.slice(2);\nconst rootProbe = args.includes("workspace") && args.includes("root") && args.includes("default");\nconst policyFileRead = args.includes("file") && (args.includes("list") || args.includes("show")) && (args.includes("agx.toml") || args.includes(".agx.toml"));\nconst sharedConfigRead = process.cwd() === ${JSON.stringify(f.repo)} && args.includes("--at-operation=@") && (rootProbe || policyFileRead);\nif (!sharedConfigRead) appendFileSync(process.env.GC_CALLS_FILE ?? ${JSON.stringify(trace)}, JSON.stringify({cwd:process.cwd(),args}) + "\\n");\nconst child = Bun.spawn([${JSON.stringify(jj)}, ...args], { stdin: "ignore", stdout: "inherit", stderr: "inherit" });\nprocess.exitCode = await child.exited;\n`,
   );
   chmodSync(wrapper, 0o755);
   return trace;
@@ -220,6 +227,7 @@ function parseOutput(output: string) {
   return parsed.success ? parsed.data : undefined;
 }
 
+// Shared config's fixed read-only root probes are excluded; this measures GC inventory work.
 test("gc contract: dry-run jj call count is constant from 5 to 50 workspaces", async () => {
   const five = await fixture(5);
   const counts: number[] = [];
@@ -386,7 +394,7 @@ test.concurrent("gc contract: declared regenerable path prunes a large node_modu
     ["build/generated"],
     1_000,
     [],
-    new Set(["tracked.txt", ".ws.toml"]),
+    new Set(["tracked.txt", "agx.toml"]),
   );
   expect(inventory.ok).toBe(true);
   if (!inventory.ok) return;

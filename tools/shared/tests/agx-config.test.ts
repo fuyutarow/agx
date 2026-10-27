@@ -88,7 +88,10 @@ test("defaults without files and schema-only policy", async () => {
     if (result.ok)
       expect(result.value).toMatchObject({
         ready: [],
+        trunk: "trunk()",
+        trunkConfigured: false,
         keep: [],
+        regenerable: [],
         verifyAlways: [],
       });
   }
@@ -142,25 +145,32 @@ test.each([
     }
   }
 });
-test("workspace keys replace independently from L1 to L2 and preserve keep entries", async () => {
-  const f = await fixture('schema = 1\n[ws]\nready = ["l1 one", "l1 two"]\n');
+test("ws contract: agx.toml [ws] is the only policy", async () => {
+  const f = await fixture(
+    'schema = 1\n[ws]\nready = ["l1 one", "l1 two"]\ntrunk = "alpha"\nkeep = ["l1 keep", "shared"]\nregenerable = ["build/generated"]\n',
+  );
   let result = await resolveAgxConfig(f.root);
   expect(result.ok).toBe(true);
   if (result.ok)
     expect(result.value).toMatchObject({
       ready: ["l1 one", "l1 two"],
-      keep: [],
+      trunk: "alpha",
+      trunkConfigured: true,
+      keep: ["l1 keep", "shared"],
+      regenerable: ["build/generated"],
     });
 
   await f.writeLocal(
-    'schema = 1\n[ws]\nready = ["l2"]\nkeep = ["relative path", "/absolute/path"]\n',
+    'schema = 1\n[ws]\nready = ["l2"]\nkeep = ["l2 keep", "shared"]\n',
   );
   result = await resolveAgxConfig(f.root);
   expect(result.ok).toBe(true);
   if (result.ok)
     expect(result.value).toMatchObject({
       ready: ["l2"],
-      keep: ["relative path", "/absolute/path"],
+      trunk: "alpha",
+      keep: ["l1 keep", "shared", "l2 keep"],
+      regenerable: ["build/generated"],
     });
 
   await f.writeLocal('schema = 1\n[ws]\nkeep = ["still kept"]\n');
@@ -169,21 +179,25 @@ test("workspace keys replace independently from L1 to L2 and preserve keep entri
   if (result.ok)
     expect(result.value).toMatchObject({
       ready: ["l1 one", "l1 two"],
-      keep: ["still kept"],
+      trunk: "alpha",
+      keep: ["l1 keep", "shared", "still kept"],
+      regenerable: ["build/generated"],
     });
 });
-test("rejects keep in L1 with the file and its L2 location", async () => {
-  const f = await fixture('schema = 1\n[ws]\nkeep = ["workspace"]\n');
-  const result = await resolveAgxConfig(f.root);
-  expect(result.ok).toBe(false);
-  if (!result.ok) {
-    expect(result.error).toBeInstanceOf(AgxConfigError);
-    expect(String(result.error)).toContain(join(f.root, "agx.toml"));
-    expect(String(result.error)).toContain(
-      "keep belongs in $XDG_CONFIG_HOME/agx/repos/<name>.toml",
-    );
-  }
-});
+test.each(['trunk = "main"', 'regenerable = ["build"]'])(
+  "L2 workspace policy is restricted to ready and keep: %s",
+  async (setting) => {
+    const f = await fixture();
+    await f.writeLocal(`schema = 1\n[ws]\n${setting}\n`);
+    const result = await resolveAgxConfig(f.root);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(AgxConfigError);
+      expect(String(result.error)).toContain(setting.split(" ")[0] ?? setting);
+      expect(String(result.error)).toContain("repo.toml");
+    }
+  },
+);
 test("only trunk policy is authoritative, including committed nontrunk edits", async () => {
   const f = await fixture(
     'schema = 1\ntickets = "committed"\n[ws]\nready = ["later"]\n',
@@ -285,6 +299,8 @@ test.each([
   ["schema = 1\n[ws]\nunknown = true\n", "unknown"],
   ['schema = 1\n[ws]\nready = [""]\n', "ready"],
   ['schema = 1\n[ws]\nready = ["   "]\n', "ready"],
+  ['schema = 1\n[ws]\ntrunk = ""\n', "trunk"],
+  ['schema = 1\n[ws]\nregenerable = ["../outside"]\n', "regenerable"],
   ["schema = 1\nschema = 1\n", "TOML"],
 ])("rejects invalid L1: %s", async (policy, message) => {
   const f = await fixture(policy);

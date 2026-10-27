@@ -46,8 +46,9 @@ agx ws gc  [--dry-run] [--include-unrecorded] [--legacy] [--abandoned] [--json] 
 - **refresh** — checks the named registered workspace with `jj status` and runs
   `jj workspace update-stale` only when jj reports `working copy is stale`. Other failures are
   returned without attempting repair. It does not run readiness, trust mise, or change sparse
-  patterns. Repeating refresh on a current workspace succeeds. It needs neither repo readiness
-  configuration nor a graveyard, and uses the same store lock as the other verbs.
+  patterns. Repeating refresh on a current workspace succeeds. It requires valid shared
+  repository policy, refuses a root `.ws.toml`, needs no readiness declaration or graveyard,
+  and uses the same store lock as the other verbs.
 - **rm** — judges the workspace, then `jj workspace forget ws_<slug>` and `rip <dir>`. It refuses if
   any change reachable from the workspace's `@` is not reachable from trunk and is non-empty.
   The working copy is snapshotted first, so an uncommitted edit counts. Land or abandon the change
@@ -58,9 +59,9 @@ agx ws gc  [--dry-run] [--include-unrecorded] [--legacy] [--abandoned] [--json] 
   workspaces. Untracked and ignored disk files are checked even in a dry run. Unsnapshotted tracked edits can change a dry-run verdict; collection always snapshots and
   re-checks the selected workspace under the lock before removal.
 
-To protect a workspace, set `keep = ["ws_<name>"]` in the main checkout root `.ws.toml`, for
-example `keep = ["ws_reference"]`. GC uses the working file when present; otherwise it reads
-`.ws.toml` from the parent revision. A config in a secondary workspace does not override this.
+To protect a workspace, set `keep = ["ws_<name>"]` under `[ws]` in the repository root
+`agx.toml`, for example `keep = ["ws_reference"]`. Machine-local keep entries are unioned
+from the matching L2 `[ws]` table. A config in a secondary workspace does not override this.
 
 ## gc: what is collected
 
@@ -110,41 +111,52 @@ JSON output is `{ rows, counts, complete }`, with rows as six-element string arr
 `collected` rows; `collectable` counts `empty`, `landed` and `abandoned` classifications even when
 an opt-in flag is absent. `--all` visits L2-registered repositories and cannot combine with `--repo`.
 
-## Repo configuration: `.ws.toml`
+## Repository policy: `agx.toml`
 
-A small repo-owned file at the backing store root. Every command, including add, adopt, rm,
-gc and doctor, uses the main checkout's working `.ws.toml` when present, whether tracked or
-untracked. Otherwise it reads `.ws.toml` from that checkout's `@-` revision. If neither
-exists, defaults are no readiness commands, trunk `trunk()` and no keep entries. A config
-in a secondary workspace does not override this rule. Read or parse failures are errors,
-not a reason to fall back and silently lose keep protection. GC applies the same rule
-again under the store lock before removal. To clear committed policy, leave an empty
-working `.ws.toml`; deleting the working file selects the committed fallback.
+All workspace commands use the shared configuration reader. L1 comes from the repository
+root's committed `agx.toml` at `trunk()`. Its `[ws]` table accepts `ready`, `trunk`, `keep`
+and `regenerable`. L2 lives in `$XDG_CONFIG_HOME/agx/repos/<name>.toml` and identifies its
+main checkout with `root = "<absolute path>"`; its `[ws]` table may set `ready` and `keep`.
+L2 `ready` replaces L1 `ready`; L2 `keep` is unioned with L1 `keep`. `trunk` and
+`regenerable` are L1-only. Unknown keys and invalid values fail closed. A secondary
+workspace's own `agx.toml` does not override the main checkout's policy.
 
 ```toml
-ready = ["mise trust -q", "bun install --frozen-lockfile"]   # sh -c, in order, in the new workspace
-trunk = "alpha"                                              # revset that defines "landed"
-keep = ["ws_reference"]                                      # workspace names or paths to preserve
-regenerable = [".cache/", "build/generated"]                    # optional literal paths whose disk content may be discarded
+schema = 1
+
+[ws]
+ready = ["mise trust -q", "bun install --frozen-lockfile"]
+trunk = "alpha"                                  # revset that defines "landed"
+keep = ["ws_reference"]                          # workspace names or paths to preserve
+regenerable = [".cache/", "build/generated"]     # literal file or directory paths
 ```
 
-GC always treats real directories named `node_modules` at any depth as regenerable, matching readiness dependency installation. The optional `regenerable` list adds literal repository-relative file or directory paths (a trailing slash is optional); a directory entry includes its descendants. No glob expansion occurs. Absolute paths, empty components, backslashes, `.` and `..` components are rejected. An absent list adds no exceptions. Policy comes from the backing checkout under the same resolution and lock rules above; a candidate cannot declare its own content disposable.
+GC and doctor inventory always treat real directories named `node_modules` at any depth as
+regenerable. `[ws].regenerable` adds literal repository-relative paths; a trailing slash is
+optional and a directory entry includes its descendants. No glob expansion occurs. Absolute
+paths, empty components, backslashes, `.` and `..` components are rejected. These patterns
+filter the existing untracked-content inventory used by GC and doctor; `rm` gains no separate
+untracked-content guard.
 
-Unknown keys are an error. This remains the active workspace policy; it is not retired by the shared ticket configuration reader.
+A repository root that still has `.ws.toml` is refused by each agx-ws command with exit 2 and
+one stderr line. The line includes the exact `[ws]` table equivalent for copying into
+`agx.toml` and says to delete `.ws.toml`. `gc --all` emits one refused row for that repository
+and continues with the others. The file is inspected only to produce this refusal diagnostic;
+it is never used as workspace policy.
 
 When `trunk` is absent and jj's `trunk()` resolves to `root()`, agx checks local
 bookmarks named `alpha`, `main`, `master` and `trunk`, in that order. Exactly one
 candidate is used as trunk, which supports repositories without a remote. The count
 is bookmark names, even when several point to the same commit. With zero or multiple
 candidates, GC retains its `no trunk` classification and the dry-run reason names
-the missing setting and an exact `trunk = "…"` line to add to `.ws.toml`. A conflicted
+the missing setting and an exact `[ws].trunk` line to add to `agx.toml`. A conflicted
 or root-pointing candidate cannot provide a usable trunk. Explicit settings and
 `trunk()` resolving to a real commit take precedence. Dry-run workspace reasons
 include `trunk source`, without changing the six-column TSV or JSON row shape.
 
 ## Invariants
 
-- **Derived observations.** Decisions are derived from jj, `.ws.toml`, `agx worker ls --json` and the filesystem. Explicit GC, including dry runs, publishes `<state dir>/workspace-verdicts.json` atomically under its own publication lock when no removal failed. This is an observation, not lifecycle authority. The lock directory `<parent>/<repo>.ws.lock` is removed on release. Foreground
+- **Derived observations.** Decisions are derived from jj, shared `agx.toml` policy, `agx worker ls --json` and the filesystem. Explicit GC, including dry runs, publishes `<state dir>/workspace-verdicts.json` atomically under its own publication lock when no removal failed. This is an observation, not lifecycle authority. The lock directory `<parent>/<repo>.ws.lock` is removed on release. Foreground
   waiters advertise transient intent in the adjacent `.ws.lock.waiters/` directory, cleaned on
   completion; dead local waiter entries are discarded by GC.
 - **One lock per backing store**, shared by mutating verbs (`tools/shared` dir-lock; a dead holder's

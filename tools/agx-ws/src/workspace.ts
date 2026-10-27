@@ -1,4 +1,4 @@
-// Run-workspace lifecycle: add, rm, gc. Facts come from jj, .ws.toml and agx.
+// Run-workspace lifecycle: add, rm, gc. Repository policy comes from shared agx.toml config.
 // Explicit GC observations publish the owner-written verdict inventory for small-file readers.
 // Store locks and foreground waiter markers are transient and removed on completion.
 import { createHash } from "node:crypto";
@@ -27,7 +27,7 @@ import {
 import { homedir, hostname } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { projectSlug } from "../../shared/src/agent-name.ts";
-import { listAgxRepos } from "../../shared/src/agx-config.ts";
+import { listAgxRepos, resolveAgxConfig } from "../../shared/src/agx-config.ts";
 import { resolveAgxBinary } from "../../shared/src/path-dispatch.ts";
 import {
   attempt,
@@ -70,40 +70,19 @@ export type Repo = {
   parent: string;
   wsRoot: string;
 };
-export type Config = z.infer<typeof ConfigSchema>;
+export type Config = {
+  ready: string[];
+  trunk: string;
+  trunkConfigured: boolean;
+  keep: string[];
+  regenerable: string[];
+};
 
-export const CONFIG_FILE = ".ws.toml";
-// Keep configuration diagnostics beside the reader so migrations update both together.
+export const CONFIG_FILE = "agx.toml";
+const LEGACY_CONFIG_FILE = ".ws.toml";
 const trunkSettingHint = (bookmark: string): string =>
-  `set trunk in ${CONFIG_FILE}: trunk = ${JSON.stringify(bookmark)}`;
-const ConfigSchema = z
-  .strictObject({
-    ready: z.array(z.string().min(1)).default([]),
-    trunk: z.string().min(1).optional(),
-    keep: z.array(z.string().min(1)).default([]),
-    regenerable: z
-      .array(
-        z
-          .string()
-          .min(1)
-          .refine(
-            (path) =>
-              !path.startsWith("/") &&
-              !path.includes("\\") &&
-              path
-                .replace(/\/$/u, "")
-                .split("/")
-                .every((part) => part !== "" && part !== "." && part !== ".."),
-            "expected a literal repository-relative path without . or .. components",
-          ),
-      )
-      .default([]),
-  })
-  .transform((cfg) => ({
-    ...cfg,
-    trunk: cfg.trunk ?? "trunk()",
-    trunkConfigured: cfg.trunk !== undefined,
-  }));
+  `set [ws].trunk in ${CONFIG_FILE}: trunk = ${JSON.stringify(bookmark)}`;
+export class LegacyWorkspaceConfigError extends Error {}
 // Lookup accepts historical names so refresh/rm still work after the creation rule changes.
 const LEGACY_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]*$/u;
 const TERMINAL_STATES = new Set(["ended", "orphaned"]);
@@ -197,50 +176,45 @@ export function resolveRepo(path: string): Attempt<Repo> {
   return good({ backing, name, parent, wsRoot: join(parent, `${name}.ws`) });
 }
 
-/** All commands prefer the main checkout's working policy, then its parent revision. */
+/** Refuse the retired file, then resolve shared main-checkout L1/L2 policy. */
 export async function readConfig(repo: Repo): Promise<Attempt<Config>> {
-  const file = join(repo.backing, CONFIG_FILE);
-  const working = existsSync(file);
-  const content = working
-    ? await attempt(() => Bun.file(file).text())
-    : await jjOut(
-        ["file", "show", "-r", "@-", CONFIG_FILE],
-        repo.backing,
-        true,
-      );
-  if (!content.ok)
-    return working
-      ? bad(`${file}: ${msg(content)}`)
-      : missingCommittedConfig(repo, content);
-  const parsed = await attempt(() => Bun.TOML.parse(content.value));
-  if (!parsed.ok) return bad(`${file}: ${msg(parsed)}`);
-  const checked = ConfigSchema.safeParse(parsed.value);
-  return checked.success
-    ? good(checked.data)
-    : bad(
-        `${file}: ${checked.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`,
-      );
-}
+  const legacyPath = join(repo.backing, LEGACY_CONFIG_FILE);
+  const legacyFile = await attempt(() => lstat(legacyPath));
+  if (legacyFile.ok) {
+    const equivalent = await attempt(async () => {
+      const parsed = Bun.TOML.parse(await readFile(legacyPath, "utf8"));
+      const table = Bun.TOML.stringify({ ws: parsed });
+      if (table === undefined)
+        throw new Error("TOML serializer returned no table");
+      return table.trimEnd();
+    });
+    const migration = equivalent.ok
+      ? `move its policy to ${CONFIG_FILE} as ${JSON.stringify(equivalent.value)}`
+      : `cannot render a valid [ws] table from it (${msg(equivalent)})`;
+    return {
+      ok: false,
+      error: new LegacyWorkspaceConfigError(
+        `${legacyPath} is retired; ${migration}; delete ${LEGACY_CONFIG_FILE}`.replaceAll(
+          /[\r\n]+/gu,
+          " ",
+        ),
+      ),
+    };
+  }
+  if (
+    !z.object({ code: z.literal("ENOENT") }).safeParse(legacyFile.error).success
+  )
+    return bad(msg(legacyFile));
 
-async function missingCommittedConfig(
-  repo: Repo,
-  failure: Attempt<never>,
-): Promise<Attempt<Config>> {
-  const files = await jjOut(
-    ["file", "list", "-r", "@-", CONFIG_FILE],
-    repo.backing,
-    true,
-  );
-  if (!files.ok) return files;
-  return files.value.trim() === ""
-    ? good({
-        ready: [],
-        trunk: "trunk()",
-        trunkConfigured: false,
-        keep: [],
-        regenerable: [],
-      })
-    : failure;
+  const shared = await resolveAgxConfig(repo.backing, { vcs: "jj" });
+  if (!shared.ok) return bad(msg(shared));
+  return good({
+    ready: shared.value.ready,
+    trunk: shared.value.trunk,
+    trunkConfigured: shared.value.trunkConfigured,
+    keep: shared.value.keep,
+    regenerable: shared.value.regenerable,
+  });
 }
 
 function legacyWorkspaceName(slug: string): Attempt<string> {
@@ -853,7 +827,7 @@ async function remoteTrunk(
       return good({ ref, commit: commit.value });
   }
   return bad(
-    `no remote-tracking trunk bookmark found for ${JSON.stringify(bookmark)}; fetch the trunk bookmark or set .ws.toml trunk`,
+    `no remote-tracking trunk bookmark found for ${JSON.stringify(bookmark)}; fetch the trunk bookmark or set [ws].trunk in agx.toml`,
   );
 }
 
@@ -928,7 +902,7 @@ async function resolveAddBase(
     if (!bookmark.ok) return bookmark;
     if (bookmark.value === "")
       return bad(
-        `cannot identify a bookmark for configured trunk ${JSON.stringify(trunk)}; set .ws.toml trunk to a bookmark name`,
+        `cannot identify a bookmark for configured trunk ${JSON.stringify(trunk)}; set [ws].trunk in agx.toml to a bookmark name`,
       );
     const remote = await remoteTrunk(repo, bookmark.value, remotes);
     if (!remote.ok) return remote;
@@ -1124,6 +1098,8 @@ export async function refresh(options: {
   if (!name.ok) return name;
   const repo = resolveRepo(options.repo);
   if (!repo.ok) return repo;
+  const config = await readConfig(repo.value);
+  if (!config.ok) return config;
   const pre = common(repo.value);
   if (!pre.ok) return pre;
   const dir = join(repo.value.wsRoot, name.value);
@@ -1160,7 +1136,9 @@ export async function remove(options: {
   if (!graveyard.ok) return graveyard;
   const dir = join(repo.value.wsRoot, name.value);
   if (protectedWorkspace(repo.value, cfg.value, { name: name.value, dir }))
-    return bad(`${dir} is kept by .ws.toml`);
+    return bad(
+      `${dir} is kept by [ws].keep in agx.toml or L2 repository config`,
+    );
   if (!existsSync(dir)) return bad(`${dir} does not exist`);
   const result = await withLock<string | TombstonedWorkspace>(
     repo.value,
@@ -2125,7 +2103,7 @@ async function adoptRow(
   )
     reason = "workspace metadata does not match repository registration";
   else if (kept.length > 0 && !options.includeKept)
-    reason = `kept by .ws.toml keep: ${kept.map((entry) => JSON.stringify(entry)).join(", ")}; pass --include-kept`;
+    reason = `kept by [ws].keep: ${kept.map((entry) => JSON.stringify(entry)).join(", ")}; pass --include-kept`;
   else if (present.ok || targets.has(target))
     reason = "target already exists or is reserved";
   else if (
@@ -2147,7 +2125,7 @@ async function adoptRow(
   const update =
     kept.length === 0
       ? ""
-      : `; update .ws.toml keep ${kept.map((entry) => JSON.stringify(entry)).join(", ")} to ${JSON.stringify(relative(repo.backing, target))}`;
+      : `; remove the matching entry from agx.toml [ws].keep or L2 [ws].keep: ${kept.map((entry) => JSON.stringify(entry)).join(", ")}`;
   return {
     line: adoptLine(
       ws.dir,
@@ -2174,6 +2152,8 @@ export async function adopt(
   const resolved = resolveRepo(options.repo ?? options.path ?? process.cwd());
   if (!resolved.ok) return resolved;
   const repo = resolved.value;
+  const initialConfig = await readConfig(repo);
+  if (!initialConfig.ok) return initialConfig;
   const run = async (): Promise<
     Attempt<{ lines: string[]; failed: string[] }>
   > => {
@@ -2254,7 +2234,7 @@ async function resolveTrunk(
     return bad(`trunk ${cfg.trunk} must resolve to exactly one commit`);
   const commit = ids[0] ?? null;
   const source = cfg.trunkConfigured
-    ? `${CONFIG_FILE} trunk = ${JSON.stringify(cfg.trunk)}`
+    ? `${CONFIG_FILE} [ws].trunk = ${JSON.stringify(cfg.trunk)}`
     : "jj trunk()";
   if (commit !== null && !/^0+$/u.test(commit)) return good({ commit, source });
   if (cfg.trunkConfigured)
@@ -2755,7 +2735,7 @@ async function classifyGc(
       `workspace metadata is invalid: checkout does not identify ${ws.name}`,
     );
   if (protectedWorkspace(repo, cfg, ws))
-    return verdict("keep", "declared in .ws.toml keep");
+    return verdict("keep", "declared in [ws].keep");
   const occupied = busy(realOr(ws.dir));
   if (occupied !== undefined) return verdict("keep", occupied);
   const lineage = lineageOf(records, realOr(ws.dir));
@@ -2913,7 +2893,7 @@ async function classify(
     collect = false,
   ): Classification => ({ verdict: label, change, age, reason, collect });
   if (protectedWorkspace(repo, cfg, ws))
-    return verdict("kept", "declared in .ws.toml keep");
+    return verdict("kept", "declared in [ws].keep");
   const owner = jjWorkspace(ws.dir);
   if (!owner.ok) {
     const broken = existsSync(ws.dir)
@@ -3148,6 +3128,7 @@ type GcResult = {
   failed: string[];
   counts: ReturnType<typeof gcCounts>;
   broken: string[];
+  refused?: string[];
   complete: boolean;
   repositories?: Array<{
     root: string;
@@ -3443,6 +3424,8 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
   const resolved = resolveRepo(options.repo);
   if (!resolved.ok) return resolved;
   const repo = resolved.value;
+  const initialConfig = await readConfig(repo);
+  if (!initialConfig.ok) return initialConfig;
   const pre = common(repo, options.dryRun);
   if (!pre.ok) return pre;
   const graveyard = await checkGraveyard();
@@ -3532,7 +3515,7 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
             if (!currentConfig.ok)
               return good("record retained: " + msg(currentConfig));
             if (protectedWorkspace(repo, currentConfig.value, ws))
-              return good("workspace is kept by .ws.toml; record retained");
+              return good("workspace is kept by [ws].keep; record retained");
             const currentTrunk = await trunkCommit(repo, currentConfig.value);
             if (!currentTrunk.ok)
               return good("record retained: " + msg(currentTrunk));
@@ -3878,6 +3861,7 @@ export async function gcAll(
   const roots = discovered.value;
   const lines: string[] = [];
   const failed: string[] = [];
+  const refused: string[] = [];
   const seen = new Set<string>();
   const repositories: NonNullable<GcResult["repositories"]> = [];
   const broken: string[] = [];
@@ -3902,6 +3886,17 @@ export async function gcAll(
       repo: repo.value.backing,
     });
     if (!done.ok) {
+      if (done.error instanceof LegacyWorkspaceConfigError) {
+        refused.push(path);
+        repositories.push({
+          root: path,
+          sources: [...sources].toSorted(),
+          status: "refused",
+          counts: gcCounts([]),
+        });
+        lines.push(`${path}\trepo\trefused\t?\t?\t${msg(done)}`);
+        continue;
+      }
       failed.push(path);
       repositories.push({
         root: path,
@@ -3932,6 +3927,7 @@ export async function gcAll(
   const result = {
     lines,
     failed,
+    refused,
     repositories,
     discovery,
     counts: gcCounts(lines),
@@ -3939,11 +3935,12 @@ export async function gcAll(
     complete:
       failed.length === 0 &&
       broken.length === 0 &&
+      refused.length === 0 &&
       !lines.some((line) =>
         ["unknown", "broken"].includes(line.split("\t")[2] ?? ""),
       ),
   };
-  if (!options.dryRun && failed.length === 0)
+  if (!options.dryRun && failed.length === 0 && refused.length === 0)
     await publishVerdicts(undefined, result, seen);
   return good(result);
 }
@@ -4083,6 +4080,12 @@ export async function harvest(options: {
     roots = good(new Map([[repo.value.backing, new Set<string>()]]));
   }
   if (!roots.ok) return roots;
+  for (const root of roots.value.keys()) {
+    const repo = resolveRepo(root);
+    if (!repo.ok) return repo;
+    const config = await readConfig(repo.value);
+    if (!config.ok) return config;
+  }
   const records = await agxRecords(process.cwd());
   if (!records.ok) return records;
   const runs: HarvestRun[] = [];

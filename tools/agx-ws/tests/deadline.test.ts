@@ -91,9 +91,31 @@ test.each(["readiness", "lock"])(
       };
       const init = await run(["jj", "git", "init", repo], root, env);
       expect(init.code, init.err).toBe(0);
-      await Bun.write(join(repo, ".ws.toml"), 'ready = ["exec sleep 30"]\n');
+      const alias = await run(
+        [
+          "jj",
+          "config",
+          "set",
+          "--repo",
+          'revset-aliases."trunk()"',
+          "bookmarks(main)",
+        ],
+        repo,
+        env,
+      );
+      expect(alias.code, alias.err).toBe(0);
+      await Bun.write(
+        join(repo, "agx.toml"),
+        'schema = 1\n[ws]\nready = ["exec sleep 30"]\n',
+      );
       const committed = await run(["jj", "commit", "-m", "base"], repo, env);
       expect(committed.code, committed.err).toBe(0);
+      const main = await run(
+        ["jj", "bookmark", "create", "main", "-r", "@-"],
+        repo,
+        env,
+      );
+      expect(main.code, main.err).toBe(0);
       if (stage === "lock") {
         await mkdir(`${repo}.ws.lock`);
         await Bun.write(
@@ -155,5 +177,6 @@ test.each(["0", "-1", "NaN", "Infinity", "2147483648"])(
 function stateTestEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env };
   delete env.AGX_NEXT_STATE_DIR;
+  env.JJ_CONFIG = "";
   return env;
 }

@@ -7,9 +7,9 @@ The schemas currently live in TypeScript validators, not JSON schema files.
 
 ## Repository policy and local overrides
 
-The shared reader is `tools/shared/src/agx-config.ts`. Worker ticket-home resolution and
-agx-ticket use it. Workspace lifecycle commands still use the separate policy described in
-[agx-ws](../tools/agx-ws/README.md#repo-configuration-wstoml).
+The shared reader is `tools/shared/src/agx-config.ts`. Worker ticket-home resolution,
+agx-ticket and agx-ws use it. Workspace policy details are described in
+[agx-ws](../tools/agx-ws/README.md#repository-policy-agxtoml).
 
 | Layer   | Declaration                                                                         | Writer                                      | Selection                                                |
 | ------- | ----------------------------------------------------------------------------------- | ------------------------------------------- | -------------------------------------------------------- |
@@ -240,6 +240,16 @@ migration, old-schema acceptance, JSON Schema publication and a configuration-er
 are not current guarantees. The retained requirements below describe future policy, not
 additional behavior that consumers may assume today.
 
+## Implemented workspace policy
+
+`agx-ws` reads `[ws]` through the shared `tools/shared/src/agx-config.ts` reader. L1
+repository-root `agx.toml` accepts `ready`, `trunk`, `keep` and `regenerable`; L2
+`repos/*.toml` accepts `ready` and `keep`. L2 `ready` replaces L1 `ready`, while L2 `keep`
+is unioned with L1 `keep`. `trunk` and `regenerable` are L1-only. Unknown keys are errors.
+A repository-root `.ws.toml` is refused by agx-ws commands with exit 2 and a one-line
+diagnostic containing the equivalent `[ws]` table and a direction to delete the old file.
+`gc --all` reports a refused repository row and continues with the other repositories.
+
 ## Retained design requirements
 
 These requirements preserve the intended configuration design. They are not promises of
@@ -247,9 +257,6 @@ commands or schemas that the present code does not implement.
 
 - Shared policy should be reviewed and portable; machine paths and keep lists should remain
   outside version control. Every declaration should have one writer and one authority.
-- All repository consumers should use the same parser and effective revision. Workspace
-  readiness should come from L1/L2, keep only from L2, and landed history only from jj `trunk()`.
-  The present workspace reader still uses `.ws.toml`; do not delete it on this release.
 - Unsupported schema versions should fail with exit 2 and one line explaining migration or
   upgrade. Optional keys with defaults should retain schema version and use a minor release.
   Changing meaning, deleting a key or making one required should increment schema by one and
@@ -277,20 +284,21 @@ local absolute paths, array replacement, missing/unsupported schema, unknown key
 roots and retired committed files. A known L2 root must be its real main-checkout path.
 
 `agx worker check <ticket> --cd <workspace>` and `agx ticket ls --repo <workspace> --json`
-exercise the shared ticket home. Workspace add and dry-run GC exercise the separate `.ws.toml`
-policy, so they cannot currently prove shared L1/L2 readiness or keep behavior. Routing can be
-inspected with `agx worker roster --json`; unknown defaults/exclusions and invalid policy fail
-loading. Repository verification is covered by `tools/agx-worker/tests/next/run.test.ts`.
+exercise the shared ticket home. Workspace add, rm, gc and doctor use the same L1/L2 reader for
+`[ws]` policy. `tools/shared/tests/agx-config.test.ts` verifies the L1 fields and L2 merge;
+`tools/agx-ws/tests/workspace.test.ts` verifies legacy refusal and command behavior, while
+`tools/agx-ws/tests/gc-contract.test.ts` verifies GC inventory. Routing can be inspected with
+`agx worker roster --json`; unknown defaults/exclusions and invalid policy fail loading.
+Repository verification is covered by `tools/agx-worker/tests/next/run.test.ts`.
 
-Migration status: shared L1/L2 and repository verification exist; workspace-policy unification,
-legacy price-reader removal, JSON schema publication and migration filters remain incomplete.
+Migration status: shared L1/L2 and workspace-policy unification are implemented; legacy
+price-reader removal, JSON schema publication and migration filters remain incomplete.
 Historical implementation-stage labels and host deployment tasks are not public interfaces.
 
 The intended publication names are `agx-toml.schema.json`, `repo-override.schema.json`,
 `user-config.schema.json` and `roster-catalog.schema.json` in this directory. Until published,
 they are design targets rather than validation authorities. Intended acceptance examples pair
 worker check with workspace add JSON for identical ticket/readiness values, and pair workspace
-dry-run GC with add JSON for identical keep/readiness values. These pairs do not currently
-report those configuration values or share the workspace reader; use the fixtures above for
-implemented behavior. A local-only setup should eventually make all repository values effective
-across add, gc, rm, doctor, check and run. That workspace integration is still pending.
+dry-run GC with add JSON for identical keep/readiness values. The shared reader and agx-ws
+fixtures now cover that workspace integration across add, gc, rm and doctor. A local-only setup
+still needs policy declarations in the matching L2 repository file.

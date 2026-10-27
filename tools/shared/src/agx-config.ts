@@ -29,8 +29,26 @@ const NonEmptyStrings = z.array(
 const VerifyConfig = z.strictObject({
   always: NonEmptyStrings.optional(),
 });
+const RegenerablePaths = z.array(
+  z
+    .string()
+    .min(1)
+    .refine(
+      (path) =>
+        !path.startsWith("/") &&
+        !path.includes("\\") &&
+        path
+          .replace(/\/$/u, "")
+          .split("/")
+          .every((part) => part !== "" && part !== "." && part !== ".."),
+      "expected a literal repository-relative path without . or .. components",
+    ),
+);
 const WorkspaceConfig = z.strictObject({
   ready: NonEmptyStrings.optional(),
+  trunk: z.string().min(1).optional(),
+  keep: NonEmptyStrings.optional(),
+  regenerable: RegenerablePaths.optional(),
 });
 const LocalWorkspaceConfig = z.strictObject({
   ready: NonEmptyStrings.optional(),
@@ -263,7 +281,10 @@ async function resolveConfig(repoRoot: string, options: { vcs?: Vcs }) {
   if (!policy.ok) return policy;
   let tickets = ".agents/tickets";
   let ready: string[] = [];
+  let trunk = "trunk()";
+  let trunkConfigured = false;
   let keep: string[] = [];
+  let regenerable: string[] = [];
   let verifyAlways: string[] = [];
   if (policy.value !== undefined) {
     const name = "agx.toml";
@@ -272,13 +293,6 @@ async function resolveConfig(repoRoot: string, options: { vcs?: Vcs }) {
     if (!decoded.ok)
       return failure(
         `${join(root, name)}: invalid TOML: ${errorMessage(decoded.error)}`,
-      );
-    const workspaceTable = z
-      .looseObject({ ws: z.looseObject({}) })
-      .safeParse(decoded.value);
-    if (workspaceTable.success && Object.hasOwn(workspaceTable.data.ws, "keep"))
-      return failure(
-        `${join(root, name)}: [ws].keep belongs in $XDG_CONFIG_HOME/agx/repos/<name>.toml`,
       );
     const parsed = Config.safeParse(decoded.value);
     if (!parsed.success)
@@ -295,13 +309,17 @@ async function resolveConfig(repoRoot: string, options: { vcs?: Vcs }) {
       );
     tickets = declared ?? tickets;
     ready = parsed.data.ws?.ready ?? ready;
+    trunk = parsed.data.ws?.trunk ?? trunk;
+    trunkConfigured = parsed.data.ws?.trunk !== undefined;
+    keep = parsed.data.ws?.keep ?? keep;
+    regenerable = parsed.data.ws?.regenerable ?? regenerable;
     verifyAlways = parsed.data.verify?.always ?? verifyAlways;
   }
   const local = await localConfig(root);
   if (!local.ok) return local;
   tickets = local.value?.tickets ?? tickets;
   ready = local.value?.ws?.ready ?? ready;
-  keep = local.value?.ws?.keep ?? keep;
+  keep = [...new Set([...keep, ...(local.value?.ws?.keep ?? [])])];
   verifyAlways = local.value?.verify?.always ?? verifyAlways;
   return good({
     root,
@@ -310,7 +328,10 @@ async function resolveConfig(repoRoot: string, options: { vcs?: Vcs }) {
       tickets.startsWith("~/") ? join(homedir(), tickets.slice(2)) : tickets,
     ),
     ready,
+    trunk,
+    trunkConfigured,
     keep,
+    regenerable,
     verifyAlways,
   });
 }
@@ -324,7 +345,10 @@ export async function resolveAgxConfig(
     root: string;
     tickets: string;
     ready: string[];
+    trunk: string;
+    trunkConfigured: boolean;
     keep: string[];
+    regenerable: string[];
     verifyAlways: string[];
   }>
 > {

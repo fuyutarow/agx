@@ -12,9 +12,10 @@ The following contracts now exist:
 - [Workspace lifecycle](../tools/agx-ws/README.md): creation, readiness, refresh, removal,
   collection, locks and workspace policy. GC judges the current working-copy chain by unlanded
   content and reports differing paths; obsolete run-end commit reachability does not prevent
-  collection after squash, rebase or a superseding continuation. Before any removable verdict, ignored and untracked disk content is inventoried and retained unless regenerable (node_modules directories or literal paths in the backing checkout's optional .ws.toml regenerable list). Inventory failures yield unknown and incomplete coverage; the guard is repeated under the removal lock.
-  Protect a workspace with `keep = ["ws_<name>"]` in the main checkout root `.ws.toml`, for
-  example `keep = ["ws_reference"]`; GC reads the working file or, when absent, its parent-revision version.
+  collection after squash, rebase or a superseding continuation. Before any removable verdict, ignored and untracked disk content is inventoried and retained unless regenerable (node_modules directories or literal paths in repository-root `agx.toml [ws].regenerable`). Inventory failures yield unknown and incomplete coverage; the guard is repeated under the removal lock.
+  Protect a workspace with `keep = ["ws_<name>"]` under `[ws]` in the main checkout root
+  `agx.toml`, for example `keep = ["ws_reference"]`; L2 keep entries are unioned with L1.
+  A leftover root `.ws.toml` is refused by agx-ws commands.
 - [Ticket lifecycle](../tools/agx-ticket/README.md): issuance, derived states, landing and collection.
 - [Worker contract](../tools/agx-worker/contract.md): worker execution and records.
 - [Compiled runtime paths](../tools/shared/compiled-runtime.md): shipped data and runtime inputs.

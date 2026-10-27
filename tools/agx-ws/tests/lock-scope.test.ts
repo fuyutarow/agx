@@ -29,6 +29,7 @@ async function fixture(slugs: string[]) {
   await mkdir(bin, { recursive: true });
   const env = {
     ...process.env,
+    JJ_CONFIG: "",
     PATH: `${bin}:${process.env.PATH}`,
     HOME: join(root, "home"),
     XDG_CONFIG_HOME: join(root, "config"),
@@ -72,9 +73,24 @@ async function fixture(slugs: string[]) {
     await chmod(file, 0o755);
   };
   await mkdir(env.HOME);
+  await mkdir(join(root, "config", "jj", "repos"), { recursive: true });
   expect((await jj(["git", "init", repo], root)).code).toBe(0);
+  expect(
+    (
+      await jj(
+        [
+          "config",
+          "set",
+          "--repo",
+          'revset-aliases."trunk()"',
+          "bookmarks(main)",
+        ],
+        repo,
+      )
+    ).code,
+  ).toBe(0);
   await Bun.write(join(repo, "a.txt"), "base\n");
-  await Bun.write(join(repo, ".ws.toml"), 'trunk = "main"\n');
+  await Bun.write(join(repo, "agx.toml"), 'schema = 1\n[ws]\ntrunk = "main"\n');
   expect((await jj(["commit", "-m", "base"])).code).toBe(0);
   expect((await jj(["bookmark", "create", "main", "-r", "@-"])).code).toBe(0);
   const dir = (slug: string) => join(`${repo}.ws`, `ws_${slug}`);
