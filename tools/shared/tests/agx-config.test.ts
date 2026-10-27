@@ -14,6 +14,7 @@ import { join } from "node:path";
 import {
   AgxConfigError,
   listAgxRepos,
+  normalizeTomlIntegers,
   resolveAgxConfig,
 } from "../src/agx-config.ts";
 
@@ -95,6 +96,34 @@ test("defaults without files and schema-only policy", async () => {
         verifyAlways: [],
       });
   }
+});
+test("config contract: a schema = 1 agx.toml with [ws] is accepted", async () => {
+  const f = await fixture(
+    'schema = 1\n\n[ws]\nready = ["mise run check"]\ntrunk = "alpha"\n',
+  );
+  const result = await resolveAgxConfig(f.root);
+  expect(result.ok, result.ok ? "" : String(result.error)).toBe(true);
+  if (result.ok)
+    expect(result.value).toMatchObject({
+      ready: ["mise run check"],
+      trunk: "alpha",
+      trunkConfigured: true,
+    });
+});
+test("config contract: schema = 2 is refused", async () => {
+  const f = await fixture('schema = 2\n\n[ws]\nready = ["mise run check"]\n');
+  const result = await resolveAgxConfig(f.root);
+  expect(result.ok).toBe(false);
+  if (!result.ok) {
+    expect(result.error).toBeInstanceOf(AgxConfigError);
+    expect(String(result.error)).toContain("schema");
+  }
+});
+test("TOML decode normalizes nested safe integer values", () => {
+  const tooLarge = BigInt(Number.MAX_SAFE_INTEGER) + 1n;
+  expect(
+    normalizeTomlIntegers({ schema: 1n, nested: [{ edition: 2n }], tooLarge }),
+  ).toEqual({ schema: 1, nested: [{ edition: 2 }], tooLarge });
 });
 test("verify.always replaces by key from L1 to L2, including an empty override", async () => {
   const f = await fixture(

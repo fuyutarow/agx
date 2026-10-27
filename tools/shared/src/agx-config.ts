@@ -77,6 +77,24 @@ const LocalConfig = z.strictObject({
     .string()
     .refine(isAbsolute, "root must be an absolute main-checkout path"),
 });
+/** Normalize BigInt parser output without rounding values outside JS's exact integer range. */
+export function normalizeTomlIntegers(value: unknown): unknown {
+  if (typeof value === "bigint") {
+    const number = Number(value);
+    return Number.isSafeInteger(number) ? number : value;
+  }
+  if (Array.isArray(value)) return value.map(normalizeTomlIntegers);
+  if (value === null || typeof value !== "object" || value instanceof Date)
+    return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [
+      key,
+      normalizeTomlIntegers(entry),
+    ]),
+  );
+}
+const decodeToml = (text: string): unknown =>
+  normalizeTomlIntegers(Bun.TOML.parse(text));
 const missing = (error: unknown) =>
   z.object({ code: z.literal("ENOENT") }).safeParse(error).success;
 const failure = (message: string) => ({
@@ -234,7 +252,7 @@ export async function listAgxRepos(): Promise<
       continue;
     const path = join(directory, entry.name);
     const raw = await attempt(async (): Promise<unknown> =>
-      Bun.TOML.parse(await readFile(path, "utf8")),
+      decodeToml(await readFile(path, "utf8")),
     );
     if (!raw.ok)
       return failure(`${path}: invalid TOML: ${errorMessage(raw.error)}`);
@@ -289,7 +307,7 @@ async function resolveConfig(repoRoot: string, options: { vcs?: Vcs }) {
   if (policy.value !== undefined) {
     const name = "agx.toml";
     const text = policy.value;
-    const decoded = await attempt((): unknown => Bun.TOML.parse(text));
+    const decoded = await attempt((): unknown => decodeToml(text));
     if (!decoded.ok)
       return failure(
         `${join(root, name)}: invalid TOML: ${errorMessage(decoded.error)}`,
