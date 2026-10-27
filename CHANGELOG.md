@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.19.0 — 2026-10-27
+
+- Use agx.toml for workspace policy and refuse .ws.toml
+
 ## 1.18.3 — 2026-10-27
 
 - Dispatch inspection honors its configured timeout.
