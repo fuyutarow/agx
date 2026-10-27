@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.20.1 — 2026-10-27
+
+- Persist vendor sessions before worker runs end
+
 ## 1.20.0 — 2026-10-27
 
 - Collect workspaces whose changes are already present on trunk
