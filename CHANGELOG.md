@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.17.1 — 2026-10-27
+
+- Reroute vendor capacity within one worker run
+
 ## 1.17.0 — 2026-10-27
 
 - Make workspace cleanup constant cost
