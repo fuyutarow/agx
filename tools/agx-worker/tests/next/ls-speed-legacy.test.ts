@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 test("public ls hides malformed imports, counts them and normalizes moved reports within one second", () => {
   const root = mkdtempSync(join(tmpdir(), "agx-ls-scale-"));
@@ -60,7 +61,11 @@ test("public ls hides malformed imports, counts them and normalizes moved report
       const result = Bun.spawnSync(
         [process.execPath, "tools/agx-worker/src/next/cli.ts", "ls", ...flags],
         {
-          env: { ...process.env, AGX_STATE_DIR: state, XDG_STATE_HOME: root },
+          env: {
+            ...subprocessEnvironment(),
+            AGX_STATE_DIR: state,
+            XDG_STATE_HOME: root,
+          },
           timeout: 5000,
         },
       );

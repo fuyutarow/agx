@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readonlyCommand } from "../../shared/src/readonly-command.ts";
+import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 
 const root = await mkdtemp(join(tmpdir(), "agx-readonly-"));
 afterAll(() => rm(root, { recursive: true, force: true }));
@@ -86,7 +87,7 @@ await Bun.write(${JSON.stringify(target)}, "late").catch(() => {});
   );
   await chmod(jj, 0o755);
   const command = readonlyCommand(["jj", "read-fixture"], root, {
-    ...process.env,
+    ...subprocessEnvironment(),
     PATH: `${bin}:${process.env.PATH ?? ""}`,
   });
   const child = Bun.spawn(command.cmd, {

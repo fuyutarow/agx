@@ -15,6 +15,7 @@ import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { foldedRuns } from "../../src/next/store.ts";
 import { createTempTracker } from "../temp.ts";
 import { prepareTicketRepo } from "../ticket-repo.ts";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const tempDirs = createTempTracker();
 
@@ -127,7 +128,7 @@ process.stdout.write(JSON.stringify({ exit: 0, report: { summary: "done", change
   });
   servers.push(server);
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...subprocessEnvironment(),
     PATH: `${bin}:${process.env.PATH}`,
     AGX_STATE_DIR: state,
     AGX_TMP_ROOT: join(root, "agx-tmp"),

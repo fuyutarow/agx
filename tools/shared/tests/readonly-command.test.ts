@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readonlyCommand } from "../src/readonly-command.ts";
+import { subprocessEnvironment } from "../src/subprocess-env.ts";
 
 test("embedded isolation helper preserves argv and denies target writes", async () => {
   const root = await mkdtemp(join(tmpdir(), "readonly-embedded-"));
@@ -57,7 +58,7 @@ test("embedded isolation needs no Bun on PATH and keeps its transport private", 
       'printf "%s:%s" "${BUN_BE_BUN-unset}" "${AGX_READONLY_COMMAND_JOB-unset}"',
     ],
     "/tmp",
-    { ...process.env, PATH: "/no-executables" },
+    { ...subprocessEnvironment(), PATH: "/no-executables" },
   );
   const child = Bun.spawn(invocation.cmd, {
     env: invocation.env,

@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fromThrowable } from "neverthrow";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0))
@@ -64,7 +65,7 @@ function fixture() {
     join(root, "bin/agx-worker"),
   );
   const env = {
-    ...process.env,
+    ...subprocessEnvironment(),
     AGX_STATE_DIR: join(root, "state"),
     XDG_STATE_HOME: join(root, "xdg"),
     AGX_CODEX_HOST_FILE: join(root, "host.toml"),

@@ -17,6 +17,7 @@ import { err } from "neverthrow";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { createTempTracker } from "../temp.ts";
 import { createRunTemp, sweepStaleTemps } from "../../src/temp.ts";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const tempDirs = createTempTracker();
 afterAll(tempDirs.assertRemoved);
@@ -80,7 +81,7 @@ async function fixture(workerBody: string, verify: string | string[]) {
   );
   writeFileSync(worker, workerBody);
   const env = {
-    ...process.env,
+    ...subprocessEnvironment(),
     AGX_STATE_DIR: join(root, "state"),
     JEV_URL: `http://127.0.0.1:${jevPort}/choice`,
     AGX_WORKER_BIN: worker,

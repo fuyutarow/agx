@@ -3,6 +3,7 @@ import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CHANGE_LAND_ENV } from "../src/change.ts";
+import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 
 const entry = join(import.meta.dir, "../src/agx.ts");
 
@@ -86,7 +87,7 @@ async function git(
   const child = Bun.spawn(["git", ...args], {
     cwd,
     env: {
-      ...process.env,
+      ...subprocessEnvironment(),
       GIT_CONFIG_NOSYSTEM: "1",
       GIT_CONFIG_GLOBAL: "/dev/null",
       ...extraEnv,

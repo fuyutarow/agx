@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { jsonOf, z } from "../../shared/src/zod.ts";
 import { clearInheritedAgentEnvironment } from "../../test-tmp.ts";
+import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 
 const HOST_MISE_MARKER = "agx-hermetic-host-mise-config-was-read";
 const HOST_AGX_MARKER = "agx-hermetic-host-agx-config-was-read";
@@ -97,7 +98,7 @@ test("hermetic contract: spawned mise and agx ignore host user config", async ()
   ).toEqual(["AGX_CONFIG", "AGX_STATE_DIR", "AGX_TEST_RUN_DIR"]);
 
   const childEnv: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...subprocessEnvironment(),
     HOME: hostHome,
     AGX_DISPATCHER_SESSION: "host-dispatcher-session",
     AGX_DISPATCHER_SESSION_ID: "host-dispatcher-id",

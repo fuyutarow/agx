@@ -9,6 +9,7 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { jsonOf, z } from "../../shared/src/zod.ts";
+import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 
 const fixtureRoot = await mkdtemp(join(stateTmpdir(), "agx-status-"));
 afterAll(() => rm(fixtureRoot, { recursive: true, force: true }));
@@ -326,7 +327,7 @@ test("single state directory precedence and startup refusals preserve data", asy
 
 // The shared preload still injects retired configuration; isolate refusal tests.
 function stateTestEnv(): NodeJS.ProcessEnv {
-  const env = { ...process.env };
+  const env = { ...subprocessEnvironment() };
   delete env.AGX_NEXT_STATE_DIR;
   return env;
 }

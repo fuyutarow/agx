@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { createTempTracker } from "../temp.ts";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const tempDirs = createTempTracker();
 const roots: string[] = [];
@@ -125,7 +126,7 @@ const fixture = async (ticketName = "pin") => {
       {
         cwd: process.cwd(),
         env: {
-          ...process.env,
+          ...subprocessEnvironment(),
           PATH: `${bin}:${process.env.PATH}`,
           AGX_STATE_DIR: state,
           MISE_GLOBAL_CONFIG_FILE: join(root, "mise-config.toml"),
@@ -837,6 +838,8 @@ describe("agx worker run --continue pins the prior row", () => {
     expect(result.stderr.toString()).toContain("workspace");
     expect(result.stderr.toString()).toContain("no longer exists");
   });
+
+
 
   test("the ticket file is re-read on continue", async () => {
     const f = await fixture();

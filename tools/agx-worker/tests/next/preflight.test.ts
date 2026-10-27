@@ -16,6 +16,7 @@ import { join, resolve } from "node:path";
 import { prepareTicketRepo } from "../ticket-repo.ts";
 import { parseNextTicket } from "../../src/next/ticket.ts";
 import { checkPremises } from "../../src/premises.ts";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const roots: string[] = [];
 
@@ -33,7 +34,7 @@ test("premise refusal preserves the first diagnostic line and all observed outpu
   );
 });
 function inheritedEnv() {
-  const env = { ...process.env };
+  const env = { ...subprocessEnvironment() };
   Reflect.deleteProperty(env, "AGX_NEXT_STATE_DIR");
   env.MISE_GLOBAL_CONFIG_FILE = join(tmpdir(), "agx-preflight-mise.toml");
   env.XDG_CONFIG_HOME = join(tmpdir(), "agx-preflight-config");

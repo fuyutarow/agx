@@ -13,6 +13,7 @@ import { dirname, join, resolve } from "node:path";
 import { jsonOf, z } from "../../shared/src/zod.ts";
 import { decodedJson } from "./decode.ts";
 import { createTempTracker } from "./temp.ts";
+import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 
 const tempDirs = createTempTracker();
 const registerTempDir = tempDirs.register;
@@ -195,7 +196,7 @@ function run(
     // declaration (a rented container) must not flip every sandbox assertion in this suite.
     {
       env: {
-        ...process.env,
+        ...subprocessEnvironment(),
         AGX_CONFIG: new URL(
           "../src/roster/policy.example.toml",
           import.meta.url,
@@ -643,7 +644,7 @@ describe("agx", () => {
       ],
       {
         env: {
-          ...process.env,
+          ...subprocessEnvironment(),
           AGX_CONFIG: new URL(
             "../src/roster/policy.example.toml",
             import.meta.url,
@@ -676,7 +677,7 @@ describe("agx", () => {
     const path = join(dir, "default.resource.json");
     const p = Bun.spawnSync(["bun", script, ...FULL, "--emit-envelope", path], {
       env: {
-        ...process.env,
+        ...subprocessEnvironment(),
         AGX_CONFIG: new URL(
           "../src/roster/policy.example.toml",
           import.meta.url,
@@ -725,7 +726,7 @@ describe("agx", () => {
       ],
       {
         env: {
-          ...process.env,
+          ...subprocessEnvironment(),
           AGX_CONFIG: new URL(
             "../src/roster/policy.example.toml",
             import.meta.url,
@@ -853,7 +854,7 @@ describe("agx", () => {
         ],
         {
           env: {
-            ...process.env,
+            ...subprocessEnvironment(),
             AGX_CONFIG: new URL(
               "../src/roster/policy.example.toml",
               import.meta.url,

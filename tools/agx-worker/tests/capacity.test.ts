@@ -15,6 +15,7 @@ import { capacityMessage, MODEL_WAIT_MS } from "../src/workers/capacity.ts";
 import { loadRoster } from "../src/roster/index.ts";
 import { prepareTicketRepo } from "./ticket-repo.ts";
 import { runHealth } from "../src/next/health.ts";
+import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -51,7 +52,7 @@ const fixture = async () => {
 const execute = async (args: string[], env: NodeJS.ProcessEnv) => {
   const child = Bun.spawn([process.execPath, ...args], {
     env: {
-      ...process.env,
+      ...subprocessEnvironment(),
       AGX_CONFIG: new URL("../src/roster/policy.example.toml", import.meta.url)
         .pathname,
       ...env,

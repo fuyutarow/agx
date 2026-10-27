@@ -25,6 +25,8 @@ import {
   acquireWorkspaceLock,
   publishCurrentRuns,
 } from "../../src/next/store.ts";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
+
 
 setDefaultTimeout(60_000);
 const temps = createTempTracker();
@@ -56,6 +58,7 @@ await lock.release();
 `,
   );
   const holder = Bun.spawn([process.execPath, script, root], {
+    env: subprocessEnvironment(),
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
@@ -172,7 +175,7 @@ console.log(JSON.stringify({ report: { summary: "done", changes: [], checks: [],
   };
   seed("prior", process.pid, true);
   const env = {
-    ...process.env,
+    ...subprocessEnvironment(),
     AGX_STATE_DIR: state,
     AGX_TMP_ROOT: join(root, "tmp"),
     JEV_URL: `http://127.0.0.1:${jev.port}/choice`,

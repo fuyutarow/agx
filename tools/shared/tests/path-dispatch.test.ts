@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveSuiteTool } from "../src/path-dispatch.ts";
+import { subprocessEnvironment } from "../src/subprocess-env.ts";
 
 test("Bun source mode ignores executable siblings beside the runtime", async () => {
   const dir = await mkdtemp(join(tmpdir(), "agx-source-path-"));
@@ -26,7 +27,7 @@ test("dispatch contract: SIGTERM to agx reaches the forwarded child and agx exit
   };
   await writeFile(join(dir, "agx-ws"), `#!${process.execPath}\nprocess.on("SIGTERM", () => { process.stderr.write("child received SIGTERM\\n"); process.exit(37); });\nprocess.stdout.write("ready\\n");\nsetInterval(() => {}, 1000);\n`, { mode: 0o755 });
   const child = Bun.spawn([process.execPath, join(import.meta.dir, "../../agx/src/agx.ts"), "ws"], {
-    env: { ...process.env, PATH: `${dir}:${process.env.PATH ?? ""}` },
+    env: subprocessEnvironment({ PATH: `${dir}:${process.env.PATH ?? ""}` }),
     stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 10000,
   });
   const reader = child.stdout.getReader();

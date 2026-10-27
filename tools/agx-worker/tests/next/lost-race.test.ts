@@ -12,6 +12,7 @@ import {
   foldedRuns,
   fullFoldedRuns,
 } from "../../src/next/store.ts";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const previousState = process.env.AGX_STATE_DIR;
 const previousPath = process.env.PATH;
@@ -154,7 +155,7 @@ test("doctor distinguishes observed completions, missing returns, legacy history
   const child = Bun.spawn(
     [process.execPath, "tools/agx-worker/src/next/cli.ts", "doctor"],
     {
-      env: { ...process.env, AGX_STATE_DIR: root },
+      env: { ...subprocessEnvironment(), AGX_STATE_DIR: root },
       stdout: "pipe",
       stderr: "pipe",
     },

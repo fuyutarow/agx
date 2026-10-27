@@ -4,6 +4,7 @@ import { chmod, mkdir, mkdtemp, readdir, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { jsonOf, z } from "../../shared/src/zod.ts";
+import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 
 const WS = join(import.meta.dir, "../src/ws.ts");
 setDefaultTimeout(90_000);
@@ -20,7 +21,7 @@ type Fixture = {
 };
 
 const isolatedEnvironment = (): NodeJS.ProcessEnv => {
-  const env = { ...process.env };
+  const env = { ...subprocessEnvironment() };
   delete env.AGX_NEXT_STATE_DIR;
   delete env.AGX_DOCTOR_HOME;
   delete env.AGX_DOCTOR_WORKSPACE;

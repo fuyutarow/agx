@@ -9,6 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createTempTracker } from "./temp.ts";
+import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 
 const tempDirs = createTempTracker();
 const registerTempDir = tempDirs.register;
@@ -28,7 +29,7 @@ afterAll(() => {
 
 function run(args: string[]): { code: number; out: string; err: string } {
   const result = Bun.spawnSync([process.execPath, CLI, ...args], {
-    env: { ...process.env, AGX_STATE_DIR: state },
+    env: { ...subprocessEnvironment(), AGX_STATE_DIR: state },
     stdout: "pipe",
     stderr: "pipe",
   });

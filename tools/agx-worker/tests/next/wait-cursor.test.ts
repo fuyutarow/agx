@@ -3,6 +3,7 @@ import * as fs from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { recordCursor } from "../../src/next/store.ts";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -113,7 +114,7 @@ test("wait returns promptly after terminal record following N appends", async ()
     ],
     {
       env: {
-        ...process.env,
+        ...subprocessEnvironment(),
         AGX_STATE_DIR: root,
         AGX_WAIT_POLL_MS: "60000",
       },
@@ -172,7 +173,11 @@ globalThis.setTimeout = (callback, delay, ...args) => {
       "--json",
     ],
     {
-      env: { ...process.env, AGX_STATE_DIR: root, AGX_WAIT_POLL_MS: "1" },
+      env: {
+        ...subprocessEnvironment(),
+        AGX_STATE_DIR: root,
+        AGX_WAIT_POLL_MS: "1",
+      },
       stdout: "pipe",
       stderr: "pipe",
       timeout: 9000,

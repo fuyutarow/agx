@@ -7,6 +7,7 @@ import { join, resolve } from "node:path";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { foldedRuns } from "../../src/next/store.ts";
 import { prepareTicketRepo } from "../ticket-repo.ts";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const roots: string[] = [];
 const children: ReturnType<typeof Bun.spawn>[] = [];
@@ -110,13 +111,14 @@ async function runCase(input: {
   await Bun.write(
     agx,
     `#!${process.execPath}
+import { subprocessEnvironment } from ${JSON.stringify(new URL("../../../shared/src/subprocess-env.ts", import.meta.url).pathname)};
 import { appendFileSync } from "node:fs";
 const args = process.argv.slice(2);
 appendFileSync(process.env.NOTICES_PATH, JSON.stringify(args) + "\\n");
 if (process.env.SENDER_MODE === "xmsg") {
   const forwarded = args[0] === "msg" ? args.slice(1) : args;
   const child = Bun.spawn([process.execPath, process.env.XMSG_ENTRY ?? "", ...forwarded], {
-    stdin: "ignore", stdout: "pipe", stderr: "pipe", env: process.env,
+    stdin: "ignore", stdout: "pipe", stderr: "pipe", env: subprocessEnvironment(),
   });
   const [exit, stdout, stderr] = await Promise.all([
     child.exited,
@@ -155,6 +157,7 @@ await new Promise(() => {});
     `const jev = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => Response.json({ answers: { worker: { choice: "luna-high", confidence: 0.9 } } }) });\nconsole.log("ready:" + jev.port);\n`,
   );
   const jev = Bun.spawn([process.execPath, jevPath], {
+    env: subprocessEnvironment(),
     stdout: "pipe",
     stderr: "ignore",
   });
@@ -174,7 +177,7 @@ await new Promise(() => {});
     ? input.dispatcher.slice("claude:".length)
     : "";
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...subprocessEnvironment(),
     PATH: `${root}:${process.env.PATH ?? ""}`,
     AGX_STATE_DIR: state,
     AGX_TMP_ROOT: join(root, "tmp"),
@@ -211,12 +214,13 @@ await new Promise(() => {});
       fakeRun,
       `import { append, flushRunPublications, now } from ${JSON.stringify(storePath)};
 import { scheduleEndNotice } from ${JSON.stringify(noticePath)};
+import { subprocessEnvironment } from ${JSON.stringify(new URL("../../../shared/src/subprocess-env.ts", import.meta.url).pathname)};
 const id = "fake-end-notice-run";
 const dispatcher = process.env.AGX_DISPATCHER_SESSION ?? null;
 const startedAt = now();
 append({ kind: "started", id, at: startedAt, ticket: "end-notice-fixture", writes: [], cwd: process.cwd(), workspace: process.cwd(), row: "fixture", dispatcher_session: dispatcher, dispatcher_address: dispatcher, vendor_session: null, pid: process.pid });
 const endedAt = now();
-const end_notice = scheduleEndNotice({ id, ticket: "end-notice-fixture", dispatcher, address: dispatcher, startedAt, endedAt, outcome: "timeout", resultPath: null, verifyExits: [], env: process.env }, [process.execPath, ${JSON.stringify(workerCli)}]);
+const end_notice = scheduleEndNotice({ id, ticket: "end-notice-fixture", dispatcher, address: dispatcher, startedAt, endedAt, outcome: "timeout", resultPath: null, verifyExits: [], env: subprocessEnvironment() }, [process.execPath, ${JSON.stringify(workerCli)}]);
 append({ kind: "ended", id, at: endedAt, exit: 3, outcome: "timeout", end_notice, report_path: null, vendor_session: null, verify: [] });
 await flushRunPublications();
 process.exitCode = 3;

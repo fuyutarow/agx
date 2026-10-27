@@ -7,6 +7,7 @@ import pkg from "../package.json" with { type: "json" };
 import rootPackage from "../../../package.json" with { type: "json" };
 import wsPackage from "../../agx-ws/package.json" with { type: "json" };
 import ticketPackage from "../../agx-ticket/package.json" with { type: "json" };
+import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 
 test("only prefixed workspace and ticket bins are exported", () => {
   expect(Object.hasOwn(rootPackage.bin, "ws")).toBe(false);
@@ -42,7 +43,7 @@ async function fixture() {
 }
 async function run(bin: string, args: string[], exit = 0) {
   const child = Bun.spawn([process.execPath, entry, ...args], {
-    env: { ...process.env, PATH: bin, FAKE_EXIT: String(exit) },
+    env: { ...subprocessEnvironment(), PATH: bin, FAKE_EXIT: String(exit) },
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",

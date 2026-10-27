@@ -13,6 +13,7 @@ import {
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { jsonOf, z } from "../../shared/src/zod.ts";
+import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 
 setDefaultTimeout(60_000);
 const scratch = await mkdtemp(join(tmpdir(), "ws-gc-lock-scope-"));
@@ -28,7 +29,7 @@ async function fixture(slugs: string[]) {
   const lock = `${repo}.ws.lock`;
   await mkdir(bin, { recursive: true });
   const env = {
-    ...process.env,
+    ...subprocessEnvironment(),
     JJ_CONFIG: "",
     PATH: `${bin}:${process.env.PATH}`,
     HOME: join(root, "home"),

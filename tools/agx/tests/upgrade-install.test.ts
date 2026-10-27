@@ -2,6 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 
 let root = "";
 let binary = "";
@@ -69,7 +70,7 @@ async function runInstallCase(prune: boolean) {
   await mkdir(newBin, { recursive: true });
   await writeFile(join(newBin, "agx-worker"), "new install must not run\n");
   const env = {
-    ...process.env,
+    ...subprocessEnvironment(),
     PATH: `${newBin}:/usr/bin:/bin`,
     AGX_STATE_DIR: join(root, "state"),
     XDG_STATE_HOME: join(root, "xdg"),

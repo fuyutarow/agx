@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { appendFileSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -9,6 +9,9 @@ import {
   type WorkspaceLockWaitClock,
 } from "../../src/next/store.ts";
 import { judgeRun } from "../../src/next/run.ts";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
+
+setDefaultTimeout(40_000);
 
 const roots: string[] = [];
 const cli = resolve(import.meta.dir, "../../src/next/cli.ts");
@@ -60,14 +63,14 @@ async function fixture(ended: boolean) {
   return { root, id, records };
 }
 
-function launchJudge(root: string, id: string, extra: string[] = []) {
+function launchJudge(root: string, id: string, extra: string[] = [], timeout = 5_000) {
   const child = Bun.spawn(
     [process.execPath, cli, "judge", id, "accept", ...extra],
     {
-      env: { ...process.env, AGX_STATE_DIR: root },
+      env: { ...subprocessEnvironment(), AGX_STATE_DIR: root },
       stdout: "pipe",
       stderr: "pipe",
-      timeout: 5_000,
+      timeout,
     },
   );
   return {
@@ -123,6 +126,7 @@ await lock.release();
 async function holdPublicationLock(root: string) {
   const script = await writeHolder(root);
   const child = Bun.spawn([process.execPath, script, root], {
+    env: subprocessEnvironment(),
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
@@ -205,6 +209,7 @@ await child.exited;
 `,
     );
     const parent = Bun.spawn([process.execPath, parentScript, script, root], {
+      env: subprocessEnvironment(),
       stdout: "pipe",
       stderr: "pipe",
       timeout: 5_000,
@@ -364,7 +369,7 @@ async function stalledPublication(root: string) {
       `import { publishCurrentRuns } from ${JSON.stringify(store)}; await publishCurrentRuns(${JSON.stringify(root)});`,
     ],
     {
-      env: { ...process.env, PATH: `${root}:${process.env.PATH ?? ""}` },
+      env: subprocessEnvironment({ PATH: `${root}:${process.env.PATH ?? ""}` }),
       stdout: "pipe",
       stderr: "pipe",
       timeout: 10000,

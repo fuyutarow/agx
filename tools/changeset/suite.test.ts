@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyChangesets, type SuiteHistory } from "./apply.ts";
 import { writeChangeset } from "./changeset.ts";
+import { subprocessEnvironment } from "../shared/src/subprocess-env.ts";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -113,7 +114,7 @@ async function git(root: string, args: string[]) {
   const child = Bun.spawn(["git", ...args], {
     cwd: root,
     env: {
-      ...process.env,
+      ...subprocessEnvironment(),
       GIT_AUTHOR_NAME: "Suite test",
       GIT_AUTHOR_EMAIL: "suite@example.test",
       GIT_COMMITTER_NAME: "Suite test",

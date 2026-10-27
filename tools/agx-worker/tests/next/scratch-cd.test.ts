@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { ticketContext } from "../../src/next/ticket-home.ts";
 import { prepareTicketRepo } from "../ticket-repo.ts";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -72,7 +73,7 @@ test.each([
       ],
       {
         env: {
-          ...process.env,
+          ...subprocessEnvironment(),
           GIT_CONFIG_NOSYSTEM: "1",
           GIT_CONFIG_GLOBAL: "/dev/null",
           GIT_DIR: undefined,

@@ -210,6 +210,11 @@
     "timeout": 60000
   },
   {
+    "file": "tools/agx-worker/tests/next/judge-lock.test.ts",
+    "name": "file default",
+    "timeout": 40000
+  },
+  {
     "file": "tools/agx-worker/tests/next/legacy-judgments.test.ts",
     "name": "C3 equal-time imported ties are deterministic across discovery order, native ties win",
     "timeout": 11000

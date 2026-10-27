@@ -9,6 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const roots: string[] = [];
 const cli = resolve(import.meta.dir, "../../src/next/cli.ts");
@@ -76,7 +77,7 @@ function command(
   state: string,
 ): { exit: number | null; stdout: string; stderr: string } {
   const result = Bun.spawnSync([process.execPath, cli, ...args], {
-    env: { ...process.env, AGX_STATE_DIR: state },
+    env: { ...subprocessEnvironment(), AGX_STATE_DIR: state },
   });
   return {
     exit: result.exitCode,

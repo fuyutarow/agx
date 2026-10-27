@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { chmod, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { subprocessEnvironment } from "../src/subprocess-env.ts";
 
 test.each([
   ["jj 0.45.1", 2],
@@ -19,7 +20,7 @@ test.each([
       `import { requireJjTemplateVersion as check } from ${JSON.stringify(modulePath)}; check(["jj", "log", "-T", "commit_id"]);`,
     ],
     {
-      env: { ...process.env, PATH: `${dir}:${process.env.PATH}` },
+      env: subprocessEnvironment({ PATH: `${dir}:${process.env.PATH}` }),
       stdout: "pipe",
       stderr: "pipe",
     },
@@ -52,7 +53,7 @@ test("template version is checked once for multiple calls in one process", async
       `import { requireJjTemplateVersion as check } from ${JSON.stringify(modulePath)}; check(["jj", "log", "-T", "commit_id"]); check(["jj", "workspace", "list", "-T", "name"]);`,
     ],
     {
-      env: { ...process.env, PATH: `${dir}:${process.env.PATH}` },
+      env: subprocessEnvironment({ PATH: `${dir}:${process.env.PATH}` }),
       stdout: "pipe",
       stderr: "pipe",
     },

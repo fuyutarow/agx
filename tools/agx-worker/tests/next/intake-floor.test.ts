@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { prepareTicketRepo } from "../ticket-repo.ts";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const Check = jsonOf(
   z.object({ ok: z.boolean(), violations: z.array(z.string()) }),
@@ -53,7 +54,7 @@ test("intake refuses every launch entry before routing, logs hashes, and admits 
   });
   servers.push(server);
   const env = {
-    ...process.env,
+    ...subprocessEnvironment(),
     PATH: `${bin}:${process.env.PATH ?? ""}`,
     AGX_NEXT_STATE_DIR: undefined,
     AGX_STATE_DIR: state,

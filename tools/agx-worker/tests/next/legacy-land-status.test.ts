@@ -13,6 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -32,7 +33,7 @@ const fixture = () => {
     join(root, "bin/agx-worker"),
   );
   const env = {
-    ...process.env,
+    ...subprocessEnvironment(),
     AGX_STATE_DIR: join(root, "state"),
     XDG_STATE_HOME: join(root, "xdg"),
     PATH: `${join(root, "bin")}:${dirname(process.execPath)}:${process.env.PATH ?? ""}`,

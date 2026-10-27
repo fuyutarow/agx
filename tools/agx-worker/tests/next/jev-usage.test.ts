@@ -10,6 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -30,7 +31,7 @@ function fixture() {
     readFileSync("tools/agx-worker/src/roster/policy.example.toml", "utf8"),
   );
   const env = {
-    ...process.env,
+    ...subprocessEnvironment(),
     AGX_STATE_DIR: join(root, "state"),
     XDG_STATE_HOME: join(root, "xdg"),
     HOME: join(root, "home"),

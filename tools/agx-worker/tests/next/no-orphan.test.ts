@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { lossEvidence, leaseFor } from "../../src/next/lease.ts";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -43,7 +44,7 @@ test("legacy ownerless record folds to ended lost; ls and ls --wait write nothin
         ...args,
       ],
       {
-        env: { ...process.env, AGX_STATE_DIR: root },
+        env: { ...subprocessEnvironment(), AGX_STATE_DIR: root },
         stdout: "pipe",
         stderr: "pipe",
         timeout: 5000,
@@ -100,7 +101,7 @@ test("tsc accepts the closed state and rejects constructing orphaned", async () 
   const compile = async () => {
     const child = Bun.spawn(compiler, {
       env: {
-        ...process.env,
+        ...subprocessEnvironment(),
         BUN_TMPDIR: root,
         BUN_INSTALL: root,
         BUN_INSTALL_CACHE_DIR: root + "/cache",

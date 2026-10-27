@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { loadRoster } from "../../src/roster/index.ts";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const PricingProjection = z.looseObject({
   schema: z.literal(1),
@@ -47,7 +48,7 @@ test("roster --json publishes pricing with missing prices omitted on a fixture",
     {
       cwd: new URL("../../../../", import.meta.url).pathname,
       env: {
-        ...process.env,
+        ...subprocessEnvironment(),
         AGX_CONFIG: new URL("./fixtures/roster-pricing.toml", import.meta.url)
           .pathname,
         AGX_STATE_DIR: join(root, "state"),

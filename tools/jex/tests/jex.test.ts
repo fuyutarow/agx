@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { jsonOf, z } from "../../shared/src/zod.ts";
 import { INPUT_CAP } from "../src/classify.ts";
 import packageJson from "../package.json" with { type: "json" };
+import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 
 const Verdict = z.object({
   model: z.union([
@@ -71,7 +72,7 @@ async function run(
 ) {
   const child = Bun.spawn([process.execPath, cli, ...args], {
     env: {
-      ...process.env,
+      ...subprocessEnvironment(),
       TYPESAFE_API_KEY: "fake-jex-key",
       JEV_URL: endpoint,
       ...env,

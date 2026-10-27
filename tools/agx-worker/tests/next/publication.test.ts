@@ -5,10 +5,11 @@ import { tmpdir } from "node:os";
 import { append, flushRunPublications } from "../../src/next/store.ts";
 import { leaseFor } from "../../src/next/lease.ts";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 const previous = process.env.AGX_STATE_DIR;
 const roots: string[] = [];
 function inheritedEnv() {
-  const env = { ...process.env };
+  const env = { ...subprocessEnvironment() };
   Reflect.deleteProperty(env, "AGX_NEXT_STATE_DIR");
   return env;
 }

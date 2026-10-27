@@ -9,6 +9,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const CLI = resolve("tools/agx-worker/src/next/cli.ts");
 const roots: string[] = [];
@@ -104,7 +105,7 @@ async function fixture(input: { verify: string[]; always?: string[] }) {
     'printf \'%s\\n\' "$*" > "$FAKE_LAUNCH_TRANSCRIPT"',
   );
 
-  const env = { ...process.env };
+  const env = { ...subprocessEnvironment() };
   for (const name of ["AGX_NEXT_STATE_DIR", "AGX_WORKER_PATH_SOURCE"])
     Reflect.deleteProperty(env, name);
   Object.assign(env, {

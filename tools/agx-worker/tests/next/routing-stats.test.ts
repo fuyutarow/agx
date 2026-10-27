@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { statsWindow } from "../../src/next/stats-window.ts";
 import { writeUsageSnapshot } from "./usage-snapshot.fixture.ts";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const roots: string[] = [];
 const FIRST_NOW_MS = Temporal.Instant.from(
@@ -48,7 +49,7 @@ const fixture = () => {
     ).replace('allow = ["codex"]', 'allow = ["codex", "claude"]'),
   );
   const env = {
-    ...process.env,
+    ...subprocessEnvironment(),
     AGX_STATE_DIR: join(root, "state"),
     XDG_STATE_HOME: join(root, "xdg"),
     HOME: join(root, "home"),

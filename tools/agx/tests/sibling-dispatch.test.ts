@@ -2,6 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 
 const entry = join(import.meta.dir, "../src/agx.ts");
 const tools = ["worker", "ticket", "ws", "status", "msg"];
@@ -31,7 +32,7 @@ if (process.argv[2] === "--help") {
 async function run(args: string[], path = "/usr/bin:/bin", probe = false) {
   const child = Bun.spawn([binary, ...args], {
     env: {
-      ...process.env,
+      ...subprocessEnvironment(),
       PATH: path,
       PROBE_STREAMS: probe ? "1" : "0",
       MEMBER_EXIT: probe ? "37" : "0",

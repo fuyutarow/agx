@@ -20,6 +20,7 @@ import {
   removeTree,
   sweepStaleRuns,
 } from "../src/test-tmp.ts";
+import { subprocessEnvironment } from "../src/subprocess-env.ts";
 
 const MODULE = join(import.meta.dir, "../src/test-tmp.ts");
 const BUN = process.execPath;
@@ -39,7 +40,7 @@ function runScript(
   const file = join(root, "..", `script-${crypto.randomUUID()}.ts`);
   writeFileSync(file, `import ${JSON.stringify(MODULE)};\n${body}\n`);
   const env: Record<string, string | undefined> = {
-    ...process.env,
+    ...subprocessEnvironment(),
     TMPDIR: root,
     ...extraEnv,
   };
@@ -84,7 +85,7 @@ test("the next test has a fresh home and child processes inherit its paths", asy
       "-e",
       "console.log(JSON.stringify([process.env.HOME, process.env.XDG_STATE_HOME, process.env.TMPDIR]))",
     ],
-    { env: process.env, stdout: "pipe" },
+    { env: subprocessEnvironment(), stdout: "pipe" },
   );
   const output = await new Response(child.stdout).text();
   expect(await child.exited).toBe(0);
@@ -155,7 +156,7 @@ test("SIGTERM removes the run parent where the runtime delivers it", async () =>
     `import ${JSON.stringify(MODULE)};\nconsole.log("ready");\nawait Bun.sleep(30000);\n`,
   );
   const child = Bun.spawn([BUN, file], {
-    env: { ...process.env, TMPDIR: root, [RUN_DIR_ENV]: "" },
+    env: { ...subprocessEnvironment(), TMPDIR: root, [RUN_DIR_ENV]: "" },
     stdout: "pipe",
   });
   const reader = child.stdout.getReader();
@@ -180,7 +181,7 @@ test("a nested bun test removes its parent even when a fixture forgets to restor
     ].join("\n"),
   );
   const env: Record<string, string | undefined> = {
-    ...process.env,
+    ...subprocessEnvironment(),
     TMPDIR: root,
   };
   delete env[RUN_DIR_ENV];

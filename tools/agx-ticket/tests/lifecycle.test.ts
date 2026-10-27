@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { decodedJson } from "../../shared/src/decode.ts";
 import { z } from "../../shared/src/zod.ts";
+import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 
 setDefaultTimeout(60_000);
 const scratch = await mkdtemp(join(tmpdir(), "tkt-lifecycle-"));
@@ -740,7 +741,7 @@ test("single state directory precedence and startup refusals preserve data", asy
 
 // The shared preload still injects retired configuration; isolate refusal tests.
 function stateTestEnv(): NodeJS.ProcessEnv {
-  const env = { ...process.env };
+  const env = { ...subprocessEnvironment() };
   delete env.AGX_NEXT_STATE_DIR;
   return env;
 }

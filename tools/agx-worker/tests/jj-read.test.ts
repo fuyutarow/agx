@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { JJ_READ_ARGS } from "../../shared/src/jj-read.ts";
 import { checkPremises } from "../src/premises.ts";
 import { readonlyCommand } from "../../shared/src/readonly-command.ts";
+import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 
 const root = await mkdtemp(join(tmpdir(), "agx-jj-read-fixture-"));
 const repo = join(root, "repo");
@@ -20,7 +21,7 @@ await writeFile(
   config,
   '[user]\nname = "Ref read fixture"\nemail = "fixture@example.invalid"\n[git]\ncolocate = false\n',
 );
-const env = { ...process.env, JJ_CONFIG: config };
+const env = subprocessEnvironment({ JJ_CONFIG: config });
 afterAll(async () => {
   await rm(root, { recursive: true, force: true });
 });

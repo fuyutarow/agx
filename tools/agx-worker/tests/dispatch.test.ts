@@ -20,6 +20,7 @@ import {
   BOUND_CLAUDE_TARGET_ENV,
   encodeBoundClaudeTarget,
 } from "../../xmsg/src/claude-target.ts";
+import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 
 const ENTRY = fileURLToPath(new URL("../src/next/cli.ts", import.meta.url));
 const RunRecord = z.looseObject({
@@ -31,7 +32,7 @@ const RunRecord = z.looseObject({
 });
 const roots: string[] = [];
 function inheritedEnv() {
-  const env = { ...process.env };
+  const env = { ...subprocessEnvironment() };
   Reflect.deleteProperty(env, "AGX_NEXT_STATE_DIR");
   return env;
 }

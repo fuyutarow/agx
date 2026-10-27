@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -78,7 +79,7 @@ globalThis.setTimeout = (...args) => { Bun.write(${JSON.stringify(ready)}, "read
       stdout: "pipe",
       stderr: "pipe",
       env: {
-        ...process.env,
+        ...subprocessEnvironment(),
         AGX_STATE_DIR: join(root, "state"),
         AGX_WAIT_POLL_MS: "50",
       },

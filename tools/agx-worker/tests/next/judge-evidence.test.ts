@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createHash } from "node:crypto";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 const Receipt = jsonOf(
@@ -39,7 +40,7 @@ afterAll(async () => {
 });
 async function judge(args: string[], runId = id) {
   const child = Bun.spawn([process.execPath, cli, "judge", runId, ...args], {
-    env: { ...process.env, AGX_STATE_DIR: root },
+    env: { ...subprocessEnvironment(), AGX_STATE_DIR: root },
     stdout: "pipe",
     stderr: "pipe",
     timeout: 10_000,

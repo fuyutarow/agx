@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { jsonOf, z } from "../../../../tools/shared/src/zod.ts";
 import { createTempTracker } from "../temp.ts";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const tempDirs = createTempTracker();
 const registerTempDir = tempDirs.register;
@@ -39,7 +40,7 @@ afterAll(() => {
 
 test("ls JSON drains completely when the pipe reader starts slowly", async () => {
   const child = Bun.spawn([process.execPath, CLI, "ls", "--json"], {
-    env: { ...process.env, AGX_STATE_DIR: state },
+    env: { ...subprocessEnvironment(), AGX_STATE_DIR: state },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -55,7 +56,7 @@ test("ls JSON drains completely when the pipe reader starts slowly", async () =>
 
 test("unknown command still exits non-zero", () => {
   const child = Bun.spawnSync([process.execPath, CLI, "unknown-command"], {
-    env: { ...process.env, AGX_STATE_DIR: state },
+    env: { ...subprocessEnvironment(), AGX_STATE_DIR: state },
     stdout: "pipe",
     stderr: "pipe",
   });

@@ -17,6 +17,7 @@ import {
   normalizeTomlIntegers,
   resolveAgxConfig,
 } from "../src/agx-config.ts";
+import { subprocessEnvironment } from "../src/subprocess-env.ts";
 
 const roots: string[] = [];
 const originalXdg = process.env.XDG_CONFIG_HOME;
@@ -40,7 +41,7 @@ async function fixture(policy?: string) {
     const child = Bun.spawn(["jj", ...args], {
       cwd: root,
       env: {
-        ...process.env,
+        ...subprocessEnvironment(),
         JJ_CONFIG: "",
         JJ_USER: "Fixture",
         JJ_EMAIL: "fixture@example.invalid",

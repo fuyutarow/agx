@@ -7,6 +7,7 @@ import {
   flushRunPublications,
   publishCurrentRuns,
 } from "../../agx-worker/src/next/store.ts";
+import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 
 // agx-status reads only what agx-worker publishes; the independent full-replay status
 // (tests/oracle/status-full-replay.ts) must answer the same JSON for the same state.
@@ -88,7 +89,7 @@ async function status(
   cwd: string,
 ): Promise<{ stdout: string; exitCode: number }> {
   const env: Record<string, string | undefined> = {
-    ...process.env,
+    ...subprocessEnvironment(),
     AGX_STATE_DIR: dir,
   };
   delete env.AGX_NEXT_STATE_DIR;

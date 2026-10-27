@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { doctorFindings, type DoctorWorkspaceRow } from "../src/workspace.ts";
+import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 
 const scratch = await mkdtemp(join(tmpdir(), "ws-doctor-root-"));
 afterAll(() => rm(scratch, { recursive: true, force: true }));
@@ -16,7 +17,7 @@ test("unset repository override reads strict L2 config; an override bypasses it"
   for (const root of [undefined, join(scratch, "empty")]) {
     const child = Bun.spawn([process.execPath, "-e", source, scratch], {
       env: {
-        ...process.env,
+        ...subprocessEnvironment(),
         AGX_REPOS_ROOT: root,
         XDG_CONFIG_HOME: configHome,
       },
@@ -45,7 +46,11 @@ test("retired repository overrides fail with exit 2 even when empty or paired wi
       [scratch, scratch],
     ]) {
       const child = Bun.spawn([process.execPath, cli, "doctor"], {
-        env: { ...process.env, [name]: value, AGX_REPOS_ROOT: replacement },
+        env: {
+          ...subprocessEnvironment(),
+          [name]: value,
+          AGX_REPOS_ROOT: replacement,
+        },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -140,7 +145,7 @@ test("registered paths contain exactly L2 roots, independent of cwd and retired 
   const read = async () => {
     const child = Bun.spawn([process.execPath, "-e", source], {
       cwd: scratch,
-      env: { ...process.env, XDG_CONFIG_HOME: configHome },
+      env: { ...subprocessEnvironment(), XDG_CONFIG_HOME: configHome },
       stdout: "pipe",
       stderr: "pipe",
     });

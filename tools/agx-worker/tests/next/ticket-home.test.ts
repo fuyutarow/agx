@@ -16,10 +16,11 @@ import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { parseNextTicket } from "../../src/next/ticket.ts";
 import { ticketContext, treeRead } from "../../src/next/ticket-home.ts";
 import { prepareTicketRepo, writeLocalTicketConfig } from "../ticket-repo.ts";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const roots: string[] = [];
 function inheritedEnv() {
-  const env = { ...process.env };
+  const env = { ...subprocessEnvironment() };
   Reflect.deleteProperty(env, "AGX_NEXT_STATE_DIR");
   return env;
 }

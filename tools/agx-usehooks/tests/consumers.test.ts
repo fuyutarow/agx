@@ -18,6 +18,7 @@ import {
   diagnostics,
   type Consumer,
 } from "../src/check-consumers.ts";
+import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 
 const temporary: string[] = [];
 afterEach(() => {
@@ -193,14 +194,15 @@ for (const failing of ["base", "workspace", "both"]) {
     const adapter = join(f.root, "missing-node-adapter.ts");
     writeFileSync(
       adapter,
-      `const args = Bun.argv.slice(2);\n` +
+      `import { subprocessEnvironment } from ${JSON.stringify(new URL("../../shared/src/subprocess-env.ts", import.meta.url).pathname)};\n` +
+        `const args = Bun.argv.slice(2);\n` +
         `if (args.includes("--showConfig")) {\n` +
         `  process.stdout.write('{"compilerOptions":{}}');\n` +
         `} else {\n` +
         `  const project = args[args.indexOf("-p") + 1];\n` +
         `  const side = project.includes("/base/") ? "base" : "workspace";\n` +
         `  if (${JSON.stringify(failing)} === "both" || side === ${JSON.stringify(failing)}) {\n` +
-        `    const result = Bun.spawnSync([${JSON.stringify(launcher)}], { env: { ...process.env, PATH: ${JSON.stringify(bin)} }, stdout: "inherit", stderr: "inherit" });\n` +
+        `    const result = Bun.spawnSync([${JSON.stringify(launcher)}], { env: subprocessEnvironment({ PATH: ${JSON.stringify(bin)} }), stdout: "inherit", stderr: "inherit" });\n` +
         `    process.exitCode = result.exitCode;\n` +
         `  }\n` +
         `}\n`,
@@ -294,7 +296,7 @@ test("CLI --all checks every L2 consumer with no library diff; default still ski
       ],
       {
         env: {
-          ...process.env,
+          ...subprocessEnvironment(),
           XDG_CONFIG_HOME: config,
           USEHOOKS_REPO_ROOT: repo,
           USEHOOKS_BASE: "alpha",

@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { jsonOf, z } from "../src/zod.ts";
+import { subprocessEnvironment } from "../src/subprocess-env.ts";
 const PackageSchema = jsonOf(
   z.object({
     version: z.string(),
@@ -82,7 +83,7 @@ async function run(
   extraEnv: NodeJS.ProcessEnv = {},
 ) {
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...subprocessEnvironment(),
     ...extraEnv,
     TERM: "xterm-256color",
   };

@@ -18,6 +18,7 @@ import {
   workspaceSnapshot,
 } from "../../src/next/outcome.ts";
 import { parseReport, WorkerReport } from "../../src/report.ts";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const roots: string[] = [];
 const servers: ReturnType<typeof Bun.serve>[] = [];
@@ -91,7 +92,7 @@ test("ended fixtures retain measured outcomes while routing omits ungraded raw h
   ];
   const expected: string[] = [];
   const env = {
-    ...process.env,
+    ...subprocessEnvironment(),
     AGX_STATE_DIR: state,
     XDG_STATE_HOME: join(root, "xdg-state"),
     AGX_CODEX_HOST_FILE: join(root, "absent-host.toml"),
@@ -270,7 +271,7 @@ test("outcome contract: malformed only when the returned report is unreadable", 
   });
   servers.push(server);
   const env = {
-    ...process.env,
+    ...subprocessEnvironment(),
     AGX_STATE_DIR: state,
     XDG_STATE_HOME: join(root, "xdg-state"),
     AGX_CODEX_HOST_FILE: join(root, "absent-host.toml"),

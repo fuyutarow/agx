@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { COMMAND_NAMES } from "../../src/next/commands.ts";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -13,7 +14,7 @@ const fixture = () => {
   const root = mkdtempSync(join(tmpdir(), "agx-state-dir-"));
   roots.push(root);
   const env = {
-    ...process.env,
+    ...subprocessEnvironment(),
     HOME: root,
     XDG_STATE_HOME: join(root, "base"),
     AGX_STATE_DIR: "",

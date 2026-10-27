@@ -3,6 +3,7 @@ import { chmod, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { attempt } from "../../shared/src/attempt.ts";
+import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 
 const deadline = join(import.meta.dir, "../src/deadline.ts");
 const ws = join(import.meta.dir, "../src/ws.ts");
@@ -175,7 +176,7 @@ test.each(["0", "-1", "NaN", "Infinity", "2147483648"])(
 
 // The shared preload still injects retired configuration; isolate refusal tests.
 function stateTestEnv(): NodeJS.ProcessEnv {
-  const env = { ...process.env };
+  const env = { ...subprocessEnvironment() };
   delete env.AGX_NEXT_STATE_DIR;
   env.JJ_CONFIG = "";
   return env;

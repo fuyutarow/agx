@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { verificationEnvironment } from "../tools/agx-worker/src/next/verify.ts";
 import { InspectionUnavailable } from "../tools/shared/src/agx-config.ts";
+import { subprocessEnvironment } from "../tools/shared/src/subprocess-env.ts";
 
 test("verification reads a neutral prefix file or an explicitly configured location", async () => {
   const root = await mkdtemp(join(tmpdir(), "consumer-prefix-"));
@@ -51,7 +52,7 @@ test("doctor inspects a registered repository and ignores an unregistered git di
     { mode: 0o755 },
   );
   const env = {
-    ...process.env,
+    ...subprocessEnvironment(),
     HOME: home,
     AGX_REPOS_ROOT: join(root, "empty-override"),
     AGX_ADDITIONAL_REPO: unregistered,

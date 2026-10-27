@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { expect, test } from "bun:test";
 import { jsonOf, z } from "../../shared/src/zod.ts";
 import { readCodexHostDeclaration } from "../src/workers/codex-host.ts";
+import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 
 const CheckResult = jsonOf(
   z.object({
@@ -41,7 +42,7 @@ function fixture() {
     join(root, "bin/agx-worker"),
   );
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...subprocessEnvironment(),
     AGX_STATE_DIR: join(root, "state"),
     XDG_STATE_HOME: join(root, "xdg-state"),
     XDG_CONFIG_HOME: join(root, "config"),

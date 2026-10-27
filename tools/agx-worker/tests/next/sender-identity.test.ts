@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { workerEnvironment } from "../../src/workers/environment.ts";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const roots: string[] = [];
 afterAll(async () => {
@@ -67,7 +68,7 @@ for (const backend of ["claude", "codex"] as const) {
         {
           cwd: root,
           env: {
-            ...process.env,
+            ...subprocessEnvironment(),
             AGX_CONFIG: resolve(
               import.meta.dir,
               "../../src/roster/policy.example.toml",

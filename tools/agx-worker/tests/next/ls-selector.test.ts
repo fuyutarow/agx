@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -127,7 +128,7 @@ const runLs = (root: string, selector: string) =>
     ],
     {
       cwd: process.cwd(),
-      env: { ...process.env, AGX_STATE_DIR: join(root, "state") },
+      env: { ...subprocessEnvironment(), AGX_STATE_DIR: join(root, "state") },
     },
   );
 
@@ -144,7 +145,7 @@ const runLatest = (root: string, ticket: string, ...flags: string[]) =>
     ],
     {
       cwd: process.cwd(),
-      env: { ...process.env, AGX_STATE_DIR: join(root, "state") },
+      env: { ...subprocessEnvironment(), AGX_STATE_DIR: join(root, "state") },
     },
   );
 
@@ -231,7 +232,7 @@ test("agx worker ls --latest requires an exact ticket and rejects a missing tick
     [process.execPath, "tools/agx-worker/src/next/cli.ts", "ls", "--latest"],
     {
       cwd: process.cwd(),
-      env: { ...process.env, AGX_STATE_DIR: join(root, "state") },
+      env: { ...subprocessEnvironment(), AGX_STATE_DIR: join(root, "state") },
     },
   );
   expect(result.exitCode).toBe(2);

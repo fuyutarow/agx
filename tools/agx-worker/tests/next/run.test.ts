@@ -18,6 +18,7 @@ import { earlyQuitRows, systemdUnitName } from "../../src/next/run.ts";
 import { append, foldedRuns, now } from "../../src/next/store.ts";
 import { VerifyResult } from "../../src/next/verify.ts";
 import { loadRoster } from "../../src/roster/index.ts";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const tempDirs = createTempTracker();
 const registerTempDir = tempDirs.register;
@@ -104,7 +105,7 @@ describe("agx-worker run", () => {
     writeFileSync(mise, '#!/usr/bin/env bun\nconsole.log("{}");\n');
     chmodSync(mise, 0o755);
     const env = {
-      ...process.env,
+      ...subprocessEnvironment(),
       PATH: `${commandBin}:${process.env.PATH}`,
       AGX_STATE_DIR: state,
       AGX_TMP_ROOT: join(root, "agx-tmp"),
@@ -194,7 +195,7 @@ describe("agx-worker run", () => {
           const committed = Bun.spawnSync(["git", ...args], {
             cwd: root,
             env: {
-              ...process.env,
+              ...subprocessEnvironment(),
               GIT_CONFIG_NOSYSTEM: "1",
               GIT_CONFIG_GLOBAL: "/dev/null",
             },
@@ -340,7 +341,7 @@ describe("agx-worker run", () => {
       {
         cwd: process.cwd(),
         env: {
-          ...process.env,
+          ...subprocessEnvironment(),
           AGX_NEXT_WORKER: "/tmp/retired-worker.ts",
           AGX_WORKER_BIN: "/tmp/current-worker.ts",
         },
@@ -390,7 +391,7 @@ describe("agx-worker run", () => {
       ],
       {
         cwd: process.cwd(),
-        env: { ...process.env, AGX_STATE_DIR: state },
+        env: { ...subprocessEnvironment(), AGX_STATE_DIR: state },
         timeout: 5_000,
       },
     );
@@ -559,7 +560,7 @@ describe("agx-worker run", () => {
       ),
     );
     const workerEnv = {
-      ...process.env,
+      ...subprocessEnvironment(),
       PATH: `${commandBin}:${process.env.PATH}`,
       AGX_STATE_DIR: state,
       XDG_STATE_HOME: join(root, "xdg-state"),
@@ -897,7 +898,7 @@ describe("agx-worker run", () => {
       [process.execPath, "tools/agx-worker/src/next/cli.ts", "ls", "--json"],
       {
         cwd: process.cwd(),
-        env: { ...process.env, AGX_STATE_DIR: state },
+        env: { ...subprocessEnvironment(), AGX_STATE_DIR: state },
       },
     );
     const listedSchema = z.array(
@@ -1095,7 +1096,7 @@ describe("agx-worker run", () => {
       `process.stdout.write(JSON.stringify({ exit: 0, report: { summary: "worker done", changes: [], checks: [], for_coordinator: [], open: [] } }) + "\\n");\n`,
     );
     const env = {
-      ...process.env,
+      ...subprocessEnvironment(),
       AGX_STATE_DIR: state,
       AGX_TMP_ROOT: join(root, "agx-tmp"),
       JEV_URL: `http://127.0.0.1:${jevPort}/choice`,
@@ -1177,7 +1178,7 @@ describe("agx-worker run", () => {
       ],
       {
         cwd: process.cwd(),
-        env: { ...process.env, AGX_STATE_DIR: join(root, "state") },
+        env: { ...subprocessEnvironment(), AGX_STATE_DIR: join(root, "state") },
       },
     );
     expect(result.exitCode).toBe(2);
@@ -1192,7 +1193,7 @@ describe("agx-worker run", () => {
     mkdirSync(source, { recursive: true });
     writeFileSync(join(source, "runs.jsonl"), readFileSync(fixture));
     const env = {
-      ...process.env,
+      ...subprocessEnvironment(),
       AGX_STATE_DIR: destination,
     };
     const first = Bun.spawnSync(
@@ -1308,7 +1309,7 @@ describe("agx-worker run", () => {
       [process.execPath, "tools/agx-worker/src/next/cli.ts", "ls", "--json"],
       {
         cwd: process.cwd(),
-        env: { ...process.env, AGX_STATE_DIR: state },
+        env: { ...subprocessEnvironment(), AGX_STATE_DIR: state },
       },
     );
     const rows = jsonOf(
@@ -1386,7 +1387,7 @@ describe("agx-worker run", () => {
       [process.execPath, "tools/agx-worker/src/next/cli.ts", "ls", "--json"],
       {
         cwd: process.cwd(),
-        env: { ...process.env, AGX_STATE_DIR: state },
+        env: { ...subprocessEnvironment(), AGX_STATE_DIR: state },
       },
     );
     const rows = jsonOf(
@@ -1456,7 +1457,7 @@ describe("agx-worker run", () => {
       join(state, "records.jsonl"),
       records.map((event) => JSON.stringify(event)).join("\n") + "\n",
     );
-    const env = { ...process.env, AGX_STATE_DIR: state };
+    const env = { ...subprocessEnvironment(), AGX_STATE_DIR: state };
     const human = Bun.spawnSync(
       [process.execPath, "tools/agx-worker/src/next/cli.ts", "ls"],
       { cwd: process.cwd(), env },

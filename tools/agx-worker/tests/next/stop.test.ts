@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { leaseFor } from "../../src/next/lease.ts";
 import { prepareTicketRepo } from "../ticket-repo.ts";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 async function cleanupRoot(root: string) {
   const records = await Bun.file(join(root, "state", "records.jsonl"))
@@ -62,7 +63,7 @@ async function fixture() {
   );
   await chmod(wrapper, 0o755);
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...subprocessEnvironment(),
     PATH: `${root}:${process.env.PATH ?? ""}`,
     AGX_STATE_DIR: state,
     XDG_STATE_HOME: join(root, "xdg"),
@@ -296,7 +297,7 @@ for (const { unit, session } of [
       f.env.INVOCATION_ID = "fixture-invocation";
       await Bun.write(
         join(f.root, "systemd-run"),
-        `#!${process.execPath}\nconst args = process.argv.slice(2); const child = Bun.spawn([process.execPath, ${JSON.stringify(cli)}, ...args.slice(args.indexOf("--") + 2)], {env:process.env, stdout:"inherit", stderr:"inherit"}); await Bun.write(${JSON.stringify(join(f.root, "main-pid"))}, String(process.pid)); process.exit(await child.exited);`,
+        `#!${process.execPath}\nimport { subprocessEnvironment } from ${JSON.stringify(new URL("../../../shared/src/subprocess-env.ts", import.meta.url).pathname)};\nconst args = process.argv.slice(2); const child = Bun.spawn([process.execPath, ${JSON.stringify(cli)}, ...args.slice(args.indexOf("--") + 2)], {env:subprocessEnvironment({ INVOCATION_ID: "fixture-invocation" }), stdout:"inherit", stderr:"inherit"}); await Bun.write(${JSON.stringify(join(f.root, "main-pid"))}, String(process.pid)); process.exit(await child.exited);`,
       );
       await chmod(join(f.root, "systemd-run"), 0o755);
       await Bun.write(

@@ -31,6 +31,7 @@ import {
   publish,
   machineSwap,
 } from "./release.ts";
+import { subprocessEnvironment } from "../shared/src/subprocess-env.ts";
 
 import { fixtureRun, fixtureRun as run } from "./fixture-runner.ts";
 
@@ -130,7 +131,7 @@ async function preview(
     {
       cwd: f.root,
       env: {
-        ...process.env,
+        ...subprocessEnvironment(),
         RELEASE_TEST_FAST_LIBRARY: "1",
         ...env,
       },

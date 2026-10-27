@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { jsonOf, z } from "../../shared/src/zod.ts";
 import { gcCounts, untrackedContent } from "../src/workspace.ts";
-
+import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 const scratch = mkdtempSync(join(tmpdir(), "agx-ws-gc-contract-"));
 const wsCli = process.env.GC_WS_CLI ?? join(import.meta.dir, "../src/ws.ts");
 const jj = Bun.which("jj") ?? "jj";
@@ -81,7 +81,8 @@ async function fixture(
   writeFileSync(statShim, "#!/bin/sh\nprintf 'ext4\\n'\n");
   chmodSync(statShim, 0o755);
   const baseEnv = {
-    ...process.env,
+    ...subprocessEnvironment(),
+    GC_CALLS_FILE: undefined,
     PATH: `${bin}:${process.env.PATH}`,
     HOME: home,
     XDG_STATE_HOME: state,

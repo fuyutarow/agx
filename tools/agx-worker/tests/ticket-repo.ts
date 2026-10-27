@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { expect } from "bun:test";
+import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 
 export async function writeLocalTicketConfig(root: string, tickets: string) {
   const directory = join(
@@ -44,7 +45,7 @@ export async function prepareTicketRepo(root: string, tickets = ".") {
       stderr: "pipe",
       timeout: 5000,
       env: {
-        ...process.env,
+        ...subprocessEnvironment(),
         GIT_CONFIG_NOSYSTEM: "1",
         GIT_CONFIG_GLOBAL: "/dev/null",
         GIT_DIR: undefined,

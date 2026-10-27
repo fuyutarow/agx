@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DoctorResponse, refreshDoctor } from "../src/refresh.ts";
 import { jsonOf, z } from "../../shared/src/zod.ts";
+import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 
 const entry = join(import.meta.dir, "../src/agx.ts");
 async function fixture() {
@@ -11,7 +12,7 @@ async function fixture() {
   const state = join(root, "state");
   await mkdir(state);
   const env = {
-    ...process.env,
+    ...subprocessEnvironment(),
     AGX_STATE_DIR: state,
     XDG_STATE_HOME: join(root, "xdg"),
     AGX_NEXT_STATE_DIR: undefined,
@@ -189,7 +190,7 @@ test("public doctor refreshes, publishes exact output, and status reads the owne
     ],
     {
       env: {
-        ...process.env,
+        ...subprocessEnvironment(),
         AGX_STATE_DIR: f.state,
         XDG_STATE_HOME: join(f.root, "xdg"),
         AGX_NEXT_STATE_DIR: undefined,
@@ -328,7 +329,7 @@ test("status exposes incomplete snapshots and refuses malformed ones over legacy
       ],
       {
         env: {
-          ...process.env,
+          ...subprocessEnvironment(),
           AGX_STATE_DIR: f.state,
           XDG_STATE_HOME: join(f.root, "xdg"),
           AGX_NEXT_STATE_DIR: undefined,

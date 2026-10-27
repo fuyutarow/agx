@@ -13,6 +13,7 @@ import {
   recordPath,
   type NextEvent,
 } from "../../src/next/store.ts";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 import { list } from "../../src/next/run.ts";
 
@@ -142,7 +143,7 @@ test("store contract: one unreadable record line is skipped and named with its f
 
   const listed = Bun.spawnSync(
     [process.execPath, "tools/agx-worker/src/next/cli.ts", "ls", "--json"],
-    { env: { ...process.env, AGX_STATE_DIR: root } },
+    { env: { ...subprocessEnvironment(), AGX_STATE_DIR: root } },
   );
   expect(listed.exitCode).toBe(0);
   expect(listed.stdout.toString()).toContain('"id":"survivor"');
@@ -306,7 +307,7 @@ test("warm listing retains malformed imports without rereading history, while fo
       "-e",
       'import { listingHistory, foldedRuns } from "./tools/agx-worker/src/next/store.ts"; await listingHistory(); await foldedRuns();',
     ],
-    { env: { ...process.env, AGX_STATE_DIR: root }, timeout: 5000 },
+    { env: { ...subprocessEnvironment(), AGX_STATE_DIR: root }, timeout: 5000 },
   );
   expect(strict.exitCode).toBe(0);
   expect(strict.stderr.toString()).toContain(`${recordPath(root)}:2`);
@@ -366,7 +367,7 @@ test("ls --running combines with JSON, all and selector; cached liveness is refr
   const ls = (args: string[]) =>
     Bun.spawnSync(
       [process.execPath, "tools/agx-worker/src/next/cli.ts", "ls", ...args],
-      { env: { ...process.env, AGX_STATE_DIR: root } },
+      { env: { ...subprocessEnvironment(), AGX_STATE_DIR: root } },
     );
   const json = ls(["--running", "--json", "--all"]);
   expect(json.exitCode).toBe(0);
@@ -397,7 +398,7 @@ test("unwritable snapshot falls back safely and malformed complete tail is skipp
   fs.appendFileSync(recordPath(), '{"kind":"broken"}\n');
   const result = Bun.spawnSync(
     [process.execPath, "tools/agx-worker/src/next/cli.ts", "ls", "--json"],
-    { env: { ...process.env, AGX_STATE_DIR: root } },
+    { env: { ...subprocessEnvironment(), AGX_STATE_DIR: root } },
   );
   expect(result.exitCode).toBe(0);
   expect(result.stderr.toString()).toContain(`${recordPath(root)}:3`);

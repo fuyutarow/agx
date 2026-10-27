@@ -22,6 +22,7 @@ import {
 } from "../../src/next/store.ts";
 import { parseNextTicket } from "../../src/next/ticket.ts";
 import { prepareTicketRepo } from "../ticket-repo.ts";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const RoutingRequest = z.looseObject({
   state: z.looseObject({
@@ -260,7 +261,7 @@ describe("retired Jev endpoint overrides", () => {
             `import { route } from ${JSON.stringify(new URL("../../src/next/route.ts", import.meta.url).pathname)}; await route("retired override");`,
           ],
           {
-            env: { ...process.env, [name]: value },
+            env: { ...subprocessEnvironment(), [name]: value },
             stdout: "pipe",
             stderr: "pipe",
             timeout: 5000,
@@ -340,7 +341,10 @@ describe("capability constrained routing", () => {
           root,
         ],
         {
-          env: { ...process.env, TYPESAFE_API_KEY: "routing-fixture-secret" },
+          env: {
+            ...subprocessEnvironment(),
+            TYPESAFE_API_KEY: "routing-fixture-secret",
+          },
           stdout: "pipe",
           stderr: "pipe",
           timeout: 5000,
@@ -767,7 +771,10 @@ test("combined candidate rejects mixed Sol generations before Jev, even outside 
       `import {route} from ${JSON.stringify(new URL("../../src/next/route.ts", import.meta.url).pathname)}; await route("mixed candidate", [], 600, [], { catalogPath: ${JSON.stringify(join(root, "catalog.toml"))} });`,
     ],
     {
-      env: { ...process.env, TYPESAFE_API_KEY: "routing-fixture-secret" },
+      env: {
+        ...subprocessEnvironment(),
+        TYPESAFE_API_KEY: "routing-fixture-secret",
+      },
       stdout: "pipe",
       stderr: "pipe",
       timeout: 5000,
@@ -840,7 +847,7 @@ for (const reason of ["split", "uncheckable", "contradiction", "missing_input"] 
           "import {route} from " + JSON.stringify(new URL("../../src/next/route.ts", import.meta.url).pathname) + "; await route('return fixture'); await Bun.write(" + JSON.stringify(join(root, "worker-started")) + ", 'started');",
         ],
         {
-          env: { ...process.env, TYPESAFE_API_KEY: "routing-fixture-secret" },
+          env: { ...subprocessEnvironment(), TYPESAFE_API_KEY: "routing-fixture-secret" },
           stdout: "pipe",
           stderr: "pipe",
           timeout: 5000,
@@ -1273,7 +1280,12 @@ test("refusal and pre-start failure retain full audit fields without a started r
         "--eval",
         `import {route} from ${JSON.stringify(modulePath)}; import {loadRoster} from ${JSON.stringify(new URL("../../src/roster/index.ts", import.meta.url).pathname)}; const loaded = await loadRoster(); const masked = ${JSON.stringify(masked)}.length && loaded.ok ? loaded.value.choice.map(row => row.id) : []; await route("fixture", [], 600, masked, {}, {path:"/fixture/ticket.md", sha256:"fixture-hash", launch:true}); process.exit(1);`,
       ],
-      { env: process.env, stdout: "pipe", stderr: "pipe", timeout: 5000 },
+      {
+        env: subprocessEnvironment(),
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 5000,
+      },
     );
     const [exit] = await Promise.all([
       child.exited,

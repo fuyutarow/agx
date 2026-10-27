@@ -5,6 +5,7 @@ import { expect, test } from "bun:test";
 import { fileURLToPath } from "node:url";
 import { loadRoster, ROUTING_OBJECTIVE } from "../src/roster/index.ts";
 import { jsonOf, z } from "../../shared/src/zod.ts";
+import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 
 const ENTRY = fileURLToPath(new URL("../src/next/cli.ts", import.meta.url));
 const FullRosterView = jsonOf(z.looseObject({ objective: z.string() }));
@@ -15,7 +16,7 @@ const SelectedRow = jsonOf(
 async function invoke(...args: string[]) {
   const child = Bun.spawn([process.execPath, ENTRY, ...args], {
     env: {
-      ...process.env,
+      ...subprocessEnvironment(),
       AGX_CONFIG: new URL("../src/roster/policy.example.toml", import.meta.url)
         .pathname,
     },
@@ -84,7 +85,7 @@ test("roster TICKET emits one selected row without starting a worker or changing
   };
   const child = Bun.spawn([process.execPath, ENTRY, "roster", ticket], {
     env: {
-      ...process.env,
+      ...subprocessEnvironment(),
       HOME: root,
       AGX_STATE_DIR: join(root, "state"),
       AGX_CONFIG: new URL("../src/roster/policy.example.toml", import.meta.url)
@@ -131,7 +132,7 @@ test("renamed worker CLI reads pre-rename records byte for byte", async () => {
   await writeFile(path, original);
   const child = Bun.spawn([process.execPath, ENTRY, "ls", "--all", "--json"], {
     env: {
-      ...process.env,
+      ...subprocessEnvironment(),
       AGX_CONFIG: new URL("../src/roster/policy.example.toml", import.meta.url)
         .pathname,
       AGX_STATE_DIR: root,
@@ -165,7 +166,7 @@ test("missing policy refuses with one line naming the path and example", async (
   };
   const policyPath = join(root, "missing.toml");
   const child = Bun.spawn([process.execPath, ENTRY, "roster", "--json"], {
-    env: { ...process.env, AGX_CONFIG: policyPath },
+    env: { ...subprocessEnvironment(), AGX_CONFIG: policyPath },
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",

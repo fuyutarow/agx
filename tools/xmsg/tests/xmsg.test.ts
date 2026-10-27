@@ -1,3 +1,4 @@
+import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 const extra = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map((part) => extra(part));
   const object = z.record(z.string(), z.unknown()).safeParse(value);
@@ -484,7 +485,7 @@ process.exit(Number(process.env.XMSG_FAKE_EXIT ?? 0));
     {
       cwd: root,
       env: {
-        ...process.env,
+        ...subprocessEnvironment(),
         PATH: root,
         HOME: root,
         AGX_STATE_DIR: join(root, "agx-state"),

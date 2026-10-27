@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkPremises, PREMISE_KINDS, premiseHelp } from "../src/premises.ts";
 import { createTempTracker } from "./temp.ts";
+import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 
 const tempDirs = createTempTracker();
 const registerTempDir = tempDirs.register;
@@ -258,7 +259,7 @@ describe("premise checks", () => {
           cwd,
           stdout: "pipe",
           stderr: "pipe",
-          env: { ...process.env },
+          env: { ...subprocessEnvironment() },
           timeout: Math.max(1, Math.floor(timeoutMs)),
         },
       );
