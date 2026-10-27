@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.17.5 — 2026-10-27
+
+- Add test-only timing seams for agx-ws integration tests
+
 ## 1.17.4 — 2026-10-27
 
 - Remove release archives from other versions before building
