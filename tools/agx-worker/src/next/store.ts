@@ -372,18 +372,29 @@ export async function acquireWorkspaceLock(
 }
 
 /** Retry a workspace lock without blocking the event loop; return its owner at the bound. */
+export type WorkspaceLockWaitClock = {
+  now: () => number;
+  sleep: (milliseconds: number) => Promise<void>;
+  pollIntervalMs: number;
+};
+
 export async function acquireWorkspaceLockUntilAvailable(
   workspace: string,
   root = stateDir(),
   timeoutMs = 30_000,
+  clock: WorkspaceLockWaitClock = {
+    now: () => performance.now(),
+    sleep: (milliseconds) => Bun.sleep(milliseconds),
+    pollIntervalMs: 5,
+  },
 ): Promise<WorkspaceLock> {
   const path = workspaceLockPath(workspace, root);
-  const deadline = performance.now() + timeoutMs;
+  const deadline = clock.now() + timeoutMs;
   let lock = await acquireWorkspaceLock(workspace, root);
   while (!lock.ok && lock.error === WORKSPACE_LOCK_BUSY) {
-    const remaining = deadline - performance.now();
+    const remaining = deadline - clock.now();
     if (remaining <= 0) break;
-    await Bun.sleep(Math.min(5, remaining));
+    await clock.sleep(Math.min(clock.pollIntervalMs, remaining));
     lock = await acquireWorkspaceLock(workspace, root);
   }
   if (lock.ok || lock.error !== WORKSPACE_LOCK_BUSY) return lock;

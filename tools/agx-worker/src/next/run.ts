@@ -27,6 +27,7 @@ import {
   recordPath,
   runningWorkspaceRun,
   stateDir,
+  type WorkspaceLockWaitClock,
 } from "./store.ts";
 import {
   codexHostDeclarationPath,
@@ -1109,19 +1110,30 @@ export async function run(flags: Flags): Promise<number> {
 export { list } from "./list-command.ts";
 export { runningSummary } from "./listing.ts";
 
-export async function judgeRun(flags: {
-  id?: string | undefined;
-  decision?: string | undefined;
-  note?: string | undefined;
-  evidence?: string[] | undefined;
-}): Promise<number> {
+type JudgeRunRuntime = {
+  root?: string;
+  lockWaitClock?: WorkspaceLockWaitClock;
+  writeStdout?: (line: string) => void;
+  onLockFailure?: (message: string, exitCode: number) => number;
+};
+
+export async function judgeRun(
+  flags: {
+    id?: string | undefined;
+    decision?: string | undefined;
+    note?: string | undefined;
+    evidence?: string[] | undefined;
+  },
+  runtime: JudgeRunRuntime = {},
+): Promise<number> {
   const id = flags.id;
   const decision = flags.decision;
   if (id === undefined || decision === undefined)
     return fatal("judge requires RUN_ID and accept|reject", 2);
   if (decision !== "accept" && decision !== "reject")
     return fatal("judge decision must be accept or reject", 2);
-  const resolution = resolveRunId(await foldedRuns(), id);
+  const root = runtime.root ?? stateDir();
+  const resolution = resolveRunId(await foldedRuns(root), id);
   if (resolution.kind === "error") return fatal(resolution.error, 2);
   const evidence = [];
   for (const path of flags.evidence ?? []) {
@@ -1146,13 +1158,18 @@ export async function judgeRun(flags: {
     note: flags.note ?? "",
     ...(evidence.length === 0 ? {} : { evidence }),
   } as const;
-  const root = stateDir();
   const lock = await acquireWorkspaceLockUntilAvailable(
     join(root, "current-runs.json"),
     root,
     30_000,
+    runtime.lockWaitClock,
   );
-  if (!lock.ok) return fatal(`cannot publish current runs: ${lock.error}`);
+  if (!lock.ok) {
+    const message = `cannot publish current runs: ${lock.error}`;
+    if (runtime.onLockFailure !== undefined)
+      return runtime.onLockFailure(message, 2);
+    return fatal(message);
+  }
   try {
     // Persist by run id even if the end record is still arriving from its owner.
     // foldInto keeps this judgment when the later `ended` event is replayed.
@@ -1161,7 +1178,9 @@ export async function judgeRun(flags: {
   } finally {
     await lock.release();
   }
-  process.stdout.write(
+  const writeStdout =
+    runtime.writeStdout ?? ((line: string) => process.stdout.write(line));
+  writeStdout(
     `${JSON.stringify({ id: judgment.id, verdict: judgment.decision, ...(judgment.note === "" ? {} : { note: judgment.note }), at: judgment.at })}\n`,
   );
   return 0;
