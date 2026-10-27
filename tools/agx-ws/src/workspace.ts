@@ -59,6 +59,13 @@ const bad = (message: string): Attempt<never> => ({
 });
 const good = <T>(value: T): Attempt<T> => ({ ok: true, value });
 const msg = (failed: { error: unknown }): string => errorMessage(failed.error);
+type MissingWorkspaceForget = {
+  name: string;
+  dir: string;
+  commit: string;
+  trunk: string | null;
+  owner?: "land";
+};
 
 /** jj string literals allow raw UTF-8; only backslashes and double quotes need escaping. */
 export const rootFileFileset = (path: string): string =>
@@ -107,12 +114,7 @@ async function jjOut(
   args: string[],
   cwd: string,
   readonly: boolean,
-  missingWorkspace?: {
-    name: string;
-    dir: string;
-    commit: string;
-    trunk: string | null;
-  },
+  missingWorkspace?: MissingWorkspaceForget,
 ): Promise<Attempt<string>> {
   // All forget callers, including adoption and readiness rollback, cross this boundary.
   if (args[0] === "workspace" && args[1] === "forget") {
@@ -299,7 +301,7 @@ async function guardWorkspaceForget(
   cwd: string,
   name: string,
   root: Attempt<string>,
-  missing?: { name: string; dir: string; commit: string; trunk: string | null },
+  missing?: MissingWorkspaceForget,
 ): Promise<Attempt<void>> {
   if (missing === undefined) {
     if (!root.ok) return root;
@@ -1550,25 +1552,42 @@ function landState(ws: Workspace): string | undefined {
     : undefined;
 }
 
-async function landBusy(state: string): Promise<boolean> {
+async function landLockStatus(
+  state: string,
+): Promise<{ held: boolean; reason: string }> {
   const lock = join(state, "land.lock");
   const present = await attempt(() => stat(lock));
   if (!present.ok) {
     const error = z
       .object({ code: z.literal("ENOENT") })
       .safeParse(present.error);
-    return !error.success;
+    return error.success
+      ? { held: false, reason: "no live land lock" }
+      : { held: true, reason: `land lock state is uncertain: ${msg(present)}` };
   }
   const owner = await attempt(() => Bun.file(join(lock, "owner.json")).text());
-  if (!owner.ok) return true;
+  if (!owner.ok)
+    return {
+      held: true,
+      reason: `land lock ownership is uncertain: ${msg(owner)}`,
+    };
   const holder = jsonOf(
-    z.object({ pid: z.number().int().positive(), host: z.string() }),
+    z.object({
+      pid: z.number().int().positive(),
+      host: z.string(),
+      what: z.string().optional(),
+    }),
   ).safeParse(owner.value);
-  return (
-    !holder.success ||
-    holder.data.host !== hostname() ||
-    pidAlive(holder.data.pid)
-  );
+  if (!holder.success)
+    return {
+      held: true,
+      reason: "land lock ownership is uncertain: invalid owner.json",
+    };
+  const name = holder.data.what ?? "land process";
+  const identity = `${name} PID ${holder.data.pid} on ${holder.data.host}`;
+  return holder.data.host !== hostname() || pidAlive(holder.data.pid)
+    ? { held: true, reason: `land lock is held by ${identity}` }
+    : { held: false, reason: "land lock has no live owner" };
 }
 
 /** Enumerate workspace name, path and target in one jj call. */
@@ -1727,7 +1746,7 @@ async function workspaceCommitReachable(
 
 async function verifyMissingWorkspaceForget(
   repo: Repo,
-  missing: { name: string; dir: string; commit: string; trunk: string | null },
+  missing: MissingWorkspaceForget,
 ): Promise<Attempt<void>> {
   const directory = await attempt(() => lstat(missing.dir));
   if (directory.ok)
@@ -1755,7 +1774,7 @@ async function verifyMissingWorkspaceForget(
     missing.trunk,
   );
   if (!reachable.ok) return reachable;
-  return reachable.value
+  return reachable.value || missing.owner === "land"
     ? good(undefined)
     : bad("workspace commit is not reachable from trunk or a remote bookmark");
 }
@@ -2839,8 +2858,10 @@ async function classifyGc(
       `aggregate jj classification failed: ${graphError}`,
     );
   const land = landState(ws);
-  if (land !== undefined && (await landBusy(land)))
-    return verdict("keep", "land lock is held or ownership is uncertain");
+  if (land !== undefined) {
+    const lock = await landLockStatus(land);
+    if (lock.held) return verdict("keep", lock.reason);
+  }
   const pendingChange = unlandedWorkspaceChange(ws, commits);
   if (pendingChange.missing !== undefined)
     return verdict(
@@ -3015,14 +3036,16 @@ async function classify(
       `untracked content: ${inventory.value.count} files (${inventory.value.paths.join(", ")})`,
     );
   const land = landState(ws);
-  if (land !== undefined)
-    return (await landBusy(land))
-      ? verdict("land-temp", "land lock is held or ownership is uncertain")
+  if (land !== undefined) {
+    const lock = await landLockStatus(land);
+    return lock.held
+      ? verdict("land-temp", lock.reason)
       : verdict(
           "land-temp",
           "temporary land checkout; no live land lock",
           true,
         );
+  }
   let fresh: Attempt<unknown>;
   if (!checkStatus) fresh = good(undefined);
   else if (readOnly) fresh = await jjOut(["status"], ws.dir, true);
@@ -3516,8 +3539,10 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
     const failed: string[] = [];
     const broken: string[] = [];
     for (const ws of candidates.value) {
+      const land = landState(ws);
       let kind = "legacy";
       if (ws.main) kind = "main";
+      else if (land !== undefined) kind = "land";
       else if (
         dirname(resolve(ws.dir)) === resolve(repo.wsRoot) &&
         basename(resolve(ws.dir)).startsWith("ws_")
@@ -3532,8 +3557,30 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
         !directoryInfo.ok &&
         z.object({ code: z.literal("ENOENT") }).safeParse(directoryInfo.error)
           .success;
+      const landLock =
+        missingDirectory && land !== undefined
+          ? await landLockStatus(land)
+          : undefined;
       let c: Classification;
-      if (missingDirectory) {
+      if (missingDirectory && land !== undefined) {
+        c =
+          landLock?.held === true
+            ? {
+                verdict: "keep",
+                change: ws.change,
+                age: ws.age,
+                reason: landLock.reason,
+                collect: false,
+              }
+            : {
+                verdict: "removable",
+                change: ws.change,
+                age: ws.age,
+                reason:
+                  "land workspace directory is missing; no live land lock",
+                collect: false,
+              };
+      } else if (missingDirectory) {
         c = {
           verdict: "broken",
           change: ws.change,
@@ -3573,49 +3620,103 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
       let reason = c.reason;
       if (c.verdict === "broken") broken.push(ws.dir);
       const missingCommit = ws.commit;
-      if (missingDirectory && !options.dryRun && missingCommit !== undefined) {
+      if (
+        missingDirectory &&
+        !options.dryRun &&
+        missingCommit !== undefined &&
+        landLock?.held !== true
+      ) {
         const forgotten = await withLock<string>(
           repo,
           "agx ws gc " + ws.name,
           async () => {
-            const currentConfig = await readConfig(repo);
-            if (!currentConfig.ok)
-              return good("record retained: " + msg(currentConfig));
-            if (protectedWorkspace(repo, currentConfig.value, ws))
-              return good("workspace is kept by [ws].keep; record retained");
-            const currentTrunk = await trunkCommit(repo, currentConfig.value);
-            if (!currentTrunk.ok)
-              return good("record retained: " + msg(currentTrunk));
-            const currentRecords = await agxRecords(repo.backing);
-            if (!currentRecords.ok)
-              return good("record retained: " + msg(currentRecords));
-            const blocked = runRemovalReason(ws.dir, currentRecords.value);
-            if (blocked !== undefined)
-              return good("record retained: " + blocked);
-            const occupied = busy(realOr(ws.dir));
-            if (occupied !== undefined)
-              return good("record retained: " + occupied);
-            const forgetResult = await jjOut(
-              ["workspace", "forget", ws.name],
-              repo.backing,
-              false,
-              {
-                name: ws.name,
-                dir: ws.dir,
-                commit: missingCommit,
-                trunk: currentTrunk.value,
-              },
-            );
-            return forgetResult.ok
-              ? good("workspace record forgotten after reachability check")
-              : good("record retained: " + msg(forgetResult));
+            const releaseLand =
+              land === undefined
+                ? undefined
+                : await acquire(
+                    join(land, "land.lock"),
+                    {
+                      pid: process.pid,
+                      host: hostname(),
+                      what: "agx ws gc land-missing",
+                      since: Temporal.Now.instant().toString(),
+                    },
+                    { waitMs: 0 },
+                  );
+            if (land !== undefined && typeof releaseLand !== "function") {
+              const lock = await landLockStatus(land);
+              return good(`record retained: ${lock.reason}`);
+            }
+            try {
+              const currentConfig = await readConfig(repo);
+              if (!currentConfig.ok)
+                return good("record retained: " + msg(currentConfig));
+              if (protectedWorkspace(repo, currentConfig.value, ws))
+                return good("workspace is kept by [ws].keep; record retained");
+              const currentTrunk = await trunkCommit(repo, currentConfig.value);
+              if (!currentTrunk.ok)
+                return good("record retained: " + msg(currentTrunk));
+              const currentRecords = await agxRecords(repo.backing);
+              if (!currentRecords.ok)
+                return good("record retained: " + msg(currentRecords));
+              const blocked = runRemovalReason(ws.dir, currentRecords.value);
+              if (blocked !== undefined)
+                return good("record retained: " + blocked);
+              const occupied = busy(realOr(ws.dir));
+              if (occupied !== undefined)
+                return good("record retained: " + occupied);
+              const forgetResult = await jjOut(
+                ["workspace", "forget", ws.name],
+                repo.backing,
+                false,
+                {
+                  name: ws.name,
+                  dir: ws.dir,
+                  commit: missingCommit,
+                  trunk: currentTrunk.value,
+                  ...(land === undefined ? {} : { owner: "land" }),
+                },
+              );
+              return forgetResult.ok
+                ? good("workspace record forgotten after reachability check")
+                : good("record retained: " + msg(forgetResult));
+            } finally {
+              if (typeof releaseLand === "function") releaseLand();
+            }
           },
           (busyReason) =>
             good("record retained: collection skipped: " + busyReason),
         );
-        reason += forgotten.ok
-          ? "; " + forgotten.value
-          : "; record retained: " + msg(forgotten);
+        if (land !== undefined) {
+          if (
+            forgotten.ok &&
+            forgotten.value ===
+              "workspace record forgotten after reachability check"
+          ) {
+            c = {
+              ...c,
+              verdict: "collected",
+              collect: false,
+              reason: "land workspace collected; " + forgotten.value,
+            };
+          } else {
+            const lock = await landLockStatus(land);
+            const detail = forgotten.ok
+              ? forgotten.value
+              : "record retained: " + msg(forgotten);
+            c = {
+              ...c,
+              verdict: "keep",
+              collect: false,
+              reason: `land workspace kept; ${detail}; ${lock.reason}`,
+            };
+          }
+          reason = c.reason;
+        } else {
+          reason += forgotten.ok
+            ? "; " + forgotten.value
+            : "; record retained: " + msg(forgotten);
+        }
       }
       if (c.collect && !options.dryRun) {
         const done = await withLock<GcRemovalResult>(
@@ -3705,19 +3806,34 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
               currentWs,
               checked.abandon === true,
             );
-            return removed.ok
-              ? good({
-                  classification: checked,
-                  tombstone: removed.value.tombstone,
-                })
-              : good({
-                  classification: {
-                    ...checked,
-                    verdict: "broken",
-                    collect: false,
-                    reason: msg(removed),
-                  },
-                });
+            if (removed.ok)
+              return good({
+                classification: checked,
+                tombstone: removed.value.tombstone,
+              });
+            const land = landState(currentWs);
+            if (
+              land !== undefined &&
+              msg(removed).includes("land lock acquired by another process")
+            ) {
+              const lock = await landLockStatus(land);
+              return good({
+                classification: {
+                  ...checked,
+                  verdict: "keep",
+                  collect: false,
+                  reason: lock.reason,
+                },
+              });
+            }
+            return good({
+              classification: {
+                ...checked,
+                verdict: "broken",
+                collect: false,
+                reason: msg(removed),
+              },
+            });
           },
           (busyReason) =>
             good({

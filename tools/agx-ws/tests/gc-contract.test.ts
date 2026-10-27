@@ -187,6 +187,34 @@ async function gc(f: Fixture, extra: string[] = [], trace?: string) {
   );
 }
 
+async function addLandWorkspace(f: Fixture) {
+  const stateRoot = f.baseEnv.AGX_STATE_DIR;
+  expect(stateRoot).toBeDefined();
+  if (stateRoot === undefined) return undefined;
+
+  const name = `land_${repoCount}`;
+  const state = join(stateRoot, "land", `fixture-${repoCount}`);
+  const dir = join(state, "workspace");
+  mkdirSync(state, { recursive: true });
+  const added = await run(
+    [
+      jj,
+      "workspace",
+      "add",
+      "--name",
+      name,
+      "-r",
+      "main",
+      "--no-colocate",
+      dir,
+    ],
+    f.repo,
+    f.baseEnv,
+  );
+  expect(added.code, added.err).toBe(0);
+  return { name, state, dir };
+}
+
 async function waitForFile(path: string): Promise<void> {
   if (existsSync(path)) return;
   await new Promise<void>((resolve, reject) => {
@@ -280,11 +308,7 @@ test("gc usecase: a change not on trunk stays kept", async () => {
   if (workspace === undefined) return;
 
   writeFileSync(join(workspace, "unlanded.txt"), "unlanded work\n");
-  await jjRun(
-    ["commit", "-m", "unpublished payload"],
-    workspace,
-    f.baseEnv,
-  );
+  await jjRun(["commit", "-m", "unpublished payload"], workspace, f.baseEnv);
 
   const result = await gc(f);
   expect(result.code, `${result.err}\n${result.out}`).toBe(0);
@@ -320,12 +344,40 @@ test("gc contract: dry-run jj call count is constant from 5 to 50 workspaces", a
   expect(counts[0]).toBe(counts[1]);
 });
 
-test.concurrent("gc contract: two missing workspace directories remain broken rows", async () => {
+test.concurrent("gc usecase: an idle land workspace is collected, not broken", async () => {
+  const f = await fixture(0);
+  const land = await addLandWorkspace(f);
+  expect(land).toBeDefined();
+  if (land === undefined) return;
+
+  rmSync(land.dir, { recursive: true, force: true });
+  const dryRun = await gc(f);
+  expect(dryRun.code, `${dryRun.err}\n${dryRun.out}`).toBe(0);
+  const row = parseOutput(dryRun.out)?.rows.find(
+    (candidate) => candidate[0] === land.dir,
+  );
+  expect(row?.[1]).toBe("land");
+  expect(row?.[2]).toBe("removable");
+
+  const collected = await wsCommand(f, [
+    "gc",
+    "--include-unrecorded",
+    "--grace-minutes",
+    "0",
+    "--inventory-seconds",
+    "1",
+  ]);
+  expect(collected.code, `${collected.err}\n${collected.out}`).toBe(0);
+  const remaining = await jjRun(["workspace", "list"], f.repo, f.baseEnv);
+  expect(remaining.out).not.toContain(land.name);
+});
+
+test.concurrent("gc usecase: a broken user workspace still fails the dry-run", async () => {
   const f = await fixture(4);
   for (const dir of f.workspaces.slice(0, 2))
     rmSync(dir, { recursive: true, force: true });
   const result = await gc(f);
-  expect([0, 1]).toContain(result.code);
+  expect(result.code, `${result.err}\n${result.out}`).toBe(1);
   const parsed = parseOutput(result.out);
   expect(parsed?.rows).toHaveLength(5);
   expect(parsed?.rows.filter((row) => row[2] === "broken")).toHaveLength(2);
