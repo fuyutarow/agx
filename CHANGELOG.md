@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.18.3 — 2026-10-27
+
+- Dispatch inspection honors its configured timeout.
+
 ## 1.18.2 — 2026-10-27
 
 - Inject judge lock timing for deterministic tests
