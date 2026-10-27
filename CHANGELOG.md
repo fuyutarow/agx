@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.18.1 — 2026-10-27
+
+- Revert the isolated worker store; ws add took 307 s in firedancer and left unregistered .jj directories
+
 ## 1.18.0 — 2026-10-27
 
 - Create isolated JJ stores for sandboxed workers
