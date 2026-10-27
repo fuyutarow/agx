@@ -1,6 +1,7 @@
 // Child completion and pipe EOF are different events: descendants can retain the pipes.
 import { attempt, type Attempt } from "../../shared/src/attempt.ts";
 import { enterStep, watchChild } from "./deadline.ts";
+import { timing } from "./timing.ts";
 
 export class StepFailure extends Error {
   constructor(
@@ -11,8 +12,7 @@ export class StepFailure extends Error {
   }
 }
 
-export const STEP_TIMEOUT_MS = 900_000;
-const DRAIN_MS = 100;
+export const STEP_TIMEOUT_MS = timing.stepTimeoutMs;
 type StepResult = { code: number; out: Buffer; err: string };
 
 export async function runStep(
@@ -77,7 +77,7 @@ export async function runStep(
     waitingFor = "stdout/stderr drain";
     // Native process timeouts stop at exit; descendants may still hold pipes open.
     const grace = new Promise<void>((resolve) => {
-      timer = setTimeout(resolve, DRAIN_MS);
+      timer = setTimeout(resolve, timing.drainGraceMs);
     });
     await Promise.race([drains, grace, deadline.promise]);
     return {

@@ -10,6 +10,7 @@ import {
   type Attempt,
 } from "../../shared/src/attempt.ts";
 import { jsonOf, z } from "../../shared/src/zod.ts";
+import { timing } from "./timing.ts";
 
 const Owner = z.object({
   pid: z.number().int().positive(),
@@ -112,12 +113,12 @@ export async function withWorkspaceLock<T>(
       const elapsed = performance.now() - started;
       lastHolder = got;
       notice(got);
-      if (elapsed >= 900_000)
+      if (elapsed >= timing.lockWaitMs)
         return {
           ok: false,
           error: `lock ${lock} held by ${describe(got)} after ${Math.floor(elapsed / 1_000)}s; not waiting longer`,
         };
-      await Bun.sleep(100);
+      await Bun.sleep(timing.lockPollMs);
     }
   };
   const result = await attempt(run);

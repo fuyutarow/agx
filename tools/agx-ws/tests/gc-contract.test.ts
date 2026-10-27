@@ -1,18 +1,18 @@
-import { afterAll, expect, setDefaultTimeout, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   rmSync,
+  watch,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { jsonOf, z } from "../../shared/src/zod.ts";
 import { untrackedContent } from "../src/workspace.ts";
-
-setDefaultTimeout(180_000);
 
 const scratch = mkdtempSync(join(tmpdir(), "agx-ws-gc-contract-"));
 const wsCli = process.env.GC_WS_CLI ?? join(import.meta.dir, "../src/ws.ts");
@@ -87,6 +87,11 @@ async function fixture(
     GRAVEYARD: graveyard,
     JJ_USER: "gc contract",
     JJ_EMAIL: "gc-contract@example.test",
+    WS_ADD_TIMEOUT_MS: "4000",
+    AGX_WS_TEST_LOCK_WAIT_MS: "100",
+    AGX_WS_TEST_LOCK_POLL_MS: "1",
+    AGX_WS_TEST_STEP_TIMEOUT_MS: "4000",
+    AGX_WS_TEST_DRAIN_GRACE_MS: "1",
   };
   const initialized = await run([jj, "git", "init", repo], parent, baseEnv);
   expect(initialized.code, initialized.err).toBe(0);
@@ -100,7 +105,17 @@ async function fixture(
     const dir = join(repo, "..", "project.ws", name);
     mkdirSync(join(repo, "..", "project.ws"), { recursive: true });
     const added = await run(
-      [jj, "workspace", "add", "--name", name, "-r", "main", dir],
+      [
+        jj,
+        "workspace",
+        "add",
+        "--name",
+        name,
+        "-r",
+        "main",
+        "--no-colocate",
+        dir,
+      ],
       repo,
       baseEnv,
     );
@@ -111,6 +126,32 @@ async function fixture(
   writeFileSync(agx, "#!/bin/sh\nprintf '%s\\n' '[]'\n");
   chmodSync(agx, 0o755);
   return { repo, parent, workspaces, bin, baseEnv };
+}
+
+async function addWorkspaces(f: Fixture, from: number, through: number) {
+  const workspaceRoot = join(f.repo, "..", "project.ws");
+  mkdirSync(workspaceRoot, { recursive: true });
+  for (let index = from; index <= through; index++) {
+    const name = `ws_${index}`;
+    const dir = join(workspaceRoot, name);
+    const added = await run(
+      [
+        jj,
+        "workspace",
+        "add",
+        "--name",
+        name,
+        "-r",
+        "main",
+        "--no-colocate",
+        dir,
+      ],
+      f.repo,
+      f.baseEnv,
+    );
+    expect(added.code, added.err).toBe(0);
+    f.workspaces.push(dir);
+  }
 }
 
 async function gc(f: Fixture, extra: string[] = [], trace?: string) {
@@ -127,6 +168,8 @@ async function gc(f: Fixture, extra: string[] = [], trace?: string) {
       "--include-unrecorded",
       "--grace-minutes",
       "0",
+      "--inventory-seconds",
+      "1",
       "--json",
       "--repo",
       f.repo,
@@ -135,6 +178,25 @@ async function gc(f: Fixture, extra: string[] = [], trace?: string) {
     f.repo,
     env,
   );
+}
+
+async function waitForFile(path: string): Promise<void> {
+  if (existsSync(path)) return;
+  await new Promise<void>((resolve, reject) => {
+    const watcher = watch(dirname(path), () => {
+      if (!existsSync(path)) return;
+      watcher.close();
+      resolve();
+    });
+    watcher.on("error", (error) => {
+      watcher.close();
+      reject(error);
+    });
+    if (existsSync(path)) {
+      watcher.close();
+      resolve();
+    }
+  });
 }
 
 async function wsCommand(f: Fixture, args: string[]) {
@@ -160,25 +222,28 @@ function parseOutput(output: string) {
 
 test("gc contract: dry-run jj call count is constant from 5 to 50 workspaces", async () => {
   const five = await fixture(5);
-  const fifty = await fixture(50);
   const counts: number[] = [];
-  for (const f of [five, fifty]) {
-    const trace = addJjCounter(f);
-    const result = await gc(f, [], trace);
-    expect(result.code, `${result.err}\n${result.out}`).toBe(0);
-    const parsed = parseOutput(result.out);
-    expect(parsed?.complete).toBe(true);
-    const callLog = (await Bun.file(trace).text())
-      .trim()
-      .split("\n")
-      .filter(Boolean);
-    counts.push(callLog.length);
-  }
+  const trace = addJjCounter(five);
+  const first = await gc(five, [], trace);
+  expect(first.code, `${first.err}\n${first.out}`).toBe(0);
+  expect(parseOutput(first.out)?.complete).toBe(true);
+  counts.push(
+    (await Bun.file(trace).text()).trim().split("\n").filter(Boolean).length,
+  );
+  rmSync(trace, { force: true });
+  await addWorkspaces(five, 6, 50);
+  addJjCounter(five);
+  const second = await gc(five, [], trace);
+  expect(second.code, `${second.err}\n${second.out}`).toBe(0);
+  expect(parseOutput(second.out)?.complete).toBe(true);
+  counts.push(
+    (await Bun.file(trace).text()).trim().split("\n").filter(Boolean).length,
+  );
   console.log(`gc contract: jj calls 5=${counts[0]} 50=${counts[1]}`);
   expect(counts[0]).toBe(counts[1]);
 });
 
-test("gc contract: two missing workspace directories remain broken rows", async () => {
+test.concurrent("gc contract: two missing workspace directories remain broken rows", async () => {
   const f = await fixture(4);
   for (const dir of f.workspaces.slice(0, 2))
     rmSync(dir, { recursive: true, force: true });
@@ -193,7 +258,7 @@ test("gc contract: two missing workspace directories remain broken rows", async 
   expect(parsed?.complete).toBe(false);
 });
 
-test("gc contract: remote-bookmarked work is removable and an unpushed change is named", async () => {
+test.concurrent("gc contract: remote-bookmarked work is removable and an unpushed change is named", async () => {
   const f = await fixture(2);
   const bare = join(f.parent, "origin.git");
   const remote = await run(
@@ -233,7 +298,7 @@ test("gc contract: remote-bookmarked work is removable and an unpushed change is
   expect(unpushed?.[5]).toContain("unpublished payload");
 });
 
-test("gc contract: lock is available while a large tombstone is still being deleted", async () => {
+test.concurrent("gc contract: lock is available while a large tombstone is still being deleted", async () => {
   const f = await fixture(1, 'trunk = "main"\nregenerable = ["build"]\n');
   const workspace = f.workspaces[0];
   expect(workspace).toBeDefined();
@@ -248,7 +313,7 @@ test("gc contract: lock is available while a large tombstone is still being dele
   const rip = join(f.bin, "rip");
   writeFileSync(
     rip,
-    `#!/usr/bin/env bun\nawait Bun.write(${JSON.stringify(entered)}, "entered");\nconst deadline = performance.now() + 20_000;\nwhile (!(await Bun.file(${JSON.stringify(release)}).exists()) && performance.now() < deadline) await Bun.sleep(10);\nif (!(await Bun.file(${JSON.stringify(release)}).exists())) process.exitCode = 9;\n`,
+    `#!/usr/bin/env bun\nimport { existsSync, watch } from "node:fs";\nimport { dirname } from "node:path";\nconst release = ${JSON.stringify(release)};\nawait Bun.write(${JSON.stringify(entered)}, "entered");\nawait new Promise((resolve) => {\n  const watcher = watch(dirname(release), () => {\n    if (!existsSync(release)) return;\n    watcher.close();\n    resolve();\n  });\n  if (existsSync(release)) {\n    watcher.close();\n    resolve();\n  }\n});\n`,
   );
   chmodSync(rip, 0o755);
 
@@ -260,6 +325,8 @@ test("gc contract: lock is available while a large tombstone is still being dele
       "--include-unrecorded",
       "--grace-minutes",
       "0",
+      "--inventory-seconds",
+      "1",
       "--repo",
       f.repo,
     ],
@@ -274,24 +341,13 @@ test("gc contract: lock is available while a large tombstone is still being dele
   const outPromise = new Response(child.stdout).text();
   const errPromise = new Response(child.stderr).text();
   const exitPromise = child.exited;
-  const enteredDeadline = performance.now() + 10_000;
-  while (
-    !(await Bun.file(entered).exists()) &&
-    performance.now() < enteredDeadline
-  )
-    await Bun.sleep(20);
-  const deletionStarted = await Bun.file(entered).exists();
+  await waitForFile(entered);
+  const deletionStarted = existsSync(entered);
   let addWasGranted = false;
   let addResult: Awaited<ReturnType<typeof wsCommand>> | undefined;
   if (deletionStarted) {
-    const add = wsCommand(f, ["add", "lock-probe"]);
-    const completed = await Promise.race([
-      add,
-      Bun.sleep(5_000).then(() => null),
-    ]);
-    addWasGranted = completed !== null;
-    if (completed !== null) addResult = completed;
-    else addResult = await add;
+    addResult = await wsCommand(f, ["add", "lock-probe"]);
+    addWasGranted = true;
   }
   await Bun.write(release, "release");
   const [out, err, code] = await Promise.all([
@@ -309,7 +365,7 @@ test("gc contract: lock is available while a large tombstone is still being dele
   expect(out).toContain("removable");
 });
 
-test("gc contract: declared regenerable path prunes a large node_modules subtree", async () => {
+test.concurrent("gc contract: declared regenerable path prunes a large node_modules subtree", async () => {
   const f = await fixture(
     1,
     'trunk = "main"\nregenerable = ["build/generated"]\n',
@@ -328,7 +384,7 @@ test("gc contract: declared regenerable path prunes a large node_modules subtree
   const inventory = await untrackedContent(
     workspace,
     ["build/generated"],
-    10_000,
+    1_000,
     [],
     new Set(["tracked.txt", ".ws.toml"]),
   );
