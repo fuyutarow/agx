@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.20.3 — 2026-10-27
+
+- Revert the bounded run-end notice; 1.20.2 refused every run record written before it and stopped all dispatch
+
 ## 1.20.2 — 2026-10-27
 
 - Record end notice outcomes after the worker run exits
