@@ -183,22 +183,17 @@ export async function readConfig(repo: Repo): Promise<Attempt<Config>> {
   if (legacyFile.ok) {
     const equivalent = await attempt(async () => {
       const parsed = Bun.TOML.parse(await readFile(legacyPath, "utf8"));
-      const table = Bun.TOML.stringify({ ws: parsed });
-      if (table === undefined)
-        throw new Error("TOML serializer returned no table");
-      return table.trimEnd();
+      const migration = Bun.TOML.stringify({ schema: 1, ws: parsed });
+      if (migration === undefined)
+        throw new Error("TOML serializer returned no migration");
+      return migration.trimEnd();
     });
-    const migration = equivalent.ok
-      ? `move its policy to ${CONFIG_FILE} as ${JSON.stringify(equivalent.value)}`
-      : `cannot render a valid [ws] table from it (${msg(equivalent)})`;
+    const message = equivalent.ok
+      ? `${legacyPath} is retired. Replace ${CONFIG_FILE} with:\n${equivalent.value}\nThen delete ${LEGACY_CONFIG_FILE}.`
+      : `${legacyPath} is retired; cannot render a valid [ws] migration (${msg(equivalent)}). Delete ${LEGACY_CONFIG_FILE}.`;
     return {
       ok: false,
-      error: new LegacyWorkspaceConfigError(
-        `${legacyPath} is retired; ${migration}; delete ${LEGACY_CONFIG_FILE}`.replaceAll(
-          /[\r\n]+/gu,
-          " ",
-        ),
-      ),
+      error: new LegacyWorkspaceConfigError(message),
     };
   }
   if (
@@ -1665,13 +1660,9 @@ async function gcCommitGraph(
       ? "false"
       : "self.contained_in(" + JSON.stringify(trunk) + ")";
   const revisions =
-    trunk === null
-      ? "::working_copies()"
-      : `::working_copies() | (${trunk})`;
-  const treeOwnerTest =
-    `self.working_copies().len() > 0 || (${trunkHeadTest})`;
-  const changedPathsTest =
-    `if(!empty && !(${trunkTest}) && !self.contained_in("::remote_bookmarks()"), self.diff().files().map(|file| file.path()).join("\\0"), "")`;
+    trunk === null ? "::working_copies()" : `::working_copies() | (${trunk})`;
+  const treeOwnerTest = `self.working_copies().len() > 0 || (${trunkHeadTest})`;
+  const changedPathsTest = `if(!empty && !(${trunkTest}) && !self.contained_in("::remote_bookmarks()"), self.diff().files().map(|file| file.path()).join("\\0"), "")`;
   const template =
     'json({"id" => commit_id, "parents" => stringify(parents.map(|parent| parent.commit_id()).join(",")), "change" => change_id.short(12), "description" => description.first_line(), "empty" => empty, "trunk" => ' +
     trunkTest +
@@ -1683,16 +1674,7 @@ async function gcCommitGraph(
     changedPathsTest +
     ')}) ++ "\\n"';
   const output = await jjOut(
-    [
-      "-R",
-      repo.backing,
-      "log",
-      "--no-graph",
-      "-r",
-      revisions,
-      "-T",
-      template,
-    ],
+    ["-R", repo.backing, "log", "--no-graph", "-r", revisions, "-T", template],
     repo.backing,
     true,
   );
@@ -2877,7 +2859,11 @@ async function classifyGc(
     !(options.abandoned === true && endedWithoutAcceptanceFor24h)
   ) {
     const trunkTarget = commits.get(trunk);
-    if (trunkTarget === undefined || !target.filesIncluded || !trunkTarget.filesIncluded)
+    if (
+      trunkTarget === undefined ||
+      !target.filesIncluded ||
+      !trunkTarget.filesIncluded
+    )
       return verdict(
         "broken",
         `cannot compare workspace content with trunk ${trunk}`,

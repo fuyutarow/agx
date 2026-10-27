@@ -110,6 +110,82 @@ test("config contract: a schema = 1 agx.toml with [ws] is accepted", async () =>
       trunkConfigured: true,
     });
 });
+test("config contract: [ws] accepts ready, trunk, keep and regenerable", async () => {
+  const f = await fixture(
+    '# repository policy\nschema = 1\n\n# workspace policy\n[ws]\nready = ["mise run check"]\ntrunk = "trunk()"\nkeep = ["ws_safe"]\nregenerable = [".rumdl_cache/"]\n',
+  );
+  const result = await resolveAgxConfig(f.root);
+  expect(result.ok, result.ok ? "" : String(result.error)).toBe(true);
+  if (result.ok)
+    expect(result.value).toMatchObject({
+      ready: ["mise run check"],
+      trunk: "trunk()",
+      keep: ["ws_safe"],
+      regenerable: [".rumdl_cache/"],
+    });
+});
+test("config contract: an unknown [ws] key is named with its path", async () => {
+  const f = await fixture("schema = 1\n[ws]\nunknown = true\n");
+  const result = await resolveAgxConfig(f.root);
+  expect(result.ok).toBe(false);
+  if (!result.ok) {
+    expect(String(result.error)).toContain("agx.toml at main ");
+    expect(String(result.error)).toContain("ws.unknown: unknown key");
+    expect(String(result.error)).not.toContain("schema");
+  }
+});
+test("config contract: missing and wrong schema name the expected value", async () => {
+  const missingFixture = await fixture('[ws]\nready = ["mise run check"]\n');
+  const missing = await resolveAgxConfig(missingFixture.root);
+  expect(missing.ok).toBe(false);
+  if (!missing.ok) {
+    expect(String(missing.error)).toContain("agx.toml at main ");
+    expect(String(missing.error)).toContain(
+      "missing required schema; expected schema = 1",
+    );
+    expect(String(missing.error)).not.toContain("unsupported schema");
+  }
+
+  const wrongFixture = await fixture(
+    'schema = 2\n[ws]\nready = ["mise run check"]\n',
+  );
+  const wrong = await resolveAgxConfig(wrongFixture.root);
+  expect(wrong.ok).toBe(false);
+  if (!wrong.ok) {
+    expect(String(wrong.error)).toContain("agx.toml at main ");
+    expect(String(wrong.error)).toContain(
+      "unsupported schema 2; expected schema = 1",
+    );
+    expect(String(wrong.error)).not.toContain("missing required schema");
+  }
+});
+test("config contract: refusal names committed revision when working copy differs", async () => {
+  const committed = '[ws]\nready = ["committed policy"]\n';
+  const f = await fixture(committed);
+  await writeFile(join(f.root, "agx.toml"), `schema = 1\n${committed}`);
+  const revision = await f.jj([
+    "log",
+    "--no-graph",
+    "-r",
+    "trunk()",
+    "-T",
+    'bookmarks.join(", ") ++ " " ++ commit_id.short(8)',
+  ]);
+  expect(revision).toMatch(/^main [a-f0-9]{8}$/u);
+
+  const result = await resolveAgxConfig(f.root);
+  expect(result.ok).toBe(false);
+  if (!result.ok) {
+    expect(String(result.error)).toContain(`agx.toml at ${revision}`);
+    expect(String(result.error)).toContain(
+      "working copy differs from this revision",
+    );
+    expect(String(result.error)).toContain("working copy policy is not read");
+    expect(String(result.error)).toContain(
+      "missing required schema; expected schema = 1",
+    );
+  }
+});
 test("config contract: schema = 2 is refused", async () => {
   const f = await fixture('schema = 2\n\n[ws]\nready = ["mise run check"]\n');
   const result = await resolveAgxConfig(f.root);
@@ -340,6 +416,7 @@ test.each([
   if (!result.ok) {
     expect(result.error).toBeInstanceOf(AgxConfigError);
     expect(String(result.error)).toContain(message);
+    expect(String(result.error)).toContain("agx.toml at main ");
     expect(String(result.error)).not.toContain("\n");
   }
 });

@@ -60,6 +60,7 @@ const Config = z.strictObject({
   ws: WorkspaceConfig.optional(),
   verify: VerifyConfig.optional(),
 });
+const ConfigEnvelope = z.record(z.string(), z.unknown());
 const LocalConfig = z.strictObject({
   schema: z.literal(1),
   tickets: z.string().trim().min(1).optional(),
@@ -102,7 +103,63 @@ const failure = (message: string) => ({
   error: new AgxConfigError(message.replaceAll(/[\r\n]+/gu, " ")),
 });
 const good = <T>(value: T) => ({ ok: true as const, value });
+const configValue = (value: unknown): string =>
+  JSON.stringify(value, (_, item) =>
+    typeof item === "bigint" ? `${item}n` : item,
+  ) ?? String(value);
+const configIssueMessage = (error: z.ZodError): string =>
+  error.issues
+    .flatMap((issue) =>
+      issue.code === "unrecognized_keys"
+        ? issue.keys.map(
+            (key) =>
+              `${[...issue.path, key].map(String).join(".")}: unknown key`,
+          )
+        : [`${issue.path.map(String).join(".") || "config"}: ${issue.message}`],
+    )
+    .join("; ");
 type Vcs = "jj" | "git" | "none";
+type CommittedPolicy = { text: string; revision: string; vcs: Vcs };
+
+async function configRefusal(
+  root: string,
+  policy: CommittedPolicy,
+  reason: string,
+): Promise<Attempt<never>> {
+  const path = join(root, "agx.toml");
+  let revision = policy.revision;
+  if (policy.vcs === "jj") {
+    const identity = await readCommand(
+      [
+        "jj",
+        ...JJ_READ_ARGS,
+        "log",
+        "--no-graph",
+        "-r",
+        policy.revision,
+        "-T",
+        'bookmarks.join(", ") ++ " " ++ commit_id.short(8)',
+      ],
+      root,
+    );
+    revision =
+      identity.ok && identity.value.trim() !== ""
+        ? identity.value.trim()
+        : `${policy.revision} (revision id unavailable)`;
+  }
+  const workingCopy = await attempt(() => readFile(path, "utf8"));
+  let workingCopyNote =
+    "; working copy could not be compared; only the committed revision is read";
+  if (workingCopy.ok) {
+    if (workingCopy.value.trimEnd() === policy.text) workingCopyNote = "";
+    else
+      workingCopyNote =
+        "; working copy differs from this revision; working copy policy is not read";
+  } else if (missing(workingCopy.error))
+    workingCopyNote =
+      "; working copy differs from this revision; working copy policy is not read";
+  return failure(`${path} at ${revision}${workingCopyNote}: ${reason}`);
+}
 
 export async function readCommand(
   argv: string[],
@@ -167,8 +224,9 @@ export async function readCommand(
 async function committedPolicy(
   root: string,
   vcs: Vcs,
-): Promise<Attempt<string | undefined>> {
+): Promise<Attempt<CommittedPolicy | undefined>> {
   if (vcs === "none") return good(undefined);
+  let gitHead: string | undefined;
   if (vcs === "git") {
     const head = await readCommand(
       ["git", "--no-optional-locks", "rev-parse", "--verify", "HEAD^{commit}"],
@@ -176,8 +234,9 @@ async function committedPolicy(
     );
     if (!head.ok && head.error instanceof InspectionUnavailable) return head;
     if (!head.ok) return good(undefined); // An unborn Git tree has no committed policy.
+    gitHead = head.value.trim();
   }
-  const revision = vcs === "jj" ? "trunk()" : "HEAD";
+  const revisionRef = vcs === "jj" ? "trunk()" : "HEAD";
   const names = (rev: string) =>
     readCommand(
       vcs === "jj"
@@ -203,16 +262,20 @@ async function committedPolicy(
           ],
       root,
     );
-  const inventory = await names(revision);
+  const inventory = await names(revisionRef);
   if (!inventory.ok) return inventory;
   if (inventory.value.split("\n").includes(".agx.toml")) return retired(root);
   if (!inventory.value.split("\n").includes("agx.toml")) return good(undefined);
-  return readCommand(
+  const policy = await readCommand(
     vcs === "jj"
-      ? ["jj", ...JJ_READ_ARGS, "file", "show", "-r", revision, "agx.toml"]
+      ? ["jj", ...JJ_READ_ARGS, "file", "show", "-r", revisionRef, "agx.toml"]
       : ["git", "--no-optional-locks", "show", "HEAD:agx.toml"],
     root,
   );
+  if (!policy.ok) return policy;
+  const revision =
+    vcs === "jj" ? revisionRef : `HEAD ${gitHead?.slice(0, 8) ?? "unknown"}`;
+  return good({ text: policy.value, revision, vcs });
 }
 const retired = (root: string) =>
   failure(
@@ -304,17 +367,35 @@ async function resolveConfig(repoRoot: string, options: { vcs?: Vcs }) {
   let keep: string[] = [];
   let regenerable: string[] = [];
   let verifyAlways: string[] = [];
-  if (policy.value !== undefined) {
-    const name = "agx.toml";
-    const text = policy.value;
+  const committed = policy.value;
+  if (committed !== undefined) {
+    const text = committed.text;
     const decoded = await attempt((): unknown => decodeToml(text));
     if (!decoded.ok)
-      return failure(
-        `${join(root, name)}: invalid TOML: ${errorMessage(decoded.error)}`,
+      return configRefusal(
+        root,
+        committed,
+        `invalid TOML: ${errorMessage(decoded.error)}`,
       );
-    const parsed = Config.safeParse(decoded.value);
+    const envelope = ConfigEnvelope.safeParse(decoded.value);
+    if (!envelope.success)
+      return configRefusal(root, committed, configIssueMessage(envelope.error));
+    if (!Object.hasOwn(envelope.data, "schema"))
+      return configRefusal(
+        root,
+        committed,
+        "missing required schema; expected schema = 1",
+      );
+    const schema = z.literal(1).safeParse(envelope.data.schema);
+    if (!schema.success)
+      return configRefusal(
+        root,
+        committed,
+        `unsupported schema ${configValue(envelope.data.schema)}; expected schema = 1`,
+      );
+    const parsed = Config.safeParse(envelope.data);
     if (!parsed.success)
-      return failure(`${join(root, name)}: ${parsed.error.message}`);
+      return configRefusal(root, committed, configIssueMessage(parsed.error));
     const declared = parsed.data.tickets;
     if (
       declared !== undefined &&
@@ -322,8 +403,10 @@ async function resolveConfig(repoRoot: string, options: { vcs?: Vcs }) {
         win32.isAbsolute(declared) ||
         declared.startsWith("~/"))
     )
-      return failure(
-        `${join(root, name)}: tickets must be relative; move absolute paths into $XDG_CONFIG_HOME/agx/repos/<name>.toml (default ~/.config/agx/repos/<name>.toml) with root = ${JSON.stringify(root)}`,
+      return configRefusal(
+        root,
+        committed,
+        `tickets must be relative; move absolute paths into $XDG_CONFIG_HOME/agx/repos/<name>.toml (default ~/.config/agx/repos/<name>.toml) with root = ${JSON.stringify(root)}`,
       );
     tickets = declared ?? tickets;
     ready = parsed.data.ws?.ready ?? ready;

@@ -507,17 +507,21 @@ describe("ws contract: shared agx.toml [ws] policy", () => {
   });
 });
 
-test("ws contract: .ws.toml is refused with its [ws] table", async () => {
+test("config contract: printed .ws.toml migration is accepted", async () => {
   const path = await repo('trunk = "main"\nkeep = ["ws_safe"]\n');
   expect((await ws(["add", "safe"], path)).code).toBe(0);
   const legacy =
     'ready = ["printf old-ready"]\ntrunk = "main"\nkeep = ["ws_safe"]\nregenerable = ["build/generated"]\n';
   await Bun.write(join(path, ".ws.toml"), legacy);
-  const renderedTable = Bun.TOML.stringify({ ws: Bun.TOML.parse(legacy) });
-  expect(renderedTable).toBeDefined();
-  if (renderedTable === undefined) return;
-  const table = renderedTable.trimEnd();
-  const expected = `ws: ${join(path, ".ws.toml")} is retired; move its policy to agx.toml as ${JSON.stringify(table)}; delete .ws.toml\n`;
+  const renderedMigration = Bun.TOML.stringify({
+    schema: 1,
+    ws: Bun.TOML.parse(legacy),
+  });
+  expect(renderedMigration).toBeDefined();
+  if (renderedMigration === undefined) return;
+  const migration = renderedMigration.trimEnd();
+  expect(migration.startsWith("schema = 1\n")).toBe(true);
+  const expected = `ws: ${join(path, ".ws.toml")} is retired. Replace agx.toml with:\n${migration}\nThen delete .ws.toml.\n`;
   const commands = [
     ["add", "blocked"],
     ["refresh", "safe"],
@@ -544,6 +548,52 @@ test("ws contract: .ws.toml is refused with its [ws] table", async () => {
   expect(doctor.err).toBe(expected);
   expect(existsSync(wsDir(path, "safe"))).toBe(true);
   await unlink(safeGit);
+
+  await Bun.write(join(path, "agx.toml"), migration);
+  await unlink(join(path, ".ws.toml"));
+  const commit = await jj(
+    ["commit", "-m", "Commit migrated workspace config"],
+    path,
+  );
+  expect(commit.code, commit.err).toBe(0);
+  const bookmark = await jj(["bookmark", "set", "main", "-r", "@-"], path);
+  expect(bookmark.code, bookmark.err).toBe(0);
+  const migrated = await ws(["gc", "--dry-run", "--repo", path], path);
+  expect(migrated.code, migrated.err).toBe(0);
+});
+
+test("config contract: gc names committed revision when working copy differs", async () => {
+  const path = await repo('trunk = "main"\n');
+  const configPath = join(path, "agx.toml");
+  const committed = '[ws]\ntrunk = "main"\n';
+  await Bun.write(configPath, committed);
+  const commit = await jj(["commit", "-m", "Commit schema-less policy"], path);
+  expect(commit.code, commit.err).toBe(0);
+  const bookmark = await jj(["bookmark", "set", "main", "-r", "@-"], path);
+  expect(bookmark.code, bookmark.err).toBe(0);
+
+  await Bun.write(configPath, `schema = 1\n${committed}`);
+  const identity = await jj(
+    [
+      "log",
+      "--no-graph",
+      "-r",
+      "trunk()",
+      "-T",
+      'bookmarks.join(", ") ++ " " ++ commit_id.short(8)',
+    ],
+    path,
+  );
+  expect(identity.code, identity.err).toBe(0);
+  expect(identity.out.trim()).toMatch(/^main [a-f0-9]{8}$/u);
+
+  const result = await ws(["gc", "--dry-run", "--repo", path], path);
+  expect(result.code, result.err).toBe(1);
+  expect(result.out).toBe("");
+  expect(result.err).toContain(`agx.toml at ${identity.out.trim()}`);
+  expect(result.err).toContain("working copy differs from this revision");
+  expect(result.err).toContain("working copy policy is not read");
+  expect(result.err).toContain("missing required schema; expected schema = 1");
 });
 
 test("ws contract: gc --all reports one refused row and continues", async () => {
