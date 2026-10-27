@@ -496,6 +496,24 @@ export async function unlanded(
       return bad(`cannot judge run-end commit ${id} of ${dir}: ${msg(past)}`);
     found.push(...past.value.filter((line) => !found.includes(line)));
   }
+  if (found.length > 0 && endCommits.length === 0) {
+    const trunk = await trunkCommit(repo, cfg);
+    if (!trunk.ok) return trunk;
+    if (trunk.value !== null) {
+      const tipRepo = retried || !existsSync(dir) ? repo.backing : dir;
+      const tipRevision = tipRepo === repo.backing ? `${name}@` : "@";
+      const tip = await jjOut(
+        ["log", "--no-graph", "-r", tipRevision, "-T", "commit_id"],
+        tipRepo,
+        tipRepo === repo.backing,
+      );
+      if (!tip.ok) return bad(`cannot judge ${dir}: ${msg(tip)}`);
+      const content = await outstanding(repo, tip.value.trim(), trunk.value);
+      if (!content.ok)
+        return bad(`cannot compare ${dir} with trunk: ${msg(content)}`);
+      if (content.value.differing.length === 0) return good([]);
+    }
+  }
   return good(found);
 }
 
@@ -1478,7 +1496,9 @@ type JjCommit = {
   trunk: boolean;
   remote: boolean;
   remoteBookmarks: string[];
+  filesIncluded: boolean;
   files: Map<string, JjTreeFile>;
+  changedPaths: string[];
 };
 type JjTreeFile = {
   object: string;
@@ -1507,7 +1527,9 @@ const JjCommitSchema = z.object({
   trunk: z.boolean(),
   remote: z.boolean(),
   remoteBookmarks: z.string(),
+  filesIncluded: z.boolean(),
   files: z.string(),
+  changedPaths: z.string(),
 });
 type Classification = {
   verdict: string;
@@ -1638,10 +1660,28 @@ async function gcCommitGraph(
     trunk === null
       ? "false"
       : "self.contained_in(" + JSON.stringify("::(" + trunk + ")") + ")";
+  const trunkHeadTest =
+    trunk === null
+      ? "false"
+      : "self.contained_in(" + JSON.stringify(trunk) + ")";
+  const revisions =
+    trunk === null
+      ? "::working_copies()"
+      : `::working_copies() | (${trunk})`;
+  const treeOwnerTest =
+    `self.working_copies().len() > 0 || (${trunkHeadTest})`;
+  const changedPathsTest =
+    `if(!empty && !(${trunkTest}) && !self.contained_in("::remote_bookmarks()"), self.diff().files().map(|file| file.path()).join("\\0"), "")`;
   const template =
     'json({"id" => commit_id, "parents" => stringify(parents.map(|parent| parent.commit_id()).join(",")), "change" => change_id.short(12), "description" => description.first_line(), "empty" => empty, "trunk" => ' +
     trunkTest +
-    ', "remote" => self.contained_in("::remote_bookmarks()"), "remoteBookmarks" => stringify(self.remote_bookmarks().map(|bookmark| if(bookmark.remote(), stringify(bookmark.name()) ++ "@" ++ stringify(bookmark.remote()), stringify(bookmark.name()))).join(",")), "files" => stringify(if(self.working_copies().len() > 0, self.files().map(|file| json({"path" => file.path(), "object" => if(file.normal_value(), stringify(file.normal_value()), ""), "type" => file.file_type(), "executable" => file.executable()})).join("\\0"), ""))}) ++ "\\n"';
+    ', "remote" => self.contained_in("::remote_bookmarks()"), "remoteBookmarks" => stringify(self.remote_bookmarks().map(|bookmark| if(bookmark.remote(), stringify(bookmark.name()) ++ "@" ++ stringify(bookmark.remote()), stringify(bookmark.name()))).join(",")), "filesIncluded" => ' +
+    treeOwnerTest +
+    ', "files" => stringify(if(' +
+    treeOwnerTest +
+    ', self.files().map(|file| json({"path" => file.path(), "object" => if(file.normal_value(), stringify(file.normal_value()), ""), "type" => file.file_type(), "executable" => file.executable()})).join("\\0"), "")), "changedPaths" => stringify(' +
+    changedPathsTest +
+    ')}) ++ "\\n"';
   const output = await jjOut(
     [
       "-R",
@@ -1649,7 +1689,7 @@ async function gcCommitGraph(
       "log",
       "--no-graph",
       "-r",
-      "::working_copies()",
+      revisions,
       "-T",
       template,
     ],
@@ -1672,6 +1712,7 @@ async function gcCommitGraph(
       parents: row.parents.split(",").filter(Boolean),
       remoteBookmarks: row.remoteBookmarks.split(",").filter(Boolean),
       files: files.value,
+      changedPaths: row.changedPaths.split("\0").filter(Boolean),
     });
   }
   return good(commits);
@@ -2655,17 +2696,33 @@ export async function outstanding(
   return current;
 }
 
+function sameTrackedFile(
+  left: JjTreeFile | undefined,
+  right: JjTreeFile | undefined,
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  return (
+    left.type !== "conflict" &&
+    right.type !== "conflict" &&
+    left.object === right.object &&
+    left.type === right.type &&
+    left.executable === right.executable
+  );
+}
+
 function unlandedWorkspaceChange(
   ws: Workspace,
   commits: Map<string, JjCommit>,
 ): {
   change: JjCommit | undefined;
+  changes: JjCommit[];
   missing: string | undefined;
   remoteBookmarks: string[];
 } {
   const pending = [ws.target];
   const seen = new Set<string>();
   const remoteBookmarks = new Set<string>();
+  const changes: JjCommit[] = [];
   while (pending.length > 0) {
     const id = pending.pop();
     if (id === undefined || seen.has(id)) continue;
@@ -2674,17 +2731,19 @@ function unlandedWorkspaceChange(
     if (commit === undefined)
       return {
         change: undefined,
+        changes: [],
         missing: `commit ${id} is absent from aggregate revset`,
         remoteBookmarks: [],
       };
     for (const bookmark of commit.remoteBookmarks)
       remoteBookmarks.add(bookmark);
-    if (!commit.empty && !commit.trunk && !commit.remote)
-      return { change: commit, missing: undefined, remoteBookmarks: [] };
+    if (commit.trunk || commit.remote) continue;
+    if (!commit.empty) changes.push(commit);
     pending.push(...commit.parents);
   }
   return {
-    change: undefined,
+    change: changes[0],
+    changes,
     missing: undefined,
     remoteBookmarks: [...remoteBookmarks].toSorted(),
   };
@@ -2806,22 +2865,39 @@ async function classifyGc(
       "broken",
       `cannot judge workspace changes: ${pendingChange.missing}`,
     );
-  if (
-    pendingChange.change !== undefined &&
-    !(options.abandoned === true && endedWithoutAcceptanceFor24h)
-  ) {
-    const description = pendingChange.change.description.trim();
-    return verdict(
-      "keep",
-      `unlanded change ${pendingChange.change.change} (${description.length > 0 ? description : "no description"})${endedWithoutAcceptanceFor24h ? "; pass --abandoned to collect aged failed runs" : ""}`,
-    );
-  }
   const target = commits.get(ws.target);
   if (target === undefined)
     return verdict(
       "broken",
       `workspace target ${ws.target} is absent from aggregate revset`,
     );
+  let landedByContent = false;
+  if (
+    pendingChange.change !== undefined &&
+    !(options.abandoned === true && endedWithoutAcceptanceFor24h)
+  ) {
+    const trunkTarget = commits.get(trunk);
+    if (trunkTarget === undefined || !target.filesIncluded || !trunkTarget.filesIncluded)
+      return verdict(
+        "broken",
+        `cannot compare workspace content with trunk ${trunk}`,
+      );
+    const changedPaths = new Set(
+      pendingChange.changes.flatMap((commit) => commit.changedPaths),
+    );
+    landedByContent =
+      changedPaths.size > 0 &&
+      [...changedPaths].every((path) =>
+        sameTrackedFile(target.files.get(path), trunkTarget.files.get(path)),
+      );
+    if (!landedByContent) {
+      const description = pendingChange.change.description.trim();
+      return verdict(
+        "keep",
+        `unlanded change ${pendingChange.change.change} (${description.length > 0 ? description : "no description"})${endedWithoutAcceptanceFor24h ? "; pass --abandoned to collect aged failed runs" : ""}`,
+      );
+    }
+  }
   const graceMinutes = gcGraceMinutes(options);
   if (graceMinutes > 0) {
     const created = await attempt(() => stat(ws.dir));
@@ -2863,11 +2939,16 @@ async function classifyGc(
     pendingChange.remoteBookmarks.length === 0
       ? ""
       : `; remote bookmark(s): ${pendingChange.remoteBookmarks.join(", ")}`;
-  let removableReason = `nothing unlanded${remoteReason}; no untracked content`;
+  const landingReason = landedByContent
+    ? `landed by content on ${trunk}`
+    : "nothing unlanded";
+  let removableReason = `${landingReason}${remoteReason}; no untracked content`;
   if (allRejected)
-    removableReason = `nothing unlanded${remoteReason}; all runs judged reject; results preserved (${lineage.map((record) => record.id).join(", ")}); no age wait`;
+    removableReason = `${landingReason}${remoteReason}; all runs judged reject; results preserved (${lineage.map((record) => record.id).join(", ")}); no age wait`;
   else if (endedWithoutAcceptanceFor24h)
-    removableReason = abandonedReason + remoteReason;
+    removableReason = landedByContent
+      ? `${landingReason}${remoteReason}; ${abandonedReason}`
+      : abandonedReason + remoteReason;
   return {
     ...verdict("removable", removableReason, true),
     abandon: allRejected || endedWithoutAcceptanceFor24h,

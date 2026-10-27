@@ -227,6 +227,75 @@ function parseOutput(output: string) {
   return parsed.success ? parsed.data : undefined;
 }
 
+test("gc usecase: a change landed as a copy is removable", async () => {
+  const f = await fixture(1);
+  const workspace = f.workspaces[0];
+  expect(workspace).toBeDefined();
+  if (workspace === undefined) return;
+
+  writeFileSync(join(workspace, "copied.txt"), "copied work\n");
+  await jjRun(["commit", "-m", "workspace copy"], workspace, f.baseEnv);
+  writeFileSync(join(f.repo, "copied.txt"), "copied work\n");
+  await jjRun(["commit", "-m", "same change on trunk"], f.repo, f.baseEnv);
+  await jjRun(["bookmark", "set", "main", "-r", "@-"], f.repo, f.baseEnv);
+
+  const trunk = (
+    await jjRun(
+      ["log", "--no-graph", "-r", "main", "-T", "commit_id"],
+      f.repo,
+      f.baseEnv,
+    )
+  ).out.trim();
+  const result = await gc(f);
+  expect(result.code, `${result.err}\n${result.out}`).toBe(0);
+  const row = parseOutput(result.out)?.rows.find(
+    (candidate) => candidate[0] === workspace,
+  );
+  expect(row?.[2]).toBe("removable");
+  expect(row?.[5]).toContain(`landed by content on ${trunk}`);
+});
+
+test("gc usecase: a change landed as a copy is removable by rm", async () => {
+  const f = await fixture(1);
+  const workspace = f.workspaces[0];
+  expect(workspace).toBeDefined();
+  if (workspace === undefined) return;
+
+  writeFileSync(join(workspace, "copied.txt"), "copied work\n");
+  await jjRun(["commit", "-m", "workspace copy"], workspace, f.baseEnv);
+  writeFileSync(join(f.repo, "copied.txt"), "copied work\n");
+  await jjRun(["commit", "-m", "same change on trunk"], f.repo, f.baseEnv);
+  await jjRun(["bookmark", "set", "main", "-r", "@-"], f.repo, f.baseEnv);
+
+  const result = await wsCommand(f, ["rm", "1"]);
+  expect(result.code, `${result.err}\n${result.out}`).toBe(0);
+  expect(result.out).toContain("removed");
+  expect(existsSync(workspace)).toBe(false);
+});
+
+test("gc usecase: a change not on trunk stays kept", async () => {
+  const f = await fixture(1);
+  const workspace = f.workspaces[0];
+  expect(workspace).toBeDefined();
+  if (workspace === undefined) return;
+
+  writeFileSync(join(workspace, "unlanded.txt"), "unlanded work\n");
+  await jjRun(
+    ["commit", "-m", "unpublished payload"],
+    workspace,
+    f.baseEnv,
+  );
+
+  const result = await gc(f);
+  expect(result.code, `${result.err}\n${result.out}`).toBe(0);
+  const row = parseOutput(result.out)?.rows.find(
+    (candidate) => candidate[0] === workspace,
+  );
+  expect(row?.[2]).toBe("keep");
+  expect(row?.[5]).toContain("unlanded change");
+  expect(row?.[5]).toContain("unpublished payload");
+});
+
 // Shared config's fixed read-only root probes are excluded; this measures GC inventory work.
 test("gc contract: dry-run jj call count is constant from 5 to 50 workspaces", async () => {
   const five = await fixture(5);
