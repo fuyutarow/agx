@@ -247,6 +247,11 @@ async function main(): Promise<number> {
           description:
             "Recipient: [codex:|claude:]<UUID, UUID prefix or exact native name>; unqualified requires both inventories",
         },
+        exact: {
+          type: Boolean,
+          description:
+            "Send to the exact backend-qualified address without recipient discovery",
+        },
         from: {
           type: String,
           description:
@@ -288,6 +293,7 @@ async function main(): Promise<number> {
       args.flags.message.length === 0 ||
       args._.length !== 1 ||
       args.flags.json !== undefined ||
+      args.flags.exact === true ||
       args.flags.timing !== undefined ||
       args.flags.relay !== undefined ||
       !Number.isInteger(args.flags.timeoutMs) ||
@@ -315,6 +321,7 @@ async function main(): Promise<number> {
       args.flags.to !== undefined ||
       args.flags.from !== undefined ||
       args.flags.message !== undefined ||
+      args.flags.exact === true ||
       args.flags.json !== undefined
     ) {
       process.stderr.write(
@@ -331,6 +338,7 @@ async function main(): Promise<number> {
       args.flags.to !== undefined ||
       args.flags.from !== undefined ||
       args.flags.message !== undefined ||
+      args.flags.exact === true ||
       args.flags.relay !== undefined ||
       !Number.isInteger(args.flags.timeoutMs) ||
       args.flags.timeoutMs < 1 ||
@@ -355,6 +363,7 @@ async function main(): Promise<number> {
     args.flags.relay !== undefined ||
     args._.length !== 1 ||
     (kind === undefined && selector?.includes(":") === true) ||
+    (args.flags.exact === true && kind === undefined) ||
     id === undefined ||
     id === "" ||
     id.trim() !== id ||
@@ -365,7 +374,7 @@ async function main(): Promise<number> {
     timeoutMs > 2_147_483_647
   ) {
     process.stderr.write(
-      "agx msg: usage: agx msg send --to [codex:|claude:]<UUID|UUID-prefix|exact-name> --message TEXT [--from backend:<full-session-UUID>] [--timeout-ms N]\n",
+      "agx msg: usage: agx msg send --to [codex:|claude:]<UUID|UUID-prefix|exact-name> --message TEXT [--exact] [--from backend:<full-session-UUID>] [--timeout-ms N]\n",
     );
     return 2;
   }
@@ -402,7 +411,9 @@ async function main(): Promise<number> {
   const deadline = started + timeoutMs;
   let target = canonicalUuid(id) ?? id;
   let claudeSnapshot: Awaited<ReturnType<typeof selectedInventory>> | undefined;
-  if (kind === undefined) {
+  if (args.flags.exact === true) {
+    if (kind !== "codex" && kind !== "claude") return 2;
+  } else if (kind === undefined) {
     const inventories = await Promise.all([
       selectedInventory(
         "codex",
@@ -492,7 +503,7 @@ async function main(): Promise<number> {
   }
   let relayTarget = target;
   const uuid = canonicalUuid(target);
-  if (kind === "claude" && uuid !== undefined) {
+  if (kind === "claude" && uuid !== undefined && args.flags.exact !== true) {
     const resolved = await resolveClaudeTarget(
       uuid,
       Math.max(1, Math.floor(deadline - performance.now())),

@@ -31,6 +31,7 @@ import { exitWithError } from "./exit.ts";
 import { Outcome, deriveOutcome } from "./outcome.ts";
 import { lossEvidence, Lease, StopSignal, Evidence } from "./lease.ts";
 import {
+  EndNoticeResult,
   LegacyIdentity,
   RunSchema,
   type FoldedRun,
@@ -123,6 +124,7 @@ const EventSchema = z.discriminatedUnion("kind", [
     sandbox_effective: z.string().optional(),
     sandbox_effective_source: z.string().optional(),
     dispatcher_session: z.string().nullable(),
+    dispatcher_address: z.string().nullable().optional(),
     vendor_session: z.string().nullable(),
     continues: z.string().nullable().optional(),
     supersedes: z.string().nullable().optional(),
@@ -158,6 +160,7 @@ const EventSchema = z.discriminatedUnion("kind", [
     sandbox_effective: z.string().optional(),
     sandbox_effective_source: z.string().optional(),
     dispatcher_session: z.string().nullable(),
+    dispatcher_address: z.string().nullable().optional(),
     vendor_session: z.string().nullable(),
     continues: z.string().nullable().optional(),
     supersedes: z.string().nullable().optional(),
@@ -228,6 +231,14 @@ const EventSchema = z.discriminatedUnion("kind", [
     verify: z.array(VerifyResult).default([]),
     returned: z.boolean().optional(),
     changed_files: z.number().int().nonnegative().optional(),
+    end_notice: EndNoticeResult.optional(),
+    legacy_key: z.string().optional(),
+  }),
+  z.looseObject({
+    kind: z.literal("end-notice"),
+    id: z.string(),
+    at: z.string(),
+    notice: EndNoticeResult,
     legacy_key: z.string().optional(),
   }),
   z.looseObject({
@@ -246,6 +257,40 @@ const EventSchema = z.discriminatedUnion("kind", [
 ]);
 export type NextEvent = z.output<typeof EventSchema>;
 const EventTextSchema = jsonOf(EventSchema);
+
+function parseCompleteRecordLines(
+  text: string,
+  path: string,
+  firstLine = 1,
+  malformed?: Record<string, unknown>[],
+): { events: NextEvent[]; lineCount: number } {
+  const lines = text.split("\n");
+  if (lines.at(-1) === "") lines.pop();
+  const events: NextEvent[] = [];
+  for (const [index, line] of lines.entries()) {
+    if (line === "") continue;
+    const event = EventTextSchema.safeParse(line);
+    if (event.success) {
+      events.push(event.data);
+      continue;
+    }
+    const raw = jsonOf(z.record(z.string(), z.unknown())).safeParse(line);
+    if (
+      malformed !== undefined &&
+      raw.success &&
+      raw.data.kind === "started" &&
+      (LegacyIdentity.safeParse(raw.data.legacy).success ||
+        (typeof raw.data.legacy_key === "string" &&
+          raw.data.legacy_key.startsWith("run:")))
+    )
+      malformed.push(raw.data);
+    const reason = event.error.issues[0]?.message ?? "invalid event";
+    process.stderr.write(
+      `agx: skipped unreadable record log line ${path}:${firstLine + index}: ${reason}\n`,
+    );
+  }
+  return { events, lineCount: lines.length };
+}
 
 import { stateDir } from "../state.ts";
 export { stateDir };
@@ -476,18 +521,8 @@ export function events(root = stateDir()): NextEvent[] {
   const path = recordPath(root);
   if (!existsSync(path)) return [];
   const text = readFileSync(path, "utf8");
-  const lines = text.split("\n");
-  if (!text.endsWith("\n")) lines.pop();
-  const parsed = lines
-    .filter((line) => line !== "")
-    .map((line) => EventTextSchema.safeParse(line));
-  const invalid = parsed.find((event) => !event.success);
-  if (invalid !== undefined)
-    exitWithError(
-      `agx: invalid record log line: ${invalid.error.message}\n`,
-      1,
-    );
-  return parsed.flatMap((event) => (event.success ? [event.data] : []));
+  const complete = text.lastIndexOf("\n") + 1;
+  return parseCompleteRecordLines(text.slice(0, complete), path).events;
 }
 
 type LegacyImportResult = Readonly<{
@@ -813,6 +848,7 @@ const SnapshotSchema = z
     device: z.number(),
     size: z.number().int().nonnegative(),
     offset: z.number().int().nonnegative(),
+    lineCount: z.number().int().nonnegative(),
     runs: z.array(RunSchema),
     malformed: z.array(LegacyRow),
   })
@@ -848,6 +884,7 @@ function foldInto(runs: Map<string, FoldedRun>, input: NextEvent[]): void {
         unit: event.unit ?? event.worker_name ?? `agt_${event.ticket}`,
         workspace_name: event.workspace_name ?? basename(event.workspace),
         dispatcher_session: event.dispatcher_session,
+        dispatcher_address: event.dispatcher_address,
         cwd: event.cwd,
         workspace: event.workspace,
         writes: event.writes,
@@ -911,8 +948,10 @@ function foldInto(runs: Map<string, FoldedRun>, input: NextEvent[]): void {
       });
       run.returned = event.returned;
       run.changed_files = event.changed_files;
+      run.end_notice = event.end_notice;
       run.vendor_session = event.vendor_session;
     }
+    if (event.kind === "end-notice") run.end_notice = event.notice;
     if (event.kind !== "judged") continue;
     const decision = event.decision === "landed" ? "accept" : event.decision;
     if (decision !== "accept" && decision !== "reject") continue;
@@ -951,6 +990,7 @@ export async function fullFoldedRuns() {
 /** Read-only, process-local cursor. Partial lines retain their original bytes. */
 export function recordCursor(root = stateDir()) {
   let offset = 0;
+  let lineCount = 0;
   let identity: { ino: number; dev: number } | undefined;
   let pending = Buffer.alloc(0);
   const runs = new Map<string, FoldedRun>();
@@ -964,6 +1004,7 @@ export function recordCursor(root = stateDir()) {
       stat.size < offset
     ) {
       offset = 0;
+      lineCount = 0;
       pending = Buffer.alloc(0);
       runs.clear();
     }
@@ -984,22 +1025,13 @@ export function recordCursor(root = stateDir()) {
     offset += length;
     const tail = Buffer.concat([pending, bytes.subarray(0, length)]);
     const complete = tail.lastIndexOf(10) + 1;
-    const input = tail
-      .subarray(0, complete)
-      .toString("utf8")
-      .split("\n")
-      .filter((line) => line !== "")
-      .map((line) => EventTextSchema.safeParse(line));
-    const invalid = input.find((event) => !event.success);
-    if (invalid !== undefined)
-      return exitWithError(
-        `agx: invalid record log line: ${invalid.error.message}\n`,
-        1,
-      );
-    foldInto(
-      runs,
-      input.flatMap((event) => (event.success ? [event.data] : [])),
+    const decoded = parseCompleteRecordLines(
+      tail.subarray(0, complete).toString("utf8"),
+      recordPath(root),
+      lineCount + 1,
     );
+    foldInto(runs, decoded.events);
+    lineCount += decoded.lineCount;
     pending = Buffer.from(tail.subarray(complete));
     return liveRuns(runs, stat, root, read);
   };
@@ -1044,13 +1076,12 @@ async function readFoldedRuns(
   const snapshot = parsed.success ? parsed.data : undefined;
   const valid =
     snapshot !== undefined &&
-    // Strict readers must still reject malformed imports cached by a listing.
-    (malformed !== undefined || snapshot.malformed.length === 0) &&
     snapshot.inode === stat.ino &&
     snapshot.device === stat.dev &&
     stat.size >= snapshot.size &&
     stat.size >= snapshot.offset;
   const offset = valid ? snapshot.offset : 0;
+  let lineCount = valid ? snapshot.lineCount : 0;
   const runs = new Map<string, FoldedRun>(
     valid ? snapshot.runs.map((run) => [run.id, run]) : [],
   );
@@ -1077,38 +1108,14 @@ async function readFoldedRuns(
     );
   const bytes = read.value;
   const complete = bytes.lastIndexOf(10) + 1;
-  const input = bytes
-    .subarray(0, complete)
-    .toString("utf8")
-    .split("\n")
-    .filter((line) => line !== "")
-    .flatMap((line) => {
-      const event = EventTextSchema.safeParse(line);
-      if (!event.success && malformed !== undefined) {
-        const raw = jsonOf(z.record(z.string(), z.unknown())).safeParse(line);
-        if (
-          raw.success &&
-          raw.data.kind === "started" &&
-          (LegacyIdentity.safeParse(raw.data.legacy).success ||
-            (typeof raw.data.legacy_key === "string" &&
-              raw.data.legacy_key.startsWith("run:")))
-        ) {
-          malformedRows.push(raw.data);
-          return [];
-        }
-      }
-      return [event];
-    });
-  const invalid = input.find((event) => !event.success);
-  if (invalid !== undefined)
-    exitWithError(
-      "agx: invalid record log line: " + invalid.error.message + "\n",
-      1,
-    );
-  foldInto(
-    runs,
-    input.flatMap((event) => (event.success ? [event.data] : [])),
+  const decoded = parseCompleteRecordLines(
+    bytes.subarray(0, complete).toString("utf8"),
+    path,
+    lineCount + 1,
+    malformedRows,
   );
+  foldInto(runs, decoded.events);
+  lineCount += decoded.lineCount;
   malformed?.push(...malformedRows);
   foldCache.set(path, {
     version: 1,
@@ -1116,6 +1123,7 @@ async function readFoldedRuns(
     device: stat.dev,
     size: stat.size,
     offset: offset + complete,
+    lineCount,
     runs: [...runs.values()],
     malformed: malformedRows,
   });

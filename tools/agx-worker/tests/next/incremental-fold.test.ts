@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   append,
+  events,
   flushRunPublications,
   foldedRuns,
   fullFoldedRuns,
@@ -42,6 +43,110 @@ const started = (id: string, pid = 2147483647): NextEvent => ({
   dispatcher_session: null,
   vendor_session: null,
   pid,
+});
+
+test("store contract: a record with an end_notice.status written before 1.20.2 is read", async () => {
+  const root = fixture();
+  const cases = [
+    {
+      id: "legacy-skip",
+      notice: { exit: null, receipt: "skipped: no dispatcher" },
+      status: "skipped",
+    },
+    {
+      id: "legacy-accepted",
+      notice: { exit: 0, receipt: "sent" },
+      status: "accepted",
+    },
+    {
+      id: "legacy-deadline",
+      notice: { exit: 4, receipt: "deadline" },
+      status: "deadline",
+    },
+    {
+      id: "legacy-unreachable",
+      notice: { exit: 127, receipt: "not found" },
+      status: "unreachable",
+    },
+    {
+      id: "current-pending",
+      notice: { status: "pending", exit: null, receipt: "scheduled" },
+      status: "pending",
+    },
+    {
+      id: "current-accepted",
+      notice: { status: "accepted", exit: 0, receipt: "sent" },
+      status: "accepted",
+    },
+    {
+      id: "current-unreachable",
+      notice: { status: "unreachable", exit: 7, receipt: "failed" },
+      status: "unreachable",
+    },
+    {
+      id: "current-deadline",
+      notice: { status: "deadline", exit: 4, receipt: "deadline" },
+      status: "deadline",
+    },
+    {
+      id: "current-skipped",
+      notice: { status: "skipped", exit: null, receipt: "skipped" },
+      status: "skipped",
+    },
+  ];
+  const records = cases.flatMap(({ id, notice }) => [
+    started(id),
+    {
+      kind: "ended",
+      id,
+      at: "2026-10-15T00:01:00Z",
+      exit: 0,
+      outcome: "ok",
+      report_path: null,
+      vendor_session: null,
+      verify: [],
+      end_notice: notice,
+    },
+  ]);
+  fs.writeFileSync(
+    recordPath(root),
+    `${records.map((record) => JSON.stringify(record)).join("\n")}\n`,
+  );
+
+  const rows = await foldedRuns(root);
+  expect(rows.map((row) => [row.id, row.end_notice?.status])).toEqual(
+    cases.map(({ id, status }) => [id, status]),
+  );
+});
+
+test("store contract: one unreadable record line is skipped and named with its file and line", async () => {
+  const root = fixture();
+  const records = [
+    JSON.stringify(started("survivor")),
+    "not-json",
+    JSON.stringify({
+      kind: "ended",
+      id: "survivor",
+      at: "2026-10-15T00:01:00Z",
+      exit: 0,
+      report_path: null,
+      vendor_session: null,
+      verify: [],
+    }),
+  ];
+  fs.writeFileSync(recordPath(root), `${records.join("\n")}\n`);
+
+  const decoded = events(root);
+  expect(decoded.map(({ kind }) => kind)).toEqual(["started", "ended"]);
+  expect((await foldedRuns(root))[0]?.state).toBe("ended");
+
+  const listed = Bun.spawnSync(
+    [process.execPath, "tools/agx-worker/src/next/cli.ts", "ls", "--json"],
+    { env: { ...process.env, AGX_STATE_DIR: root } },
+  );
+  expect(listed.exitCode).toBe(0);
+  expect(listed.stdout.toString()).toContain('"id":"survivor"');
+  expect(listed.stderr.toString()).toContain(`${recordPath(root)}:2`);
 });
 
 test.each([127, 137])(
@@ -154,7 +259,7 @@ test("warm fold reads exactly appended record bytes and zero for unchanged histo
   expect(await foldedRuns()).toEqual(await fullFoldedRuns());
 });
 
-test("warm listing retains malformed imports without rereading history, while strict folds reject them", async () => {
+test("warm listing retains malformed imports without rereading history, while folds skip them", async () => {
   const root = fixture();
   append(started("native", process.pid));
   await flushRunPublications();
@@ -188,7 +293,9 @@ test("warm listing retains malformed imports without rereading history, while st
   read.mockClear();
   expect(await listingHistory()).toEqual(history);
   expect(await list({ json: true })).toBe(0);
-  expect(warning.mock.calls[0]?.[0]).toContain("hidden_legacy=1");
+  expect(
+    warning.mock.calls.some(([line]) => String(line).includes("hidden_legacy=1")),
+  ).toBe(true);
   expect(await list({ json: true, includeLegacy: true })).toBe(0);
   expect(output.mock.calls.at(-1)?.[0]).toContain('"row":42');
   expect(read.mock.calls).toHaveLength(0);
@@ -201,8 +308,8 @@ test("warm listing retains malformed imports without rereading history, while st
     ],
     { env: { ...process.env, AGX_STATE_DIR: root }, timeout: 5000 },
   );
-  expect(strict.exitCode).toBe(1);
-  expect(strict.stderr.toString()).toContain("invalid record log line");
+  expect(strict.exitCode).toBe(0);
+  expect(strict.stderr.toString()).toContain(`${recordPath(root)}:2`);
   fs.writeFileSync(recordPath(), "");
   expect(await listingHistory()).toEqual({ runs: [], malformed: [] });
 });
@@ -276,7 +383,7 @@ test("ls --running combines with JSON, all and selector; cached liveness is refr
   expect(await foldedRuns()).toEqual(await fullFoldedRuns());
 });
 
-test("unwritable snapshot falls back safely and malformed complete tail is rejected", async () => {
+test("unwritable snapshot falls back safely and malformed complete tail is skipped", async () => {
   const root = fixture();
   append(started("run"));
   fs.mkdirSync(join(root, "records.fold.json"));
@@ -292,6 +399,6 @@ test("unwritable snapshot falls back safely and malformed complete tail is rejec
     [process.execPath, "tools/agx-worker/src/next/cli.ts", "ls", "--json"],
     { env: { ...process.env, AGX_STATE_DIR: root } },
   );
-  expect(result.exitCode).toBe(1);
-  expect(result.stderr.toString()).toContain("invalid record log line");
+  expect(result.exitCode).toBe(0);
+  expect(result.stderr.toString()).toContain(`${recordPath(root)}:3`);
 });

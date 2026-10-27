@@ -1371,11 +1371,13 @@ describe("agx-worker run", () => {
       join(state, "records.jsonl"),
       `${JSON.stringify(malformed)}\n`,
     );
-    const refused = Bun.spawnSync(
+    const skipped = Bun.spawnSync(
       [process.execPath, "tools/agx-worker/src/next/cli.ts", "ls"],
       { cwd: process.cwd(), env },
     );
-    expect(refused.exitCode).toBe(1);
-    expect(refused.stderr.toString()).toContain("invalid record log line");
+    expect(skipped.exitCode).toBe(0);
+    expect(skipped.stderr.toString()).toContain(
+      `${join(state, "records.jsonl")}:1`,
+    );
   });
 });

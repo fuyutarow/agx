@@ -62,7 +62,7 @@ import {
   verifyKind,
   type VerifyKind,
 } from "./verify.ts";
-import { sendEndNotice } from "./end-notice.ts";
+import { scheduleEndNotice } from "./end-notice.ts";
 
 export type Flags = Readonly<Record<string, string | boolean | undefined>>;
 const fatal = (message: string, exitCode = 2): never =>
@@ -76,6 +76,26 @@ export function systemdUnitName(cgroup: string): string | undefined {
     .findLast((part) => part.endsWith(".service"));
   return unit?.slice(0, -".service".length);
 }
+const dispatcherAddressFor = (
+  session: string | null,
+  env: NodeJS.ProcessEnv,
+): string | null => {
+  if (session === null || session.trim() === "") return null;
+  if (/^(codex|claude):.+$/u.test(session)) return session;
+  const declaredVendor =
+    env.AGX_DISPATCHER_VENDOR === "codex" ||
+    env.AGX_DISPATCHER_VENDOR === "claude"
+      ? env.AGX_DISPATCHER_VENDOR
+      : undefined;
+  const matchingVendors = [
+    ...(env.CLAUDE_CODE_SESSION_ID === session ? ["claude"] : []),
+    ...(env.CODEX_SESSION_ID === session ? ["codex"] : []),
+  ];
+  const vendor =
+    declaredVendor ??
+    (matchingVendors.length === 1 ? matchingVendors[0] : undefined);
+  return vendor === undefined ? null : `${vendor}:${session}`;
+};
 const invocationUnitFor = async (): Promise<string | undefined> => {
   if (
     process.env.INVOCATION_ID === undefined ||
@@ -453,6 +473,7 @@ export async function run(flags: Flags): Promise<number> {
   let activeProgressPath = join(runDir, "worker-progress.jsonl");
   let started = false;
   let ended = false;
+  let dispatcherAddress: string | null = null;
   let stopTask: Promise<never> | undefined;
   let killWorker: (() => void) | undefined;
   const vendorSessionFromProgress = (): string | undefined => {
@@ -492,10 +513,11 @@ export async function run(flags: Flags): Promise<number> {
       ended = true;
       const endedAt = now();
       stopTask = (async () => {
-        const endNotice = await sendEndNotice({
+        const endNotice = scheduleEndNotice({
           id,
           ticket: ticketName,
           dispatcher,
+          address: dispatcherAddress,
           startedAt,
           endedAt,
           outcome: "stopped",
@@ -569,6 +591,7 @@ export async function run(flags: Flags): Promise<number> {
     dispatcher = claudeSession;
   else if (codexSession !== undefined && codexSession !== "")
     dispatcher = codexSession;
+  dispatcherAddress = dispatcherAddressFor(dispatcher, process.env);
   if (dispatcher === null)
     process.stderr.write(
       "WARN dispatcher session is unavailable; pass --session ID or preserve CLAUDE_CODE_SESSION_ID/CODEX_SESSION_ID (systemd-run: use -E NAME).\n",
@@ -653,6 +676,7 @@ export async function run(flags: Flags): Promise<number> {
     sandbox_effective,
     sandbox_effective_source,
     dispatcher_session: dispatcher,
+    dispatcher_address: dispatcherAddress,
     vendor_session: resumeSession ?? null,
     continues:
       supersedes === undefined
@@ -1091,10 +1115,11 @@ export async function run(flags: Flags): Promise<number> {
   if (stopTask !== undefined) await stopTask;
   ended = true;
   const endedAt = now();
-  const endNotice = await sendEndNotice({
+  const endNotice = scheduleEndNotice({
     id,
     ticket: ticketName,
     dispatcher,
+    address: dispatcherAddress,
     startedAt,
     endedAt,
     outcome,
@@ -1128,6 +1153,7 @@ export async function run(flags: Flags): Promise<number> {
     ),
     changed_files: changed,
   });
+  await flushRunPublications();
   temp.remove();
   await workspaceLock.release();
   process.stdout.write(

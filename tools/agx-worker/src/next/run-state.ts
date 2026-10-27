@@ -9,6 +9,48 @@ export const LegacyIdentity = z.object({
   source: z.literal("legacy-v1"),
 });
 
+const EndNoticeStatus = z.enum([
+  "pending",
+  "accepted",
+  "unreachable",
+  "deadline",
+  "skipped",
+]);
+
+const EndNoticeResultShape = z.object({
+  status: EndNoticeStatus,
+  exit: z.number().nullable(),
+  receipt: z.string(),
+});
+
+const LegacyEndNoticeResult = z.object({
+  exit: z.number().nullable(),
+  receipt: z.string(),
+});
+
+const statusForLegacyEndNotice = (
+  notice: z.output<typeof LegacyEndNoticeResult>,
+): z.output<typeof EndNoticeStatus> => {
+  if (notice.exit === null) return "skipped";
+  if (notice.exit === 0) return "accepted";
+  if (notice.exit === 4) return "deadline";
+  return "unreachable";
+};
+
+/** Earlier releases wrote only exit and receipt; recover their outcome on read. */
+export const EndNoticeResult = z.preprocess((value) => {
+  const current = EndNoticeResultShape.safeParse(value);
+  if (current.success) return current.data;
+  const object = z.record(z.string(), z.unknown()).safeParse(value);
+  if (!object.success || object.data.status !== undefined) return value;
+  const legacy = LegacyEndNoticeResult.safeParse(value);
+  if (!legacy.success) return value;
+  return {
+    ...legacy.data,
+    status: statusForLegacyEndNotice(legacy.data),
+  };
+}, EndNoticeResultShape);
+
 export const RunSchema = z.object({
   id: z.string(),
   legacy: LegacyIdentity.optional(),
@@ -60,6 +102,8 @@ export const RunSchema = z.object({
   ticket_orig_path: z.string().optional(),
   ticket_sha256: z.string().optional(),
   vendor_session: z.string().nullable(),
+  dispatcher_address: z.string().nullable().optional(),
+  end_notice: EndNoticeResult.optional(),
   pid: z.number(),
   failed_early_quit: z.boolean(),
   returned: z.boolean().optional(),
