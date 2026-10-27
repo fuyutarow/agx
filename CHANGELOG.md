@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.16.2 — 2026-10-27
+
+- Judge waits for the current-runs publication lock before recording judgments
+
 ## 1.16.1 — 2026-10-27
 
 - Use alpha@origin as workspace add trunk and warn on divergent local copies
