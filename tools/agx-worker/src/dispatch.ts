@@ -44,6 +44,22 @@ export const DISPATCH_CHECK_TIMEOUT_MS = 60_000;
 export const DISPATCH_LIST_TIMEOUT_MS = 60_000;
 export const DISPATCH_COMMAND_TIMEOUT_MS = 60_000;
 export const DISPATCH_TREE_READ_TIMEOUT_MS = 60_000;
+const DispatchCommandTimeoutMs = z.coerce
+  .number()
+  .int()
+  .positive()
+  .max(2_147_483_647);
+
+function dispatchCommandTimeoutMs(env: NodeJS.ProcessEnv): number {
+  const configured = env.DISPATCH_COMMAND_TIMEOUT_MS;
+  if (configured === undefined) return DISPATCH_COMMAND_TIMEOUT_MS;
+  const parsed = DispatchCommandTimeoutMs.safeParse(configured);
+  if (!parsed.success)
+    throw new Error(
+      "DISPATCH_COMMAND_TIMEOUT_MS must be a positive integer of at most 2147483647 milliseconds",
+    );
+  return parsed.data;
+}
 
 const cliArgv = () => process.argv.slice(2);
 const cli = standardCli(cleyeCli, cliPackage, cliArgv);
@@ -81,7 +97,7 @@ export async function invoke(
   args: string[],
   cwd: string,
   env: NodeJS.ProcessEnv,
-  timeoutMs = DISPATCH_COMMAND_TIMEOUT_MS,
+  timeoutMs = dispatchCommandTimeoutMs(env),
   bound = "DISPATCH_COMMAND_TIMEOUT_MS",
 ): Promise<{ code: number; out: string; err: string }> {
   const started = performance.now();

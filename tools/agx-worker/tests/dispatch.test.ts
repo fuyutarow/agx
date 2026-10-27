@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DispatchBindingSchema } from "../../shared/src/agx-dispatch-binding.ts";
 import { jsonOf, z } from "../../shared/src/zod.ts";
+import { DISPATCH_COMMAND_TIMEOUT_MS } from "../src/dispatch.ts";
 
 const ENTRY = fileURLToPath(new URL("../src/next/cli.ts", import.meta.url));
 const RunRecord = z.looseObject({
@@ -128,6 +129,7 @@ function fixture() {
     'if [ "$repo" != "$FAKE_REPO" ]; then echo "ws: fixture-home is not a valid local jj workspace" >&2; exit 1; fi',
     'workspace="$(dirname "$repo")/$(basename "$repo").ws/ws_$slug"',
     'mkdir -p "$workspace/.jj"',
+    'if [ "$FAKE_WS_SLEEP_SECONDS" != "" ]; then sleep "$FAKE_WS_SLEEP_SECONDS"; fi',
     'if [ "$FAKE_WS_CHATTER" = "yes" ]; then',
     '  chatter="30 packages installed …\n$HOME/consumer.ws/ws_fleet-line-real\'"',
     '  if [ "$json" = "yes" ]; then printf "%s\\n" "$chatter" >&2; else printf "%s\\n" "$chatter"; exit 0; fi',
@@ -179,6 +181,7 @@ function fixture() {
     FAKE_UNIT_ARGS: unitArgs,
     FAKE_BINDING: bindingFile,
     FAKE_WS_ARGS: wsArgs,
+    FAKE_WS_SLEEP_SECONDS: "",
     FAKE_SYSTEMD_RUN_SCRIPT: systemdRunner,
   };
   return {
@@ -1262,6 +1265,32 @@ test("dispatch inspection helpers distinguish expiry from a completed failure", 
   expect(completed.code).toBe(2);
   expect(completed.err).toContain("completed refusal");
 });
+
+test("dispatch contract: the inspection bound honours DISPATCH_COMMAND_TIMEOUT_MS", async () => {
+  expect(DISPATCH_COMMAND_TIMEOUT_MS).toBe(60_000);
+
+  const overridden = fixture();
+  overridden.env.DISPATCH_COMMAND_TIMEOUT_MS = "1000";
+  const slowWorkspaceAdd = join(overridden.root, "bin", "agx-ws");
+  writeFileSync(
+    slowWorkspaceAdd,
+    '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$FAKE_WS_ARGS"\nexec sleep 2\n',
+  );
+  chmodSync(slowWorkspaceAdd, 0o755);
+  const expired = await invoke(overridden);
+  expect(expired.exitCode, expired.stderr).toBe(75);
+  expect(expired.stderr).toContain("inspection timeout DISPATCH_COMMAND_TIMEOUT_MS=1000ms");
+  expect(expired.stderr).toContain('"add"');
+  expect(expired.stderr).toContain("--repo");
+  expect(await Bun.file(overridden.unitArgs).exists()).toBe(false);
+
+  const unset = fixture();
+  delete unset.env.DISPATCH_COMMAND_TIMEOUT_MS;
+  unset.env.FAKE_WS_SLEEP_SECONDS = "2";
+  const completed = await invoke(unset);
+  expect(completed.exitCode, completed.stderr).toBe(0);
+  expect(await Bun.file(unset.unitArgs).exists()).toBe(true);
+}, 15_000);
 
 test("source dispatch pins bun, absolute source entry and dispatcher PATH", async () => {
   const f = fixture();
