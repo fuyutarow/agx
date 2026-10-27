@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.20.2 — 2026-10-27
+
+- Record end notice outcomes after the worker run exits
+- Support exact backend-qualified sends without discovery
+
 ## 1.20.1 — 2026-10-27
 
 - Persist vendor sessions before worker runs end
