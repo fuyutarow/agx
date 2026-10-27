@@ -9,6 +9,12 @@ export const LegacyIdentity = z.object({
   source: z.literal("legacy-v1"),
 });
 
+export const EndNoticeResult = z.object({
+  status: z.enum(["pending", "accepted", "unreachable", "deadline", "skipped"]),
+  exit: z.number().nullable(),
+  receipt: z.string(),
+});
+
 export const RunSchema = z.object({
   id: z.string(),
   legacy: LegacyIdentity.optional(),
@@ -60,6 +66,8 @@ export const RunSchema = z.object({
   ticket_orig_path: z.string().optional(),
   ticket_sha256: z.string().optional(),
   vendor_session: z.string().nullable(),
+  dispatcher_address: z.string().nullable().optional(),
+  end_notice: EndNoticeResult.optional(),
   pid: z.number(),
   failed_early_quit: z.boolean(),
   returned: z.boolean().optional(),

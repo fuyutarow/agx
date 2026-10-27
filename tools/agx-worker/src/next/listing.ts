@@ -13,7 +13,10 @@ export function listingRows(rows: ListedRun[], at = Temporal.Now.instant()) {
         ),
       ),
     )().unwrapOr(undefined);
-    return Object.assign({}, row, { elapsed_seconds: elapsed });
+    const listed = { ...row };
+    delete listed.dispatcher_address;
+    delete listed.end_notice;
+    return Object.assign(listed, { elapsed_seconds: elapsed });
   });
 }
 /** Core-owned counts; empty dispatcher identities are unattributed. */

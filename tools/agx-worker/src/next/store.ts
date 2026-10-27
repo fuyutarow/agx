@@ -31,6 +31,7 @@ import { exitWithError } from "./exit.ts";
 import { Outcome, deriveOutcome } from "./outcome.ts";
 import { lossEvidence, Lease, StopSignal, Evidence } from "./lease.ts";
 import {
+  EndNoticeResult,
   LegacyIdentity,
   RunSchema,
   type FoldedRun,
@@ -123,6 +124,7 @@ const EventSchema = z.discriminatedUnion("kind", [
     sandbox_effective: z.string().optional(),
     sandbox_effective_source: z.string().optional(),
     dispatcher_session: z.string().nullable(),
+    dispatcher_address: z.string().nullable().optional(),
     vendor_session: z.string().nullable(),
     continues: z.string().nullable().optional(),
     supersedes: z.string().nullable().optional(),
@@ -158,6 +160,7 @@ const EventSchema = z.discriminatedUnion("kind", [
     sandbox_effective: z.string().optional(),
     sandbox_effective_source: z.string().optional(),
     dispatcher_session: z.string().nullable(),
+    dispatcher_address: z.string().nullable().optional(),
     vendor_session: z.string().nullable(),
     continues: z.string().nullable().optional(),
     supersedes: z.string().nullable().optional(),
@@ -228,6 +231,14 @@ const EventSchema = z.discriminatedUnion("kind", [
     verify: z.array(VerifyResult).default([]),
     returned: z.boolean().optional(),
     changed_files: z.number().int().nonnegative().optional(),
+    end_notice: EndNoticeResult.optional(),
+    legacy_key: z.string().optional(),
+  }),
+  z.looseObject({
+    kind: z.literal("end-notice"),
+    id: z.string(),
+    at: z.string(),
+    notice: EndNoticeResult,
     legacy_key: z.string().optional(),
   }),
   z.looseObject({
@@ -848,6 +859,7 @@ function foldInto(runs: Map<string, FoldedRun>, input: NextEvent[]): void {
         unit: event.unit ?? event.worker_name ?? `agt_${event.ticket}`,
         workspace_name: event.workspace_name ?? basename(event.workspace),
         dispatcher_session: event.dispatcher_session,
+        dispatcher_address: event.dispatcher_address,
         cwd: event.cwd,
         workspace: event.workspace,
         writes: event.writes,
@@ -911,8 +923,10 @@ function foldInto(runs: Map<string, FoldedRun>, input: NextEvent[]): void {
       });
       run.returned = event.returned;
       run.changed_files = event.changed_files;
+      run.end_notice = event.end_notice;
       run.vendor_session = event.vendor_session;
     }
+    if (event.kind === "end-notice") run.end_notice = event.notice;
     if (event.kind !== "judged") continue;
     const decision = event.decision === "landed" ? "accept" : event.decision;
     if (decision !== "accept" && decision !== "reject") continue;

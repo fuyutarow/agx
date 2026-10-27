@@ -1,24 +1,106 @@
-export type EndNotice = {
-  exit: number | null;
-  receipt: string;
-};
+import { z } from "../../../shared/src/zod.ts";
+import { selfCommand } from "../self-command.ts";
+import { append, flushRunPublications, now } from "./store.ts";
+import { EndNoticeResult } from "./run-state.ts";
 
+export type EndNotice = z.output<typeof EndNoticeResult>;
+
+export const EndNoticeRequest = z.object({
+  id: z.string(),
+  ticket: z.string(),
+  dispatcher: z.string().nullable(),
+  address: z.string().nullable(),
+  startedAt: z.string(),
+  endedAt: z.string(),
+  outcome: z.string(),
+  resultPath: z.string().nullable(),
+  verifyExits: z.array(z.number()),
+  parentPid: z.number().int().positive(),
+});
+
+export type EndNoticeRequest = z.output<typeof EndNoticeRequest>;
+
+const noticeDeadlineMs = 1_200;
+const noticeGuardMs = 1_600;
+const parentWaitLimitMs = 3_000;
 const receiptLimit = 4_000;
 
-export async function sendEndNotice(input: {
-  id: string;
-  ticket: string;
-  dispatcher: string | null;
-  startedAt: string;
-  endedAt: string;
-  outcome: string;
-  resultPath: string | null;
-  verifyExits: number[];
-  env?: NodeJS.ProcessEnv;
-}): Promise<EndNotice> {
-  if (input.dispatcher === null || input.dispatcher.trim() === "")
-    return { exit: null, receipt: "skipped: no dispatcher session" };
-  const dispatcher = input.dispatcher;
+const pending: EndNotice = {
+  status: "pending",
+  exit: null,
+  receipt: "scheduled after run completion",
+};
+
+function targetFor(input: Pick<EndNoticeRequest, "dispatcher" | "address">) {
+  const target = input.address ?? input.dispatcher;
+  return target === null || target.trim() === "" ? null : target;
+}
+
+/** Queue the notice worker without keeping this run alive. */
+export function scheduleEndNotice(
+  input: Omit<EndNoticeRequest, "parentPid"> & { env?: NodeJS.ProcessEnv },
+  workerCommand: string[] = selfCommand(),
+): EndNotice {
+  const { env, ...request } = input;
+  if (targetFor(input) === null)
+    return {
+      status: "skipped",
+      exit: null,
+      receipt: "skipped: no dispatcher session",
+    };
+  try {
+    const child = Bun.spawn(
+      [
+        ...workerCommand,
+        "--internal-end-notice",
+        JSON.stringify({ ...request, parentPid: process.pid }),
+      ],
+      {
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "ignore",
+        detached: true,
+        env: {
+          ...process.env,
+          ...env,
+          AGX_RUN_ID: input.id,
+        },
+      },
+    );
+    child.unref();
+    return pending;
+  } catch (error) {
+    return {
+      status: "unreachable",
+      exit: 127,
+      receipt: `could not start notice worker: ${String(error).slice(0, receiptLimit)}`,
+    };
+  }
+}
+
+async function waitForParentExit(parentPid: number): Promise<void> {
+  const deadline = performance.now() + parentWaitLimitMs;
+  while (performance.now() < deadline) {
+    try {
+      process.kill(parentPid, 0);
+    } catch {
+      return;
+    }
+    await Bun.sleep(20);
+  }
+}
+
+async function sendEndNotice(
+  input: EndNoticeRequest,
+  env: NodeJS.ProcessEnv,
+): Promise<EndNotice> {
+  const target = targetFor(input);
+  if (target === null)
+    return {
+      status: "skipped",
+      exit: null,
+      receipt: "skipped: no dispatcher session",
+    };
   const elapsedMs = Math.max(
     0,
     Temporal.Instant.from(input.endedAt)
@@ -29,46 +111,85 @@ export async function sendEndNotice(input: {
     `agx run ${input.id.slice(0, 8)} ${input.ticket} ended ${input.outcome} ` +
     `after ${(elapsedMs / 60_000).toFixed(1)} min; result: ${input.resultPath ?? "none"}; ` +
     `verify: ${input.verifyExits.length === 0 ? "not run" : input.verifyExits.join(",")}`;
-  const path = input.env?.PATH ?? process.env.PATH;
+  const path = env.PATH;
   const executable =
     path === undefined ? Bun.which("agx") : Bun.which("agx", { PATH: path });
   if (executable === null)
-    return { exit: 127, receipt: "agx executable not found on PATH" };
+    return {
+      status: "unreachable",
+      exit: 127,
+      receipt: "agx executable not found on PATH",
+    };
 
-  return Promise.try(async () => {
+  const signal = AbortSignal.timeout(noticeGuardMs);
+  try {
     const child = Bun.spawn(
-      [executable, "msg", "send", "--to", dispatcher, "--message", message],
+      [
+        executable,
+        "msg",
+        "send",
+        "--to",
+        target,
+        ...(input.address === null ? [] : ["--exact"]),
+        "--message",
+        message,
+        "--timeout-ms",
+        String(noticeDeadlineMs),
+      ],
       {
         stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",
-        env: { ...process.env, ...input.env, AGX_RUN_ID: input.id },
-        timeout: 15_000,
+        env: { ...process.env, ...env, AGX_RUN_ID: input.id },
+        signal,
         killSignal: "SIGKILL",
       },
     );
-    const stdout =
+    const [exit, stdout, stderr] = await Promise.all([
+      child.exited,
       child.stdout === null
         ? Promise.resolve("")
-        : new Response(child.stdout).text();
-    const stderr =
+        : new Response(child.stdout).text(),
       child.stderr === null
         ? Promise.resolve("")
-        : new Response(child.stderr).text();
-    const processExit = await child.exited;
-    const output = `${await stdout}${await stderr}`.trim();
+        : new Response(child.stderr).text(),
+    ]);
+    const output = `${stdout}${stderr}`.trim().slice(-receiptLimit);
+    if (signal.aborted || exit === 4)
+      return {
+        status: "deadline",
+        exit: exit === 4 ? exit : 4,
+        receipt:
+          output || `notice deadline exceeded after ${noticeDeadlineMs} ms`,
+      };
+    if (exit === 0)
+      return {
+        status: "accepted",
+        exit,
+        receipt: output || "agx msg send accepted",
+      };
     return {
-      exit: child.exitCode ?? (child.signalCode === null ? processExit : 128),
-      receipt:
-        output === ""
-          ? `agx msg send exited ${processExit}`
-          : output.slice(-receiptLimit),
+      status: "unreachable",
+      exit,
+      receipt: output || `agx msg send exited ${exit}`,
     };
-  }).then(
-    (notice) => notice,
-    (error: unknown) => ({
+  } catch (error) {
+    return {
+      status: "unreachable",
       exit: 1,
       receipt: `agx msg send failed: ${String(error).slice(0, receiptLimit)}`,
-    }),
-  );
+    };
+  }
+}
+
+/** Internal detached worker: deliver only after the run process has exited. */
+export async function completeEndNotice(
+  input: EndNoticeRequest,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<EndNotice> {
+  await waitForParentExit(input.parentPid);
+  const notice = await sendEndNotice(input, env);
+  append({ kind: "end-notice", id: input.id, at: now(), notice });
+  await flushRunPublications();
+  return notice;
 }
