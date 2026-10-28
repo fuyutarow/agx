@@ -61,6 +61,7 @@ const Config = z.strictObject({
   verify: VerifyConfig.optional(),
 });
 const ConfigEnvelope = z.record(z.string(), z.unknown());
+const TomlDate = z.date();
 const LocalConfig = z.strictObject({
   schema: z.literal(1),
   tickets: z.string().trim().min(1).optional(),
@@ -84,8 +85,13 @@ export function normalizeTomlIntegers(value: unknown): unknown {
     const number = Number(value);
     return Number.isSafeInteger(number) ? number : value;
   }
-  if (Array.isArray(value)) return value.map(normalizeTomlIntegers);
-  if (value === null || typeof value !== "object" || value instanceof Date)
+  if (Array.isArray(value))
+    return value.map((entry) => normalizeTomlIntegers(entry));
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    TomlDate.safeParse(value).success
+  )
     return value;
   return Object.fromEntries(
     Object.entries(value).map(([key, entry]) => [
@@ -104,19 +110,19 @@ const failure = (message: string) => ({
 });
 const good = <T>(value: T) => ({ ok: true as const, value });
 const configValue = (value: unknown): string =>
-  JSON.stringify(value, (_, item) =>
+  JSON.stringify(value, (_key, item: unknown) =>
     typeof item === "bigint" ? `${item}n` : item,
   ) ?? String(value);
 const configIssueMessage = (error: z.ZodError): string =>
   error.issues
-    .flatMap((issue) =>
-      issue.code === "unrecognized_keys"
-        ? issue.keys.map(
-            (key) =>
-              `${[...issue.path, key].map(String).join(".")}: unknown key`,
-          )
-        : [`${issue.path.map(String).join(".") || "config"}: ${issue.message}`],
-    )
+    .flatMap((issue) => {
+      if (issue.code === "unrecognized_keys")
+        return issue.keys.map(
+          (key) => `${[...issue.path, key].map(String).join(".")}: unknown key`,
+        );
+      const path = issue.path.map(String).join(".");
+      return [`${path === "" ? "config" : path}: ${issue.message}`];
+    })
     .join("; ");
 type Vcs = "jj" | "git" | "none";
 type CommittedPolicy =
