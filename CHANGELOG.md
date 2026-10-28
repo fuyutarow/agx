@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.21.1 — 2026-10-28
+
+- Refresh Terra roster to GPT-6.1 Terra
+- Resolve bare worker ticket names from the declared repository home
+
 ## 1.21.0 — 2026-10-28
 
 - Use an untracked default-workspace agx.toml when trunk has none and report its source
