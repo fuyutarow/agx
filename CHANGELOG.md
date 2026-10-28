@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.21.6 — 2026-10-28
+
+- Continue runs when their roster row is retired, preserving the workspace and recording both rows.
+
 ## 1.21.5 — 2026-10-28
 
 - Re-land bounded run-end notice with legacy record decoding
