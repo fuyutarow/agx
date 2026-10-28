@@ -15,7 +15,7 @@ import { basename, join } from "node:path";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { createTempTracker } from "../temp.ts";
 import { earlyQuitRows, systemdUnitName } from "../../src/next/run.ts";
-import { foldedRuns } from "../../src/next/store.ts";
+import { append, foldedRuns, now } from "../../src/next/store.ts";
 import { VerifyResult } from "../../src/next/verify.ts";
 import { loadRoster } from "../../src/roster/index.ts";
 
@@ -43,6 +43,125 @@ const scratch = async (prefix: string): Promise<string> => {
 };
 
 describe("agx-worker run", () => {
+  test("dispatch contract: a Jev missing_input reply is recorded as refused with its reason", async () => {
+    const root = await scratch("missing-input-");
+    const state = join(root, "state");
+    const ticket = join(root, "ticket.md");
+    const reason = "verify requires $AGX_RUN_DIR/parity.tsv";
+    const binding = {
+      id: "00000000-0000-4000-8000-000000000001",
+      ticket: "missing-input",
+      workspace: root,
+      unit: "agt_missing-input",
+    };
+    append(
+      {
+        kind: "dispatching",
+        id: binding.id,
+        at: now(),
+        ticket: binding.ticket,
+        writes: [],
+        cwd: root,
+        workspace: root,
+        worker_name: binding.unit,
+        unit: binding.unit,
+        dispatcher_session: null,
+        vendor_session: null,
+        pid: process.pid,
+        ticket_path: ticket,
+      },
+      state,
+    );
+    writeFileSync(
+      ticket,
+      `+++\nschema = 2\nname = "missing-input"\nwrites = []\noutcome = "fixture refusal"\nverify = ["test -s $AGX_RUN_DIR/parity.tsv"]\n[proposition]\nid = "MISSING-INPUT"\nclaim = "missing input is named"\nrefuted_by = "refusal omits its reason"\n+++\n`,
+    );
+    const jevFile = join(root, "fake-jev.ts");
+    const probe = Bun.serve({ port: 0, fetch: () => new Response() });
+    const jevPort = probe.port;
+    await probe.stop(true);
+    writeFileSync(
+      jevFile,
+      `Bun.serve({ hostname: "127.0.0.1", port: ${jevPort}, fetch: () => Response.json({ answers: { worker: { choice: "missing_input", reason_code: ${JSON.stringify(reason)} } } }) });\n`,
+    );
+    const jev = Bun.spawn([process.execPath, jevFile], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    servers.push(jev);
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      if (
+        (await fetch(`http://127.0.0.1:${jevPort}/health`).catch(
+          () => null,
+        )) !== null
+      )
+        break;
+      await Bun.sleep(25);
+    }
+    const commandBin = join(root, "bin");
+    mkdirSync(commandBin);
+    const mise = join(commandBin, "mise");
+    writeFileSync(mise, '#!/usr/bin/env bun\nconsole.log("{}");\n');
+    chmodSync(mise, 0o755);
+    const env = {
+      ...process.env,
+      PATH: `${commandBin}:${process.env.PATH}`,
+      AGX_STATE_DIR: state,
+      AGX_TMP_ROOT: join(root, "agx-tmp"),
+      JEV_URL: `http://127.0.0.1:${jevPort}/choice`,
+      TYPESAFE_API_KEY: "test-key",
+      AGX_CONFIG: new URL(
+        "../../src/roster/policy.example.toml",
+        import.meta.url,
+      ).pathname,
+      XDG_CONFIG_HOME: join(root, "config"),
+    };
+    const result = Bun.spawnSync(
+      [
+        process.execPath,
+        "tools/agx-worker/src/next/cli.ts",
+        "run",
+        ticket,
+        "--cd",
+        root,
+        "--dispatch-binding",
+        JSON.stringify(binding),
+      ],
+      { cwd: process.cwd(), env, timeout: 10_000 },
+    );
+    expect(result.exitCode, result.stderr.toString()).toBe(2);
+    expect(result.stderr.toString()).toContain(reason);
+    const parsedRecords = jsonOf(
+      z.array(z.record(z.string(), z.unknown())),
+    ).safeParse(
+      `[${readFileSync(join(state, "records.jsonl"), "utf8")
+        .trim()
+        .split("\n")
+        .join(",")}]`,
+    );
+    expect(parsedRecords.success).toBe(true);
+    if (!parsedRecords.success) return;
+    const records = parsedRecords.data;
+    expect(
+      records.some(
+        (record) =>
+          record.kind === "refusal" && JSON.stringify(record).includes(reason),
+      ),
+    ).toBe(true);
+    expect(
+      (await foldedRuns(state)).find((run) => run.id === binding.id),
+    ).toMatchObject({ state: "ended", outcome: "refused", row: "dispatching" });
+    expect(
+      records.some(
+        (record) =>
+          record.kind === "ended" &&
+          record.id === binding.id &&
+          record.outcome === "refused",
+      ),
+    ).toBe(true);
+    expect(records.some((record) => record.kind === "started")).toBe(false);
+  });
+
   test.each(["passed", "failed", "absent", "missing-result"])(
     "real run orders and records verify.always: %s",
     async (mode) => {

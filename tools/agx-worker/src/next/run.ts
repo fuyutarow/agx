@@ -457,8 +457,21 @@ export async function run(flags: Flags): Promise<number> {
     return fatal("ticket time box expired before worker startup", 124);
   if (selectedRoute.kind === "exhausted")
     return fatal("no roster row satisfies the ticket's requirements", 2);
-  if (selectedRoute.kind === "refused")
+  if (selectedRoute.kind === "refused") {
+    recordRefusal(path, cwd, bytes, [selectedRoute.message.trimEnd()]);
+    if (binding !== undefined)
+      append({
+        kind: "ended",
+        id: binding.id,
+        at: now(),
+        exit: selectedRoute.exitCode,
+        outcome: "refused",
+        report_path: null,
+        vendor_session: resumeSession ?? null,
+        verify: [],
+      });
     return fatal(selectedRoute.message, selectedRoute.exitCode);
+  }
   const row = selectedRoute.row;
   let activeRow = row;
   const attemptedRows = [row.id];

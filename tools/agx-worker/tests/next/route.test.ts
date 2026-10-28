@@ -210,6 +210,9 @@ function startServer(
         answers: {
           worker: {
             choice: wireChoice,
+            ...(choice === "missing_input"
+              ? { reason_code: "verify requires $AGX_RUN_DIR/parity.tsv" }
+              : {}),
             ...(wireProbabilities === undefined
               ? {}
               : { probabilities: wireProbabilities }),
@@ -1209,53 +1212,67 @@ for (const reason of [
   "contradiction",
   "missing_input",
 ]) {
-  test(`return ${reason} exits 2, records the answer and never reaches worker startup`, async () => {
-    const { root } = await isolateState();
-    const server = startServer(reason, { [reason]: 1, model_0: 0 });
-    const child = Bun.spawn(
-      [
-        process.execPath,
-        "--eval",
-        `import {route} from ${JSON.stringify(new URL("../../src/next/route.ts", import.meta.url).pathname)}; await route("return fixture"); await Bun.write(${JSON.stringify(join(root, "worker-started"))}, "started");`,
-      ],
-      {
-        env: { ...process.env, TYPESAFE_API_KEY: "routing-fixture-secret" },
-        stdout: "pipe",
-        stderr: "pipe",
-        timeout: 5000,
-      },
-    );
-    const [exit, stdout, stderr] = await Promise.all([
-      child.exited,
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-    ]);
-    expect(exit).toBe(2);
-    expect(stdout).toBe("");
-    expect(stderr).toContain(`ticket returned: ${reason}`);
-    expect(stderr).toContain("Fix:");
-    expect(await Bun.file(join(root, "worker-started")).exists()).toBe(false);
-    expect(server.calls()).toBe(1);
-    const parsedRecord = jsonOf(
-      z.object({
-        reason: z.string(),
-        pick_audit: z.object({
-          answer: z.object({ choice: z.string() }),
-          probabilities: z.record(z.string(), z.number()),
-          anonymization_map: z.record(z.string(), z.string()),
+  test(
+    reason === "missing_input"
+      ? "dispatch contract: a Jev missing_input reply is recorded as refused with its reason"
+      : `return ${reason} exits 2, records the answer and never reaches worker startup`,
+    async () => {
+      const { root } = await isolateState();
+      const server = startServer(reason, { [reason]: 1, model_0: 0 });
+      const child = Bun.spawn(
+        [
+          process.execPath,
+          "--eval",
+          `import {route} from ${JSON.stringify(new URL("../../src/next/route.ts", import.meta.url).pathname)}; await route("return fixture"); await Bun.write(${JSON.stringify(join(root, "worker-started"))}, "started");`,
+        ],
+        {
+          env: { ...process.env, TYPESAFE_API_KEY: "routing-fixture-secret" },
+          stdout: "pipe",
+          stderr: "pipe",
+          timeout: 5000,
+        },
+      );
+      const [exit, stdout, stderr] = await Promise.all([
+        child.exited,
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+      ]);
+      expect(exit).toBe(2);
+      expect(stdout).toBe("");
+      expect(stderr).toContain(`ticket returned: ${reason}`);
+      if (reason === "missing_input")
+        expect(stderr).toContain(
+          "ticket returned: missing_input: verify requires $AGX_RUN_DIR/parity.tsv",
+        );
+      else expect(stderr).toContain("Fix:");
+      expect(await Bun.file(join(root, "worker-started")).exists()).toBe(false);
+      expect(server.calls()).toBe(1);
+      const parsedRecord = jsonOf(
+        z.object({
+          reason: z.string(),
+          reason_detail: z.string().optional(),
+          pick_audit: z.object({
+            answer: z.object({ choice: z.string() }),
+            probabilities: z.record(z.string(), z.number()),
+            anonymization_map: z.record(z.string(), z.string()),
+          }),
         }),
-      }),
-    ).safeParse(
-      await readFile(join(root, "state", "routing-refusals.jsonl"), "utf8"),
-    );
-    expect(parsedRecord.success).toBe(true);
-    if (!parsedRecord.success) return;
-    const record = parsedRecord.data;
-    expect(record.reason).toBe(reason);
-    expect(record.pick_audit.answer.choice).toBe(reason);
-    expect(record.pick_audit.probabilities[reason]).toBe(1);
-    expect(record.pick_audit.anonymization_map.model_0).toBeDefined();
-  });
+      ).safeParse(
+        await readFile(join(root, "state", "routing-refusals.jsonl"), "utf8"),
+      );
+      expect(parsedRecord.success).toBe(true);
+      if (!parsedRecord.success) return;
+      const record = parsedRecord.data;
+      expect(record.reason).toBe(reason);
+      if (reason === "missing_input")
+        expect(record.reason_detail).toBe(
+          "verify requires $AGX_RUN_DIR/parity.tsv",
+        );
+      expect(record.pick_audit.answer.choice).toBe(reason);
+      expect(record.pick_audit.probabilities[reason]).toBe(1);
+      expect(record.pick_audit.anonymization_map.model_0).toBeDefined();
+    },
+  );
 }
 
 test("missing worker answer uses the default and records the missing-answer fallback", async () => {

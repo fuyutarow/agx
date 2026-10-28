@@ -616,13 +616,19 @@ export async function route(
     recordRoutingRefusal({
       ticket: brief,
       reason: reason.data,
+      ...(answer?.reason_code === undefined
+        ? {}
+        : { reason_detail: answer.reason_code }),
       ...(probabilities?.[reason.data] === undefined
         ? {}
         : { probability: probabilities[reason.data] }),
       pick_audit: pickAudit("jev-return", probabilities),
     });
+    const detail = answer?.reason_code;
     return refuse(
-      `agx: ticket returned: ${reason.data}: ${returns[reason.data].criterion} Fix: ${returns[reason.data].fix}\n`,
+      detail === undefined
+        ? `agx: ticket returned: ${reason.data}: ${returns[reason.data].criterion} Fix: ${returns[reason.data].fix}\n`
+        : `agx: ticket returned: ${reason.data}: ${detail}\n`,
       2,
     );
   }
