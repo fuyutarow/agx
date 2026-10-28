@@ -22,6 +22,11 @@ import {
   recordRoutingRefusal,
 } from "./routing-events.ts";
 
+// AA publishes mean decode times: luna-max averages 597s in a 600s box,
+// and the owner's incident had all 101 timeouts on luna-max. Reserve margin
+// for task variation and overhead instead of admitting a mean near the deadline.
+const PUBLISHED_TASK_DURATION_BUDGET_RATIO = 0.6;
+
 const Reply = z.looseObject({
   answers: z.record(
     z.string(),
@@ -314,12 +319,42 @@ export async function route(
     removed: [],
   });
   const usage = await readRouteUsage(undefined, exhaustionPolicy(roster.auto));
-  const candidates = filter(
+  const availableCandidates = filter(
     eligible,
     "route unavailable",
     (row) => usage[row.route].available,
     (row) => usage[row.route],
   );
+  const durationBudgetS = timeoutS * PUBLISHED_TASK_DURATION_BUDGET_RATIO;
+  let candidates = filter(
+    availableCandidates,
+    "published duration exceeds time box",
+    (row) =>
+      row.aa_time_per_task_s === undefined ||
+      row.aa_time_per_task_s <= durationBudgetS,
+    (row) => ({
+      aa_time_per_task_s: row.aa_time_per_task_s,
+      timeout_s: timeoutS,
+    }),
+  );
+  if (candidates.length === 0 && availableCandidates.length > 0) {
+    const shortestDurationS = Math.min(
+      ...availableCandidates.flatMap((row) => row.aa_time_per_task_s ?? []),
+    );
+    // Relax only the duration budget; policy, capability, mask and route
+    // availability must still hold. Retain every tie for the shortest duration.
+    candidates = filter(
+      availableCandidates,
+      "published duration bound relaxed to shortest rows",
+      (row) => row.aa_time_per_task_s === shortestDurationS,
+    );
+    audit.duration_bound_relaxed = {
+      timeout_s: timeoutS,
+      budget_s: durationBudgetS,
+      shortest_published_duration_s: shortestDurationS,
+      offered_rows: candidates.map((row) => row.id),
+    };
+  }
   audit.filters = filters;
   audit.usage_snapshot = usage;
   if (candidates.length === 0 && eligible.length === 0 && options !== undefined)
@@ -400,6 +435,15 @@ export async function route(
   const request: Record<string, unknown> = {
     state: {
       task: brief.slice(0, Math.min(roster.auto.max_task_chars, 2400)),
+      published_task_metrics: Object.fromEntries(
+        candidates.map((row, index) => [
+          `model_${index}`,
+          {
+            aa_cost_per_task_usd: row.aa_cost_per_task_usd ?? null,
+            aa_time_per_task_s: row.aa_time_per_task_s ?? null,
+          },
+        ]),
+      ),
       routes: Object.fromEntries(
         Object.entries(usage).map(([name, value]) => [
           name,

@@ -18,6 +18,8 @@ const ChoiceSchema = z.strictObject({
   aa_index: z.number().optional(),
   aa_cost_to_run_usd: z.number().positive().optional(),
   aa_tokens_to_run_m: z.number().positive().optional(),
+  aa_cost_per_task_usd: z.number().positive().optional(),
+  aa_time_per_task_s: z.number().positive().optional(),
   tb4: z.number().optional(),
   tb4_source: z.url().optional(),
   scicode: z.number().optional(),

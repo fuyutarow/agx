@@ -32,12 +32,22 @@ const hasTaskCostData = (r: Roster): boolean =>
   r.as_of_cost !== undefined ||
   r.choice.some(
     (row) =>
+      row.aa_cost_per_task_usd !== undefined ||
       row.aa_cost_to_run_usd !== undefined ||
       row.aa_tokens_to_run_m !== undefined,
   );
 
-/** Uses fixed-workload cost when cataloged; legacy catalogs retain per-token multiples. */
+/** Uses published per-task cost; older catalogs retain their original cost basis. */
 export function costMultiple(r: Roster, c: Choice): number | undefined {
+  const perTaskCosts = r.choice.flatMap((row) =>
+    row.aa_cost_per_task_usd === undefined ? [] : [row.aa_cost_per_task_usd],
+  );
+  if (perTaskCosts.length > 0) {
+    if (c.aa_cost_per_task_usd === undefined) return undefined;
+    return (
+      Math.round((c.aa_cost_per_task_usd / Math.min(...perTaskCosts)) * 10) / 10
+    );
+  }
   const taskCosts = r.choice.flatMap((row) =>
     row.aa_cost_to_run_usd === undefined ? [] : [row.aa_cost_to_run_usd],
   );

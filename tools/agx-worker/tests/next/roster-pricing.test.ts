@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
+import { loadRoster } from "../../src/roster/index.ts";
 
 const PricingProjection = z.looseObject({
   schema: z.literal(1),
@@ -23,6 +24,10 @@ const PricingProjection = z.looseObject({
       price_in: z.number().optional(),
       price_cached_in: z.number().optional(),
       price_out: z.number().optional(),
+      aa_cost_to_run_usd: z.number().optional(),
+      aa_tokens_to_run_m: z.number().optional(),
+      aa_cost_per_task_usd: z.number().optional(),
+      aa_time_per_task_s: z.number().optional(),
     }),
   ),
 });
@@ -71,6 +76,10 @@ test("roster --json publishes pricing with missing prices omitted on a fixture",
     price_in: 0.1,
     price_cached_in: 0.01,
     price_out: 0.5,
+    aa_cost_to_run_usd: 62.575047245754845,
+    aa_tokens_to_run_m: 40.451607,
+    aa_cost_per_task_usd: 0.07294776473194697,
+    aa_time_per_task_s: 269.2430350741027,
   });
   // The fixture uses the shipped catalog: this Claude row has no cached price,
   // and remains exported even though automatic routing allows only codex.
@@ -81,7 +90,39 @@ test("roster --json publishes pricing with missing prices omitted on a fixture",
     price_out: 10,
   });
   expect(missing).not.toHaveProperty("price_cached_in");
+  expect(missing).not.toHaveProperty("aa_cost_per_task_usd");
+  expect(missing).not.toHaveProperty("aa_time_per_task_s");
+  expect(
+    roster.choice.find((row) => row.id === "luna-medium"),
+  ).not.toHaveProperty("aa_time_per_task_s");
   expect(roster.choice.some((row) => row.id === "luna-low")).toBe(false);
   expect(roster.choice.some((row) => row.id === "sol6-high")).toBe(false);
   expect(roster).not.toHaveProperty("exclude");
+});
+
+test("roster rejects nonpositive published per-task measurements", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agx-roster-task-metrics-"));
+  roots.push(root);
+  const catalogPath = join(root, "catalog.toml");
+  const catalog = await Bun.file(
+    new URL("../../src/roster/catalog.toml", import.meta.url),
+  ).text();
+  for (const field of ["aa_cost_per_task_usd", "aa_time_per_task_s"])
+    for (const invalid of [0, -1]) {
+      await Bun.write(
+        catalogPath,
+        catalog.replace(
+          new RegExp(`^${field} = .*`, "mu"),
+          `${field} = ${invalid}`,
+        ),
+      );
+      const loaded = await loadRoster({
+        catalogPath,
+        policyPath: new URL("./fixtures/roster-pricing.toml", import.meta.url)
+          .pathname,
+      });
+      expect(loaded.ok).toBe(false);
+      if (loaded.ok) expect.unreachable(`accepted ${field} = ${invalid}`);
+      expect(loaded.error).toContain(field);
+    }
 });

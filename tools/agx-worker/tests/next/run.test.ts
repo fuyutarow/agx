@@ -17,6 +17,7 @@ import { createTempTracker } from "../temp.ts";
 import { earlyQuitRows, systemdUnitName } from "../../src/next/run.ts";
 import { foldedRuns } from "../../src/next/store.ts";
 import { VerifyResult } from "../../src/next/verify.ts";
+import { loadRoster } from "../../src/roster/index.ts";
 
 const tempDirs = createTempTracker();
 const registerTempDir = tempDirs.register;
@@ -416,6 +417,27 @@ describe("agx-worker run", () => {
     const mise = join(commandBin, "mise");
     writeFileSync(mise, '#!/usr/bin/env bun\nconsole.log("{}");\n');
     chmodSync(mise, 0o755);
+    // Keep the fixed first target and every identity assertion. Slower rows
+    // remain available for subsequent invocations that mask early-quit rows.
+    const policyExample = new URL(
+      "../../src/roster/policy.example.toml",
+      import.meta.url,
+    );
+    const roster = await loadRoster({ policyPath: policyExample.pathname });
+    if (!roster.ok) expect.unreachable(roster.error);
+    const targetDuration = roster.value.choice.find(
+      (row) => row.id === "luna-high",
+    )?.aa_time_per_task_s;
+    if (targetDuration === undefined)
+      expect.unreachable("dispatch fixture target needs a published duration");
+    const policyPath = join(root, "routing-policy.toml");
+    writeFileSync(
+      policyPath,
+      readFileSync(policyExample, "utf8").replace(
+        "exclude = []",
+        `exclude = ${JSON.stringify(roster.value.choice.filter((row) => row.aa_time_per_task_s === undefined || row.aa_time_per_task_s < targetDuration).map((row) => row.id))}`,
+      ),
+    );
     const workerEnv = {
       ...process.env,
       PATH: `${commandBin}:${process.env.PATH}`,
@@ -425,10 +447,7 @@ describe("agx-worker run", () => {
       JEV_URL: `http://127.0.0.1:${jevPort}/choice`,
       AGX_WORKER_BIN: worker,
       TYPESAFE_API_KEY: "test-key",
-      AGX_CONFIG: new URL(
-        "../../src/roster/policy.example.toml",
-        import.meta.url,
-      ).pathname,
+      AGX_CONFIG: policyPath,
       AGX_DISPATCHER_SESSION: "",
       AGX_RUN_ID: "inherited-run",
       CLAUDE_CODE_SESSION_ID: "claude-session",
@@ -611,7 +630,7 @@ describe("agx-worker run", () => {
         timeout: 10_000,
       },
     );
-    expect(lateRun.exitCode).toBe(0);
+    expect(lateRun.exitCode, lateRun.stderr.toString()).toBe(0);
     const lateRecordsResult = jsonOf(
       z.array(
         z.looseObject({

@@ -27,6 +27,13 @@ import { prepareTicketRepo } from "../ticket-repo.ts";
 const RoutingRequest = z.looseObject({
   state: z.looseObject({
     task: z.string(),
+    published_task_metrics: z.record(
+      z.string(),
+      z.object({
+        aa_cost_per_task_usd: z.number().nullable(),
+        aa_time_per_task_s: z.number().nullable(),
+      }),
+    ),
     routes: z.looseObject({
       claude: z.looseObject({
         available: z.boolean(),
@@ -589,6 +596,195 @@ describe("capability constrained routing", () => {
     expect(criteria?.["luna-high"]).not.toBe(criteria?.["luna-max"]);
   });
 
+  test("route contract: a higher effort carries its higher published per-task cost and duration in the Jev request", async () => {
+    await isolateState();
+    const loaded = await loadRoster();
+    if (!loaded.ok) expect.unreachable(loaded.error);
+    const server = startServer("luna-high");
+    await route("published per-task measurements", [], 3600);
+    const request = server.rawRequest();
+    if (request === undefined) expect.unreachable("missing Jev request");
+    const ids = server.wireIds();
+    const metrics = request.state.published_task_metrics;
+    expect(Object.keys(metrics)).toEqual(
+      Object.keys(request.questions.worker.criteria).filter((id) =>
+        id.startsWith("model_"),
+      ),
+    );
+    ["luna", "terra", "sol", "astra"].forEach((family) => {
+      let previousCost = 0;
+      let previousDuration = 0;
+      for (const effort of ["low", "medium", "high", "xhigh", "max"]) {
+        const row = loaded.value.choice.find(
+          (choice) => choice.id === `${family}-${effort}`,
+        );
+        const id = ids[`${family}-${effort}`];
+        if (row === undefined || id === undefined)
+          expect.unreachable(`missing ${family}-${effort}`);
+        const cost = row.aa_cost_per_task_usd;
+        if (cost === undefined)
+          expect.unreachable(`missing cost for ${row.id}`);
+        expect(metrics[id]).toEqual({
+          aa_cost_per_task_usd: cost,
+          aa_time_per_task_s: row.aa_time_per_task_s ?? null,
+        });
+        expect(cost).toBeGreaterThan(previousCost);
+        previousCost = cost;
+        if (row.aa_time_per_task_s !== undefined) {
+          expect(row.aa_time_per_task_s).toBeGreaterThan(previousDuration);
+          previousDuration = row.aa_time_per_task_s;
+        }
+      }
+    });
+    expect(metrics[ids["luna-high"] ?? "missing"]).toEqual({
+      aa_cost_per_task_usd: 0.07294776473194697,
+      aa_time_per_task_s: 269.2430350741027,
+    });
+    expect(metrics[ids["luna-max"] ?? "missing"]).toEqual({
+      aa_cost_per_task_usd: 0.15195575732105837,
+      aa_time_per_task_s: 597.3140575781733,
+    });
+    expect(
+      metrics[ids["luna-medium"] ?? "missing"]?.aa_time_per_task_s,
+    ).toBeNull();
+    expect(server.request()?.questions.worker.criteria["luna-high"]).toContain(
+      "Multiple 14.3x cheapest costed row.",
+    );
+    expect(server.request()?.questions.worker.criteria["luna-max"]).toContain(
+      "Multiple 29.7x cheapest costed row.",
+    );
+  });
+
+  test("route contract: a row whose published duration exceeds the time box is not offered", async () => {
+    await isolateState();
+    const loaded = await loadRoster();
+    if (!loaded.ok) expect.unreachable(loaded.error);
+    const duration = loaded.value.choice.find(
+      (row) => row.id === "luna-high",
+    )?.aa_time_per_task_s;
+    if (duration === undefined)
+      expect.unreachable("missing published duration");
+    // A 600s ticket has a 360s published-duration budget. Even a Jev reply
+    // naming the excluded row cannot bypass the filter.
+    const server = startServer("luna-max", { "luna-max": 1 });
+    expect((await route("time-box margin", [], 600)).id).toBe("luna-high");
+    const request = server.rawRequest();
+    if (request === undefined) expect.unreachable("missing Jev request");
+    expect(request.state.task_size.timeout_s).toBe(600);
+    expect(server.wireIds()["luna-high"]).toBeDefined();
+    expect(server.wireIds()["luna-xhigh"]).toBeDefined();
+    expect(server.wireIds()["luna-max"]).toBeUndefined();
+    expect(server.wireIds()["luna-medium"]).toBeDefined();
+    for (const metric of Object.values(request.state.published_task_metrics))
+      if (metric.aa_time_per_task_s !== null)
+        expect(metric.aa_time_per_task_s).toBeLessThanOrEqual(360);
+    const filters = z
+      .array(z.object({ reason: z.string(), removed: z.array(z.unknown()) }))
+      .safeParse(routingEvents().events.at(-1)?.audit?.filters);
+    if (!filters.success) expect.unreachable("missing routing filter audit");
+    expect(
+      filters.data.find(
+        (filter) => filter.reason === "published duration exceeds time box",
+      )?.removed,
+    ).toContainEqual({
+      row: "luna-max",
+      detail: {
+        aa_time_per_task_s: 597.3140575781733,
+        timeout_s: 600,
+      },
+    });
+    // Equality at 60% fits. Just below it, the default is filtered as well;
+    // fallback must choose a remaining row.
+    const boundary = startServer("luna-high", { "luna-high": 1 });
+    expect((await route("exact margin boundary", [], duration / 0.6)).id).toBe(
+      "luna-high",
+    );
+    expect(boundary.wireIds()["luna-high"]).toBeDefined();
+    const shorter = startServer("luna-high", { "luna-high": 1 });
+    expect(
+      (await route("below boundary", [], duration / 0.6 - 0.0001)).id,
+    ).toBe("luna-low");
+    expect(shorter.wireIds()["luna-high"]).toBeUndefined();
+    // Max remains available when its published duration fits with margin.
+    const longer = startServer("luna-max", { "luna-max": 1 });
+    expect((await route("max fits with margin", [], 1000)).id).toBe("luna-max");
+    expect(longer.wireIds()["luna-max"]).toBeDefined();
+  });
+
+  test("route contract: criteria contain no effort-preference prose", async () => {
+    await isolateState();
+    const server = startServer("luna-high");
+    await route("quantitative criteria", [], 3600);
+    const request = server.rawRequest();
+    if (request === undefined) expect.unreachable("missing Jev request");
+    const criteria = Object.entries(request.questions.worker.criteria).filter(
+      ([id]) => id.startsWith("model_"),
+    );
+    expect(criteria.length).toBeGreaterThan(0);
+    for (const [, text] of criteria)
+      expect(text).not.toMatch(
+        /\b(?:effort|setting|low|medium|high|xhigh|max|prefer|avoid|choose|select|reserve|recommend|suitable|ideal|best|overkill|simpler|harder)\b/iu,
+      );
+  });
+
+  test("route contract: a time box shorter than every published duration still offers the shortest rows", async () => {
+    const { root } = await isolateState();
+    const policy = join(root, "roster.toml");
+    await writeFile(
+      policy,
+      (await readFile(policy, "utf8")).replace(
+        "[route]",
+        '[route]\nallow = ["codex"]',
+      ),
+    );
+    const catalogPath = join(root, "catalog.toml");
+    // A synthetic tied row proves that relaxation preserves all shortest ties.
+    await writeFile(
+      catalogPath,
+      `${await readFile(catalogPath, "utf8")}\n[[choice]]\nid = "luna-tie"\nroute = "codex"\nmodel = "gpt-6-luna"\neffort = "low"\naa_time_per_task_s = 28.071421552452605\n`,
+    );
+    const server = startServer("luna-tie", { "luna-tie": 1 }, catalogPath);
+    const result = await route(
+      "no published duration fits",
+      [],
+      0.001,
+      ["luna-medium"],
+      { catalogPath },
+    );
+    expect(result.id).toBe("luna-tie");
+    expect(server.calls()).toBe(1);
+    expect(Object.keys(server.wireIds()).toSorted()).toEqual([
+      "luna-low",
+      "luna-tie",
+    ]);
+    expect(
+      routingEvents().events.at(-1)?.audit?.duration_bound_relaxed,
+    ).toEqual({
+      timeout_s: 0.001,
+      budget_s: 0.0006,
+      shortest_published_duration_s: 28.071421552452605,
+      offered_rows: ["luna-low", "luna-tie"],
+    });
+    const capable = startServer("sol-low", undefined, catalogPath);
+    expect(
+      (
+        await route("short but capable", ["long-tool-loop"], 0.001, [], {
+          catalogPath,
+        })
+      ).id,
+    ).toBe("sol-low");
+    expect(Object.keys(capable.wireIds())).toEqual(["sol-low"]);
+    // Unknown durations stay eligible without relaxing the bound.
+    const unknown = startServer("luna-medium", undefined, catalogPath);
+    expect(
+      (await route("unknown duration", [], 0.001, [], { catalogPath })).id,
+    ).toBe("luna-medium");
+    expect(Object.keys(unknown.wireIds())).toEqual(["luna-medium"]);
+    expect(routingEvents().events.at(-1)?.audit).not.toHaveProperty(
+      "duration_bound_relaxed",
+    );
+  });
+
   test("fresh Codex source survives consecutive picks and empty statusline publication", async () => {
     const { home } = await isolateState();
     const nowMs = Temporal.Now.instant().epochMilliseconds;
@@ -824,7 +1020,7 @@ describe("capability constrained routing", () => {
 test("fresh Sol 6.1 choice records the restored model and sourced criteria", async () => {
   await isolateState();
   const server = startServer("sol-high", { "sol-high": 1 });
-  const picked = await route("fresh generation probe");
+  const picked = await route("fresh generation probe", [], 1500);
   expect(picked).toMatchObject({ id: "sol-high", model: "gpt-6.1-sol" });
   const criteria = server.request()?.questions.worker.criteria ?? {};
   expect(
@@ -880,7 +1076,9 @@ for (const capability of ["terminal-agentic", "long-tool-loop"]) {
   test(`all restored Sol 6.1 efforts meet ${capability} eligibility`, async () => {
     await isolateState();
     const server = startServer("sol-xhigh", { "sol-xhigh": 1 });
-    expect((await route("terminal probe", [capability])).id).toBe("sol-xhigh");
+    expect((await route("terminal probe", [capability], 1500)).id).toBe(
+      "sol-xhigh",
+    );
     const criteria = server.request()?.questions.worker.criteria ?? {};
     expect(
       Object.keys(criteria)
@@ -948,7 +1146,7 @@ test("one raw Choice blinds the entire injected payload and preserves every crit
   const roster = loaded.value;
   const server = startServer("sol-medium", { "sol-medium": 1 });
   const task = "User task mentions sol-medium and high effort verbatim";
-  const selected = await route(task, ["sol-high", "xhigh"]);
+  const selected = await route(task, ["sol-high", "xhigh"], 1500);
   const request = server.rawRequest();
   expect(request).toBeDefined();
   if (request === undefined) return;
@@ -1141,7 +1339,7 @@ test("every shipped Jev option is readable and keeps its row measurements", asyn
 
   expect(texts).toHaveLength(rows.length);
   const quantitativeCriterion =
-    /^Route (?:codex|claude)\. (?:(?:AA|TB4|SciCode|CodingAgent) \d+(?:\.\d+)?%? \(Artificial Analysis, \d{4}-\d{2}-\d{2}\)(?:; (?:AA|TB4|SciCode|CodingAgent) \d+(?:\.\d+)?%? \(Artificial Analysis, \d{4}-\d{2}-\d{2}\))*|no published scores)\. Price (?:\$\d+(?:\.\d+)?|—)\/(?:\$\d+(?:\.\d+)?|—)\/(?:\$\d+(?:\.\d+)?|—) per 1M tokens in\/cache\/out\. Multiple (?:\d+(?:\.\d+)?|unknown)x cheapest row\.$/u;
+    /^Route (?:codex|claude)\. (?:(?:AA|TB4|SciCode|CodingAgent) \d+(?:\.\d+)?%? \(Artificial Analysis, \d{4}-\d{2}-\d{2}\)(?:; (?:AA|TB4|SciCode|CodingAgent) \d+(?:\.\d+)?%? \(Artificial Analysis, \d{4}-\d{2}-\d{2}\))*|no published scores)\. Price (?:\$\d+(?:\.\d+)?|—)\/(?:\$\d+(?:\.\d+)?|—)\/(?:\$\d+(?:\.\d+)?|—) per 1M tokens in\/cache\/out(?: \(per-token price only\))?\.(?: Cost to run AA index: \$\d+(?:\.\d+)? \(\d+(?:\.\d+)?M tokens, AA \d{4}-\d{2}-\d{2}\)\.)? Multiple (?:\d+(?:\.\d+)?|unknown)x cheapest costed row\.$/u;
   for (const text of texts) {
     expect(text).toMatch(quantitativeCriterion);
     expect(text).not.toMatch(
