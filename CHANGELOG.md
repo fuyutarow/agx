@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.21.0 — 2026-10-28
+
+- Use an untracked default-workspace agx.toml when trunk has none and report its source
+
 ## 1.20.8 — 2026-10-28
 
 - Workspace creation reports its policy revision and readiness commands.
