@@ -20,9 +20,7 @@ if (entrypoint === undefined) {
 } else {
   const entrypointCommand = command === "agx-msg" ? "xmsg" : command;
   Reflect.set(globalThis, "AGX_RELEASE_ENTRYPOINT", entrypointCommand);
-  try {
-    await entrypoint();
-  } finally {
+  await entrypoint().finally(() => {
     Reflect.deleteProperty(globalThis, "AGX_RELEASE_ENTRYPOINT");
-  }
+  });
 }

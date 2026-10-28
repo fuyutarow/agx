@@ -192,13 +192,22 @@ function isArchiveForVersion(name: string, version: string) {
 
 async function removeOtherVersionArchives(root: string, version: string) {
   const dist = join(root, "dist");
-  const entries = await readdir(dist, { withFileTypes: true }).catch(
-    (error: unknown) => {
-      if (error instanceof Error && "code" in error && error.code === "ENOENT")
-        return [];
-      throw error;
-    },
+  const listed = await fromPromise(
+    readdir(dist, { withFileTypes: true }),
+    (error: unknown) => error,
   );
+  if (listed.isErr()) {
+    const missing = z
+      .object({ code: z.literal("ENOENT") })
+      .safeParse(listed.error);
+    if (missing.success) return ok();
+    return err(
+      listed.error instanceof Error
+        ? listed.error.message
+        : String(listed.error),
+    );
+  }
+  const entries = listed.value;
   for (const entry of entries) {
     if (
       (!entry.isFile() && !entry.isSymbolicLink()) ||
@@ -206,8 +215,18 @@ async function removeOtherVersionArchives(root: string, version: string) {
       isArchiveForVersion(entry.name, version)
     )
       continue;
-    await rm(join(dist, entry.name), { force: true });
+    const removed = await fromPromise(
+      rm(join(dist, entry.name), { force: true }),
+      (error: unknown) => error,
+    );
+    if (removed.isErr())
+      return err(
+        removed.error instanceof Error
+          ? removed.error.message
+          : String(removed.error),
+      );
   }
+  return ok();
 }
 
 async function buildMember(
@@ -224,7 +243,8 @@ async function buildMember(
   const host = platform(target);
   if (host.isErr()) return host;
   const { dir, version, commands } = info.value;
-  await removeOtherVersionArchives(root, version);
+  const cleaned = await removeOtherVersionArchives(root, version);
+  if (cleaned.isErr()) return cleaned;
   const stage = join(root, "dist", pkg);
   const bin = suiteBin ?? join(stage, "bin");
   await rm(stage, { recursive: true, force: true });
@@ -284,7 +304,8 @@ async function buildSuite(
   const host = platform(target);
   if (host.isErr()) return host;
   const stage = join(root, "dist", "suite");
-  await removeOtherVersionArchives(root, suite.value.version);
+  const cleaned = await removeOtherVersionArchives(root, suite.value.version);
+  if (cleaned.isErr()) return cleaned;
   await rm(stage, { recursive: true, force: true });
   const bin = join(stage, "bin");
   await mkdir(bin, { recursive: true });
@@ -317,21 +338,9 @@ async function buildSuite(
     const entrypoint = guardedEntrypoints.get(member);
     if (entrypoint === undefined) {
       await symlink(source, destination);
-    } else {
-      const guardedSource = join(source, entrypoint.path);
-      if (await Bun.file(guardedSource).exists()) {
-        await cp(source, destination, { recursive: true });
-        const stagedEntrypoint = join(destination, entrypoint.path);
-        const text = await Bun.file(stagedEntrypoint).text();
-        await Bun.write(
-          stagedEntrypoint,
-          text.replaceAll(
-            "import.meta.main",
-            `Reflect.get(globalThis, "AGX_RELEASE_ENTRYPOINT") === "${entrypoint.command}"`,
-          ),
-        );
-      } else await symlink(source, destination);
+      continue;
     }
+    await stageGuardedEntrypoint(source, destination, entrypoint);
   }
   const executable = join(bin, `agx${host.value.os === "win32" ? ".exe" : ""}`);
   const args = [
@@ -378,6 +387,28 @@ async function buildSuite(
   });
 }
 
+async function stageGuardedEntrypoint(
+  source: string,
+  destination: string,
+  entrypoint: { path: string; command: string },
+) {
+  const guardedSource = join(source, entrypoint.path);
+  if (!(await Bun.file(guardedSource).exists())) {
+    await symlink(source, destination);
+    return;
+  }
+  await cp(source, destination, { recursive: true });
+  const stagedEntrypoint = join(destination, entrypoint.path);
+  const text = await Bun.file(stagedEntrypoint).text();
+  await Bun.write(
+    stagedEntrypoint,
+    text.replaceAll(
+      "import.meta.main",
+      `Reflect.get(globalThis, "AGX_RELEASE_ENTRYPOINT") === "${entrypoint.command}"`,
+    ),
+  );
+}
+
 export async function suiteNotes(
   root: string,
   previousTag?: string,
@@ -418,7 +449,8 @@ async function buildLibrary(
   const { pkg, dir, version, source } = info;
   if (source === undefined)
     return err(`Package ${pkg} has no library source entry`);
-  await removeOtherVersionArchives(root, version);
+  const cleaned = await removeOtherVersionArchives(root, version);
+  if (cleaned.isErr()) return cleaned;
   const stage = join(root, "dist", pkg);
   await rm(stage, { recursive: true, force: true });
   await mkdir(stage, { recursive: true });

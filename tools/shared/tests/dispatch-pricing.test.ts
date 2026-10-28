@@ -33,12 +33,16 @@ test("dispatch row prices come from the canonical catalog", () => {
 });
 
 test("roster contract: every choice names a model the catalog prices", () => {
-  for (const row of shippedCatalog.choice) {
-    expect(dispatchRowPrice(row.id)).toMatchObject({
-      route: row.route,
-      price_in: expect.any(Number),
-      price_out: expect.any(Number),
-    });
+  const catalog = ShippedCatalog.safeParse(shippedCatalog);
+  expect(catalog.success).toBe(true);
+  if (!catalog.success) return;
+  for (const row of catalog.data.choice) {
+    const price = dispatchRowPrice(row.id);
+    expect(price).toBeDefined();
+    if (price === undefined) continue;
+    expect(price.route).toBe(row.route);
+    expect(typeof price.price_in).toBe("number");
+    expect(typeof price.price_out).toBe("number");
   }
 });
 

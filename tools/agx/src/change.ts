@@ -9,7 +9,7 @@ const rejectPrototypeFlag = (type: string, flag: string): void => {
   if (type === "unknown-flag" && flag === "__proto__") process.exit(2);
 };
 
-export async function change(argv: string[]): Promise<void> {
+export function change(argv: string[]): void {
   const cli = standardCli(cleyeCli, packageJson, () => argv);
   const parsed = cli(
     {
