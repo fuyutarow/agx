@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.21.4 — 2026-10-28
+
+- Remove benchmark per-task costs from Jev routing while retaining duration eligibility.
+
 ## 1.21.3 — 2026-10-28
 
 - Offer the shortest eligible routing rows and audit the relaxed duration budget when no published duration fits.
