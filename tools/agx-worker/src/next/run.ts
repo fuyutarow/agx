@@ -63,6 +63,7 @@ import {
   type VerifyKind,
 } from "./verify.ts";
 import { scheduleEndNotice } from "./end-notice.ts";
+import { completionFor } from "./completion.ts";
 
 export type Flags = Readonly<Record<string, string | boolean | undefined>>;
 const fatal = (message: string, exitCode = 2): never =>
@@ -1195,6 +1196,7 @@ export async function judgeRun(
     id?: string | undefined;
     decision?: string | undefined;
     note?: string | undefined;
+    override?: string | undefined;
     evidence?: string[] | undefined;
   },
   runtime: JudgeRunRuntime = {},
@@ -1208,6 +1210,24 @@ export async function judgeRun(
   const root = runtime.root ?? stateDir();
   const resolution = resolveRunId(await foldedRuns(root), id);
   if (resolution.kind === "error") return fatal(resolution.error, 2);
+  const overrideReason = flags.override?.trim();
+  if (flags.override !== undefined && overrideReason === "")
+    return fatal("judge override reason must not be empty", 2);
+  const completion = completionFor(resolution.row);
+  if (decision === "accept" && completion.completion === null)
+    return fatal(
+      `cannot accept run '${resolution.row.id}' before it ends; completion class is not available`,
+      2,
+    );
+  if (
+    decision === "accept" &&
+    completion.completion === "incomplete" &&
+    overrideReason === undefined
+  )
+    return fatal(
+      `cannot accept incomplete run '${resolution.row.id}'; completion=${completion.completion}; facts=${JSON.stringify(completion.facts)}; pass --override '<reason>' to record an explicit override`,
+      2,
+    );
   const evidence = [];
   for (const path of flags.evidence ?? []) {
     const bytes = await readFile(path).catch(() =>
@@ -1229,6 +1249,9 @@ export async function judgeRun(
     at,
     decision,
     note: flags.note ?? "",
+    ...(overrideReason === undefined
+      ? {}
+      : { override_reason: overrideReason }),
     ...(evidence.length === 0 ? {} : { evidence }),
   } as const;
   const lock = await acquireWorkspaceLockUntilAvailable(
@@ -1256,7 +1279,7 @@ export async function judgeRun(
   const writeStdout =
     runtime.writeStdout ?? ((line: string) => process.stdout.write(line));
   writeStdout(
-    `${JSON.stringify({ id: judgment.id, verdict: judgment.decision, ...(judgment.note === "" ? {} : { note: judgment.note }), at: judgment.at })}\n`,
+    `${JSON.stringify({ id: judgment.id, verdict: judgment.decision, ...(judgment.note === "" ? {} : { note: judgment.note }), ...(judgment.override_reason === undefined ? {} : { override_reason: judgment.override_reason }), at: judgment.at })}\n`,
   );
   return 0;
 }

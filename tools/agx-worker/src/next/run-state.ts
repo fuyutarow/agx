@@ -86,6 +86,7 @@ export const RunSchema = z.object({
       decision: z.string(),
       note: z.string(),
       at: z.string(),
+      override_reason: z.string().optional(),
       legacy_key: z.string().optional(),
     })
     .nullable(),

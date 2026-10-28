@@ -248,6 +248,7 @@ const EventSchema = z.discriminatedUnion("kind", [
     at: z.string(),
     decision: z.string(),
     note: z.string(),
+    override_reason: z.string().optional(),
     evidence: z
       .array(
         z.object({ path: z.string(), sha256: z.string(), content: z.string() }),
@@ -968,6 +969,9 @@ function foldInto(runs: Map<string, FoldedRun>, input: NextEvent[]): void {
       decision,
       note: event.note,
       at: event.at,
+      ...(event.override_reason === undefined
+        ? {}
+        : { override_reason: event.override_reason }),
       ...(event.legacy_key === undefined
         ? {}
         : { legacy_key: event.legacy_key }),

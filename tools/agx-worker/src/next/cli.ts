@@ -303,6 +303,10 @@ async function main(): Promise<void> {
         parameters: ["<run>", "<decision>"],
         flags: {
           note: { type: String, description: "optional judgment note" },
+          override: {
+            type: String,
+            description: "reason to accept an incomplete run",
+          },
           evidence: {
             type: [String],
             description: "attach file sha256 and content (repeatable)",
@@ -319,8 +323,25 @@ async function main(): Promise<void> {
       id: parsed._[0],
       decision: parsed._[1],
       note: parsed.flags.note,
+      override: parsed.flags.override,
       evidence: parsed.flags.evidence,
     });
+  } else if (commandName === "classify") {
+    const parsed = cli(
+      {
+        name: "agx worker classify",
+        parameters: ["<run>"],
+        flags: {
+          json: { type: Boolean, description: "emit JSON facts" },
+        },
+        strictFlags: true,
+        ignoreArgv: rejectPrototypeFlag,
+      },
+      undefined,
+      commandArgs,
+    );
+    const { classifyRun } = await import("./classify.ts");
+    exit = await classifyRun({ id: parsed._[0], json: parsed.flags.json });
   } else if (commandName === "stats") {
     const parsed = cli(
       {

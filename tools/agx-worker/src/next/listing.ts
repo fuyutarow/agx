@@ -1,5 +1,6 @@
 import type { ListedRun } from "./run-state.ts";
 import { fromThrowable } from "neverthrow";
+import { completionFor } from "./completion.ts";
 /** Observation-time elapsed values belong to the machine producer, not its reader. */
 export function listingRows(rows: ListedRun[], at = Temporal.Now.instant()) {
   return rows.map((row) => {
@@ -16,7 +17,10 @@ export function listingRows(rows: ListedRun[], at = Temporal.Now.instant()) {
     const listed = { ...row };
     delete listed.dispatcher_address;
     delete listed.end_notice;
-    return Object.assign(listed, { elapsed_seconds: elapsed });
+    return Object.assign(listed, {
+      elapsed_seconds: elapsed,
+      completion: completionFor(row).completion,
+    });
   });
 }
 /** Core-owned counts; empty dispatcher identities are unattributed. */

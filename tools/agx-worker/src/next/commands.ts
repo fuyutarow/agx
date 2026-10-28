@@ -4,6 +4,7 @@ export const COMMAND_NAMES = [
   "stop",
   "check",
   "ls",
+  "classify",
   "judge",
   "stats",
   "doctor",
