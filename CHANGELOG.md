@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.21.2 — 2026-10-28
+
+- Refuse VCS-mutating verification outside sandbox write roots
+
 ## 1.21.1 — 2026-10-28
 
 - Refresh Terra roster to GPT-6.1 Terra
