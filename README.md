@@ -1,5 +1,23 @@
 # agx
 
+## Guiding principle
+
+agx is the lightest harness suite that leaves development itself as the only bottleneck. For each change, the target metric is implementation time divided by elapsed time. On 2026-10-28, the baselines were coralbase 7%, agx 20%, and firedancer 45%.
+
+Every stage agx runs must satisfy all three admission conditions:
+
+- It names a failure that actually happened.
+- It needs no human turn except judgment.
+- Its on-path cost is smaller than the time it saves.
+
+A stage that cannot show all three is not added.
+
+Each stage reports its on-path seconds and refusal count in status output. Count a refusal whenever a stage declines to proceed because a required condition is unmet. A stage with zero refusals over a stated period is a removal candidate.
+
+Mainline invariants whose cost is near zero stay regardless of incident count: never advance alpha to an unchecked tree; never lose a commit.
+
+agx protects only lands that go through agx; a direct push is not prevented.
+
 agx operates and observes local agent sessions and runs. A suite member owns one state or is stateless; members compose through CLI commands and `--json` output, importing only their own package and `packages/core`. General filters that also accept non-agent input, and tools for machine-wide resources, display, or search, are outside the suite. The planned colocated non-member `jex` shares the Jev client in core. Consumer-facing specifications live in [contract/](contract/).
 
 For a standalone checkout, run `mise run setup` to install locked dependencies;
