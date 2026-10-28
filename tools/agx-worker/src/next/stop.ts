@@ -30,14 +30,19 @@ export async function stopRun(selector: string): Promise<number> {
 }
 
 async function stopOwnedRun(run: ListedRun): Promise<number> {
-  if (
-    run.state !== "running" ||
-    events().some((e) => e.id === run.id && e.kind === "ended")
-  )
+  const recordedEnd = events().findLast(
+    (event) => event.id === run.id && event.kind === "ended",
+  );
+  if (recordedEnd?.kind === "ended")
+    return reportAlreadyEnded(run.id, recordedEnd.outcome, recordedEnd.at);
+  if (run.state !== "running") {
+    if (run.ended_at !== null)
+      return reportAlreadyEnded(run.id, run.outcome, run.ended_at);
     return refuse(
-      `run ${run.id} already ended (${run.outcome ?? "ended"}); not running`,
+      `run ${run.id} has inferred outcome ${run.outcome} without a recorded end time; no signal sent`,
       1,
     );
+  }
   const lease = run.lease;
   if (lease === undefined || lease.pid <= 1 || lease.start === null)
     return refuse(
@@ -124,20 +129,17 @@ async function stopOwnedRun(run: ListedRun): Promise<number> {
     vendor_session: run.vendor_session,
   });
   process.stderr.write(`agx worker stop: stopping ${run.id}\n`);
+  let systemctlFailure: string | undefined;
   if (lease.unit !== null && systemctl !== null) {
-    const child = Bun.spawn([systemctl, "--user", "stop", lease.unit], {
-      stdout: "ignore",
-      stderr: "pipe",
-      timeout: 10000,
-    });
-    const [exit, error] = await Promise.all([
-      child.exited,
-      new Response(child.stderr).text(),
-    ]);
-    if (exit !== 0)
-      return refuse(
-        `cannot stop ${lease.unit}: ${error.trim()}; inspect with agx worker ls ${run.id}`,
-      );
+    const result = await stopSystemdUnit(
+      run,
+      actor,
+      lease,
+      lease.unit,
+      systemctl,
+    );
+    systemctlFailure = result.failure;
+    if (result.terminal !== undefined) return result.terminal;
   } else {
     // Revalidate immediately before the signal; never fall back to an unverified PID.
     if ((await leaseFor(lease.pid, null)).start !== lease.start)
@@ -147,49 +149,130 @@ async function stopOwnedRun(run: ListedRun): Promise<number> {
       return refuse(`cannot signal run ${run.id}: ${String(sent.error)}`);
   }
   for (let attempt = 0; attempt < 100; attempt += 1) {
+    const currentEnd = events().findLast(
+      (event) => event.id === run.id && event.kind === "ended",
+    );
+    if (currentEnd?.kind === "ended")
+      return reportEndState(run, actor, currentEnd);
     const observed = await leaseFor(lease.pid, lease.unit);
     if (observed.start === lease.start) {
       await Bun.sleep(50);
       continue;
     }
-    const finished = recordStopped(run, actor);
-    if (finished !== undefined) return finished;
-    const ended = events().findLast(
-      (event) => event.id === run.id && event.kind === "ended",
-    );
-    const session =
-      ended?.kind === "ended" ? ended.vendor_session : run.vendor_session;
-    process.stdout.write(
-      session === null
-        ? `stopped ${run.id} by ${actor}; not continuable because no vendor session had started\n`
-        : `stopped ${run.id} by ${actor}; continuable with vendor session ${session}\n`,
-    );
-    return 0;
+    return reportEndState(run, actor, recordStopped(run, actor));
   }
+  const finalEnd = events().findLast(
+    (event) => event.id === run.id && event.kind === "ended",
+  );
+  if (finalEnd?.kind === "ended") return reportEndState(run, actor, finalEnd);
+  if (systemctlFailure !== undefined)
+    return refuse(
+      `cannot stop ${lease.unit}: ${systemctlFailure}; inspect with agx worker ls ${run.id}`,
+      1,
+    );
   return refuse(
     `run ${run.id} did not stop within 5s; inspect with agx worker ls ${run.id}`,
   );
 }
 
-function recordStopped(run: ListedRun, actor: string): number | undefined {
-  const end = events().findLast((e) => e.id === run.id && e.kind === "ended");
-  if (end === undefined)
-    append({
-      kind: "ended",
-      id: run.id,
-      at: now(),
-      exit: 143,
-      outcome: "stopped",
-      signal: "SIGTERM",
-      stopped_by: actor,
-      report_path: null,
-      vendor_session: run.vendor_session,
-      verify: [],
-    });
-  else if (end.kind === "ended" && end.outcome !== "stopped")
-    return refuse(
-      `run ${run.id} completed concurrently (${end.outcome ?? "ended"}); inspect its result`,
-    );
+async function stopSystemdUnit(
+  run: ListedRun,
+  actor: string,
+  lease: NonNullable<ListedRun["lease"]>,
+  unit: string,
+  systemctl: string,
+): Promise<{ failure: string | undefined; terminal: number | undefined }> {
+  const child = Bun.spawn([systemctl, "--user", "stop", unit], {
+    stdout: "ignore",
+    stderr: "pipe",
+    timeout: 10000,
+  });
+  const [exit, error] = await Promise.all([
+    child.exited,
+    new Response(child.stderr).text(),
+  ]);
+  if (exit === 0) return { failure: undefined, terminal: undefined };
+  const stderr = error.trim();
+  const failure =
+    stderr !== "" ? stderr : `systemctl exited with status ${exit}`;
+  const ended = events().findLast(
+    (event) => event.id === run.id && event.kind === "ended",
+  );
+  if (ended?.kind === "ended")
+    return { failure, terminal: reportEndState(run, actor, ended) };
+  const current = await leaseFor(lease.pid, lease.unit);
+  if (current.start !== lease.start) return { failure, terminal: undefined };
+  return {
+    failure,
+    terminal: refuse(
+      `cannot stop ${unit}: ${failure}; inspect with agx worker ls ${run.id}`,
+      1,
+    ),
+  };
+}
 
-  return undefined;
+function reportAlreadyEnded(
+  runId: string,
+  outcome: string | null | undefined,
+  endedAt: string | null | undefined,
+): number {
+  process.stderr.write(
+    `run ${runId} already ended (outcome=${outcome ?? "unknown"}, ended_at=${endedAt ?? "unknown"}); nothing to stop\n`,
+  );
+  return 0;
+}
+
+function reportStopped(
+  runId: string,
+  actor: string,
+  session: string | null,
+): number {
+  process.stdout.write(
+    session === null
+      ? `stopped ${runId} by ${actor}; not continuable because no vendor session had started\n`
+      : `stopped ${runId} by ${actor}; continuable with vendor session ${session}\n`,
+  );
+  return 0;
+}
+
+function reportEndState(
+  run: ListedRun,
+  actor: string,
+  ended: {
+    outcome?: string | null | undefined;
+    at?: string | null | undefined;
+    vendor_session?: string | null | undefined;
+    stopped_by?: string | undefined;
+  },
+): number {
+  if (ended.outcome === "stopped")
+    return reportStopped(
+      run.id,
+      ended.stopped_by ?? actor,
+      ended.vendor_session ?? null,
+    );
+  return reportAlreadyEnded(
+    run.id,
+    ended.outcome ?? run.outcome,
+    ended.at ?? run.ended_at,
+  );
+}
+
+function recordStopped(run: ListedRun, actor: string) {
+  const end = events().findLast((e) => e.id === run.id && e.kind === "ended");
+  if (end?.kind === "ended") return end;
+  const stopped = {
+    kind: "ended",
+    id: run.id,
+    at: now(),
+    exit: 143,
+    outcome: "stopped",
+    signal: "SIGTERM",
+    stopped_by: actor,
+    report_path: null,
+    vendor_session: run.vendor_session,
+    verify: [],
+  } satisfies Parameters<typeof append>[0];
+  append(stopped);
+  return stopped;
 }

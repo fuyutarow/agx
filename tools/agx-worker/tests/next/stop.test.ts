@@ -101,6 +101,91 @@ const row = (root: string, pid: number) => ({
   pid,
 });
 
+async function unitRun(
+  f: Awaited<ReturnType<typeof fixture>>,
+  options: { stopExit: number; stopStderr?: string; signal?: boolean },
+) {
+  const owner = Bun.spawn(
+    [process.execPath, "-e", "setInterval(() => {}, 1000)"],
+    { stdout: "ignore", stderr: "ignore" },
+  );
+  children.push(owner);
+  const unit = "agt_stop-contract.service";
+  const started = {
+    ...row(f.root, owner.pid),
+    lease: await leaseFor(owner.pid, unit),
+  };
+  await Bun.write(
+    join(f.state, "records.jsonl"),
+    `${JSON.stringify(started)}\n`,
+  );
+  const binary = join(f.root, "systemctl");
+  await Bun.write(
+    binary,
+    `#!${process.execPath}\nconst args = process.argv.slice(2); if (args.includes("--property=MainPID")) process.stdout.write(${JSON.stringify(String(owner.pid))}); else if (args.includes("stop")) { if (${options.signal === true}) process.kill(${owner.pid}, "SIGKILL"); const reason = ${JSON.stringify(options.stopStderr ?? "")}; if (reason !== "") process.stderr.write(reason); process.exit(${options.stopExit}); } else process.exit(2);`,
+  );
+  await chmod(binary, 0o755);
+  f.env.PATH = `${f.root}:${f.env.PATH ?? ""}`;
+  return { owner, started };
+}
+
+test("stop contract: stopping a running worker reports stopped", async () => {
+  const f = await fixture();
+  const { owner, started } = await unitRun(f, {
+    stopExit: 1,
+    signal: true,
+  });
+  const stopped = await f.invoke("stop", started.id);
+  expect(await owner.exited).toBe(137);
+  expect(stopped.exit, stopped.err).toBe(0);
+  expect(stopped.out).toContain(`stopped ${started.id}`);
+  expect(stopped.err).not.toContain("cannot stop");
+  const listed = await f.invoke("ls", started.id, "--json");
+  expect(listed.out).toContain('"state":"ended"');
+  expect(listed.out).toContain('"outcome":"stopped"');
+});
+
+test("stop contract: stopping an ended run says it already ended", async () => {
+  const f = await fixture();
+  const endedAt = "2026-10-28T04:09:32.110041291Z";
+  await Bun.write(
+    join(f.state, "records.jsonl"),
+    [
+      row(f.root, 1),
+      {
+        kind: "ended",
+        id: "fixture-run",
+        at: endedAt,
+        exit: 0,
+        outcome: "ok",
+        vendor_session: null,
+        report_path: null,
+      },
+    ]
+      .map((event) => JSON.stringify(event))
+      .join("\n") + "\n",
+  );
+  const stopped = await f.invoke("stop", "fixture-run");
+  expect(stopped.exit).toBe(0);
+  expect(stopped.err).toContain("already ended");
+  expect(stopped.err).toContain("outcome=ok");
+  expect(stopped.err).toContain(endedAt);
+  expect(stopped.err).not.toContain("cannot stop");
+  expect(await Bun.file(join(f.state, "records.jsonl")).text()).not.toContain(
+    "stop-requested",
+  );
+});
+
+test("stop contract: a failed stop names its reason and exits non-zero", async () => {
+  const f = await fixture();
+  const { owner, started } = await unitRun(f, { stopExit: 23 });
+  const stopped = await f.invoke("stop", started.id);
+  expect(owner.exitCode).toBeNull();
+  expect(stopped.exit).not.toBe(0);
+  expect(stopped.err).toContain("systemctl exited with status 23");
+  expect(stopped.err).not.toContain("service: ;");
+});
+
 test("unknown, ended, ownerless and reused PID records never signal an unrelated process", async () => {
   const f = await fixture();
   const unrelated = Bun.spawn(
@@ -128,7 +213,7 @@ test("unknown, ended, ownerless and reused PID records never signal an unrelated
     `${JSON.stringify(started)}\n${JSON.stringify({ kind: "ended", id: started.id, at: Temporal.Now.instant().toString(), exit: 0, outcome: "ok", vendor_session: null, report_path: null })}\n`,
   );
   const ended = await f.invoke("stop", started.id);
-  expect(ended.exit).toBe(1);
+  expect(ended.exit).toBe(0);
   expect(ended.err).toContain("already ended");
   expect(unrelated.exitCode).toBeNull();
 });
@@ -348,7 +433,7 @@ test("systemd stop uses only a matching recorded unit and PID", async () => {
   expect((await f.invoke("ls", "--json")).out).toContain('"outcome":"stopped"');
 });
 
-test("a unit that truly ended is not reported stopped", async () => {
+test("an inferred lost owner without an end record is refused", async () => {
   const f = await fixture();
   const owner = Bun.spawn(
     [process.execPath, "-e", "setInterval(() => {}, 1000)"],
@@ -370,8 +455,9 @@ test("a unit that truly ended is not reported stopped", async () => {
   await chmod(binary, 0o755);
   const ended = await f.invoke("stop", "fixture-run");
   expect(ended.exit).toBe(1);
-  expect(ended.err).toContain("not running");
-  expect(ended.out).not.toContain("stopped");
+  expect(ended.err).toContain("inferred outcome lost");
+  expect(ended.err).toContain("without a recorded end time");
+  expect(ended.out).not.toContain("already ended");
   expect(await Bun.file(join(f.root, "unit-call")).exists()).toBe(false);
   expect(await Bun.file(join(f.state, "records.jsonl")).text()).not.toContain(
     "stop-requested",
