@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.20.8 — 2026-10-28
+
+- Workspace creation reports its policy revision and readiness commands.
+
 ## 1.20.7 — 2026-10-28
 
 - Forget missing land workspace registrations without classifying them as broken
