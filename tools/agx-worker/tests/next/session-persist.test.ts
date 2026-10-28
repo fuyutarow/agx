@@ -17,16 +17,17 @@ import { createTempTracker } from "../temp.ts";
 import { prepareTicketRepo } from "../ticket-repo.ts";
 
 const tempDirs = createTempTracker();
-afterAll(tempDirs.assertRemoved);
 
 const roots: string[] = [];
 const processes: ReturnType<typeof Bun.spawn>[] = [];
 const servers: ReturnType<typeof Bun.serve>[] = [];
 const vendorPids = new Set<number>();
 
-afterEach(async () => {
-  for (const child of processes.splice(0))
+const cleanup = async () => {
+  const children = processes.splice(0);
+  for (const child of children)
     if (child.exitCode === null) child.kill("SIGKILL");
+  await Promise.all(children.map((child) => child.exited));
   for (const server of servers.splice(0)) await server.stop(true);
   for (const pid of vendorPids) {
     Bun.spawnSync(["kill", "-KILL", String(pid)], {
@@ -35,8 +36,13 @@ afterEach(async () => {
     });
   }
   vendorPids.clear();
-  for (const root of roots.splice(0))
+  for (const root of roots)
     rmSync(root, { recursive: true, force: true });
+};
+afterEach(cleanup);
+afterAll(async () => {
+  await cleanup();
+  tempDirs.assertRemoved();
 });
 
 const Event = z.looseObject({
@@ -74,6 +80,8 @@ const fixture = async (reportedSession: boolean) => {
     mkdtempSync(join(tmpdir(), `agx-test-${process.pid}-session-persist-`)),
   );
   roots.push(root);
+  // The worker removes each run directory but intentionally leaves its configured root.
+  tempDirs.register(join(root, "agx-tmp"));
   await prepareTicketRepo(root);
   const state = join(root, "state");
   const bin = join(root, "bin");

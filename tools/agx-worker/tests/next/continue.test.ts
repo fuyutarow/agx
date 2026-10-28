@@ -18,11 +18,15 @@ import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { createTempTracker } from "../temp.ts";
 
 const tempDirs = createTempTracker();
-afterAll(tempDirs.assertRemoved);
 const roots: string[] = [];
-afterEach(() => {
-  for (const root of roots.splice(0))
+const removeRoots = () => {
+  for (const root of roots)
     rmSync(root, { recursive: true, force: true });
+};
+afterEach(removeRoots);
+afterAll(() => {
+  removeRoots();
+  tempDirs.assertRemoved();
 });
 
 const ticketText = (prose: string): string =>
@@ -35,6 +39,8 @@ const fixture = async (ticketName = "pin") => {
     mkdtempSync(join(tmpdir(), `agx-test-${process.pid}-continue-`)),
   );
   roots.push(root);
+  // The worker removes each run directory but intentionally leaves its configured root.
+  tempDirs.register(join(root, "agx-tmp"));
   await prepareTicketRepo(root);
   const bin = join(root, "bin");
   mkdirSync(bin);
