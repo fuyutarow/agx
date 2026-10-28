@@ -1,5 +1,5 @@
 {
-  "version": "1.21.8",
+  "version": "1.22.0",
   "name": "@agx/agx-ws",
   "private": true,
   "type": "module",

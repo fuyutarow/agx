@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.0 — 2026-10-28
+
+- Classify worker completion and guard incomplete acceptance
+
 ## 1.21.8 — 2026-10-28
 
 - Record Jev refusal reasons as dispatch refusals
