@@ -332,18 +332,19 @@ const gcCommand = command(
         process.stdout.write(
           `discovery\t${JSON.stringify(done.value.discovery)}\n`,
         );
-      for (const repo of done.value.repositories ?? [])
-        if (repo.status !== "refused")
-          process.stdout.write(
-            `${repo.root}\trepo\t${repo.status}\t${repo.sources.join(",")}\t${JSON.stringify(repo.counts)}\n`,
-          );
+      for (const repo of (done.value.repositories ?? []).filter(
+        (candidate) => candidate.status !== "refused",
+      ))
+        process.stdout.write(
+          `${repo.root}\trepo\t${repo.status}\t${repo.sources.join(",")}\t${JSON.stringify(repo.counts)}\n`,
+        );
       for (const line of done.value.lines) process.stdout.write(`${line}\n`);
     }
     if (done.value.failed.length > 0)
       fail(`could not collect: ${done.value.failed.join(", ")}`);
     if (done.value.broken.length > 0)
       fail(`broken workspaces: ${done.value.broken.join(", ")}`);
-    if (done.value.refused?.length) process.exitCode = 2;
+    if ((done.value.refused?.length ?? 0) > 0) process.exitCode = 2;
   },
 );
 

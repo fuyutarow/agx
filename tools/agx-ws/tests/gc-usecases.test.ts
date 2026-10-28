@@ -142,11 +142,11 @@ async function withFixture(
   config = "",
 ): Promise<void> {
   const created = await fixture(config);
-  try {
-    await action(created);
-  } finally {
-    await rm(created.root, { recursive: true, force: true });
-  }
+  await using _cleanup = {
+    [Symbol.asyncDispose]: () =>
+      rm(created.root, { recursive: true, force: true }),
+  };
+  await action(created);
 }
 
 async function jj(
@@ -180,7 +180,7 @@ async function gc(f: Fixture, args: string[]): Promise<RunResult> {
   return run(["bun", WS, "gc", ...args, "--repo", f.repo], f.repo, f.env);
 }
 
-async function rowFor(result: RunResult, path: string): Promise<string[]> {
+function rowFor(result: RunResult, path: string): string[] {
   const rows = result.out
     .trim()
     .split("\n")
@@ -188,8 +188,7 @@ async function rowFor(result: RunResult, path: string): Promise<string[]> {
     .map((line) => line.split("\t"));
   const row = rows.find((candidate) => candidate[0] === path);
   expect(row, `no gc row for ${path}\n${result.out}`).toBeDefined();
-  if (row === undefined) throw new Error(`missing gc row for ${path}`);
-  return row;
+  return row ?? [];
 }
 
 function gcJson(result: RunResult): { rows: string[][]; complete: boolean } {
@@ -199,9 +198,7 @@ function gcJson(result: RunResult): { rows: string[][]; complete: boolean } {
   });
   const parsed = jsonOf(schema).safeParse(result.out);
   expect(parsed.success, result.out).toBe(true);
-  if (!parsed.success)
-    throw new Error("gc JSON output did not match its schema");
-  return parsed.data;
+  return parsed.success ? parsed.data : { rows: [], complete: false };
 }
 
 function jsonRowFor(
@@ -210,9 +207,7 @@ function jsonRowFor(
 ): string[] {
   const matches = report.rows.filter((row) => row[0] === path);
   expect(matches).toHaveLength(1);
-  const row = matches[0];
-  if (row === undefined) throw new Error(`missing gc JSON row for ${path}`);
-  return row;
+  return matches[0] ?? [];
 }
 
 async function commitFile(
@@ -325,8 +320,8 @@ test("gc usecase: U2 removes a workspace whose non-empty change is reachable fro
       "0",
     ]);
     expectSuccess(dry, "agx ws gc --dry-run");
-    expect((await rowFor(dry, collectedPath))[2]).toBe("removable");
-    const trunkVerdict = (await rowFor(dry, trunkPath))[2];
+    expect(rowFor(dry, collectedPath)[2]).toBe("removable");
+    const trunkVerdict = rowFor(dry, trunkPath)[2];
     expect(["removable", "empty", "landed"].includes(trunkVerdict ?? "")).toBe(
       true,
     );
@@ -337,8 +332,8 @@ test("gc usecase: U2 removes a workspace whose non-empty change is reachable fro
       "0",
     ]);
     expectSuccess(collected, "agx ws gc");
-    expect((await rowFor(collected, collectedPath))[2]).toBe("removable");
-    expect((await rowFor(collected, trunkPath))[2]).toBe("removable");
+    expect(rowFor(collected, collectedPath)[2]).toBe("removable");
+    expect(rowFor(collected, trunkPath)[2]).toBe("removable");
     expect(existsSync(collectedPath)).toBe(false);
     expect(existsSync(trunkPath)).toBe(false);
   });
@@ -365,7 +360,7 @@ test("gc usecase: U3 keeps and names the ten unpushed changes in a workspace", a
       "0",
     ]);
     expectSuccess(dry, "agx ws gc --dry-run");
-    const row = await rowFor(dry, path);
+    const row = rowFor(dry, path);
     expect(row[2], row.join("\t")).toBe("keep");
     expect(row[5]).toContain("unlanded change");
     expect(row[5]).toContain("unpublished change 10");
@@ -499,7 +494,7 @@ test("gc usecase: U6 keeps live workspaces and workspaces younger than the grace
         workspace: live,
         cwd: live,
         continues: null,
-        started_at: new Date().toISOString(),
+        started_at: Temporal.Now.instant().toString(),
       },
     ]);
 
@@ -510,14 +505,14 @@ test("gc usecase: U6 keeps live workspaces and workspaces younger than the grace
       "0",
     ]);
     expectSuccess(liveDry, "agx ws gc --dry-run live");
-    const liveRow = await rowFor(liveDry, live);
+    const liveRow = rowFor(liveDry, live);
     expect(liveRow[2]).toBe("keep");
     expect(liveRow[5]).toContain("live or continuing run live-usecase-run");
 
     await setRecords(f, []);
     const youngDry = await gc(f, ["--dry-run", "--include-unrecorded"]);
     expectSuccess(youngDry, "agx ws gc --dry-run young");
-    const youngRow = await rowFor(youngDry, young);
+    const youngRow = rowFor(youngDry, young);
     expect(youngRow[2]).toBe("keep");
     expect(youngRow[5]).toContain("grace 30 min");
   });
@@ -543,7 +538,7 @@ test("gc usecase: U7 ignores declared regenerable paths but keeps other untracke
       "0",
     ]);
     expectSuccess(onlyRegenerable, "agx ws gc --dry-run");
-    const cleanRow = await rowFor(onlyRegenerable, path);
+    const cleanRow = rowFor(onlyRegenerable, path);
     expect(
       ["removable", "empty", "landed"].includes(cleanRow[2] ?? ""),
       onlyRegenerable.out,
@@ -559,7 +554,7 @@ test("gc usecase: U7 ignores declared regenerable paths but keeps other untracke
       "0",
     ]);
     expectSuccess(withUntracked, "agx ws gc --dry-run");
-    const kept = await rowFor(withUntracked, path);
+    const kept = rowFor(withUntracked, path);
     expect(kept[2]).toBe("keep");
     expect(kept[5]).toContain("valuable-output.json");
     expect(kept[5]).not.toContain("node_modules");
@@ -592,7 +587,10 @@ test.todo("gc usecase: U8 classification uses the same number of jj calls for 5 
       await addWorkspace(f, `count-${index}`);
     const realJj = Bun.which("jj");
     expect(realJj).not.toBeNull();
-    if (realJj === null) throw new Error("jj is required for this fixture");
+    if (realJj === null) {
+      expect(realJj, "jj is required for this fixture").not.toBeNull();
+      return;
+    }
     const calls = join(f.root, "jj-calls.log");
     f.env.JJ_CALL_LOG = calls;
     await Bun.write(
@@ -640,8 +638,17 @@ test.todo("gc usecase: U9 holds the workspace lock only for forget plus rename t
     const realRip = Bun.which("rip");
     expect(realJj).not.toBeNull();
     expect(realRip).not.toBeNull();
-    if (realJj === null || realRip === null)
-      throw new Error("jj and rip are required for this fixture");
+    if (realJj === null) {
+      expect(realJj, "jj and rip are required for this fixture").not.toBeNull();
+      return;
+    }
+    if (realRip === null) {
+      expect(
+        realRip,
+        "jj and rip are required for this fixture",
+      ).not.toBeNull();
+      return;
+    }
     const events = join(f.root, "lock-events.log");
     const lock = join(f.root, "project.ws.lock");
     f.env.WS_LOCK_EVENTS = events;
@@ -675,10 +682,11 @@ test.todo("gc usecase: U9 holds the workspace lock only for forget plus rename t
       .split("\n")
       .map((line) => line.split("\t"));
     const forget = rows.find(
-      (row) => row[0] === "jj" && row[1]?.includes("workspace forget"),
+      (row) =>
+        row[0] === "jj" && (row[1]?.includes("workspace forget") ?? false),
     );
     const listing = rows.find(
-      (row) => row[0] === "jj" && row[1]?.includes("workspace list"),
+      (row) => row[0] === "jj" && (row[1]?.includes("workspace list") ?? false),
     );
     const rename = rows.find((row) => row[0] === "rip");
     expect(forget?.[2]).toBe("held");
@@ -733,9 +741,7 @@ test.todo("gc usecase: U11 judges and collects a worker store created by agx ws 
     ]);
     expectSuccess(dry, "agx ws gc --dry-run worker-store");
     expect(
-      ["removable", "empty", "landed"].includes(
-        (await rowFor(dry, path))[2] ?? "",
-      ),
+      ["removable", "empty", "landed"].includes(rowFor(dry, path)[2] ?? ""),
     ).toBe(true);
     const collected = await gc(f, [
       "--include-unrecorded",

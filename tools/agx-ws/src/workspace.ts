@@ -189,13 +189,11 @@ export async function readConfig(repo: Repo): Promise<Attempt<ResolvedConfig>> {
   const legacyPath = join(repo.backing, LEGACY_CONFIG_FILE);
   const legacyFile = await attempt(() => lstat(legacyPath));
   if (legacyFile.ok) {
-    const equivalent = await attempt(async () => {
+    const rendered = await attempt(async () => {
       const parsed = Bun.TOML.parse(await readFile(legacyPath, "utf8"));
-      const migration = Bun.TOML.stringify({ schema: 1, ws: parsed });
-      if (migration === undefined)
-        throw new Error("TOML serializer returned no migration");
-      return migration.trimEnd();
+      return Bun.TOML.stringify({ schema: 1, ws: parsed });
     });
+    const equivalent = legacyMigration(rendered);
     const message = equivalent.ok
       ? `${legacyPath} is retired. Replace ${CONFIG_FILE} with:\n${equivalent.value}\nThen delete ${LEGACY_CONFIG_FILE}.`
       : `${legacyPath} is retired; cannot render a valid [ws] migration (${msg(equivalent)}). Delete ${LEGACY_CONFIG_FILE}.`;
@@ -228,7 +226,7 @@ export async function readConfig(repo: Repo): Promise<Attempt<ResolvedConfig>> {
 function reportReadyPlan(config: Config): void {
   const revision = config.policyRevision ?? "unknown revision";
   process.stderr.write(`ws: policy: agx.toml at ${revision}\n`);
-  if (config.workingCopyPolicyDiffers)
+  if (config.workingCopyPolicyDiffers === true)
     process.stderr.write(
       `ws: policy: working-copy agx.toml differs from the policy snapshot at ${revision}; working-copy policy is not used\n`,
     );
@@ -242,6 +240,15 @@ function reportReadyPlan(config: Config): void {
     process.stderr.write(
       `ws: ready: will run ${index + 1}/${config.ready.length}: ${command}\n`,
     );
+}
+
+function legacyMigration(
+  rendered: Attempt<string | undefined>,
+): Attempt<string> {
+  if (!rendered.ok) return rendered;
+  if (rendered.value === undefined)
+    return bad("TOML serializer returned no migration");
+  return good(rendered.value.trimEnd());
 }
 
 function legacyWorkspaceName(slug: string): Attempt<string> {
@@ -523,24 +530,22 @@ export async function unlanded(
       return bad(`cannot judge run-end commit ${id} of ${dir}: ${msg(past)}`);
     found.push(...past.value.filter((line) => !found.includes(line)));
   }
-  if (found.length > 0 && endCommits.length === 0) {
-    const trunk = await trunkCommit(repo, cfg);
-    if (!trunk.ok) return trunk;
-    if (trunk.value !== null) {
-      const tipRepo = retried || !existsSync(dir) ? repo.backing : dir;
-      const tipRevision = tipRepo === repo.backing ? `${name}@` : "@";
-      const tip = await jjOut(
-        ["log", "--no-graph", "-r", tipRevision, "-T", "commit_id"],
-        tipRepo,
-        tipRepo === repo.backing,
-      );
-      if (!tip.ok) return bad(`cannot judge ${dir}: ${msg(tip)}`);
-      const content = await outstanding(repo, tip.value.trim(), trunk.value);
-      if (!content.ok)
-        return bad(`cannot compare ${dir} with trunk: ${msg(content)}`);
-      if (content.value.differing.length === 0) return good([]);
-    }
-  }
+  if (found.length === 0 || endCommits.length > 0) return good(found);
+  const trunk = await trunkCommit(repo, cfg);
+  if (!trunk.ok) return trunk;
+  if (trunk.value === null) return good(found);
+  const tipRepo = retried || !existsSync(dir) ? repo.backing : dir;
+  const tipRevision = tipRepo === repo.backing ? `${name}@` : "@";
+  const tip = await jjOut(
+    ["log", "--no-graph", "-r", tipRevision, "-T", "commit_id"],
+    tipRepo,
+    tipRepo === repo.backing,
+  );
+  if (!tip.ok) return bad(`cannot judge ${dir}: ${msg(tip)}`);
+  const content = await outstanding(repo, tip.value.trim(), trunk.value);
+  if (!content.ok)
+    return bad(`cannot compare ${dir} with trunk: ${msg(content)}`);
+  if (content.value.differing.length === 0) return good([]);
   return good(found);
 }
 
@@ -3550,6 +3555,45 @@ async function finishGcRemoval(
   };
 }
 
+async function accountForMissingWorkspaceForget(
+  classification: Classification,
+  forgotten: Attempt<string>,
+  land: string | undefined,
+): Promise<{ classification: Classification; reason: string }> {
+  if (land === undefined) {
+    const detail = forgotten.ok
+      ? forgotten.value
+      : "record retained: " + msg(forgotten);
+    return {
+      classification,
+      reason: classification.reason + "; " + detail,
+    };
+  }
+  if (
+    forgotten.ok &&
+    forgotten.value === "workspace record forgotten after reachability check"
+  ) {
+    const updated = {
+      ...classification,
+      verdict: "collected",
+      collect: false,
+      reason: "land workspace collected; " + forgotten.value,
+    };
+    return { classification: updated, reason: updated.reason };
+  }
+  const lock = await landLockStatus(land);
+  const detail = forgotten.ok
+    ? forgotten.value
+    : "record retained: " + msg(forgotten);
+  const updated = {
+    ...classification,
+    verdict: "keep",
+    collect: false,
+    reason: `land workspace kept; ${detail}; ${lock.reason}`,
+  };
+  return { classification: updated, reason: updated.reason };
+}
+
 /** TSV columns: path, kind, verdict, change id, age, reason. */
 export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
   const resolved = resolveRepo(options.repo);
@@ -3688,76 +3732,53 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
               const lock = await landLockStatus(land);
               return good(`record retained: ${lock.reason}`);
             }
-            try {
-              const currentConfig = await readConfig(repo);
-              if (!currentConfig.ok)
-                return good("record retained: " + msg(currentConfig));
-              if (protectedWorkspace(repo, currentConfig.value, ws))
-                return good("workspace is kept by [ws].keep; record retained");
-              const currentTrunk = await trunkCommit(repo, currentConfig.value);
-              if (!currentTrunk.ok)
-                return good("record retained: " + msg(currentTrunk));
-              const currentRecords = await agxRecords(repo.backing);
-              if (!currentRecords.ok)
-                return good("record retained: " + msg(currentRecords));
-              const blocked = runRemovalReason(ws.dir, currentRecords.value);
-              if (blocked !== undefined)
-                return good("record retained: " + blocked);
-              const occupied = busy(realOr(ws.dir));
-              if (occupied !== undefined)
-                return good("record retained: " + occupied);
-              const forgetResult = await jjOut(
-                ["workspace", "forget", ws.name],
-                repo.backing,
-                false,
-                {
-                  name: ws.name,
-                  dir: ws.dir,
-                  commit: missingCommit,
-                  trunk: currentTrunk.value,
-                  ...(land === undefined ? {} : { owner: "land" }),
-                },
-              );
-              return forgetResult.ok
-                ? good("workspace record forgotten after reachability check")
-                : good("record retained: " + msg(forgetResult));
-            } finally {
-              if (typeof releaseLand === "function") releaseLand();
-            }
+            using _landLock =
+              typeof releaseLand === "function"
+                ? { [Symbol.dispose]: releaseLand }
+                : undefined;
+            const currentConfig = await readConfig(repo);
+            if (!currentConfig.ok)
+              return good("record retained: " + msg(currentConfig));
+            if (protectedWorkspace(repo, currentConfig.value, ws))
+              return good("workspace is kept by [ws].keep; record retained");
+            const currentTrunk = await trunkCommit(repo, currentConfig.value);
+            if (!currentTrunk.ok)
+              return good("record retained: " + msg(currentTrunk));
+            const currentRecords = await agxRecords(repo.backing);
+            if (!currentRecords.ok)
+              return good("record retained: " + msg(currentRecords));
+            const blocked = runRemovalReason(ws.dir, currentRecords.value);
+            if (blocked !== undefined)
+              return good("record retained: " + blocked);
+            const occupied = busy(realOr(ws.dir));
+            if (occupied !== undefined)
+              return good("record retained: " + occupied);
+            const forgetResult = await jjOut(
+              ["workspace", "forget", ws.name],
+              repo.backing,
+              false,
+              {
+                name: ws.name,
+                dir: ws.dir,
+                commit: missingCommit,
+                trunk: currentTrunk.value,
+                ...(land === undefined ? {} : { owner: "land" }),
+              },
+            );
+            return forgetResult.ok
+              ? good("workspace record forgotten after reachability check")
+              : good("record retained: " + msg(forgetResult));
           },
           (busyReason) =>
             good("record retained: collection skipped: " + busyReason),
         );
-        if (land !== undefined) {
-          if (
-            forgotten.ok &&
-            forgotten.value ===
-              "workspace record forgotten after reachability check"
-          ) {
-            c = {
-              ...c,
-              verdict: "collected",
-              collect: false,
-              reason: "land workspace collected; " + forgotten.value,
-            };
-          } else {
-            const lock = await landLockStatus(land);
-            const detail = forgotten.ok
-              ? forgotten.value
-              : "record retained: " + msg(forgotten);
-            c = {
-              ...c,
-              verdict: "keep",
-              collect: false,
-              reason: `land workspace kept; ${detail}; ${lock.reason}`,
-            };
-          }
-          reason = c.reason;
-        } else {
-          reason += forgotten.ok
-            ? "; " + forgotten.value
-            : "; record retained: " + msg(forgotten);
-        }
+        const outcome = await accountForMissingWorkspaceForget(
+          c,
+          forgotten,
+          land,
+        );
+        c = outcome.classification;
+        reason = outcome.reason;
       }
       if (c.collect && !options.dryRun) {
         const done = await withLock<GcRemovalResult>(
@@ -3852,12 +3873,12 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
                 classification: checked,
                 tombstone: removed.value.tombstone,
               });
-            const land = landState(currentWs);
+            const currentLand = landState(currentWs);
             if (
-              land !== undefined &&
+              currentLand !== undefined &&
               msg(removed).includes("land lock acquired by another process")
             ) {
-              const lock = await landLockStatus(land);
+              const lock = await landLockStatus(currentLand);
               return good({
                 classification: {
                   ...checked,
@@ -4109,37 +4130,37 @@ export async function gcAll(
       includeMain: false,
       repo: repo.value.backing,
     });
-    if (!done.ok) {
-      if (done.error instanceof LegacyWorkspaceConfigError) {
-        refused.push(path);
-        repositories.push({
-          root: path,
-          sources: [...sources].toSorted(),
-          status: "refused",
-          counts: gcCounts([]),
-        });
-        lines.push(`${path}\trepo\trefused\t?\t?\t${msg(done)}`);
-        continue;
-      }
-      failed.push(path);
+    if (done.ok) {
       repositories.push({
         root: path,
         sources: [...sources].toSorted(),
-        status: "FAILED",
-        counts: gcCounts([]),
+        status: done.value.complete ? "complete" : "incomplete",
+        counts: done.value.counts,
       });
-      lines.push(`${path}\trepo\tFAILED\t?\t?\t${msg(done)}`);
+      lines.push(...done.value.lines);
+      failed.push(...done.value.failed);
+      broken.push(...done.value.broken);
       continue;
     }
+    if (done.error instanceof LegacyWorkspaceConfigError) {
+      refused.push(path);
+      repositories.push({
+        root: path,
+        sources: [...sources].toSorted(),
+        status: "refused",
+        counts: gcCounts([]),
+      });
+      lines.push(`${path}\trepo\trefused\t?\t?\t${msg(done)}`);
+      continue;
+    }
+    failed.push(path);
     repositories.push({
       root: path,
       sources: [...sources].toSorted(),
-      status: done.value.complete ? "complete" : "incomplete",
-      counts: done.value.counts,
+      status: "FAILED",
+      counts: gcCounts([]),
     });
-    lines.push(...done.value.lines);
-    failed.push(...done.value.failed);
-    broken.push(...done.value.broken);
+    lines.push(`${path}\trepo\tFAILED\t?\t?\t${msg(done)}`);
   }
   const discovery = {
     state: repositories.filter((repo) => repo.sources.includes("state")).length,

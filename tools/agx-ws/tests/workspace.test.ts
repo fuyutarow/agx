@@ -480,30 +480,29 @@ describe("ws contract: shared agx.toml [ws] policy", () => {
       policyPath,
       `schema = 1\nroot = ${JSON.stringify(path)}\n[ws]\nkeep = "invalid"\n`,
     );
-    try {
-      for (const args of [
-        ["add", "other"],
-        ["rm", "safe"],
-        ["gc", "--include-unrecorded"],
-      ]) {
-        const result = await ws(args, path);
-        expect(result.code, result.err).toBe(1);
-        expect(result.err).toContain(policyPath);
-      }
-      const safeGit = join(wsDir(path, "safe"), ".git");
-      await Bun.write(safeGit, `gitdir: ${join(path, ".git")}\n`);
-      const doctor = await ws(
-        ["doctor"],
-        path,
-        baseEnv({ AGX_REPOS_ROOT: join(path, "..", "proj.ws") }),
-      );
-      expect(doctor.code, doctor.err).toBe(1);
-      expect(doctor.err).toContain(policyPath);
-      expect(existsSync(wsDir(path, "safe"))).toBe(true);
-      await unlink(safeGit);
-    } finally {
-      await unlink(policyPath);
+    await using _cleanup = {
+      [Symbol.asyncDispose]: () => unlink(policyPath),
+    };
+    for (const args of [
+      ["add", "other"],
+      ["rm", "safe"],
+      ["gc", "--include-unrecorded"],
+    ]) {
+      const result = await ws(args, path);
+      expect(result.code, result.err).toBe(1);
+      expect(result.err).toContain(policyPath);
     }
+    const safeGit = join(wsDir(path, "safe"), ".git");
+    await Bun.write(safeGit, `gitdir: ${join(path, ".git")}\n`);
+    const doctor = await ws(
+      ["doctor"],
+      path,
+      baseEnv({ AGX_REPOS_ROOT: join(path, "..", "proj.ws") }),
+    );
+    expect(doctor.code, doctor.err).toBe(1);
+    expect(doctor.err).toContain(policyPath);
+    expect(existsSync(wsDir(path, "safe"))).toBe(true);
+    await unlink(safeGit);
   });
 });
 

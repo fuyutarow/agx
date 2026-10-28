@@ -6,8 +6,10 @@ function testDuration(name: string, fallback: number): number {
   const raw = process.env[name];
   if (raw === undefined) return fallback;
   const parsed = TestDurationMs.safeParse(raw);
-  if (!parsed.success)
-    throw new Error(`${name} must be an integer from 1 to 5000`);
+  if (!parsed.success) {
+    process.stderr.write(`Error: ${name} must be an integer from 1 to 5000\n`);
+    process.exit(1);
+  }
   return parsed.data;
 }
 

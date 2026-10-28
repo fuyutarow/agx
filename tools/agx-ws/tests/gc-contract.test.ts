@@ -190,10 +190,9 @@ async function gc(f: Fixture, extra: string[] = [], trace?: string) {
 async function addLandWorkspace(f: Fixture) {
   const stateRoot = f.baseEnv.AGX_STATE_DIR;
   expect(stateRoot).toBeDefined();
-  if (stateRoot === undefined) return undefined;
 
   const name = `land_${repoCount}`;
-  const state = join(stateRoot, "land", `fixture-${repoCount}`);
+  const state = join(stateRoot ?? "", "land", `fixture-${repoCount}`);
   const dir = join(state, "workspace");
   mkdirSync(state, { recursive: true });
   const added = await run(
