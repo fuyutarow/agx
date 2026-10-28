@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.20.6 — 2026-10-28
+
+- Accept declared workspace config keys and make config refusals precise
+
 ## 1.20.5 — 2026-10-28
 
 - Add workspace cleanup use-case acceptance tests.
