@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.21.5 — 2026-10-28
+
+- Re-land bounded run-end notice with legacy record decoding
+
 ## 1.21.4 — 2026-10-28
 
 - Remove benchmark per-task costs from Jev routing while retaining duration eligibility.
