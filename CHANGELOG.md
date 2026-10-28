@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.21.7 — 2026-10-28
+
+- Make worker stop outcomes match recorded run state
+
 ## 1.21.6 — 2026-10-28
 
 - Continue runs when their roster row is retired, preserving the workspace and recording both rows.
