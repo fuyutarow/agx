@@ -1,4 +1,5 @@
 import { z } from "../../../shared/src/zod.ts";
+import { fromThrowable } from "neverthrow";
 import { selfCommand } from "../self-command.ts";
 import { append, flushRunPublications, now } from "./store.ts";
 import { EndNoticeResult } from "./run-state.ts";
@@ -48,44 +49,46 @@ export function scheduleEndNotice(
       exit: null,
       receipt: "skipped: no dispatcher session",
     };
-  try {
-    const child = Bun.spawn(
-      [
-        ...workerCommand,
-        "--internal-end-notice",
-        JSON.stringify({ ...request, parentPid: process.pid }),
-      ],
-      {
-        stdin: "ignore",
-        stdout: "ignore",
-        stderr: "ignore",
-        detached: true,
-        env: {
-          ...process.env,
-          ...env,
-          AGX_RUN_ID: input.id,
+  const spawned = fromThrowable(
+    () =>
+      Bun.spawn(
+        [
+          ...workerCommand,
+          "--internal-end-notice",
+          JSON.stringify({ ...request, parentPid: process.pid }),
+        ],
+        {
+          stdin: "ignore",
+          stdout: "ignore",
+          stderr: "ignore",
+          detached: true,
+          env: {
+            ...process.env,
+            ...env,
+            AGX_RUN_ID: input.id,
+          },
         },
-      },
-    );
-    child.unref();
-    return pending;
-  } catch (error) {
+      ),
+    (error) => error,
+  )();
+  if (spawned.isErr())
     return {
       status: "unreachable",
       exit: 127,
-      receipt: `could not start notice worker: ${String(error).slice(0, receiptLimit)}`,
+      receipt: `could not start notice worker: ${String(spawned.error).slice(0, receiptLimit)}`,
     };
-  }
+  spawned.value.unref();
+  return pending;
 }
 
 async function waitForParentExit(parentPid: number): Promise<void> {
   const deadline = performance.now() + parentWaitLimitMs;
   while (performance.now() < deadline) {
-    try {
-      process.kill(parentPid, 0);
-    } catch {
-      return;
-    }
+    const alive = fromThrowable(
+      () => process.kill(parentPid, 0),
+      (error) => error,
+    )();
+    if (alive.isErr()) return;
     await Bun.sleep(20);
   }
 }
@@ -122,29 +125,40 @@ async function sendEndNotice(
     };
 
   const signal = AbortSignal.timeout(noticeGuardMs);
-  try {
-    const child = Bun.spawn(
-      [
-        executable,
-        "msg",
-        "send",
-        "--to",
-        target,
-        ...(input.address === null ? [] : ["--exact"]),
-        "--message",
-        message,
-        "--timeout-ms",
-        String(noticeDeadlineMs),
-      ],
-      {
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-        env: { ...process.env, ...env, AGX_RUN_ID: input.id },
-        signal,
-        killSignal: "SIGKILL",
-      },
-    );
+  const spawned = fromThrowable(
+    () =>
+      Bun.spawn(
+        [
+          executable,
+          "msg",
+          "send",
+          "--to",
+          target,
+          ...(input.address === null ? [] : ["--exact"]),
+          "--message",
+          message,
+          "--timeout-ms",
+          String(noticeDeadlineMs),
+        ],
+        {
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+          env: { ...process.env, ...env, AGX_RUN_ID: input.id },
+          signal,
+          killSignal: "SIGKILL",
+        },
+      ),
+    (error) => error,
+  )();
+  if (spawned.isErr())
+    return {
+      status: "unreachable",
+      exit: 1,
+      receipt: `agx msg send failed: ${String(spawned.error).slice(0, receiptLimit)}`,
+    };
+  {
+    const child = spawned.value;
     const [exit, stdout, stderr] = await Promise.all([
       child.exited,
       child.stdout === null
@@ -160,24 +174,20 @@ async function sendEndNotice(
         status: "deadline",
         exit: exit === 4 ? exit : 4,
         receipt:
-          output || `notice deadline exceeded after ${noticeDeadlineMs} ms`,
+          output !== ""
+            ? output
+            : `notice deadline exceeded after ${noticeDeadlineMs} ms`,
       };
     if (exit === 0)
       return {
         status: "accepted",
         exit,
-        receipt: output || "agx msg send accepted",
+        receipt: output !== "" ? output : "agx msg send accepted",
       };
     return {
       status: "unreachable",
       exit,
-      receipt: output || `agx msg send exited ${exit}`,
-    };
-  } catch (error) {
-    return {
-      status: "unreachable",
-      exit: 1,
-      receipt: `agx msg send failed: ${String(error).slice(0, receiptLimit)}`,
+      receipt: output !== "" ? output : `agx msg send exited ${exit}`,
     };
   }
 }

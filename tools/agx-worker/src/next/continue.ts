@@ -166,15 +166,29 @@ export async function pinContinuation(
         resolve(stateDir(), "runs", previous.id, "ticket.orig.md"),
     };
   }
-  const parsedTicket = routing === undefined
-    ? parseNextTicket(await Bun.file(ticketPath).text().catch(() => ""))
-    : undefined;
-  const timeoutS = routing?.timeoutS ?? (parsedTicket?.success === true ? parsedTicket.ticket.timeout_s ?? 600 : undefined);
-  const outsideBox = row !== undefined && timeoutS !== undefined && !fitsPublishedTimeBox(row, timeoutS);
+  const parsedTicket =
+    routing === undefined
+      ? parseNextTicket(
+          await Bun.file(ticketPath)
+            .text()
+            .catch(() => ""),
+        )
+      : undefined;
+  const timeoutS =
+    routing?.timeoutS ??
+    (parsedTicket?.success === true
+      ? (parsedTicket.ticket.timeout_s ?? 600)
+      : undefined);
+  const outsideBox =
+    row !== undefined &&
+    timeoutS !== undefined &&
+    !fitsPublishedTimeBox(row, timeoutS);
   if (row === undefined || outsideBox) {
     if (routing === undefined && parsedTicket?.success !== true) return null;
     const inspected = parsedTicket?.success === true ? parsedTicket : undefined;
-    const brief = routing?.brief ?? `Proposition ${inspected?.ticket.proposition.id}: ${inspected?.ticket.proposition.claim}\n${inspected?.prose}`;
+    const brief =
+      routing?.brief ??
+      `Proposition ${inspected?.ticket.proposition.id}: ${inspected?.ticket.proposition.claim}\n${inspected?.prose}`;
     const result = await route(
       brief,
       routing?.capabilities ?? inspected?.ticket.capabilities ?? [],
@@ -182,14 +196,27 @@ export async function pinContinuation(
       routing?.maskedRows ?? [],
       {},
       null,
-      { capacityRetry: true, timeoutMs: loaded.value.auto.timeout_ms, inspect: routing === undefined },
+      {
+        capacityRetry: true,
+        timeoutMs: loaded.value.auto.timeout_ms,
+        inspect: routing === undefined,
+      },
     );
     if (result.kind !== "selected")
-      return refuse(result.kind === "refused" ? result.message.trim() : "no eligible roster row can replace the prior row");
+      return refuse(
+        result.kind === "refused"
+          ? result.message.trim()
+          : "no eligible roster row can replace the prior row",
+      );
     const next = result.row;
     if (!fitsPublishedTimeBox(next, timeoutS ?? 600))
-      return refuse(`fresh routing selected row ${next.id} outside the ${timeoutS ?? 600} s time box`);
-    const sessionDescription = previous.route === next.route ? "resuming the vendor session" : "with a fresh vendor session";
+      return refuse(
+        `fresh routing selected row ${next.id} outside the ${timeoutS ?? 600} s time box`,
+      );
+    const sessionDescription =
+      previous.route === next.route
+        ? "resuming the vendor session"
+        : "with a fresh vendor session";
     if (routing !== undefined)
       process.stderr.write(
         outsideBox

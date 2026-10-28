@@ -268,12 +268,12 @@ function parseCompleteRecordLines(
 ): { events: NextEvent[]; lineCount: number } {
   const lines = text.split("\n");
   if (lines.at(-1) === "") lines.pop();
-  const events: NextEvent[] = [];
+  const parsedEvents: NextEvent[] = [];
   for (const [index, line] of lines.entries()) {
     if (line === "") continue;
     const event = EventTextSchema.safeParse(line);
     if (event.success) {
-      events.push(event.data);
+      parsedEvents.push(event.data);
       continue;
     }
     const raw = jsonOf(z.record(z.string(), z.unknown())).safeParse(line);
@@ -291,7 +291,7 @@ function parseCompleteRecordLines(
       `agx: skipped unreadable record log line ${path}:${firstLine + index}: ${reason}\n`,
     );
   }
-  return { events, lineCount: lines.length };
+  return { events: parsedEvents, lineCount: lines.length };
 }
 
 import { stateDir } from "../state.ts";

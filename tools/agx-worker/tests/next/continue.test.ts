@@ -20,8 +20,7 @@ import { createTempTracker } from "../temp.ts";
 const tempDirs = createTempTracker();
 const roots: string[] = [];
 const removeRoots = () => {
-  for (const root of roots)
-    rmSync(root, { recursive: true, force: true });
+  for (const root of roots) rmSync(root, { recursive: true, force: true });
 };
 afterEach(removeRoots);
 afterAll(() => {
@@ -113,7 +112,9 @@ const fixture = async (ticketName = "pin") => {
     Bun.spawnSync(
       [
         ...(compiled ? [entry] : [process.execPath]),
-        ...(overrides.AGX_TEST_PRELOAD === undefined ? [] : ["--preload", overrides.AGX_TEST_PRELOAD]),
+        ...(overrides.AGX_TEST_PRELOAD === undefined
+          ? []
+          : ["--preload", overrides.AGX_TEST_PRELOAD]),
         ...(compiled ? [] : [entry]),
         command,
         ticket,
@@ -655,123 +656,187 @@ describe("agx worker run --continue pins the prior row", () => {
     expect(existsSync(join(f.state, "runs"))).toBe(false);
   });
 
-test("continue contract: a continuation never stays on a row outside the time box", async () => {
-  const f = await fixture();
-  writeFileSync(f.ticket, ticketText("first prose").replace("verify = []", "verify = []\ntimeout_s = 600"));
-  const catalog = join(f.root, "catalog.toml");
-  writeFileSync(catalog, `schema = 1\nas_of = "2026-10-29"\n[jev]\n[sources]\n[[choice]]\nid = "luna-max"\nroute = "codex"\nmodel = "gpt-6-luna"\neffort = "max"\naa_time_per_task_s = 597\ntb4 = 50\nprice_in = 0.1\nprice_out = 0.1\n[[choice]]\nid = "luna-low"\nroute = "codex"\nmodel = "gpt-6-luna"\neffort = "low"\naa_time_per_task_s = 200\ntb4 = 5\nprice_in = 0.1\nprice_out = 0.1\n[[choice]]\nid = "terra-high"\nroute = "codex"\nmodel = "gpt-6.1-terra"\neffort = "high"\naa_time_per_task_s = 180\ntb4 = 45\nprice_in = 1\nprice_out = 1\n`);
-  const policy = join(f.root, "policy.toml");
-  writeFileSync(policy, `schema = 1\n[route]\nallow = ["codex"]\ndefault = "terra-high"\nexclude = []\nmax_task_chars = 6000\ntimeout_ms = 20000\nno_egress = []\npick_temperature = 0.5\n[route.jev]\napi = "typesafe"\nurl = "http://127.0.0.1:1/choice"\nmodel = "test"\n[claude_run]\nmax_budget_usd = 2\nmax_turns = 60\nreason = "A fixed test policy for a bounded worker run."\n`);
-  const rosterModule = new URL("../../src/roster/index.ts", import.meta.url).pathname;
-  const jevModule = new URL("../../../shared/src/jev-client.ts", import.meta.url).pathname;
-  const usageModule = new URL("../../src/next/usage.ts", import.meta.url).pathname;
-  const entry = join(f.root, "fixture-cli.ts");
-  writeFileSync(entry, `import { mock } from "bun:test";\nconst roster = await import(${JSON.stringify(rosterModule)});\nconst loadRoster = roster.loadRoster;\nmock.module(${JSON.stringify(rosterModule)}, () => ({ ...roster, loadRoster: (options = {}) => loadRoster({ ...options, catalogPath: ${JSON.stringify(catalog)} }) }));\nconst jev = await import(${JSON.stringify(jevModule)});\nmock.module(${JSON.stringify(jevModule)}, () => ({ ...jev, postJev: async () => ({ ok: true, status: 200, text: JSON.stringify({ answers: { worker: { choice: "cross_module" } } }), trace: { endpoint: "fixture", request: null, latency_ms: 0 } }) }));\nconst usage = await import(${JSON.stringify(usageModule)});\nconst available = { available: true, exhausted: false, usage_status: "unknown", preference: "neutral", windows: {} };\nmock.module(${JSON.stringify(usageModule)}, () => ({ ...usage, readRouteUsage: async () => ({ codex: available, claude: available }) }));\n`);
-  const env = { AGX_CONFIG: policy, AGX_TEST_PRELOAD: entry, AGX_NEXT_JEV_URL: undefined, JEX_JEV_URL: undefined, JEV_URL: "http://127.0.0.1:1/choice" };
-  writeFileSync(
-    join(f.state, "records.jsonl"),
-    `${f.events().map((event) => JSON.stringify(
-      event.kind === "started" && event.id === "codex-run"
-        ? Object.assign(event, { row: "luna-max", route: "codex", model: "gpt-6-luna", effort: "max" })
-        : event,
-    )).join("\n")}\n`,
-  );
-  const originalRecords = readFileSync(join(f.state, "records.jsonl"), "utf8");
-  const fresh = f.resume(undefined, env);
-  expect(fresh.exitCode, fresh.stderr.toString()).toBe(0);
-  const freshReceipt = jsonOf(Receipt).safeParse(fresh.stdout.toString().trim());
-  expect(freshReceipt.success).toBe(true);
-  if (!freshReceipt.success) return;
-  expect(freshReceipt.data.row).toBe("terra-high");
-  writeFileSync(join(f.state, "records.jsonl"), originalRecords);
-  const checked = f.resume("codex-run", env, undefined, false, [], "check");
-  expect(checked.exitCode, checked.stderr.toString()).toBe(0);
-  expect(checked.stdout.toString()).toContain(`row=luna-max -> ${freshReceipt.data.row}`);
-  const continued = f.resume("codex-run", env);
-  expect(continued.exitCode, continued.stderr.toString()).toBe(0);
-  expect(continued.stderr.toString()).toContain("row luna-max is outside the 600 s time box; continuing codex-run on ");
-  const receipt = jsonOf(Receipt).safeParse(continued.stdout.toString().trim());
-  expect(receipt.success).toBe(true);
-  if (!receipt.success) return;
-  expect(receipt.data.row).toBe(freshReceipt.data.row);
-  expect(f.events().find((event) => event.kind === "started" && event.id === receipt.data.id)).toMatchObject({ vendor_session: "codex-thread-1" });
-});
-
-test("continue contract: a run whose row was retired", async () => {
-  const f = await fixture();
-  writeFileSync(
-    join(f.state, "records.jsonl"),
-    `${f.events()
-      .map((event) =>
-        event.kind === "started" && event.id === "codex-run"
-          ? Object.assign(event, { route: "codex", model: "gpt-6.1-terra", effort: "high" })
-          : event,
-      )
-      .map((event) => JSON.stringify(event))
-      .join("\n")}\n`,
-  );
-  const policy = join(f.root, "retired-policy.toml");
-  writeFileSync(
-    policy,
-    readFileSync(
-      new URL("../../src/roster/policy.example.toml", import.meta.url),
+  test("continue contract: a continuation never stays on a row outside the time box", async () => {
+    const f = await fixture();
+    writeFileSync(
+      f.ticket,
+      ticketText("first prose").replace(
+        "verify = []",
+        "verify = []\ntimeout_s = 600",
+      ),
+    );
+    const catalog = join(f.root, "catalog.toml");
+    writeFileSync(
+      catalog,
+      `schema = 1\nas_of = "2026-10-29"\n[jev]\n[sources]\n[[choice]]\nid = "luna-max"\nroute = "codex"\nmodel = "gpt-6-luna"\neffort = "max"\naa_time_per_task_s = 597\ntb4 = 50\nprice_in = 0.1\nprice_out = 0.1\n[[choice]]\nid = "luna-low"\nroute = "codex"\nmodel = "gpt-6-luna"\neffort = "low"\naa_time_per_task_s = 200\ntb4 = 5\nprice_in = 0.1\nprice_out = 0.1\n[[choice]]\nid = "terra-high"\nroute = "codex"\nmodel = "gpt-6.1-terra"\neffort = "high"\naa_time_per_task_s = 180\ntb4 = 45\nprice_in = 1\nprice_out = 1\n`,
+    );
+    const policy = join(f.root, "policy.toml");
+    writeFileSync(
+      policy,
+      `schema = 1\n[route]\nallow = ["codex"]\ndefault = "terra-high"\nexclude = []\nmax_task_chars = 6000\ntimeout_ms = 20000\nno_egress = []\npick_temperature = 0.5\n[route.jev]\napi = "typesafe"\nurl = "http://127.0.0.1:1/choice"\nmodel = "test"\n[claude_run]\nmax_budget_usd = 2\nmax_turns = 60\nreason = "A fixed test policy for a bounded worker run."\n`,
+    );
+    const rosterModule = new URL("../../src/roster/index.ts", import.meta.url)
+      .pathname;
+    const jevModule = new URL(
+      "../../../shared/src/jev-client.ts",
+      import.meta.url,
+    ).pathname;
+    const usageModule = new URL("../../src/next/usage.ts", import.meta.url)
+      .pathname;
+    const entry = join(f.root, "fixture-cli.ts");
+    writeFileSync(
+      entry,
+      `import { mock } from "bun:test";\nconst roster = await import(${JSON.stringify(rosterModule)});\nconst loadRoster = roster.loadRoster;\nmock.module(${JSON.stringify(rosterModule)}, () => ({ ...roster, loadRoster: (options = {}) => loadRoster({ ...options, catalogPath: ${JSON.stringify(catalog)} }) }));\nconst jev = await import(${JSON.stringify(jevModule)});\nmock.module(${JSON.stringify(jevModule)}, () => ({ ...jev, postJev: async () => ({ ok: true, status: 200, text: JSON.stringify({ answers: { worker: { choice: "cross_module" } } }), trace: { endpoint: "fixture", request: null, latency_ms: 0 } }) }));\nconst usage = await import(${JSON.stringify(usageModule)});\nconst available = { available: true, exhausted: false, usage_status: "unknown", preference: "neutral", windows: {} };\nmock.module(${JSON.stringify(usageModule)}, () => ({ ...usage, readRouteUsage: async () => ({ codex: available, claude: available }) }));\n`,
+    );
+    const env = {
+      AGX_CONFIG: policy,
+      AGX_TEST_PRELOAD: entry,
+      AGX_NEXT_JEV_URL: undefined,
+      JEX_JEV_URL: undefined,
+      JEV_URL: "http://127.0.0.1:1/choice",
+    };
+    writeFileSync(
+      join(f.state, "records.jsonl"),
+      `${f
+        .events()
+        .map((event) =>
+          JSON.stringify(
+            event.kind === "started" && event.id === "codex-run"
+              ? Object.assign(event, {
+                  row: "luna-max",
+                  route: "codex",
+                  model: "gpt-6-luna",
+                  effort: "max",
+                })
+              : event,
+          ),
+        )
+        .join("\n")}\n`,
+    );
+    const originalRecords = readFileSync(
+      join(f.state, "records.jsonl"),
       "utf8",
-    ).replace('exclude = []', 'exclude = ["terra-high"]'),
-  );
-  const checked = f.resume(
-    "codex-run",
-    { AGX_CONFIG: policy },
-    undefined,
-    false,
-    [],
-    "check",
-  );
-  expect(checked.exitCode, checked.stderr.toString()).toBe(0);
-  expect(checked.stdout.toString()).toContain(
-    `CONTINUE run=codex-run row=terra-high -> luna-high workspace=${f.root}`,
-  );
-  const continued = f.resume("codex-run", { AGX_CONFIG: policy });
-  expect(continued.exitCode, continued.stderr.toString()).toBe(0);
-  const receipt = jsonOf(Receipt.extend({
-    continued_from_row: z.string(),
-    workspace: z.string(),
-  })).safeParse(continued.stdout.toString().trim());
-  expect(receipt.success).toBe(true);
-  if (!receipt.success) return;
-  expect(receipt.data).toMatchObject({
-    row: "luna-high",
-    continued_from_row: "terra-high",
-    workspace: f.root,
+    );
+    const fresh = f.resume(undefined, env);
+    expect(fresh.exitCode, fresh.stderr.toString()).toBe(0);
+    const freshReceipt = jsonOf(Receipt).safeParse(
+      fresh.stdout.toString().trim(),
+    );
+    expect(freshReceipt.success).toBe(true);
+    if (!freshReceipt.success) return;
+    expect(freshReceipt.data.row).toBe("terra-high");
+    writeFileSync(join(f.state, "records.jsonl"), originalRecords);
+    const checked = f.resume("codex-run", env, undefined, false, [], "check");
+    expect(checked.exitCode, checked.stderr.toString()).toBe(0);
+    expect(checked.stdout.toString()).toContain(
+      `row=luna-max -> ${freshReceipt.data.row}`,
+    );
+    const continued = f.resume("codex-run", env);
+    expect(continued.exitCode, continued.stderr.toString()).toBe(0);
+    expect(continued.stderr.toString()).toContain(
+      "row luna-max is outside the 600 s time box; continuing codex-run on ",
+    );
+    const receipt = jsonOf(Receipt).safeParse(
+      continued.stdout.toString().trim(),
+    );
+    expect(receipt.success).toBe(true);
+    if (!receipt.success) return;
+    expect(receipt.data.row).toBe(freshReceipt.data.row);
+    expect(
+      f
+        .events()
+        .find(
+          (event) => event.kind === "started" && event.id === receipt.data.id,
+        ),
+    ).toMatchObject({ vendor_session: "codex-thread-1" });
   });
-  expect(
-    f
-      .events()
-      .find((event) => event.kind === "started" && event.id === receipt.data.id),
-  ).toMatchObject({
-    row: "luna-high",
-    continued_from_row: "terra-high",
-    workspace: f.root,
-    continues: "codex-run",
-    supersedes: null,
-  });
-});
 
-test("continue contract: a run whose workspace is gone is still refused", async () => {
-  const f = await fixture();
-  const events = f.events().map((event) =>
-    event.kind === "started" && event.id === "codex-run"
-      ? Object.assign(event, { workspace: join(f.root, "missing-workspace") })
-      : event,
-  );
-  writeFileSync(
-    join(f.state, "records.jsonl"),
-    `${events.map((event) => JSON.stringify(event)).join("\n")}\n`,
-  );
-  const result = f.resume("codex-run", {}, undefined, false, [], "check");
-  expect(result.exitCode).toBe(2);
-  expect(result.stderr.toString()).toContain("workspace");
-  expect(result.stderr.toString()).toContain("no longer exists");
-});
+  test("continue contract: a run whose row was retired", async () => {
+    const f = await fixture();
+    writeFileSync(
+      join(f.state, "records.jsonl"),
+      `${f
+        .events()
+        .map((event) =>
+          event.kind === "started" && event.id === "codex-run"
+            ? Object.assign(event, {
+                route: "codex",
+                model: "gpt-6.1-terra",
+                effort: "high",
+              })
+            : event,
+        )
+        .map((event) => JSON.stringify(event))
+        .join("\n")}\n`,
+    );
+    const policy = join(f.root, "retired-policy.toml");
+    writeFileSync(
+      policy,
+      readFileSync(
+        new URL("../../src/roster/policy.example.toml", import.meta.url),
+        "utf8",
+      ).replace("exclude = []", 'exclude = ["terra-high"]'),
+    );
+    const checked = f.resume(
+      "codex-run",
+      { AGX_CONFIG: policy },
+      undefined,
+      false,
+      [],
+      "check",
+    );
+    expect(checked.exitCode, checked.stderr.toString()).toBe(0);
+    expect(checked.stdout.toString()).toContain(
+      `CONTINUE run=codex-run row=terra-high -> luna-high workspace=${f.root}`,
+    );
+    const continued = f.resume("codex-run", { AGX_CONFIG: policy });
+    expect(continued.exitCode, continued.stderr.toString()).toBe(0);
+    const receipt = jsonOf(
+      Receipt.extend({
+        continued_from_row: z.string(),
+        workspace: z.string(),
+      }),
+    ).safeParse(continued.stdout.toString().trim());
+    expect(receipt.success).toBe(true);
+    if (!receipt.success) return;
+    expect(receipt.data).toMatchObject({
+      row: "luna-high",
+      continued_from_row: "terra-high",
+      workspace: f.root,
+    });
+    expect(
+      f
+        .events()
+        .find(
+          (event) => event.kind === "started" && event.id === receipt.data.id,
+        ),
+    ).toMatchObject({
+      row: "luna-high",
+      continued_from_row: "terra-high",
+      workspace: f.root,
+      continues: "codex-run",
+      supersedes: null,
+    });
+  });
+
+  test("continue contract: a run whose workspace is gone is still refused", async () => {
+    const f = await fixture();
+    const events = f.events().map((event) =>
+      event.kind === "started" && event.id === "codex-run"
+        ? Object.assign(event, {
+            workspace: join(f.root, "missing-workspace"),
+          })
+        : event,
+    );
+    writeFileSync(
+      join(f.state, "records.jsonl"),
+      `${events.map((event) => JSON.stringify(event)).join("\n")}\n`,
+    );
+    const result = f.resume("codex-run", {}, undefined, false, [], "check");
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr.toString()).toContain("workspace");
+    expect(result.stderr.toString()).toContain("no longer exists");
+  });
 
   test("the ticket file is re-read on continue", async () => {
     const f = await fixture();

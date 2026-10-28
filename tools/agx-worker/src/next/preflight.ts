@@ -305,22 +305,28 @@ export async function preflight(
     ? (ticket.premises ?? [])
     : []) {
     if (ctx === undefined) continue;
-    let reference = /^(?:rev|bookmark):(.+)$/u.exec(premise)?.[1];
+    let premiseReference = /^(?:rev|bookmark):(.+)$/u.exec(premise)?.[1];
     if (
       ctx.vcs === "git" &&
       premise.startsWith("bookmark:") &&
-      reference !== undefined
+      premiseReference !== undefined
     ) {
-      const at = reference.lastIndexOf("@");
-      reference =
+      const at = premiseReference.lastIndexOf("@");
+      premiseReference =
         at < 0
-          ? `refs/heads/${reference}`
-          : `refs/remotes/${reference.slice(at + 1)}/${reference.slice(0, at)}`;
+          ? `refs/heads/${premiseReference}`
+          : `refs/remotes/${premiseReference.slice(at + 1)}/${premiseReference.slice(0, at)}`;
     }
     const commit =
-      reference === undefined ? ctx.base_rev : await ctx.revision(reference);
+      premiseReference === undefined
+        ? ctx.base_rev
+        : await ctx.revision(premiseReference);
     if (commit instanceof InspectionUnavailable) return { temporary: commit };
-    if (commit === null && reference === undefined && ctx.vcs === undefined)
+    if (
+      commit === null &&
+      premiseReference === undefined &&
+      ctx.vcs === undefined
+    )
       continue;
     if (commit === null)
       add(

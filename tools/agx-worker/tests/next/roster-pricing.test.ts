@@ -107,22 +107,27 @@ test("roster rejects nonpositive published per-task measurements", async () => {
   const catalog = await Bun.file(
     new URL("../../src/roster/catalog.toml", import.meta.url),
   ).text();
-  for (const field of ["aa_cost_per_task_usd", "aa_time_per_task_s"])
-    for (const invalid of [0, -1]) {
-      await Bun.write(
-        catalogPath,
-        catalog.replace(
-          new RegExp(`^${field} = .*`, "mu"),
-          `${field} = ${invalid}`,
-        ),
-      );
-      const loaded = await loadRoster({
-        catalogPath,
-        policyPath: new URL("./fixtures/roster-pricing.toml", import.meta.url)
-          .pathname,
-      });
-      expect(loaded.ok).toBe(false);
-      if (loaded.ok) expect.unreachable(`accepted ${field} = ${invalid}`);
-      expect(loaded.error).toContain(field);
-    }
+  const invalidPricing: Array<[string, number]> = [
+    ["aa_cost_per_task_usd", 0],
+    ["aa_cost_per_task_usd", -1],
+    ["aa_time_per_task_s", 0],
+    ["aa_time_per_task_s", -1],
+  ];
+  for (const [field, invalid] of invalidPricing) {
+    await Bun.write(
+      catalogPath,
+      catalog.replace(
+        new RegExp(`^${field} = .*`, "mu"),
+        `${field} = ${invalid}`,
+      ),
+    );
+    const loaded = await loadRoster({
+      catalogPath,
+      policyPath: new URL("./fixtures/roster-pricing.toml", import.meta.url)
+        .pathname,
+    });
+    expect(loaded.ok).toBe(false);
+    if (!loaded.ok) expect(loaded.error).toContain(field);
+    else expect.unreachable(`accepted ${field} = ${invalid}`);
+  }
 });

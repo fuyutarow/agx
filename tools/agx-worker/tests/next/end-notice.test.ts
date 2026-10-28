@@ -32,14 +32,14 @@ afterEach(async () => {
   for (const child of children.splice(0)) child.kill("SIGKILL");
   for (const socket of sockets.splice(0)) socket.destroy();
   await Promise.all(
-    servers
-      .splice(0)
-      .map(
-        (server) =>
-          new Promise<void>((resolveClose) =>
-            server.close(() => resolveClose()),
-          ),
-      ),
+    servers.splice(0).map(
+      (server) =>
+        new Promise<void>((resolveClose) => {
+          server.close(() => {
+            resolveClose();
+          });
+        }),
+    ),
   );
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
@@ -247,27 +247,32 @@ process.exitCode = 3;
       ? jsonOf(EndedRecord).safeParse(JSON.stringify(endedEvent.data))
       : undefined;
   expect(ended?.success).toBe(true);
-  const finalNotice =
-    ended?.success === true
-      ? await waitForNotice(state, ended.data.id, ended.data.end_notice)
-      : { status: "pending" as const, exit: null, receipt: "missing" };
+  let finalNotice: z.output<typeof NoticeRecord> = {
+    status: "pending",
+    exit: null,
+    receipt: "missing",
+  };
+  if (ended?.success === true)
+    finalNotice = await waitForNotice(
+      state,
+      ended.data.id,
+      ended.data.end_notice,
+    );
   const noticeLines = await Bun.file(noticesPath)
     .text()
     .catch(() => "");
   const claudeLines = await Bun.file(claudeArgsPath)
     .text()
     .catch(() => "");
-  const claudeArgs =
-    claudeLines.trim() === ""
-      ? []
-      : claudeLines
-          .trim()
-          .split("\n")
-          .flatMap((line) => {
-            const parsed = jsonOf(z.array(z.string())).safeParse(line);
-            return parsed.success ? [parsed.data] : [];
-          })
-          .flat();
+  const claudeArgs = claudeLines
+    .trim()
+    .split("\n")
+    .flatMap((line) => {
+      const parsed = jsonOf(z.array(z.string())).safeParse(line);
+      if (!parsed.success) return [];
+      return [parsed.data];
+    })
+    .flat();
   return {
     root,
     state,
@@ -355,7 +360,7 @@ test("end notice contract: a dead dispatcher never delays the run end", async ()
   });
   const address = server.address();
   if (address === null || typeof address === "string")
-    throw new Error("unanswering socket did not bind a TCP port");
+    assert.fail("unanswering socket did not bind a TCP port");
   const dispatcherId = "80d8b978-a8bf-4797-8f93-12829e759502";
   const result = await runCase({
     dispatcher: `claude:${dispatcherId}`,
