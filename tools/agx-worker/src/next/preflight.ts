@@ -1,6 +1,6 @@
 import { fromPromise, fromThrowable } from "neverthrow";
 import { createHash, randomUUID } from "node:crypto";
-import { sandboxNeeds } from "./sandbox-needs.ts";
+import { inspectSandboxNeeds } from "./sandbox-needs.ts";
 import { readFile } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import { validateSlug } from "../../../shared/src/slug.ts";
@@ -383,15 +383,18 @@ export async function preflight(
       "--sandbox must be none, read-only, or workspace-write",
       "choose a supported sandbox",
     );
-  if (ticket !== undefined && parsedSandbox.success)
-    for (const warning of await sandboxNeeds(
+  if (ticket !== undefined && parsedSandbox.success) {
+    const sandboxNeeds = await inspectSandboxNeeds(
       cwd,
       parsedSandbox.data,
       ticket.writes,
       ticket.verify,
       ctx?.verifyAlways,
-    ))
+    );
+    for (const warning of sandboxNeeds.warnings)
       process.stderr.write(`${warning}\n`);
+    failures.push(...sandboxNeeds.refusals);
+  }
   if (binding?.success === false)
     add(
       `invalid dispatch binding: ${binding.error.message}`,

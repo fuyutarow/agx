@@ -18,19 +18,21 @@ The top-level `objective` field in `roster --json` is the routing objective text
 
 ## Sandbox capability preflight
 
-`check TICKET --cd TREE [--sandbox MODE]`, `run`, and dispatch's check emit
-advisory `WARN sandbox` lines on stderr before worker startup. A warning does not
-change the exit status, requested sandbox, sandbox provenance, or launch arguments.
-Dispatch forwards successful check stderr before starting the worker unit.
-`none` suppresses these restricted-sandbox warnings. No detector executes a verify
-command, contacts systemd, runs a declared tool, writes VCS metadata, or upgrades
-the sandbox.
+`check TICKET --cd TREE [--sandbox MODE]`, `run`, and dispatch's check inspect
+verification requirements before worker startup. Advisory `WARN sandbox` lines
+do not change the exit status, requested sandbox, sandbox provenance, or launch
+arguments. A hard sandbox contract refusal exits 2. Dispatch forwards successful
+check stderr before starting the worker unit. `none` suppresses restricted-sandbox
+warnings and refusals. No detector executes a verify command, contacts systemd,
+runs a declared tool, writes VCS metadata, or upgrades the sandbox.
 
 Each warning contains `capability`, `requested`, JSON-quoted `evidence`,
 `allows=none` with an explicit unsandboxed explanation, and `sandbox unchanged`.
 One user-bus warning is emitted per matching verification entry. One external-store
 warning is emitted per distinct canonical store path, with writes and VCS verify
-evidence (or an explicit empty-writes qualification).
+evidence (or an explicit empty-writes qualification). The edit-only case continues
+to dispatch with this warning, including when `writes` is non-empty and no
+verification entry mutates VCS metadata.
 
 `user-systemd-bus` detects literal `systemctl` or `systemd-run` commands followed
 by `--user`, and the known `agent-resource-run` wrapper, in ticket `verify` and
@@ -40,13 +42,24 @@ directory or relative repo pointer, following symlinks. A store outside canonica
 `--cd` warns even when writes is empty. A shared store may need writes for VCS
 operations that do not change tracked files.
 
+The sandbox contract treats canonical `--cd` as the writable root for
+`workspace-write`, no paths as writable for `read-only`, and all paths as writable
+for `none`. For ticket `verify` and repository `[verify].always`, static inspection
+recognizes common mutating `git` and `jj` commands, including `git commit` and
+`jj new`, `jj commit`, `jj rebase`, and `jj describe`. If any discovered workspace
+VCS store is outside the requested mode's writable roots, preflight refuses before
+the dispatching record or worker unit exists. The diagnostic names the verify
+entry, command, and store; it directs the worker to leave edits for the dispatcher
+to commit or the operator to choose `--sandbox none` explicitly.
+
 Detection is conservative static inspection. It does not expand aliases, inspect
 arbitrary scripts or nested task definitions, infer unknown tool requirements,
 certify host bus availability, or model vendor-specific writable roots and host
 declarations. Quoted/commented commands may warn; absent warnings do not certify
 capability. The operator chooses any different sandbox explicitly. Acceptance
-coverage lives in `tests/next/sandbox-needs.test.ts`, `tests/next/preflight.test.ts`
-and `tests/dispatch.test.ts`, using disposable filesystem pointers and fake launchers.
+coverage lives in `tests/next/sandbox-needs.test.ts`, `tests/next/preflight.test.ts`,
+`tests/next/sandbox-dispatch.test.ts`, and `tests/dispatch.test.ts`, using disposable
+filesystem pointers and fake launchers.
 
 `agx worker stats` emits one JSON object without requiring `--json`. Its additive
 `legacy_land` field is the public legacy landing presence contract (C4):
