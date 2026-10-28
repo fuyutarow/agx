@@ -50,6 +50,9 @@ const Ticket = z
     external_reads: z.array(oneLine).optional(),
     network: z.enum(["none", "allowed"]).optional(),
     sandbox: z.enum(["none", "read-only", "workspace-write"]).optional(),
+    ack_target: oneLine
+      .regex(/^claude:.+$/u, "must be claude:<UUID, prefix, or exact name>")
+      .optional(),
     resources: z
       .strictObject({
         cpu: z.number().positive(),
@@ -191,6 +194,7 @@ export function parseNextTicket(
     "external_reads",
     "network",
     "sandbox",
+    "ack_target",
     "resources",
   ]);
   for (const key of Object.keys(fields.data))

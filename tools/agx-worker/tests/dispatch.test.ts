@@ -16,6 +16,10 @@ import { fileURLToPath } from "node:url";
 import { DispatchBindingSchema } from "../../shared/src/agx-dispatch-binding.ts";
 import { jsonOf, z } from "../../shared/src/zod.ts";
 import { DISPATCH_COMMAND_TIMEOUT_MS } from "../src/dispatch.ts";
+import {
+  BOUND_CLAUDE_TARGET_ENV,
+  encodeBoundClaudeTarget,
+} from "../../xmsg/src/claude-target.ts";
 
 const ENTRY = fileURLToPath(new URL("../src/next/cli.ts", import.meta.url));
 const RunRecord = z.looseObject({
@@ -216,6 +220,40 @@ async function invoke(f: ReturnType<typeof fixture>, ...args: string[]) {
   ]);
   return { stdout, stderr, exitCode };
 }
+
+test("dispatch passes the ticket ACK target to the run as a bound address", async () => {
+  const f = fixture();
+  writeFileSync(
+    f.ticket,
+    readFileSync(f.ticket, "utf8").replace(
+      "schema = 2",
+      'schema = 2\nack_target = "claude:coordinator-peer"',
+    ),
+  );
+  const result = await invoke(f);
+  expect(result.exitCode, result.stderr).toBe(0);
+  const bound = encodeBoundClaudeTarget({
+    selector: "claude:coordinator-peer",
+    address: "claude:coordinator-peer",
+  });
+  expect(readFileSync(f.unitArgs, "utf8")).toContain(
+    `--setenv=${BOUND_CLAUDE_TARGET_ENV}=${bound}`,
+  );
+});
+
+test("dispatch binds its Claude session when the ticket omits an ACK target", async () => {
+  const f = fixture();
+  f.env.AGX_DISPATCHER_SESSION = undefined;
+  const result = await invoke(f);
+  expect(result.exitCode, result.stderr).toBe(0);
+  const bound = encodeBoundClaudeTarget({
+    selector: "claude:fixture-claude",
+    address: "claude:fixture-claude",
+  });
+  expect(readFileSync(f.unitArgs, "utf8")).toContain(
+    `--setenv=${BOUND_CLAUDE_TARGET_ENV}=${bound}`,
+  );
+});
 
 function priorRun(
   f: ReturnType<typeof fixture>,

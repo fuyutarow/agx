@@ -14,7 +14,10 @@ import {
   resolveRecipientSelector,
 } from "./recipient-prefix.ts";
 import { claudeReceipt } from "./claude-receipt.ts";
-import { resolveClaudeTarget } from "./claude-target.ts";
+import {
+  matchBoundClaudeTarget,
+  resolveClaudeTarget,
+} from "./claude-target.ts";
 import {
   relayCheckCommand,
   relayEvidence,
@@ -409,11 +412,22 @@ async function main(): Promise<number> {
   }
   const started = performance.now();
   const deadline = started + timeoutMs;
+  let boundClaudeName: string | undefined;
+  if (kind === "claude") {
+    const bound = matchBoundClaudeTarget(`claude:${id}`);
+    if (bound.kind === "invalid") {
+      process.stderr.write(
+        `agx msg: invalid dispatch-bound Claude target (${bound.reason}); no send attempted\n`,
+      );
+      return 3;
+    }
+    if (bound.kind === "matched") boundClaudeName = bound.name;
+  }
   let target = canonicalUuid(id) ?? id;
   let claudeSnapshot: Awaited<ReturnType<typeof selectedInventory>> | undefined;
   if (args.flags.exact === true) {
     if (kind !== "codex" && kind !== "claude") return 2;
-  } else if (kind === undefined) {
+  } else if (boundClaudeName === undefined && kind === undefined) {
     const inventories = await Promise.all([
       selectedInventory(
         "codex",
@@ -445,7 +459,11 @@ async function main(): Promise<number> {
     kind = resolution.recipient.vendor;
     target = resolution.recipient.id;
     claudeSnapshot = inventories[1];
-  } else if (canonicalUuid(id) === undefined && /^[0-9a-f-]+$/iu.test(id)) {
+  } else if (
+    boundClaudeName === undefined &&
+    canonicalUuid(id) === undefined &&
+    /^[0-9a-f-]+$/iu.test(id)
+  ) {
     if (kind !== "codex" && kind !== "claude") return 2;
     const inventory = await selectedInventory(kind, timeoutMs);
     const { recipients, evidence } = inventory;
@@ -470,6 +488,7 @@ async function main(): Promise<number> {
     }
     target = canonicalUuid(resolution.recipient.id) ?? resolution.recipient.id;
   } else if (
+    boundClaudeName === undefined &&
     kind === "codex" &&
     canonicalUuid(id) === undefined &&
     !/^[0-9a-f-]+$/iu.test(id)
@@ -501,9 +520,14 @@ async function main(): Promise<number> {
       return 2;
     }
   }
-  let relayTarget = target;
+  let relayTarget = boundClaudeName ?? target;
   const uuid = canonicalUuid(target);
-  if (kind === "claude" && uuid !== undefined && args.flags.exact !== true) {
+  if (
+    kind === "claude" &&
+    uuid !== undefined &&
+    args.flags.exact !== true &&
+    boundClaudeName === undefined
+  ) {
     const resolved = await resolveClaudeTarget(
       uuid,
       Math.max(1, Math.floor(deadline - performance.now())),

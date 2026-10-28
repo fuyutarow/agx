@@ -20,6 +20,10 @@ import {
   resolveNearestVendorIdentity,
   unknownSender,
 } from "../src/caller-identity.ts";
+import {
+  BOUND_CLAUDE_TARGET_ENV,
+  encodeBoundClaudeTarget,
+} from "../src/claude-target.ts";
 
 const cli = resolve(import.meta.dir, "../src/xmsg.ts");
 const roots: string[] = [];
@@ -1411,6 +1415,39 @@ test.each([
     );
   },
 );
+
+test("xmsg contract: a bound target is delivered without reading the session registry", async () => {
+  const bound = encodeBoundClaudeTarget({
+    selector: `claude:${uuidB}`,
+    address: "claude:bound peer",
+  });
+  const r = await run({
+    output: completeStream(uuidUse(uuidB), accepted),
+    args: sendArgs(`claude:${uuidB}`),
+    env: { [BOUND_CLAUDE_TARGET_ENV]: bound },
+  });
+  expect(r.exit).toBe(0);
+  expect(r.calls).toHaveLength(1);
+  expect(r.calls[0]?.[0]).toBe("--print");
+  expect(r.argv.at(-1)).toContain('Target: "bound peer"');
+  expect(r.argv.at(-1)).toContain(
+    JSON.stringify(envelope(message, undefined, uuidB)),
+  );
+});
+
+test("xmsg contract: an unbound claude target still resolves through the registry", async () => {
+  const name = "unbound peer";
+  const r = await run({
+    registry: [{ sessionId: uuidB, name, status: "busy" }],
+    relayPeer: name,
+    output: completeStream(listUse, listResult, uuidUse(uuidB), accepted),
+    args: sendArgs(`claude:${uuidB}`),
+  });
+  expect(r.exit).toBe(0);
+  expect(r.calls[0]).toEqual(["agents", "--json"]);
+  expect(r.calls).toHaveLength(2);
+  expect(r.argv.at(-1)).toContain(`Target: ${JSON.stringify(name)}`);
+});
 
 test.each([
   { records: [], reason: "found 0 live registrations" },

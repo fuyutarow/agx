@@ -64,6 +64,10 @@ import {
 } from "./verify.ts";
 import { scheduleEndNotice } from "./end-notice.ts";
 import { completionFor } from "./completion.ts";
+import {
+  normalizeClaudeSelector,
+  readBoundClaudeTarget,
+} from "../../../xmsg/src/claude-target.ts";
 
 export type Flags = Readonly<Record<string, string | boolean | undefined>>;
 const fatal = (message: string, exitCode = 2): never =>
@@ -152,6 +156,7 @@ const renderPromise = (
     judgment: Readonly<{ decision: string; note: string }> | null;
     ticketDiff: string;
   },
+  ackTarget?: string,
 ): string =>
   withReportInstruction(
     [
@@ -170,6 +175,9 @@ const renderPromise = (
       "Everything below serves this proposition; do not let a side task displace it.",
       "",
       `AGX_RUN_DIR=${runDir}. Write worker results, logs and measurements there; keep only source changes in the workspace.`,
+      ...(ackTarget === undefined
+        ? []
+        : [`Completion ACK target: ${ackTarget}`]),
       "Promise:",
       `outcome: ${ticket.outcome}`,
       `writes: ${JSON.stringify(ticket.writes.map((glob) => resolve(cwd, glob)))}`,
@@ -401,6 +409,23 @@ export async function run(flags: Flags): Promise<number> {
   } = inspected;
   if (ticket === undefined || bytes === null || ctx === undefined)
     return fatal("preflight did not resolve ticket and context");
+  const boundAckTarget = readBoundClaudeTarget();
+  if (boundAckTarget.kind === "invalid")
+    return fatal(
+      `invalid dispatch-bound Claude target: ${boundAckTarget.reason}`,
+    );
+  if (
+    boundAckTarget.kind === "present" &&
+    ticket.ack_target !== undefined &&
+    normalizeClaudeSelector(ticket.ack_target) !==
+      boundAckTarget.binding.selector
+  )
+    return fatal("dispatch-bound Claude target does not match ticket ack_target");
+  const ackTarget =
+    ticket.ack_target ??
+    (boundAckTarget.kind === "present"
+      ? boundAckTarget.binding.selector
+      : undefined);
   const timeoutMs = (ticket.timeout_s ?? 600) * 1000;
   const deadline = AbortSignal.timeout(timeoutMs);
   const runStartedAt = performance.now();
@@ -618,7 +643,15 @@ export async function run(flags: Flags): Promise<number> {
   writeFileSync(
     workerBrief,
     withReportInstruction(
-      renderPromise(ticket, cwd, sandbox, prose, runDir, continuation),
+      renderPromise(
+        ticket,
+        cwd,
+        sandbox,
+        prose,
+        runDir,
+        continuation,
+        ackTarget,
+      ),
     ),
   );
   let sandbox_effective: string = sandbox;

@@ -29,6 +29,12 @@ import { JJ_READ_ARGS } from "../../shared/src/jj-read.ts";
 import { readonlyCommand } from "../../shared/src/readonly-command.ts";
 import { InspectionTimeout } from "../../shared/src/agx-config.ts";
 import { resolveSuiteTool } from "../../shared/src/path-dispatch.ts";
+import {
+  BOUND_CLAUDE_TARGET_ENV,
+  encodeBoundClaudeTarget,
+  normalizeClaudeSelector,
+  resolveClaudeDeliveryTarget,
+} from "../../xmsg/src/claude-target.ts";
 
 import { selfCommand } from "./self-command.ts";
 import { parseNextTicket } from "./next/ticket.ts";
@@ -63,6 +69,21 @@ type InvokeResult =
       out: "";
       err: string;
     };
+
+function dispatchAckTarget(
+  declared: string | undefined,
+  dispatcherSession: string | null,
+  env: NodeJS.ProcessEnv,
+): string | undefined {
+  if (declared !== undefined) return declared;
+  if (dispatcherSession === null) return undefined;
+  const qualified = normalizeClaudeSelector(dispatcherSession);
+  if (qualified !== undefined && dispatcherSession.startsWith("claude:"))
+    return qualified;
+  return env.CLAUDE_CODE_SESSION_ID === dispatcherSession
+    ? `claude:${dispatcherSession}`
+    : undefined;
+}
 
 function dispatchCommandTimeoutMs(
   env: NodeJS.ProcessEnv,
@@ -551,6 +572,31 @@ export async function dispatch(options: {
     );
     return 2;
   }
+  const dispatcherSession =
+    [
+      env.AGX_DISPATCHER_SESSION,
+      env.CLAUDE_CODE_SESSION_ID,
+      env.CODEX_SESSION_ID,
+    ].find((session) => session !== undefined && session !== "") ?? null;
+  const ackSelector = dispatchAckTarget(
+    parsedTicket.ticket.ack_target,
+    dispatcherSession,
+    env,
+  );
+  let boundAckTarget: string | undefined;
+  if (ackSelector !== undefined) {
+    const resolved = await resolveClaudeDeliveryTarget(
+      ackSelector,
+      DISPATCH_CHECK_TIMEOUT_MS,
+    );
+    if (!resolved.ok) {
+      process.stderr.write(
+        `agx worker dispatch: cannot bind ACK target ${JSON.stringify(ackSelector)}: ${resolved.reason}\n`,
+      );
+      return 3;
+    }
+    boundAckTarget = encodeBoundClaudeTarget(resolved.binding);
+  }
   const wsSlug = options.ws ?? slug;
   const ticketRepo = await defaultRepositoryRoot(dirname(ticketPath), env);
   if (ticketRepo.root === undefined) {
@@ -897,12 +943,6 @@ export async function dispatch(options: {
     return recordsCheck.code ?? 1;
   }
   const recordBytes = intakeBytes ?? (await readFile(ticketPath));
-  const dispatcherSession =
-    [
-      env.AGX_DISPATCHER_SESSION,
-      env.CLAUDE_CODE_SESSION_ID,
-      env.CODEX_SESSION_ID,
-    ].find((session) => session !== undefined && session !== "") ?? null;
   const lease = await leaseFor(process.pid, `${unit}.service`);
   append({
     kind: "dispatching",
@@ -958,6 +998,9 @@ export async function dispatch(options: {
     "CODEX_SESSION_ID",
     `--setenv=PATH=${callerEnv.PATH}`,
     "--setenv=AGX_WORKER_PATH_SOURCE=dispatcher",
+    ...(boundAckTarget === undefined
+      ? []
+      : [`--setenv=${BOUND_CLAUDE_TARGET_ENV}=${boundAckTarget}`]),
     "--",
     ...workerCommand,
     "run",
