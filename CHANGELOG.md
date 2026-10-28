@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.21.3 — 2026-10-28
+
+- Offer the shortest eligible routing rows and audit the relaxed duration budget when no published duration fits.
+- Route efforts by published per-task cost and duration; exclude choices exceeding the ticket time box.
+
 ## 1.21.2 — 2026-10-28
 
 - Refuse VCS-mutating verification outside sandbox write roots
