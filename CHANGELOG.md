@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.21.8 — 2026-10-28
+
+- Record Jev refusal reasons as dispatch refusals
+
 ## 1.21.7 — 2026-10-28
 
 - Make worker stop outcomes match recorded run state
