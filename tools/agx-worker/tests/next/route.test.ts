@@ -831,6 +831,9 @@ test("fresh Sol 6.1 choice records the restored model and sourced criteria", asy
     Object.keys(criteria).filter((id) => id.startsWith("sol-")),
   ).toHaveLength(5);
   expect(criteria["sol-high"]).toContain("AA 50");
+  expect(criteria["sol-high"]).toContain(
+    "AA 50 (Artificial Analysis, 2026-10-08)",
+  );
   expect(criteria["sol-high"]).toContain("TB4 51.5%");
   expect(criteria["sol-high"]).toContain("SciCode 55.8%");
   expect(criteria["sol-high"]).toContain(
@@ -841,6 +844,23 @@ test("fresh Sol 6.1 choice records the restored model and sourced criteria", asy
   );
   expect(Object.keys(criteria).filter((id) => id.startsWith("sol6-"))).toEqual(
     [],
+  );
+});
+
+test("Terra score criteria use the row's Artificial Analysis read date", async () => {
+  await isolateState();
+  const server = startServer("terra-high");
+  const picked = await route("Terra score date probe");
+  expect(picked).toMatchObject({ id: "terra-high", model: "gpt-6.1-terra" });
+  const criteria = server.request()?.questions.worker.criteria ?? {};
+  expect(criteria["terra-high"]).toContain(
+    "AA 44 (Artificial Analysis, 2026-10-28)",
+  );
+  expect(criteria["terra-high"]).toContain(
+    "TB4 41.9% (Artificial Analysis, 2026-10-28)",
+  );
+  expect(criteria["terra-high"]).toContain(
+    "SciCode 51.6% (Artificial Analysis, 2026-10-28)",
   );
 });
 
@@ -1325,6 +1345,7 @@ test("Jev request is byte-identical across opposite local run histories", async 
   expect(second.rawBody()).toBe(first.rawBody());
 });
 
+// Ten histories per choice are the no-feedback guard's point; do not shrink this fixture.
 test("local accepted and rejected history cannot change the Jev request", async () => {
   const requests: string[] = [];
   for (const decision of ["accept", "reject"] as const) {
@@ -1384,7 +1405,7 @@ test("local accepted and rejected history cannot change the Jev request", async 
   }
   expect(requests).toHaveLength(2);
   expect(requests[0]).toBe(requests[1]);
-});
+}, 20_000);
 test("audit retains the exact request and replays the existing sampling guard", async () => {
   await isolateState();
   const server = startServer("sol-medium", {

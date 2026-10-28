@@ -72,6 +72,7 @@ export const ROUTING_OBJECTIVE =
 
 /** What Jev reads about one row: its route, measured capability, and relative price. */
 export function criterionFor(r: Roster, c: Choice): string {
+  const scoreAsOf = c.score_as_of ?? r.as_of;
   const source = (key: string): string => {
     const url = r.sources[key];
     return url !== undefined && url.includes("artificialanalysis.ai")
@@ -81,16 +82,16 @@ export function criterionFor(r: Roster, c: Choice): string {
   const measured = [
     c.aa_index === undefined
       ? undefined
-      : `AA ${c.aa_index} (${source("aa_releases")}, ${r.as_of})`,
+      : `AA ${c.aa_index} (${source("aa_releases")}, ${scoreAsOf})`,
     c.tb4 === undefined
       ? undefined
-      : `TB4 ${c.tb4}% (${source("aa_releases")}, ${r.as_of})`,
+      : `TB4 ${c.tb4}% (${source("aa_releases")}, ${scoreAsOf})`,
     c.scicode === undefined
       ? undefined
-      : `SciCode ${c.scicode}% (${source("aa_releases")}, ${r.as_of})`,
+      : `SciCode ${c.scicode}% (${source("aa_releases")}, ${scoreAsOf})`,
     c.coding_agent === undefined
       ? undefined
-      : `CodingAgent ${c.coding_agent} (${source("aa_coding_agents")}, ${r.as_of})`,
+      : `CodingAgent ${c.coding_agent} (${source("aa_coding_agents")}, ${scoreAsOf})`,
   ].filter((x) => x !== undefined);
   const taskCostData = hasTaskCostData(r);
   const taskCostParts = [

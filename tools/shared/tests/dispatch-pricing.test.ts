@@ -32,6 +32,16 @@ test("dispatch row prices come from the canonical catalog", () => {
   expect(dispatchRowPrice("missing-row")).toBeUndefined();
 });
 
+test("roster contract: every choice names a model the catalog prices", () => {
+  for (const row of shippedCatalog.choice) {
+    expect(dispatchRowPrice(row.id)).toMatchObject({
+      route: row.route,
+      price_in: expect.any(Number),
+      price_out: expect.any(Number),
+    });
+  }
+});
+
 test("formats statusline costs to cents without hiding sub-cent spend", () => {
   expect(formatCostUsd(0)).toBe("$0");
   expect(formatCostUsd(0.0004)).toBe("<$0.01");

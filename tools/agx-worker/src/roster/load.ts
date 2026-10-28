@@ -14,6 +14,7 @@ const ChoiceSchema = z.strictObject({
   route: RouteSchema,
   model: z.string(),
   effort: z.enum(["low", "medium", "high", "xhigh", "max"]),
+  score_as_of: z.iso.date().optional(),
   aa_index: z.number().optional(),
   aa_cost_to_run_usd: z.number().positive().optional(),
   aa_tokens_to_run_m: z.number().positive().optional(),
