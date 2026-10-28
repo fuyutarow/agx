@@ -75,6 +75,38 @@ async function fixture(policy?: string) {
   return { parent, root, jj, local, localDirectory, writeLocal };
 }
 
+async function gitFixture(policy?: string) {
+  const parent = await mkdtemp(join(tmpdir(), "agx-config-git-"));
+  roots.push(parent);
+  process.env.XDG_CONFIG_HOME = join(parent, "config");
+  const root = join(parent, "repo");
+  await mkdir(root);
+  const git = async (args: string[]) => {
+    const child = Bun.spawn(["git", ...args], {
+      cwd: root,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 5000,
+    });
+    const [exit, out, err] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    expect(exit, err).toBe(0);
+    return out.trim();
+  };
+  await git(["init", "-q"]);
+  await git(["config", "user.name", "Fixture"]);
+  await git(["config", "user.email", "fixture@example.invalid"]);
+  await writeFile(join(root, "base"), "base\n");
+  if (policy !== undefined) await writeFile(join(root, "agx.toml"), policy);
+  await git(["add", "base", ...(policy === undefined ? [] : ["agx.toml"])]);
+  await git(["commit", "-m", "Base policy"]);
+  return { parent, root };
+}
+
 const home = async (root: string) => {
   const result = await resolveAgxConfig(root);
   expect(result.ok, result.ok ? "" : String(result.error)).toBe(true);
@@ -88,6 +120,10 @@ test("defaults without files and schema-only policy", async () => {
     expect(result.ok).toBe(true);
     if (result.ok)
       expect(result.value).toMatchObject({
+        policySource:
+          policy === undefined
+            ? "built-in defaults (trunk has no agx.toml)"
+            : "agx.toml (trunk)",
         ready: [],
         trunk: "trunk()",
         trunkConfigured: false,
@@ -315,6 +351,57 @@ test("only trunk policy is authoritative, including committed nontrunk edits", a
   expect(await readFile(join(f.root, "agx.toml"), "utf8")).toBe(bytes);
   await f.jj(["commit", "-m", "Nontrunk policy"]);
   expect(await home(f.root)).toBe(join(f.root, "committed"));
+});
+test("config contract: an untracked agx.toml is the policy when trunk has none", async () => {
+  const f = await gitFixture();
+  await mkdir(join(f.root, ".git/info"), { recursive: true });
+  await writeFile(join(f.root, ".git/info/exclude"), "agx.toml\n");
+  await writeFile(
+    join(f.root, "agx.toml"),
+    'schema = 1\n[ws]\nready = ["mise trust", "bun install"]\n',
+  );
+  const result = await resolveAgxConfig(f.root, { vcs: "git" });
+  expect(result.ok, result.ok ? "" : String(result.error)).toBe(true);
+  if (result.ok)
+    expect(result.value).toMatchObject({
+      policySource:
+        "agx.toml (untracked, default workspace; trunk has none)",
+      ready: ["mise trust", "bun install"],
+    });
+});
+test("config contract: trunk agx.toml wins over an untracked working copy", async () => {
+  const f = await fixture(
+    'schema = 1\n[ws]\nready = ["trunk setup"]\n',
+  );
+  const secondary = join(f.parent, "secondary");
+  await f.jj(["workspace", "add", "--name", "secondary", "-r", "root()", secondary]);
+  await writeFile(
+    join(secondary, "agx.toml"),
+    'schema = 1\n[ws]\nready = ["local setup"]\n',
+  );
+  const result = await resolveAgxConfig(secondary);
+  expect(result.ok, result.ok ? "" : String(result.error)).toBe(true);
+  if (result.ok)
+    expect(result.value).toMatchObject({
+      policySource: "agx.toml (trunk)",
+      ready: ["trunk setup"],
+    });
+});
+test("config contract: an uncommitted edit to a tracked agx.toml is not read", async () => {
+  const f = await fixture(
+    'schema = 1\n[ws]\nready = ["trunk setup"]\n',
+  );
+  await writeFile(
+    join(f.root, "agx.toml"),
+    'schema = 1\n[ws]\nready = ["uncommitted setup"]\n',
+  );
+  const result = await resolveAgxConfig(f.root);
+  expect(result.ok, result.ok ? "" : String(result.error)).toBe(true);
+  if (result.ok)
+    expect(result.value).toMatchObject({
+      policySource: "agx.toml (trunk)",
+      ready: ["trunk setup"],
+    });
 });
 test("XDG L2 replaces per key and is selected by main checkout root", async () => {
   const f = await fixture('schema = 1\ntickets = "policy"\n');

@@ -109,6 +109,9 @@ const addCommand = command(
           `ws: base change_id=${base.change_id} commit_id=${base.commit_id} ref=${base.ref} fetch=${base.fetch}\n`,
         );
       }
+      process.stderr.write(
+        `ws: policy source: ${done.value.policy_source}\n`,
+      );
       await new Promise<void>((resolve) => {
         process.stdout.write(
           `${argv.flags.json === true ? JSON.stringify(done.value) : done.value.workspace}\n`,

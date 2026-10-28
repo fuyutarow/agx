@@ -165,6 +165,7 @@ async function configRefusal(
 }
 type ResolvedAgxConfig = {
   root: string;
+  policySource: string;
   tickets: string;
   ready: string[];
   trunk: string;
@@ -177,6 +178,15 @@ export type ResolvedAgxConfigWithProvenance = ResolvedAgxConfig & {
   policyRevision: string | undefined;
   workingCopyPolicyDiffers: boolean | undefined;
 };
+type CommittedRepositoryPolicy = ConfiguredPolicy & {
+  kind: "committed";
+  source: string;
+};
+type UntrackedPolicy = { kind: "untracked"; text: string; source: string };
+type RepositoryPolicy = CommittedRepositoryPolicy | UntrackedPolicy;
+const TRUNK_POLICY_SOURCE = "agx.toml (trunk)";
+const UNTRACKED_POLICY_SOURCE =
+  "agx.toml (untracked, default workspace; trunk has none)";
 
 export async function readCommand(
   argv: string[],
@@ -314,6 +324,39 @@ async function committedPolicy(
   );
   return text.ok ? good({ revision, text: text.value, vcs }) : text;
 }
+
+/** Read a default-workspace policy only when the working-copy tree does not track it. */
+async function untrackedPolicy(
+  root: string,
+  vcs: Vcs,
+): Promise<Attempt<UntrackedPolicy | undefined>> {
+  if (vcs === "none") return good(undefined);
+  const path = join(root, "agx.toml");
+  const local = await attempt(() => readFile(path, "utf8"));
+  if (!local.ok) return missing(local.error) ? good(undefined) : local;
+  const tracked = await readCommand(
+    vcs === "jj"
+      ? [
+          "jj",
+          ...JJ_READ_ARGS,
+          "file",
+          "list",
+          "-r",
+          "@",
+          "-T",
+          'path ++ "\\n"',
+        ]
+      : ["git", "--no-optional-locks", "ls-files", "--cached", "--", "agx.toml"],
+    root,
+  );
+  if (!tracked.ok) return tracked;
+  if (tracked.value.split("\n").includes("agx.toml")) return good(undefined);
+  return good({
+    kind: "untracked",
+    text: local.value,
+    source: UNTRACKED_POLICY_SOURCE,
+  });
+}
 const retired = (root: string) =>
   failure(
     `${join(root, ".agx.toml")} is retired; rename it: mv .agx.toml agx.toml (machine-local absolute paths go in $XDG_CONFIG_HOME/agx/repos/<name>.toml (default ~/.config/agx/repos/<name>.toml) with root = ${JSON.stringify(root)})`,
@@ -398,24 +441,41 @@ async function resolveConfig(
     if (!main.ok) return main;
     root = await realpath(main.value);
   }
-  const policy = await committedPolicy(root, vcs);
-  if (!policy.ok) return policy;
+  const committed = await committedPolicy(root, vcs);
+  if (!committed.ok) return committed;
   let workingCopyPolicyDiffers: boolean | undefined;
-  if (policy.value.revision !== undefined) {
+  if (committed.value.revision !== undefined) {
     const workingCopyPolicy = await attempt(() =>
       readFile(join(root, "agx.toml"), "utf8"),
     );
     if (workingCopyPolicy.ok)
       workingCopyPolicyDiffers =
-        policy.value.text === undefined ||
-        workingCopyPolicy.value.trimEnd() !== policy.value.text;
+        committed.value.text === undefined ||
+        workingCopyPolicy.value.trimEnd() !== committed.value.text;
     else if (missing(workingCopyPolicy.error))
-      workingCopyPolicyDiffers = policy.value.text !== undefined;
+      workingCopyPolicyDiffers = committed.value.text !== undefined;
     else
       return failure(
         `${join(root, "agx.toml")}: cannot compare working-copy policy: ${errorMessage(workingCopyPolicy.error)}`,
       );
   }
+  let policy: RepositoryPolicy | undefined;
+  if (committed.value.text !== undefined)
+    policy = {
+      ...committed.value,
+      kind: "committed",
+      source: TRUNK_POLICY_SOURCE,
+    };
+  else {
+    const localPolicy = await untrackedPolicy(root, vcs);
+    if (!localPolicy.ok) return localPolicy;
+    policy = localPolicy.value;
+  }
+  const policySource =
+    policy?.source ??
+    (vcs === "none"
+      ? "built-in defaults (no VCS)"
+      : "built-in defaults (trunk has no agx.toml)");
   let tickets = ".agents/tickets";
   let ready: string[] = [];
   let trunk = "trunk()";
@@ -423,35 +483,28 @@ async function resolveConfig(
   let keep: string[] = [];
   let regenerable: string[] = [];
   let verifyAlways: string[] = [];
-  const committed = policy.value;
-  if (committed.text !== undefined) {
-    const text = committed.text;
+  if (policy !== undefined) {
+    const text = policy.text;
+    const refuse = async (reason: string): Promise<Attempt<never>> =>
+      policy.kind === "committed"
+        ? configRefusal(root, policy, reason)
+        : failure(`${join(root, "agx.toml")} (${policy.source}): ${reason}`);
     const decoded = await attempt((): unknown => decodeToml(text));
     if (!decoded.ok)
-      return configRefusal(
-        root,
-        committed,
-        `invalid TOML: ${errorMessage(decoded.error)}`,
-      );
+      return refuse(`invalid TOML: ${errorMessage(decoded.error)}`);
     const envelope = ConfigEnvelope.safeParse(decoded.value);
     if (!envelope.success)
-      return configRefusal(root, committed, configIssueMessage(envelope.error));
+      return refuse(configIssueMessage(envelope.error));
     if (!Object.hasOwn(envelope.data, "schema"))
-      return configRefusal(
-        root,
-        committed,
-        "missing required schema; expected schema = 1",
-      );
+      return refuse("missing required schema; expected schema = 1");
     const schema = z.literal(1).safeParse(envelope.data.schema);
     if (!schema.success)
-      return configRefusal(
-        root,
-        committed,
+      return refuse(
         `unsupported schema ${configValue(envelope.data.schema)}; expected schema = 1`,
       );
     const parsed = Config.safeParse(envelope.data);
     if (!parsed.success)
-      return configRefusal(root, committed, configIssueMessage(parsed.error));
+      return refuse(configIssueMessage(parsed.error));
     const declared = parsed.data.tickets;
     if (
       declared !== undefined &&
@@ -459,9 +512,7 @@ async function resolveConfig(
         win32.isAbsolute(declared) ||
         declared.startsWith("~/"))
     )
-      return configRefusal(
-        root,
-        committed,
+      return refuse(
         `tickets must be relative; move absolute paths into $XDG_CONFIG_HOME/agx/repos/<name>.toml (default ~/.config/agx/repos/<name>.toml) with root = ${JSON.stringify(root)}`,
       );
     tickets = declared ?? tickets;
@@ -480,6 +531,7 @@ async function resolveConfig(
   verifyAlways = local.value?.verify?.always ?? verifyAlways;
   return good({
     root,
+    policySource,
     tickets: resolve(
       root,
       tickets.startsWith("~/") ? join(homedir(), tickets.slice(2)) : tickets,
@@ -490,7 +542,7 @@ async function resolveConfig(
     keep,
     regenerable,
     verifyAlways,
-    policyRevision: policy.value.revision,
+    policyRevision: committed.value.revision,
     workingCopyPolicyDiffers,
   });
 }
@@ -505,6 +557,7 @@ export async function resolveAgxConfig(
   const config = result.value;
   return good({
     root: config.root,
+    policySource: config.policySource,
     tickets: config.tickets,
     ready: config.ready,
     trunk: config.trunk,

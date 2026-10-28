@@ -89,6 +89,7 @@ export type Config = {
   policyRevision: string | undefined;
   workingCopyPolicyDiffers: boolean | undefined;
 };
+type ResolvedConfig = Config & { policySource: string };
 
 export const CONFIG_FILE = "agx.toml";
 const LEGACY_CONFIG_FILE = ".ws.toml";
@@ -184,7 +185,7 @@ export function resolveRepo(path: string): Attempt<Repo> {
 }
 
 /** Refuse the retired file, then resolve shared main-checkout L1/L2 policy. */
-export async function readConfig(repo: Repo): Promise<Attempt<Config>> {
+export async function readConfig(repo: Repo): Promise<Attempt<ResolvedConfig>> {
   const legacyPath = join(repo.backing, LEGACY_CONFIG_FILE);
   const legacyFile = await attempt(() => lstat(legacyPath));
   if (legacyFile.ok) {
@@ -213,6 +214,7 @@ export async function readConfig(repo: Repo): Promise<Attempt<Config>> {
   });
   if (!shared.ok) return bad(msg(shared));
   return good({
+    policySource: shared.value.policySource,
     ready: shared.value.ready,
     trunk: shared.value.trunk,
     trunkConfigured: shared.value.trunkConfigured,
@@ -772,7 +774,11 @@ export type AddBaseReceipt = {
   fetch: "succeeded" | "unfetched" | "no remote" | "explicit --rev";
 };
 
-export type AddResult = { workspace: string; base?: AddBaseReceipt };
+export type AddResult = {
+  workspace: string;
+  policy_source: string;
+  base?: AddBaseReceipt;
+};
 
 /** Runs in the coordinator's environment, before a sandboxed worker receives the path. */
 async function readyWorkspace(
@@ -1036,7 +1042,9 @@ export async function add(options: AddOptions): Promise<Attempt<AddResult>> {
       if (present) {
         if (options.reuse === true && names.value.includes(name)) {
           const recorded = await recordWorkspace(repo.value.backing, dir);
-          return recorded.ok ? good({ workspace: dir }) : recorded;
+          return recorded.ok
+            ? good({ workspace: dir, policy_source: cfg.value.policySource })
+            : recorded;
         }
         return bad(`${dir} already exists`);
       }
@@ -1126,7 +1134,11 @@ export async function add(options: AddOptions): Promise<Attempt<AddResult>> {
         };
       }
       enterStep("release workspace store lock");
-      return good({ workspace: dir, ...(base === undefined ? {} : { base }) });
+      return good({
+        workspace: dir,
+        policy_source: cfg.value.policySource,
+        ...(base === undefined ? {} : { base }),
+      });
     },
   );
   // Verdict inventory belongs to explicit gc, never the latency path of one creation.
