@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.1 — 2026-10-29
+
+- Route workers by ticket requirement class and published TB4 score
+
 ## 1.22.0 — 2026-10-28
 
 - Classify worker completion and guard incomplete acceptance
