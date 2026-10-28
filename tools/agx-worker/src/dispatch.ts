@@ -39,6 +39,7 @@ import { resolveRunId } from "./next/run-id.ts";
 import { timeBoxUnchangedRefusal } from "./next/continue.ts";
 import { timeboxLineageRefusal } from "./next/timebox-lineage.ts";
 import { stateDir } from "./state.ts";
+import { resolveTicketReference } from "./next/ticket-home.ts";
 
 export const DISPATCH_CHECK_TIMEOUT_MS = 60_000;
 export const DISPATCH_LIST_TIMEOUT_MS = 60_000;
@@ -454,8 +455,19 @@ export async function dispatch(options: {
   }
   const workerCommand = selfCommand();
   const env: NodeJS.ProcessEnv = { ...callerEnv };
-  const ticketPath = resolve(cwd, options.ticketPath);
+  const reference = await resolveTicketReference(options.ticketPath, cwd);
+  if (reference.contextError !== undefined) {
+    process.stderr.write(`agx worker dispatch: ${reference.contextError}\n`);
+    return reference.contextExitCode ?? 2;
+  }
+  const ticketPath = resolve(cwd, reference.path);
   const intakeBytes = await readFile(ticketPath).catch(() => null);
+  if (intakeBytes === null && reference.searchedPaths.length > 0) {
+    process.stderr.write(
+      `agx worker dispatch: no such ticket: ${reference.input}; searched: ${reference.searchedPaths.map((path) => JSON.stringify(path)).join(", ")}\n`,
+    );
+    return 1;
+  }
   const unchanged = await timeBoxUnchangedRefusal(
     options.continuation,
     intakeBytes,

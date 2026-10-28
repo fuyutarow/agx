@@ -9,6 +9,7 @@ import {
 } from "../../../shared/src/agx-config.ts";
 import { JJ_READ_ARGS } from "../../../shared/src/jj-read.ts";
 import { readonlyCommand } from "../../../shared/src/readonly-command.ts";
+import { validateSlug } from "../../../shared/src/slug.ts";
 
 const inside = (path: string, home: string) => {
   const part = relative(home, path);
@@ -210,6 +211,41 @@ export async function ticketContext(cwd: string) {
     vcs,
     verifyAlways: config.value.verifyAlways,
   } as const;
+}
+
+export type TicketReferenceResolution = Readonly<{
+  path: string;
+  input: string;
+  searchedPaths: readonly string[];
+  contextError?: string;
+  contextExitCode?: number;
+}>;
+
+/** Resolve a bare ticket slug through the repository's declared ticket home. */
+export async function resolveTicketReference(
+  input: string,
+  cwd: string,
+): Promise<TicketReferenceResolution> {
+  const bareName =
+    !isAbsolute(input) &&
+    !input.includes("/") &&
+    !input.includes("\\") &&
+    validateSlug(input, "agx ticket new").ok;
+  if (!bareName) return { path: input, input, searchedPaths: [] };
+
+  const context = await ticketContext(cwd);
+  if (!context.ok)
+    return {
+      path: input,
+      input,
+      searchedPaths: [],
+      contextError: context.error,
+      contextExitCode:
+        context.configurationError instanceof InspectionUnavailable ? 75 : 2,
+    };
+
+  const path = join(context.home, `${input}.md`);
+  return { path, input, searchedPaths: [path] };
 }
 
 export async function ticketPlacement(

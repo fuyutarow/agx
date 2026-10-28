@@ -12,7 +12,11 @@ import { legacyLandStatus } from "../state.ts";
 import { verifyLine } from "../ticket.ts";
 import { parseReport, parseReturn, withReportInstruction } from "../report.ts";
 import { type NextTicket } from "./ticket.ts";
-import { ticketContext, ticketPlacement } from "./ticket-home.ts";
+import {
+  resolveTicketReference,
+  ticketContext,
+  ticketPlacement,
+} from "./ticket-home.ts";
 import {
   append,
   flushRunPublications,
@@ -270,10 +274,14 @@ const runVerify = async (
 };
 
 export async function check(flags: Flags): Promise<number> {
-  const path = value(flags, "ticket");
+  const input = value(flags, "ticket");
   const cwd = resolve(value(flags, "cd") ?? process.cwd());
-  if (path === undefined) return fatal("check requires positional TICKET", 2);
-  const inspected = await preflight(path, cwd, flags);
+  if (input === undefined) return fatal("check requires positional TICKET", 2);
+  const reference = await resolveTicketReference(input, process.cwd());
+  if (reference.contextError !== undefined)
+    return fatal(reference.contextError, reference.contextExitCode ?? 2);
+  const { path } = reference;
+  const inspected = await preflight(path, cwd, flags, reference);
   if (inspected.lineageRefusal !== undefined)
     return fatal(inspected.lineageRefusal, 2);
   if (inspected.temporary !== undefined)
@@ -311,10 +319,14 @@ export async function run(flags: Flags): Promise<number> {
       "AGX_NEXT_WORKER is no longer supported; use AGX_WORKER_BIN",
       2,
     );
-  const path = value(flags, "ticket");
+  const input = value(flags, "ticket");
   const cwd = resolve(value(flags, "cd") ?? process.cwd());
-  if (path === undefined) return fatal("run requires positional TICKET", 2);
-  const inspected = await preflight(path, cwd, flags);
+  if (input === undefined) return fatal("run requires positional TICKET", 2);
+  const reference = await resolveTicketReference(input, process.cwd());
+  if (reference.contextError !== undefined)
+    return fatal(reference.contextError, reference.contextExitCode ?? 2);
+  const { path } = reference;
+  const inspected = await preflight(path, cwd, flags, reference);
   if (inspected.lineageRefusal !== undefined)
     return fatal(inspected.lineageRefusal, 2);
   if (
@@ -454,7 +466,9 @@ export async function run(flags: Flags): Promise<number> {
     return parsed.success ? parsed.data.session : undefined;
   };
   let recordedVendorSession = resumeSession;
-  const persistVendorSession = (session = vendorSessionFromProgress()): void => {
+  const persistVendorSession = (
+    session = vendorSessionFromProgress(),
+  ): void => {
     if (session === undefined || session === recordedVendorSession) return;
     append({ kind: "session", id, at: now(), vendor_session: session });
     recordedVendorSession = session;

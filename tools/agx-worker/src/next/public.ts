@@ -6,22 +6,30 @@ import { parseNextTicket } from "./ticket.ts";
 import { route } from "./route.ts";
 import { loadRoster, ROUTING_OBJECTIVE } from "../roster/index.ts";
 import { printPreflightFailures, recordRefusal } from "./preflight.ts";
+import { resolveTicketReference } from "./ticket-home.ts";
 
 const oneLine = (reason: string): string => reason.replaceAll(/[\r\n]+/gu, " ");
 
 export async function roster(ticketPath?: string): Promise<number> {
   if (ticketPath !== undefined) {
-    const source = await attempt(() => readFile(ticketPath));
+    const reference = await resolveTicketReference(ticketPath, process.cwd());
+    if (reference.contextError !== undefined) {
+      process.stderr.write(`agx-worker roster: ${reference.contextError}\n`);
+      return reference.contextExitCode ?? 2;
+    }
+    const source = await attempt(() => readFile(reference.path));
     if (!source.ok) {
-      process.stderr.write(
-        `agx-worker roster: ${errorMessage(source.error)}\n`,
-      );
+      const searched =
+        reference.searchedPaths.length === 0
+          ? errorMessage(source.error)
+          : `no such ticket: ${reference.input}; searched: ${reference.searchedPaths.map((path) => JSON.stringify(path)).join(", ")}`;
+      process.stderr.write(`agx-worker roster: ${searched}\n`);
       return 1;
     }
     const parsed = parseNextTicket(source.value.toString("utf8"));
     if ((parsed.intake?.length ?? 0) > 0) {
       const failures = parsed.intake ?? [];
-      recordRefusal(ticketPath, process.cwd(), source.value, failures);
+      recordRefusal(reference.path, process.cwd(), source.value, failures);
       return printPreflightFailures(failures);
     }
     if (!parsed.success) {
@@ -35,7 +43,7 @@ export async function roster(ticketPath?: string): Promise<number> {
       [],
       {},
       {
-        path: resolve(ticketPath),
+        path: resolve(reference.path),
         sha256: createHash("sha256").update(source.value).digest("hex"),
       },
     );

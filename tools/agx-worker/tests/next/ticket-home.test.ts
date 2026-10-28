@@ -288,14 +288,27 @@ async function fixture(home = "tickets") {
     AGX_CONFIG: new URL("../../src/roster/policy.example.toml", import.meta.url)
       .pathname,
   };
-  const invoke = async (args: string[], cwd = root) => {
-    const child = Bun.spawn([process.execPath, CLI, ...args, "--cd", cwd], {
-      env,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: 15000,
-    });
+  const invoke = async (
+    args: string[],
+    cwd: string | undefined = root,
+    callerCwd = root,
+  ) => {
+    const child = Bun.spawn(
+      [
+        process.execPath,
+        CLI,
+        ...args,
+        ...(cwd === undefined ? [] : ["--cd", cwd]),
+      ],
+      {
+        cwd: callerCwd,
+        env,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 15000,
+      },
+    );
     const [exit, out, err] = await Promise.all([
       child.exited,
       new Response(child.stdout).text(),
@@ -305,6 +318,31 @@ async function fixture(home = "tickets") {
   };
   return { root, directory, ticket, env, invoke };
 }
+
+test("ticket contract: a bare name resolves from the ticket home directory and from the repository root", async () => {
+  const f = await fixture(".agents/tickets");
+  const name = "ticket-contract-1028";
+  await writeFile(
+    join(f.directory, `${name}.md`),
+    text().replace('name = "home"', `name = "${name}"`),
+  );
+
+  for (const callerCwd of [f.root, f.directory]) {
+    const result = await f.invoke(["check", name], undefined, callerCwd);
+    expect(result.exit, `${result.out}\n${result.err}`).toBe(0);
+    expect(result.out).toContain(`OK ticket=${name}`);
+  }
+}, 30000);
+
+test("ticket contract: an unknown bare name lists the searched paths", async () => {
+  const f = await fixture(".agents/tickets");
+  const name = "missing-ticket-1028";
+  const result = await f.invoke(["check", name], undefined, f.directory);
+
+  expect(result.exit).toBe(2);
+  expect(result.err).toContain(`no such ticket: ${name}`);
+  expect(result.err).toContain(join(f.directory, `${name}.md`));
+}, 30000);
 
 test.each(["scratch", "empty-git", "other-repository"])(
   "ticket repository wins over scratch --cd (fake parent: %s)",

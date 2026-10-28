@@ -12,7 +12,11 @@ import {
   routeFilterLabel,
 } from "../roster/index.ts";
 import { parseNextTicket, writeGlob } from "./ticket.ts";
-import { ticketContext, ticketPlacement } from "./ticket-home.ts";
+import {
+  ticketContext,
+  ticketPlacement,
+  type TicketReferenceResolution,
+} from "./ticket-home.ts";
 import {
   append,
   now,
@@ -103,6 +107,7 @@ export async function preflight(
   path: string,
   cwd: string,
   flags: PreflightFlags = {},
+  reference?: TicketReferenceResolution,
 ) {
   const failures: (string | AgxConfigError)[] = [];
   const add = (reason: string, repair: string) => {
@@ -118,8 +123,16 @@ export async function preflight(
     bytes === null ? undefined : parseNextTicket(bytes.toString("utf8"), true);
   const ticket = parsed?.success === true ? parsed.ticket : undefined;
   failures.push(...(parsed?.intake ?? []));
-  if (bytes === null)
-    add(`no such ticket: ${path}`, "supply a readable ticket path");
+  if (bytes === null) {
+    const searched =
+      reference === undefined || reference.searchedPaths.length === 0
+        ? ""
+        : `; searched: ${reference.searchedPaths.map((item) => JSON.stringify(item)).join(", ")}`;
+    add(
+      `no such ticket: ${reference?.input ?? path}${searched}`,
+      "supply a readable ticket path",
+    );
+  }
   for (const reason of parsed?.success === false
     ? (parsed.reasons ?? [parsed.reason])
     : [])
