@@ -27,7 +27,10 @@ import {
 import { homedir, hostname } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { projectSlug } from "../../shared/src/agent-name.ts";
-import { listAgxRepos, resolveAgxConfig } from "../../shared/src/agx-config.ts";
+import {
+  listAgxRepos,
+  resolveAgxConfigWithProvenance,
+} from "../../shared/src/agx-config.ts";
 import { resolveAgxBinary } from "../../shared/src/path-dispatch.ts";
 import {
   attempt,
@@ -83,6 +86,8 @@ export type Config = {
   trunkConfigured: boolean;
   keep: string[];
   regenerable: string[];
+  policyRevision: string | undefined;
+  workingCopyPolicyDiffers: boolean | undefined;
 };
 
 export const CONFIG_FILE = "agx.toml";
@@ -203,7 +208,9 @@ export async function readConfig(repo: Repo): Promise<Attempt<Config>> {
   )
     return bad(msg(legacyFile));
 
-  const shared = await resolveAgxConfig(repo.backing, { vcs: "jj" });
+  const shared = await resolveAgxConfigWithProvenance(repo.backing, {
+    vcs: "jj",
+  });
   if (!shared.ok) return bad(msg(shared));
   return good({
     ready: shared.value.ready,
@@ -211,7 +218,28 @@ export async function readConfig(repo: Repo): Promise<Attempt<Config>> {
     trunkConfigured: shared.value.trunkConfigured,
     keep: shared.value.keep,
     regenerable: shared.value.regenerable,
+    policyRevision: shared.value.policyRevision,
+    workingCopyPolicyDiffers: shared.value.workingCopyPolicyDiffers,
   });
+}
+
+function reportReadyPlan(config: Config): void {
+  const revision = config.policyRevision ?? "unknown revision";
+  process.stderr.write(`ws: policy: agx.toml at ${revision}\n`);
+  if (config.workingCopyPolicyDiffers)
+    process.stderr.write(
+      `ws: policy: working-copy agx.toml differs from the policy snapshot at ${revision}; working-copy policy is not used\n`,
+    );
+  if (config.ready.length === 0) {
+    process.stderr.write(
+      `ws: ready: none declared in agx.toml at ${revision}\n`,
+    );
+    return;
+  }
+  for (const [index, command] of config.ready.entries())
+    process.stderr.write(
+      `ws: ready: will run ${index + 1}/${config.ready.length}: ${command}\n`,
+    );
 }
 
 function legacyWorkspaceName(slug: string): Attempt<string> {
@@ -980,6 +1008,7 @@ export async function add(options: AddOptions): Promise<Attempt<AddResult>> {
   if (!repo.ok) return repo;
   const cfg = await readConfig(repo.value);
   if (!cfg.ok) return cfg;
+  reportReadyPlan(cfg.value);
   const pre = common(repo.value);
   if (!pre.ok) return pre;
   const graveyard = await checkGraveyard();

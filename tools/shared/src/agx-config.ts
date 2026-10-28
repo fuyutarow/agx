@@ -119,11 +119,14 @@ const configIssueMessage = (error: z.ZodError): string =>
     )
     .join("; ");
 type Vcs = "jj" | "git" | "none";
-type CommittedPolicy = { text: string; revision: string; vcs: Vcs };
+type CommittedPolicy =
+  | { text: string; revision: string; vcs: "jj" | "git" }
+  | { text: undefined; revision: string | undefined; vcs: Vcs };
+type ConfiguredPolicy = Extract<CommittedPolicy, { text: string }>;
 
 async function configRefusal(
   root: string,
-  policy: CommittedPolicy,
+  policy: ConfiguredPolicy,
   reason: string,
 ): Promise<Attempt<never>> {
   const path = join(root, "agx.toml");
@@ -160,6 +163,20 @@ async function configRefusal(
       "; working copy differs from this revision; working copy policy is not read";
   return failure(`${path} at ${revision}${workingCopyNote}: ${reason}`);
 }
+type ResolvedAgxConfig = {
+  root: string;
+  tickets: string;
+  ready: string[];
+  trunk: string;
+  trunkConfigured: boolean;
+  keep: string[];
+  regenerable: string[];
+  verifyAlways: string[];
+};
+export type ResolvedAgxConfigWithProvenance = ResolvedAgxConfig & {
+  policyRevision: string | undefined;
+  workingCopyPolicyDiffers: boolean | undefined;
+};
 
 export async function readCommand(
   argv: string[],
@@ -224,19 +241,41 @@ export async function readCommand(
 async function committedPolicy(
   root: string,
   vcs: Vcs,
-): Promise<Attempt<CommittedPolicy | undefined>> {
-  if (vcs === "none") return good(undefined);
-  let gitHead: string | undefined;
+): Promise<Attempt<CommittedPolicy>> {
+  if (vcs === "none")
+    return good({ revision: undefined, text: undefined, vcs });
+  let revision: string | undefined;
   if (vcs === "git") {
     const head = await readCommand(
       ["git", "--no-optional-locks", "rev-parse", "--verify", "HEAD^{commit}"],
       root,
     );
     if (!head.ok && head.error instanceof InspectionUnavailable) return head;
-    if (!head.ok) return good(undefined); // An unborn Git tree has no committed policy.
-    gitHead = head.value.trim();
+    if (!head.ok)
+      return good({ revision: undefined, text: undefined, vcs });
+    revision = head.value;
+  } else {
+    const selected = await readCommand(
+      [
+        "jj",
+        ...JJ_READ_ARGS,
+        "log",
+        "--no-graph",
+        "-r",
+        "trunk()",
+        "-T",
+        'commit_id ++ "\\n"',
+      ],
+      root,
+    );
+    if (!selected.ok) return selected;
+    const revisions = selected.value.split("\n").filter(Boolean);
+    if (revisions.length > 1)
+      return failure("trunk() must resolve to exactly one policy revision");
+    revision = revisions[0];
   }
-  const revisionRef = vcs === "jj" ? "trunk()" : "HEAD";
+  if (revision === undefined)
+    return good({ revision, text: undefined, vcs });
   const names = (rev: string) =>
     readCommand(
       vcs === "jj"
@@ -262,20 +301,18 @@ async function committedPolicy(
           ],
       root,
     );
-  const inventory = await names(revisionRef);
+  const inventory = await names(revision);
   if (!inventory.ok) return inventory;
   if (inventory.value.split("\n").includes(".agx.toml")) return retired(root);
-  if (!inventory.value.split("\n").includes("agx.toml")) return good(undefined);
-  const policy = await readCommand(
+  if (!inventory.value.split("\n").includes("agx.toml"))
+    return good({ revision, text: undefined, vcs });
+  const text = await readCommand(
     vcs === "jj"
-      ? ["jj", ...JJ_READ_ARGS, "file", "show", "-r", revisionRef, "agx.toml"]
-      : ["git", "--no-optional-locks", "show", "HEAD:agx.toml"],
+      ? ["jj", ...JJ_READ_ARGS, "file", "show", "-r", revision, "agx.toml"]
+      : ["git", "--no-optional-locks", "show", revision + ":agx.toml"],
     root,
   );
-  if (!policy.ok) return policy;
-  const revision =
-    vcs === "jj" ? revisionRef : `HEAD ${gitHead?.slice(0, 8) ?? "unknown"}`;
-  return good({ text: policy.value, revision, vcs });
+  return text.ok ? good({ revision, text: text.value, vcs }) : text;
 }
 const retired = (root: string) =>
   failure(
@@ -342,7 +379,10 @@ async function localConfig(
   return good(repos.value.find((repo) => repo.root === root)?.config);
 }
 
-async function resolveConfig(repoRoot: string, options: { vcs?: Vcs }) {
+async function resolveConfig(
+  repoRoot: string,
+  options: { vcs?: Vcs },
+): Promise<Attempt<ResolvedAgxConfigWithProvenance>> {
   const workspace = await realpath(repoRoot);
   const vcs =
     options.vcs ??
@@ -360,6 +400,22 @@ async function resolveConfig(repoRoot: string, options: { vcs?: Vcs }) {
   }
   const policy = await committedPolicy(root, vcs);
   if (!policy.ok) return policy;
+  let workingCopyPolicyDiffers: boolean | undefined;
+  if (policy.value.revision !== undefined) {
+    const workingCopyPolicy = await attempt(() =>
+      readFile(join(root, "agx.toml"), "utf8"),
+    );
+    if (workingCopyPolicy.ok)
+      workingCopyPolicyDiffers =
+        policy.value.text === undefined ||
+        workingCopyPolicy.value.trimEnd() !== policy.value.text;
+    else if (missing(workingCopyPolicy.error))
+      workingCopyPolicyDiffers = policy.value.text !== undefined;
+    else
+      return failure(
+        `${join(root, "agx.toml")}: cannot compare working-copy policy: ${errorMessage(workingCopyPolicy.error)}`,
+      );
+  }
   let tickets = ".agents/tickets";
   let ready: string[] = [];
   let trunk = "trunk()";
@@ -368,7 +424,7 @@ async function resolveConfig(repoRoot: string, options: { vcs?: Vcs }) {
   let regenerable: string[] = [];
   let verifyAlways: string[] = [];
   const committed = policy.value;
-  if (committed !== undefined) {
+  if (committed.text !== undefined) {
     const text = committed.text;
     const decoded = await attempt((): unknown => decodeToml(text));
     if (!decoded.ok)
@@ -434,6 +490,8 @@ async function resolveConfig(repoRoot: string, options: { vcs?: Vcs }) {
     keep,
     regenerable,
     verifyAlways,
+    policyRevision: policy.value.revision,
+    workingCopyPolicyDiffers,
   });
 }
 
@@ -441,18 +499,27 @@ async function resolveConfig(repoRoot: string, options: { vcs?: Vcs }) {
 export async function resolveAgxConfig(
   repoRoot: string,
   options: { vcs?: Vcs } = {},
-): Promise<
-  Attempt<{
-    root: string;
-    tickets: string;
-    ready: string[];
-    trunk: string;
-    trunkConfigured: boolean;
-    keep: string[];
-    regenerable: string[];
-    verifyAlways: string[];
-  }>
-> {
+): Promise<Attempt<ResolvedAgxConfig>> {
+  const result = await resolveAgxConfigWithProvenance(repoRoot, options);
+  if (!result.ok) return result;
+  const config = result.value;
+  return good({
+    root: config.root,
+    tickets: config.tickets,
+    ready: config.ready,
+    trunk: config.trunk,
+    trunkConfigured: config.trunkConfigured,
+    keep: config.keep,
+    regenerable: config.regenerable,
+    verifyAlways: config.verifyAlways,
+  });
+}
+
+/** Return the committed policy source so callers can explain workspace readiness decisions. */
+export async function resolveAgxConfigWithProvenance(
+  repoRoot: string,
+  options: { vcs?: Vcs } = {},
+): Promise<Attempt<ResolvedAgxConfigWithProvenance>> {
   const result = await attempt(() => resolveConfig(repoRoot, options));
   const resolved = result.ok ? result.value : result;
   if (resolved.ok) return resolved;

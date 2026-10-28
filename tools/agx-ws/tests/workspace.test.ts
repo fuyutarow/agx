@@ -507,6 +507,55 @@ describe("ws contract: shared agx.toml [ws] policy", () => {
   });
 });
 
+test("ws contract: ws add runs every declared ready command in order", async () => {
+  const path = await repo(
+    'trunk = "main"\nready = ["mkdir -p node_modules/neverthrow && printf installed > node_modules/neverthrow/.ready", "test -s node_modules/neverthrow/.ready && printf verified > ready-order.txt"]\n',
+  );
+  const added = await ws(["add", "ready-order"], path);
+  expect(added.code, added.err).toBe(0);
+  const dir = wsDir(path, "ready-order");
+  expect(
+    await Bun.file(join(dir, "node_modules/neverthrow/.ready")).text(),
+  ).toBe("installed");
+  expect(await Bun.file(join(dir, "ready-order.txt")).text()).toBe("verified");
+  expect(added.err).toContain(
+    "ws: ready: will run 1/2: mkdir -p node_modules/neverthrow && printf installed > node_modules/neverthrow/.ready",
+  );
+  expect(added.err).toContain(
+    "ws: ready: will run 2/2: test -s node_modules/neverthrow/.ready && printf verified > ready-order.txt",
+  );
+});
+
+test("ws contract: ws add names the policy revision and an uncommitted agx.toml", async () => {
+  const path = await repo('trunk = "main"\n');
+  const selected = await jj(
+    ["log", "--no-graph", "-r", "trunk()", "-T", "commit_id"],
+    path,
+  );
+  expect(selected.code, selected.err).toBe(0);
+  const revision = selected.out.trim();
+  expect(revision).not.toBe("");
+  await Bun.write(
+    join(path, "agx.toml"),
+    'schema = 1\n[ws]\ntrunk = "main"\nready = ["touch working-copy-ready.out"]\n',
+  );
+
+  const added = await ws(["add", "uncommitted-policy"], path);
+  expect(added.code, added.err).toBe(0);
+  expect(added.err).toContain(`ws: policy: agx.toml at ${revision}`);
+  expect(added.err).toContain(
+    `ws: policy: working-copy agx.toml differs from the policy snapshot at ${revision}; working-copy policy is not used`,
+  );
+  expect(added.err).toContain(
+    `ws: ready: none declared in agx.toml at ${revision}`,
+  );
+  expect(
+    await Bun.file(
+      join(wsDir(path, "uncommitted-policy"), "working-copy-ready.out"),
+    ).exists(),
+  ).toBe(false);
+});
+
 test("config contract: printed .ws.toml migration is accepted", async () => {
   const path = await repo('trunk = "main"\nkeep = ["ws_safe"]\n');
   expect((await ws(["add", "safe"], path)).code).toBe(0);
