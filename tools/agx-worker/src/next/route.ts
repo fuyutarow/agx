@@ -8,6 +8,7 @@ import {
   routeFilterLabel,
   ROUTING_OBJECTIVE,
   type Choice,
+  type Roster,
   criterionFor,
   type LoadRosterOptions,
 } from "../roster/index.ts";
@@ -26,6 +27,33 @@ import {
 // and the owner's incident had all 101 timeouts on luna-max. Reserve margin
 // for task variation and overhead instead of admitting a mean near the deadline.
 const PUBLISHED_TASK_DURATION_BUDGET_RATIO = 0.6;
+
+function criterionWithoutTaskCost(
+  roster: Roster,
+  row: Choice,
+): string {
+  const ownPrice =
+    row.price_in === undefined || row.price_out === undefined
+      ? undefined
+      : row.price_in + row.price_out;
+  const prices = roster.choice.flatMap((choice) =>
+    choice.price_in === undefined || choice.price_out === undefined
+      ? []
+      : [choice.price_in + choice.price_out],
+  );
+  const cheapest = prices.length === 0 ? undefined : Math.min(...prices);
+  const multiple =
+    ownPrice === undefined || cheapest === undefined
+      ? undefined
+      : Math.round((ownPrice / cheapest) * 10) / 10;
+  return criterionFor(roster, row)
+    .replace(/ \(per-token price only\)/u, "")
+    .replace(/ Cost to run AA index: \$\d+(?:\.\d+)?(?: \([^)]*\))?\./u, "")
+    .replace(
+      /Multiple (?:unknown|\d+(?:\.\d+)?)x cheapest costed row\./u,
+      `Multiple ${multiple ?? "unknown"}x cheapest row.`,
+    );
+}
 
 const Reply = z.looseObject({
   answers: z.record(
@@ -426,7 +454,7 @@ export async function route(
     if (evidence === undefined)
       return refuse(`missing measured evidence for ${key}`, 2);
     criteria[key] = blindCriterion(
-      criterionFor(roster, row),
+      criterionWithoutTaskCost(roster, row),
       loaded.catalogRows,
     );
   }
@@ -439,7 +467,6 @@ export async function route(
         candidates.map((row, index) => [
           `model_${index}`,
           {
-            aa_cost_per_task_usd: row.aa_cost_per_task_usd ?? null,
             aa_time_per_task_s: row.aa_time_per_task_s ?? null,
           },
         ]),

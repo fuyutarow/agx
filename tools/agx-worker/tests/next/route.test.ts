@@ -30,9 +30,8 @@ const RoutingRequest = z.looseObject({
     published_task_metrics: z.record(
       z.string(),
       z.object({
-        aa_cost_per_task_usd: z.number().nullable(),
         aa_time_per_task_s: z.number().nullable(),
-      }),
+      }).catchall(z.unknown()),
     ),
     routes: z.looseObject({
       claude: z.looseObject({
@@ -168,7 +167,9 @@ function startServer(
           Object.entries(criteria).flatMap(([id, value]) => {
             const matchedRow = roster.choice.find((row) =>
               value.startsWith(
-                blindCriterion(criterionFor(roster, row), roster.choice),
+                blindCriterion(criterionFor(roster, row), roster.choice).split(
+                  " Price ",
+                )[0] ?? "",
               ),
             );
             return matchedRow === undefined ? [] : [[matchedRow.id, id]];
@@ -564,7 +565,7 @@ describe("capability constrained routing", () => {
     expect(ROUTING_OBJECTIVE).toContain("7-day windows most");
   });
 
-  test("route contract: cost per task", async () => {
+  test("route contract: Jev criteria retain token prices without AA task-cost text", async () => {
     await isolateState();
     const catalogPath = new URL(
       "./fixtures/roster-cost-per-task.toml",
@@ -583,20 +584,16 @@ describe("capability constrained routing", () => {
     expect(criteria?.["luna-max"]).toContain(
       "Price $0.10/$0.01/$0.50 per 1M tokens in/cache/out.",
     );
-    expect(criteria?.["luna-high"]).toContain(
-      "Cost to run AA index: $0.25 (1.8M tokens, AA 2026-10-25). Multiple 1x cheapest costed row.",
-    );
-    expect(criteria?.["luna-max"]).toContain(
-      "Cost to run AA index: $0.75 (5.4M tokens, AA 2026-10-25). Multiple 3x cheapest costed row.",
-    );
-    expect(criteria?.["luna-medium"]).toContain("per-token price only");
-    expect(criteria?.["luna-medium"]).toContain(
-      "Multiple unknownx cheapest costed row.",
-    );
+    for (const criterion of Object.values(criteria ?? {})) {
+      expect(criterion).not.toMatch(
+        /Cost to run AA index|cheapest costed row|per-token price only/iu,
+      );
+      expect(criterion).toMatch(/Multiple \d+(?:\.\d+)?x cheapest row\./u);
+    }
     expect(criteria?.["luna-high"]).not.toBe(criteria?.["luna-max"]);
   });
 
-  test("route contract: a higher effort carries its higher published per-task cost and duration in the Jev request", async () => {
+  test("route contract: Jev receives published duration without per-task cost", async () => {
     await isolateState();
     const loaded = await loadRoster();
     if (!loaded.ok) expect.unreachable(loaded.error);
@@ -612,7 +609,6 @@ describe("capability constrained routing", () => {
       ),
     );
     ["luna", "terra", "sol", "astra"].forEach((family) => {
-      let previousCost = 0;
       let previousDuration = 0;
       for (const effort of ["low", "medium", "high", "xhigh", "max"]) {
         const row = loaded.value.choice.find(
@@ -621,15 +617,12 @@ describe("capability constrained routing", () => {
         const id = ids[`${family}-${effort}`];
         if (row === undefined || id === undefined)
           expect.unreachable(`missing ${family}-${effort}`);
-        const cost = row.aa_cost_per_task_usd;
-        if (cost === undefined)
-          expect.unreachable(`missing cost for ${row.id}`);
         expect(metrics[id]).toEqual({
-          aa_cost_per_task_usd: cost,
           aa_time_per_task_s: row.aa_time_per_task_s ?? null,
         });
-        expect(cost).toBeGreaterThan(previousCost);
-        previousCost = cost;
+        expect(Object.keys(metrics[id] ?? {})).toEqual([
+          "aa_time_per_task_s",
+        ]);
         if (row.aa_time_per_task_s !== undefined) {
           expect(row.aa_time_per_task_s).toBeGreaterThan(previousDuration);
           previousDuration = row.aa_time_per_task_s;
@@ -637,21 +630,19 @@ describe("capability constrained routing", () => {
       }
     });
     expect(metrics[ids["luna-high"] ?? "missing"]).toEqual({
-      aa_cost_per_task_usd: 0.07294776473194697,
       aa_time_per_task_s: 269.2430350741027,
     });
     expect(metrics[ids["luna-max"] ?? "missing"]).toEqual({
-      aa_cost_per_task_usd: 0.15195575732105837,
       aa_time_per_task_s: 597.3140575781733,
     });
     expect(
       metrics[ids["luna-medium"] ?? "missing"]?.aa_time_per_task_s,
     ).toBeNull();
     expect(server.request()?.questions.worker.criteria["luna-high"]).toContain(
-      "Multiple 14.3x cheapest costed row.",
+      "Multiple 1x cheapest row.",
     );
     expect(server.request()?.questions.worker.criteria["luna-max"]).toContain(
-      "Multiple 29.7x cheapest costed row.",
+      "Multiple 1x cheapest row.",
     );
   });
 
@@ -1189,8 +1180,11 @@ test("one raw Choice blinds the entire injected payload and preserves every crit
     "missing_input",
   ]);
   ordered.forEach((row, i) => {
-    expect(request.questions.worker.criteria[`model_${i}`]).toBe(
-      blindCriterion(criterionFor(roster, row), roster.choice),
+    const criterion = request.questions.worker.criteria[`model_${i}`];
+    expect(criterion).toContain(`Route ${row.route}.`);
+    expect(criterion).toContain("Price ");
+    expect(criterion).not.toMatch(
+      /Cost to run AA index|cheapest costed row|per-token price only/iu,
     );
   });
   expect(server.calls()).toBe(1);
