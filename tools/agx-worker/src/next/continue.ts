@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { exhaustionPolicy, loadRoster, type Choice } from "../roster/index.ts";
 import { exitWithError } from "./exit.ts";
@@ -9,6 +10,8 @@ import { resolveRunId } from "./run-id.ts";
 
 export type PinnedContinuation = Readonly<{
   previousId: string;
+  previousRow: string;
+  workspace: string;
   row: Choice;
   resumeSession?: string | undefined;
   supersedes?: string;
@@ -71,6 +74,9 @@ export async function pinContinuation(
   if (selected.kind === "error")
     return refuse(selected.error.replace(/^unknown run id /u, "unknown run "));
   const previous = selected.row;
+  const workspace = await stat(previous.workspace).catch(() => null);
+  if (workspace === null || !workspace.isDirectory())
+    return refuse(`its workspace ${previous.workspace} no longer exists`);
   if (previous.vendor_session === null && previous.outcome !== "capacity") {
     if (previous.outcome !== "lost")
       return refuse(
@@ -123,6 +129,8 @@ export async function pinContinuation(
       );
       return {
         previousId: previous.id,
+        previousRow: previous.row,
+        workspace: previous.workspace,
         row: next,
         resumeSession: previous.vendor_session,
         judgment:
@@ -142,8 +150,9 @@ export async function pinContinuation(
     );
     return {
       previousId: previous.id,
+      previousRow: previous.row,
+      workspace: previous.workspace,
       row: next,
-      supersedes: previous.id,
       judgment:
         previous.judgment === null
           ? null
@@ -156,8 +165,58 @@ export async function pinContinuation(
         resolve(stateDir(), "runs", previous.id, "ticket.orig.md"),
     };
   }
-  if (row === undefined)
-    return refuse(`its row ${previous.row} is not in the roster`);
+  if (row === undefined) {
+    const usage = await readRouteUsage(
+      undefined,
+      exhaustionPolicy(loaded.value.auto),
+    );
+    const minimumTb4 = routing?.capabilities.some((tag) =>
+      ["terminal-agentic", "long-tool-loop"].includes(tag),
+    )
+      ? 30
+      : undefined;
+    const eligible = loaded.value.choice.filter(
+      (entry) =>
+        entry.id !== previous.row &&
+        (loaded.value.auto.routes === undefined ||
+          loaded.value.auto.routes.includes(entry.route)) &&
+        usage[entry.route].available &&
+        (minimumTb4 === undefined || (entry.tb4 ?? 0) >= minimumTb4),
+    );
+    const next =
+      eligible.find(
+        (entry) =>
+          entry.route === previous.route && entry.effort === previous.effort,
+      ) ??
+      eligible.find((entry) => entry.route === previous.route) ??
+      eligible[0];
+    if (next === undefined)
+      return refuse(`no eligible roster row can replace retired row ${previous.row}`);
+    if (routing !== undefined)
+      process.stderr.write(
+        `agx: retired row ${previous.row}; continuing ${previous.id} on ${next.id} (${next.model}) ${previous.route === next.route ? "resuming the vendor session" : "with a fresh vendor session"}\n`,
+      );
+    return {
+      previousId: previous.id,
+      previousRow: previous.row,
+      workspace: previous.workspace,
+      row: next,
+      resumeSession:
+        previous.route === next.route
+          ? (previous.vendor_session ?? undefined)
+          : undefined,
+      judgment:
+        previous.judgment === null
+          ? null
+          : {
+              decision: previous.judgment.decision,
+              note: previous.judgment.note,
+            },
+      ticketOrigPath:
+        previous.ticket_orig_path ??
+        resolve(stateDir(), "runs", previous.id, "ticket.orig.md"),
+    };
+  }
   const usage = await readRouteUsage(
     undefined,
     exhaustionPolicy(loaded.value.auto),
@@ -166,6 +225,8 @@ export async function pinContinuation(
     return refuse(`its ${row.route} route is at its subscription limit`);
   return {
     previousId: previous.id,
+    previousRow: previous.row,
+    workspace: previous.workspace,
     row,
     resumeSession: previous.vendor_session ?? undefined,
     judgment:

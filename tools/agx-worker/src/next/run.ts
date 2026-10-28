@@ -326,6 +326,10 @@ export async function check(flags: Flags): Promise<number> {
   process.stdout.write(
     `OK ticket=${ticket.name ?? basename(path, ".md")} cwd=${cwd} ${routeFilterLabel(loaded.value.auto)}\n`,
   );
+  if (inspected.pinned !== undefined && inspected.pinned !== null)
+    process.stdout.write(
+      `CONTINUE run=${inspected.pinned.previousId} row=${inspected.pinned.previousRow} -> ${inspected.pinned.row.id} workspace=${inspected.pinned.workspace}\n`,
+    );
   if ((inspected.ctx?.verifyAlways.length ?? 0) > 0)
     process.stdout.write(
       `[verify].always=${JSON.stringify(inspected.ctx?.verifyAlways)}\n`,
@@ -596,7 +600,7 @@ export async function run(flags: Flags): Promise<number> {
     process.stderr.write(
       "WARN dispatcher session is unavailable; pass --session ID or preserve CLAUDE_CODE_SESSION_ID/CODEX_SESSION_ID (systemd-run: use -E NAME).\n",
     );
-  const workspace = resolve(cwd);
+  const workspace = resolve(pinned?.workspace ?? cwd);
   writeFileSync(
     workerBrief,
     withReportInstruction(
@@ -682,6 +686,7 @@ export async function run(flags: Flags): Promise<number> {
       supersedes === undefined
         ? (pinned?.previousId ?? continuationId ?? null)
         : null,
+    continued_from_row: pinned?.previousRow,
     supersedes: supersedes ?? null,
     base_rev: ctx.base_rev ?? undefined,
     premise_commits,
@@ -1157,7 +1162,7 @@ export async function run(flags: Flags): Promise<number> {
   temp.remove();
   await workspaceLock.release();
   process.stdout.write(
-    `${JSON.stringify({ id, ticket: ticketName, workspace, row: activeRow.id, route: activeRow.route, model: activeRow.model, effort: activeRow.effort, ...(attemptedRows.length > 1 ? { rows: attemptedRows } : {}), sandbox, sandbox_source, sandbox_effective, sandbox_effective_source, exit, outcome, report_path: reportPath, state_file: recordPath(), host: hostname(), unit, execution })}\n`,
+    `${JSON.stringify({ id, ticket: ticketName, workspace, row: activeRow.id, ...(pinned == null ? {} : { continued_from_row: pinned.previousRow }), route: activeRow.route, model: activeRow.model, effort: activeRow.effort, ...(attemptedRows.length > 1 ? { rows: attemptedRows } : {}), sandbox, sandbox_source, sandbox_effective, sandbox_effective_source, exit, outcome, report_path: reportPath, state_file: recordPath(), host: hostname(), unit, execution })}\n`,
   );
   return exit;
 }

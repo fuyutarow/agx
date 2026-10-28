@@ -647,15 +647,81 @@ describe("agx worker run --continue pins the prior row", () => {
     expect(existsSync(join(f.state, "runs"))).toBe(false);
   });
 
-  test("a run whose row left the roster exits 2 before any worker starts", async () => {
-    const f = await fixture();
-    const before = f.events().length;
-    const result = f.resume("ghost-run");
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr.toString().trim().split("\n")).toHaveLength(1);
-    expect(f.events()).toHaveLength(before + 1);
-    expect(f.events().at(-1)?.kind).toBe("refusal");
+test("continue contract: a run whose row was retired", async () => {
+  const f = await fixture();
+  writeFileSync(
+    join(f.state, "records.jsonl"),
+    `${f.events()
+      .map((event) =>
+        event.kind === "started" && event.id === "codex-run"
+          ? { ...event, route: "codex", model: "gpt-6.1-terra", effort: "high" }
+          : event,
+      )
+      .map((event) => JSON.stringify(event))
+      .join("\n")}\n`,
+  );
+  const policy = join(f.root, "retired-policy.toml");
+  writeFileSync(
+    policy,
+    readFileSync(
+      new URL("../../src/roster/policy.example.toml", import.meta.url),
+      "utf8",
+    ).replace('exclude = []', 'exclude = ["terra-high"]'),
+  );
+  const checked = f.resume(
+    "codex-run",
+    { AGX_CONFIG: policy },
+    undefined,
+    false,
+    [],
+    "check",
+  );
+  expect(checked.exitCode, checked.stderr.toString()).toBe(0);
+  expect(checked.stdout.toString()).toContain(
+    `CONTINUE run=codex-run row=terra-high -> luna-high workspace=${f.root}`,
+  );
+  const continued = f.resume("codex-run", { AGX_CONFIG: policy });
+  expect(continued.exitCode, continued.stderr.toString()).toBe(0);
+  const receipt = jsonOf(Receipt.extend({
+    continued_from_row: z.string(),
+    workspace: z.string(),
+  })).safeParse(continued.stdout.toString().trim());
+  expect(receipt.success).toBe(true);
+  if (!receipt.success) return;
+  expect(receipt.data).toMatchObject({
+    row: "luna-high",
+    continued_from_row: "terra-high",
+    workspace: f.root,
   });
+  expect(
+    f
+      .events()
+      .find((event) => event.kind === "started" && event.id === receipt.data.id),
+  ).toMatchObject({
+    row: "luna-high",
+    continued_from_row: "terra-high",
+    workspace: f.root,
+    continues: "codex-run",
+    supersedes: null,
+  });
+});
+
+test("continue contract: a run whose workspace is gone is still refused", async () => {
+  const f = await fixture();
+  const events = f.events().map((event) =>
+    event.kind === "started" && event.id === "codex-run"
+      ? { ...event, workspace: join(f.root, "missing-workspace") }
+      : event,
+  );
+  writeFileSync(
+    join(f.state, "records.jsonl"),
+    `${events.map((event) => JSON.stringify(event)).join("\n")}\n`,
+  );
+  const result = f.resume("codex-run", {}, undefined, false, [], "check");
+  expect(result.exitCode).toBe(2);
+  expect(result.stderr.toString()).toContain("workspace");
+  expect(result.stderr.toString()).toContain("no longer exists");
+});
 
   test("the ticket file is re-read on continue", async () => {
     const f = await fixture();

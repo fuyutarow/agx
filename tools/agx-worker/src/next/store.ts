@@ -127,6 +127,7 @@ const EventSchema = z.discriminatedUnion("kind", [
     dispatcher_address: z.string().nullable().optional(),
     vendor_session: z.string().nullable(),
     continues: z.string().nullable().optional(),
+    continued_from_row: z.string().optional(),
     supersedes: z.string().nullable().optional(),
     base_rev: z.string().optional(),
     premise_commits: z

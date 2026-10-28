@@ -93,6 +93,7 @@ export const RunSchema = z.object({
   verify: z.array(VerifyResult),
   last_progress_path: z.string().nullable(),
   continues: z.string().nullable(),
+  continued_from_row: z.string().optional(),
   supersedes: z.string().nullable().optional(),
   base_rev: z.string().optional(),
   premise_commits: z
