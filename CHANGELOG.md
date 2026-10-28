@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.20.5 — 2026-10-28
+
+- Add workspace cleanup use-case acceptance tests.
+
 ## 1.20.4 — 2026-10-27
 
 - Workspace outcomes compare all files and report changed paths.
