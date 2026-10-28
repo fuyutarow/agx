@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import assert from "node:assert/strict";
 import { chmod, mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -158,13 +159,13 @@ await new Promise(() => {});
     stderr: "ignore",
   });
   children.push(jev);
-  if (jev.stdout === null) throw new Error("JEV fixture stdout is unavailable");
+  if (jev.stdout === null) assert.fail("JEV fixture stdout is unavailable");
   const reader = jev.stdout.getReader();
   let readyLine = "";
   const decoder = new TextDecoder();
   while (!readyLine.includes("\n")) {
     const chunk = await reader.read();
-    if (chunk.done) throw new Error("JEV fixture exited before becoming ready");
+    if (chunk.done) assert.fail("JEV fixture exited before becoming ready");
     readyLine += decoder.decode(chunk.value);
   }
   reader.releaseLock();

@@ -51,15 +51,38 @@ const DispatchCommandTimeoutMs = z.coerce
   .positive()
   .max(2_147_483_647);
 
-function dispatchCommandTimeoutMs(env: NodeJS.ProcessEnv): number {
+type DispatchCommandTimeout =
+  | { ok: true; milliseconds: number }
+  | { ok: false; error: string };
+
+type InvokeResult =
+  | { kind: "command"; code: number; out: string; err: string }
+  | {
+      kind: "timeout-error";
+      code: 127;
+      out: "";
+      err: string;
+    };
+
+function dispatchCommandTimeoutMs(
+  env: NodeJS.ProcessEnv,
+): DispatchCommandTimeout {
   const configured = env.DISPATCH_COMMAND_TIMEOUT_MS;
-  if (configured === undefined) return DISPATCH_COMMAND_TIMEOUT_MS;
+  if (configured === undefined)
+    return { ok: true, milliseconds: DISPATCH_COMMAND_TIMEOUT_MS };
   const parsed = DispatchCommandTimeoutMs.safeParse(configured);
   if (!parsed.success)
-    throw new Error(
-      "DISPATCH_COMMAND_TIMEOUT_MS must be a positive integer of at most 2147483647 milliseconds",
-    );
-  return parsed.data;
+    return {
+      ok: false,
+      error:
+        "DISPATCH_COMMAND_TIMEOUT_MS must be a positive integer of at most 2147483647 milliseconds",
+    };
+  return { ok: true, milliseconds: parsed.data };
+}
+
+function reportDispatchTimeoutError(message: string): number {
+  process.stderr.write(`agx worker dispatch: ${message}\n`);
+  return 1;
 }
 
 const cliArgv = () => process.argv.slice(2);
@@ -98,9 +121,21 @@ export async function invoke(
   args: string[],
   cwd: string,
   env: NodeJS.ProcessEnv,
-  timeoutMs = dispatchCommandTimeoutMs(env),
+  timeoutMs?: number,
   bound = "DISPATCH_COMMAND_TIMEOUT_MS",
-): Promise<{ code: number; out: string; err: string }> {
+): Promise<InvokeResult> {
+  const timeoutResult: DispatchCommandTimeout =
+    timeoutMs === undefined
+      ? dispatchCommandTimeoutMs(env)
+      : { ok: true, milliseconds: timeoutMs };
+  if (!timeoutResult.ok)
+    return {
+      kind: "timeout-error",
+      code: 127,
+      out: "",
+      err: timeoutResult.error,
+    };
+  const effectiveTimeoutMs = timeoutResult.milliseconds;
   const started = performance.now();
   const child = Bun.spawn(args, {
     cwd,
@@ -108,7 +143,7 @@ export async function invoke(
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
-    timeout: timeoutMs,
+    timeout: effectiveTimeoutMs,
     killSignal: "SIGKILL",
   });
   const [out, err, code] = await Promise.all([
@@ -118,15 +153,17 @@ export async function invoke(
   ]);
   if (
     child.signalCode === "SIGKILL" &&
-    performance.now() - started >= timeoutMs
+    performance.now() - started >= effectiveTimeoutMs
   )
     return {
+      kind: "command",
       code: 75,
       out: "",
-      err: new InspectionTimeout(bound, timeoutMs, args, cwd).message,
+      err: new InspectionTimeout(bound, effectiveTimeoutMs, args, cwd).message,
     };
   if (code === 75)
     return {
+      kind: "command",
       code,
       out,
       err:
@@ -134,7 +171,7 @@ export async function invoke(
           ? `inspection unavailable; command=${JSON.stringify(args)}; cwd=${cwd}; exit=75; no stderr`
           : err.trim().replaceAll(/[\r\n]+/gu, "; "),
     };
-  return { code, out, err };
+  return { kind: "command", code, out, err };
 }
 
 export async function invokeReadonly(
@@ -340,6 +377,8 @@ async function waitForUnitEnd(
       cwd,
       env,
     );
+    if (status.kind === "timeout-error")
+      return reportDispatchTimeoutError(status.err);
     if (status.code === 75) {
       process.stderr.write(`${status.err}\n`);
       return 75;
@@ -557,6 +596,8 @@ export async function dispatch(options: {
       cwd,
       env,
     );
+    if (active.kind === "timeout-error")
+      return reportDispatchTimeoutError(active.err);
     if (active.code === 75) {
       process.stderr.write(`${active.err}\n`);
       return 75;
@@ -663,6 +704,7 @@ export async function dispatch(options: {
       cwd,
       env,
     );
+    if (ws.kind === "timeout-error") return reportDispatchTimeoutError(ws.err);
     if (ws.code !== 0) {
       const reason = ws.err.trim();
       process.stderr.write(
@@ -706,6 +748,8 @@ export async function dispatch(options: {
           cwd,
           env,
         );
+  if (continuationUnitStatus?.kind === "timeout-error")
+    return reportDispatchTimeoutError(continuationUnitStatus.err);
   if (continuationUnitStatus?.code === 75) {
     process.stderr.write(`${continuationUnitStatus.err}\n`);
     return 75;

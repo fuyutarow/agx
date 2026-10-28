@@ -1,4 +1,5 @@
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
+import assert from "node:assert/strict";
 import {
   chmodSync,
   existsSync,
@@ -46,7 +47,8 @@ const Event = z.looseObject({
 const eventsIn = (state: string) =>
   (existsSync(join(state, "records.jsonl"))
     ? readFileSync(join(state, "records.jsonl"), "utf8")
-    : "")
+    : ""
+  )
     .trim()
     .split("\n")
     .flatMap((line) => {
@@ -64,7 +66,7 @@ const waitFor = async <T>(
     if (value !== undefined) return value;
     await Bun.sleep(25);
   }
-  throw new Error(`timed out waiting for ${description}`);
+  return assert.fail(`timed out waiting for ${description}`);
 };
 
 const fixture = async (reportedSession: boolean) => {
@@ -111,7 +113,9 @@ process.stdout.write(JSON.stringify({ exit: 0, report: { summary: "done", change
     hostname: "127.0.0.1",
     port: 0,
     fetch: () =>
-      Response.json({ answers: { worker: { choice: "luna-high", confidence: 0.9 } } }),
+      Response.json({
+        answers: { worker: { choice: "luna-high", confidence: 0.9 } },
+      }),
   });
   servers.push(server);
   const env: NodeJS.ProcessEnv = {
@@ -120,10 +124,8 @@ process.stdout.write(JSON.stringify({ exit: 0, report: { summary: "done", change
     AGX_STATE_DIR: state,
     AGX_TMP_ROOT: join(root, "agx-tmp"),
     AGX_WORKER_BIN: vendor,
-    AGX_CONFIG: new URL(
-      "../../src/roster/policy.example.toml",
-      import.meta.url,
-    ).pathname,
+    AGX_CONFIG: new URL("../../src/roster/policy.example.toml", import.meta.url)
+      .pathname,
     AGX_DISPATCHER_SESSION: "session-persist-test",
     AGX_TEST_HOLD: "1",
     AGX_TEST_SESSION: reportedSession ? "reported-vendor-session" : "",
@@ -186,7 +188,8 @@ const killProcess = (pid: number): void => {
     stdout: "ignore",
     stderr: "ignore",
   });
-  if (result.exitCode !== 0) throw new Error(`could not kill fixture process ${pid}`);
+  if (result.exitCode !== 0)
+    assert.fail(`could not kill fixture process ${pid}`);
 };
 
 const killRunAfterStart = async (
@@ -196,15 +199,24 @@ const killRunAfterStart = async (
   const owner = f.start();
   const started = await waitFor(
     () =>
-      eventsIn(f.state).find((event) => event.kind === "started" && event.id)
-        ?.id,
+      eventsIn(f.state).find(
+        (event) => event.kind === "started" && event.id !== undefined,
+      )?.id,
     "started run record",
   );
-  const pid = await waitFor(async () => {
-    if (!existsSync(f.vendorPidPath)) return undefined;
-    const value = Number(readFileSync(f.vendorPidPath, "utf8"));
-    return Number.isInteger(value) && value > 0 ? value : undefined;
-  }, "fake vendor process");
+  const pid = await waitFor(
+    () => {
+      const value = existsSync(f.vendorPidPath)
+        ? Number(readFileSync(f.vendorPidPath, "utf8"))
+        : undefined;
+      return typeof value === "number" &&
+        Number.isInteger(value) &&
+        value > 0
+        ? value
+        : undefined;
+    },
+    "fake vendor process",
+  );
   vendorPids.add(pid);
 
   if (reportedSession) {
@@ -233,9 +245,9 @@ const killRunAfterStart = async (
   killProcess(pid);
   vendorPids.delete(pid);
 
-  const lost = await waitFor(async () =>
-    (await foldedRuns(f.state)).find((run) => run.id === started),
-  "lost run projection",
+  const lost = await waitFor(
+    async () => (await foldedRuns(f.state)).find((run) => run.id === started),
+    "lost run projection",
   );
   expect(lost).toMatchObject({
     id: started,
@@ -265,7 +277,11 @@ describe("worker contract: session persist", () => {
       ],
       {
         cwd: process.cwd(),
-        env: { ...f.env, AGX_TEST_HOLD: undefined, AGX_TEST_SESSION: undefined },
+        env: {
+          ...f.env,
+          AGX_TEST_HOLD: undefined,
+          AGX_TEST_SESSION: undefined,
+        },
         timeout: 15_000,
       },
     );
@@ -302,7 +318,11 @@ describe("worker contract: session persist", () => {
       ],
       {
         cwd: process.cwd(),
-        env: { ...f.env, AGX_TEST_HOLD: undefined, AGX_TEST_SESSION: undefined },
+        env: {
+          ...f.env,
+          AGX_TEST_HOLD: undefined,
+          AGX_TEST_SESSION: undefined,
+        },
         timeout: 15_000,
       },
     );

@@ -1225,14 +1225,16 @@ export async function judgeRun(
       return runtime.onLockFailure(message, 2);
     return fatal(message);
   }
-  try {
+  await (async () => {
+    await using lockResource = {
+      [Symbol.asyncDispose]: () => lock.release(),
+    };
+    void lockResource;
     // Persist by run id even if the end record is still arriving from its owner.
     // foldInto keeps this judgment when the later `ended` event is replayed.
     append(judgment, root, false);
     await publishCurrentRuns(root, lock);
-  } finally {
-    await lock.release();
-  }
+  })();
   const writeStdout =
     runtime.writeStdout ?? ((line: string) => process.stdout.write(line));
   writeStdout(

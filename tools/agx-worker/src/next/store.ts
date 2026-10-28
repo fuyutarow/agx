@@ -324,14 +324,10 @@ function linuxDeviceNumbers(device: bigint) {
 }
 
 function processCommand(pid: number): string {
-  let fromProc = "";
-  try {
-    fromProc = readFileSync(`/proc/${pid}/cmdline`, "utf8")
-      .replaceAll("\0", " ")
-      .trim();
-  } catch {
-    // /proc is Linux-only and the holder may exit between lookup and inspection.
-  }
+  const fromProcResult = fromThrowable(() =>
+    readFileSync(`/proc/${pid}/cmdline`, "utf8").replaceAll("\0", " ").trim(),
+  )();
+  const fromProc = fromProcResult.isOk() ? fromProcResult.value : "";
   if (fromProc !== "") return fromProc.slice(0, 300);
   const result = Bun.spawnSync({
     cmd: ["ps", "-p", String(pid), "-o", "command="],
@@ -341,6 +337,11 @@ function processCommand(pid: number): string {
   return result.stdout.toString("utf8").trim().slice(0, 300);
 }
 
+function processCommandOrUnavailable(pid: number): string {
+  const command = processCommand(pid);
+  return command === "" ? "(unavailable)" : command;
+}
+
 function lockHolder(
   path: string,
 ): { pid: number; command: string } | undefined {
@@ -348,29 +349,27 @@ function lockHolder(
     const info = statSync(path, { bigint: true });
     const { major, minor } = linuxDeviceNumbers(info.dev);
     const lines = readFileSync("/proc/locks", "utf8").split("\n");
-    for (const line of lines) {
-      const fields = line.trim().split(/\s+/u);
-      if (
-        fields[1] !== "FLOCK" ||
-        fields[2] !== "ADVISORY" ||
-        fields[3] !== "WRITE"
-      )
-        continue;
-      const pid = Number(fields[4]);
-      const [lockMajor, lockMinor, inode] = (fields[5] ?? "").split(":");
-      if (
-        !Number.isInteger(pid) ||
-        lockMajor === undefined ||
-        lockMinor === undefined ||
-        inode === undefined ||
-        Number.parseInt(lockMajor, 16) !== major ||
-        Number.parseInt(lockMinor, 16) !== minor ||
-        BigInt(inode) !== info.ino
-      )
-        continue;
-      return { pid, command: processCommand(pid) || "(unavailable)" };
-    }
-    return undefined;
+    const matchingFields = lines
+      .map((line) => line.trim().split(/\s+/u))
+      .find((fields) => {
+        const pid = Number(fields[4]);
+        const [lockMajor, lockMinor, inode] = (fields[5] ?? "").split(":");
+        return (
+          fields[1] === "FLOCK" &&
+          fields[2] === "ADVISORY" &&
+          fields[3] === "WRITE" &&
+          Number.isInteger(pid) &&
+          lockMajor !== undefined &&
+          lockMinor !== undefined &&
+          inode !== undefined &&
+          Number.parseInt(lockMajor, 16) === major &&
+          Number.parseInt(lockMinor, 16) === minor &&
+          BigInt(inode) === info.ino
+        );
+      });
+    if (matchingFields === undefined) return undefined;
+    const pid = Number(matchingFields[4]);
+    return { pid, command: processCommandOrUnavailable(pid) };
   }
 
   const result = Bun.spawnSync({
@@ -380,7 +379,7 @@ function lockHolder(
   });
   const pid = Number(result.stdout.toString("utf8").trim().split("\n")[0]);
   if (!Number.isInteger(pid) || pid <= 0) return undefined;
-  return { pid, command: processCommand(pid) || "(unavailable)" };
+  return { pid, command: processCommandOrUnavailable(pid) };
 }
 
 /** The file is only a stable inode; ownership lives in the kernel, never in its contents. */
@@ -430,15 +429,17 @@ export type WorkspaceLockWaitClock = {
   pollIntervalMs: number;
 };
 
+const defaultWorkspaceLockWaitClock = {
+  now: () => performance.now(),
+  sleep: (milliseconds: number) => Bun.sleep(milliseconds),
+  pollIntervalMs: 5,
+} satisfies WorkspaceLockWaitClock;
+
 export async function acquireWorkspaceLockUntilAvailable(
   workspace: string,
   root = stateDir(),
   timeoutMs = 30_000,
-  clock: WorkspaceLockWaitClock = {
-    now: () => performance.now(),
-    sleep: (milliseconds) => Bun.sleep(milliseconds),
-    pollIntervalMs: 5,
-  },
+  clock: WorkspaceLockWaitClock = defaultWorkspaceLockWaitClock,
 ): Promise<WorkspaceLock> {
   const path = workspaceLockPath(workspace, root);
   const deadline = clock.now() + timeoutMs;
@@ -454,12 +455,8 @@ export async function acquireWorkspaceLockUntilAvailable(
   // Make one last attempt at the deadline so a lock released at the boundary wins.
   lock = await acquireWorkspaceLock(workspace, root);
   if (lock.ok || lock.error !== WORKSPACE_LOCK_BUSY) return lock;
-  let owner: { pid: number; command: string } | undefined;
-  try {
-    owner = lockHolder(path);
-  } catch {
-    owner = undefined;
-  }
+  const ownerResult = fromThrowable(() => lockHolder(path))();
+  const owner = ownerResult.isOk() ? ownerResult.value : undefined;
   return {
     ok: false,
     error: `workspace lock stayed busy past ${timeoutMs}ms; ${owner === undefined ? "holder pid and command unavailable" : `holder pid=${owner.pid} command=${JSON.stringify(owner.command)}`}`,

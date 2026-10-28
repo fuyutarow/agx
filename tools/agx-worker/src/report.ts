@@ -177,14 +177,14 @@ const FENCE = /^```(?:json)?\s*\n([\s\S]*?)\n```$/u;
 const originalExitText = (exit: unknown): string => {
   if (typeof exit === "string") return exit;
   if (exit === undefined) return "(missing)";
-  return JSON.stringify(exit) ?? String(exit);
+  return JSON.stringify(exit) ?? "(unserializable)";
 };
 
 /** Preserve a reported nonnumeric exit as text while keeping the report readable. */
 const normalizeReportCheckExits = (value: unknown): unknown => {
   const report = z.record(z.string(), z.unknown()).safeParse(value);
   if (!report.success || !Array.isArray(report.data.checks)) return value;
-  const checks = report.data.checks.map((check) => {
+  const checks = report.data.checks.map((check: unknown) => {
     const parsed = z.record(z.string(), z.unknown()).safeParse(check);
     if (!parsed.success || typeof parsed.data.exit === "number") return check;
     if (
