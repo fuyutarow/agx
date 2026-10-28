@@ -7,6 +7,7 @@ import { route } from "./route.ts";
 import { loadRoster, ROUTING_OBJECTIVE } from "../roster/index.ts";
 import { printPreflightFailures, recordRefusal } from "./preflight.ts";
 import { resolveTicketReference } from "./ticket-home.ts";
+import { routingEvents } from "./routing-events.ts";
 
 const oneLine = (reason: string): string => reason.replaceAll(/[\r\n]+/gu, " ");
 
@@ -47,7 +48,13 @@ export async function roster(ticketPath?: string): Promise<number> {
         sha256: createHash("sha256").update(source.value).digest("hex"),
       },
     );
-    process.stdout.write(`${JSON.stringify(row)}\n`);
+    const decision = routingEvents().events.at(-1);
+    const audit = decision?.audit ?? {};
+    process.stdout.write(`${JSON.stringify({
+      requirement_class: audit.requirement_class ?? null,
+      tb4_bar: audit.tb4_bar ?? null,
+      row,
+    })}\n`);
     return 0;
   }
   const loaded = await loadRoster();

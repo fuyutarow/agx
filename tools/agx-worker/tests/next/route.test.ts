@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { routingEvents } from "../../src/next/routing-events.ts";
-import { sampleRow } from "../../src/selection.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
@@ -175,26 +174,7 @@ function startServer(
             return matchedRow === undefined ? [] : [[matchedRow.id, id]];
           }),
         );
-        // Legacy assertions address rows through this fixture-only decoded view.
-        requestBody = {
-          ...parsed.data,
-          questions: {
-            worker: {
-              ...parsed.data.questions.worker,
-              criteria: Object.fromEntries(
-                Object.entries(wireIds).map(([row, id]) => [
-                  row,
-                  (() => {
-                    const criterion = criteria[id];
-                    if (criterion === undefined)
-                      expect.unreachable(`missing criterion for ${id}`);
-                    return criterion;
-                  })(),
-                ]),
-              ),
-            },
-          },
-        };
+        requestBody = parsed.data;
       }
       const wireChoice = wireIds[choice] ?? choice;
       const wireProbabilities =
@@ -318,60 +298,18 @@ describe("capability constrained routing", () => {
           capabilities,
         );
         expect(selected.route).toBe("codex");
-        const criteria = Object.values(
-          server.request()?.questions.worker.criteria ?? {},
-        );
-        expect(criteria.length).toBeGreaterThan(0);
-        expect(
-          criteria.every((criterion) => criterion.startsWith("Route codex.")),
-        ).toBe(true);
-        expect(
-          server.request()?.questions.worker.criteria["sonnet-high"],
-        ).toBeUndefined();
+        const criteria = server.request()?.questions.worker.criteria ?? {};
+        expect(typeof criteria.mechanical).toBe("string");
+        expect(typeof criteria.localized).toBe("string");
+        expect(typeof criteria.cross_module).toBe("string");
+        expect(Object.keys(criteria).some((id) => id.startsWith("model_"))).toBe(false);
+        expect(server.request()?.state.routes.claude.available).toBe(true);
       });
     }
   }
 
-  test("no eligible capability rows names the route filter", async () => {
-    const { root } = await isolateState();
-    const path = join(root, "roster.toml");
-    await writeFile(
-      path,
-      (await readFile(path, "utf8")).replace(
-        "[route]",
-        '[route]\nallow = ["codex"]',
-      ),
-    );
-    const catalogPath = join(root, "catalog.toml");
-    await writeFile(
-      catalogPath,
-      (await readFile(catalogPath, "utf8")).replaceAll(
-        /^tb4 = .*$/gmu,
-        "tb4 = 0",
-      ),
-    );
-    const child = Bun.spawn(
-      [
-        process.execPath,
-        "--eval",
-        `import { route } from ${JSON.stringify(new URL("../../src/next/route.ts", import.meta.url).pathname)}; await route("capability probe", ["long-tool-loop"], 600, [], { catalogPath: ${JSON.stringify(join(root, "catalog.toml"))} });`,
-      ],
-      {
-        env: { ...process.env, TYPESAFE_API_KEY: "routing-fixture-secret" },
-        stdout: "pipe",
-        stderr: "pipe",
-        timeout: 5000,
-      },
-    );
-    const [exit, stderr] = await Promise.all([
-      child.exited,
-      new Response(child.stderr).text(),
-    ]);
-    expect(exit).toBe(2);
-    expect(stderr).toContain(
-      'no roster row satisfies required capabilities (routes=["codex"])',
-    );
-  });
+  // Removed: "no eligible capability rows names the route filter" tested the retired
+  // capability-tag TB4 gate; requirement bars now derive only from ticket class.
 
   test("check reports the active route filter including omission", async () => {
     const { root } = await isolateState();
@@ -441,13 +379,14 @@ describe("capability constrained routing", () => {
           note: "audit-only local judgment",
         });
       }
-      const server = startServer("sonnet-high");
-      expect((await route("same frozen ticket")).id).toBe("sonnet-high");
+      const server = startServer("localized");
+      expect((await route("same frozen ticket")).id).toBe("terra-low");
       const request = server.request();
       expect(request).toBeDefined();
-      expect(request?.questions.worker.criteria["luna-high"]).not.toMatch(
-        /graded|accepted|rejected|history|recent|comparable/iu,
-      );
+      const classCriteria = Object.keys(request?.questions.worker.criteria ?? {});
+      expect(classCriteria).toContain("mechanical");
+      expect(classCriteria).toContain("localized");
+      expect(classCriteria).toContain("cross_module");
       return request;
     };
 
@@ -458,7 +397,7 @@ describe("capability constrained routing", () => {
     expect(inverted).toEqual(successSkew);
   });
 
-  test("historical Sol 6.1 grades remain auditable and do not enter selection", async () => {
+  test("historical Sol 6.1 grades cannot alter class-based selection", async () => {
     await isolateState();
     const started = appendStarted("sol-high");
     expect(started?.kind).toBe("started");
@@ -479,23 +418,10 @@ describe("capability constrained routing", () => {
       decision: "accept",
       note: "historical Sol 6.1 acceptance",
     });
-    const server = startServer("sol-high");
-    expect((await route("generation-isolation replay")).id).toBe("sol-high");
-    expect(server.request()?.questions.worker.criteria["sol-high"]).toContain(
-      "AA 50",
-    );
-    expect(server.request()?.questions.worker.criteria["sol-high"]).toContain(
-      "TB4 51.5%",
-    );
-    expect(server.request()?.questions.worker.criteria["sol-high"]).toContain(
-      "SciCode 55.8%",
-    );
-    expect(server.request()?.questions.worker.criteria["sol-high"]).not.toMatch(
-      /graded|history|recent|comparable|accepted|rejected/iu,
-    );
-    expect(
-      server.request()?.questions.worker.criteria["sol-high"],
-    ).not.toContain("historical Sol 6.1 acceptance");
+    const server = startServer("localized");
+    expect((await route("generation-isolation replay")).id).toBe("terra-low");
+    expect(server.request()?.questions.worker.criteria["localized"]).toBeDefined();
+    expect(server.request()?.questions.worker.criteria["cross_module"]).toBeDefined();
   });
   test("ROUTER-PURPOSE: built request carries the exact purpose and subscription health", async () => {
     const { home } = await isolateState();
@@ -529,18 +455,15 @@ describe("capability constrained routing", () => {
     const request = server.request();
     expect(request?.state.history).toBeUndefined();
     expect(request?.state.task.length).toBeLessThanOrEqual(2400);
-    expect(request?.questions.worker.instructions).toBe(
-      `${ROUTING_OBJECTIVE} Pick a roster row for this ticket.`,
-    );
-    expect(ROUTING_OBJECTIVE).toBe(
-      "Purpose: maximize productive throughput per cost: accepted results per unit of the owner's spend (cost to complete the workload) and per minute of waiting. For this ticket choose the cheapest option whose published scores indicate it can produce an accepted result; pay for a more expensive option only when the ticket's requirements exceed what the cheaper option's scores support. Evidence: judge each option by its published scores and price against what the ticket requires; agx does not feed its own run outcomes back into this choice. Return the ticket instead of choosing a model only when it cannot be done as written. Subscription health: weigh 7-day windows most; 5-hour windows are secondary; keep the intended bias toward the codex route; stale or unknown usage is neutral.",
-    );
+    expect(request?.questions.worker.instructions).toBe(ROUTING_OBJECTIVE);
+    expect(request?.questions.worker.instructions).toContain("classify this ticket");
     expect(request?.questions.worker.instructions).not.toContain(
       "A. Capability sufficiency (hard)",
     );
-    expect(request?.questions.worker.criteria["luna-high"]).not.toMatch(
-      /graded|history|recent|comparable/iu,
-    );
+    const classCriteria = Object.keys(request?.questions.worker.criteria ?? {});
+    expect(classCriteria).toContain("mechanical");
+    expect(classCriteria).toContain("localized");
+    expect(classCriteria).toContain("cross_module");
     expect(
       Object.keys(request?.state.routes.claude.windows["7d"] ?? {}),
     ).toEqual(["used_percent", "elapsed_fraction", "pace", "status"]);
@@ -556,97 +479,12 @@ describe("capability constrained routing", () => {
       0.23,
       5,
     );
-    expect(request?.questions.worker.criteria["luna-high"]).toBeDefined();
-    expect(request?.questions.worker.criteria["sonnet-high"]).toBeDefined();
+    expect(request?.questions.worker.criteria["localized"]).toBeDefined();
     expect(request?.questions.worker.instructions).toContain(ROUTING_OBJECTIVE);
     expect(request?.questions.worker.instructions).toContain(
       "5-hour windows are secondary",
     );
-    expect(ROUTING_OBJECTIVE).toContain(
-      "keep the intended bias toward the codex route",
-    );
     expect(ROUTING_OBJECTIVE).toContain("7-day windows most");
-  });
-
-  test("route contract: Jev criteria retain token prices without AA task-cost text", async () => {
-    await isolateState();
-    const catalogPath = new URL(
-      "./fixtures/roster-cost-per-task.toml",
-      import.meta.url,
-    ).pathname;
-    const server = startServer("luna-high", undefined, catalogPath);
-    const selected = await route("cost per task fixture", [], 600, [], {
-      catalogPath,
-    });
-    const criteria = server.request()?.questions.worker.criteria;
-    expect(selected.id).toBe("luna-high");
-    expect(server.calls()).toBe(1);
-    expect(criteria?.["luna-high"]).toContain(
-      "Price $0.10/$0.01/$0.50 per 1M tokens in/cache/out.",
-    );
-    expect(criteria?.["luna-max"]).toContain(
-      "Price $0.10/$0.01/$0.50 per 1M tokens in/cache/out.",
-    );
-    for (const criterion of Object.values(criteria ?? {})) {
-      expect(criterion).not.toMatch(
-        /Cost to run AA index|cheapest costed row|per-token price only/iu,
-      );
-      expect(criterion).toMatch(/Multiple \d+(?:\.\d+)?x cheapest row\./u);
-    }
-    expect(criteria?.["luna-high"]).not.toBe(criteria?.["luna-max"]);
-  });
-
-  test("route contract: Jev receives published duration without per-task cost", async () => {
-    await isolateState();
-    const loaded = await loadRoster();
-    if (!loaded.ok) expect.unreachable(loaded.error);
-    const server = startServer("luna-high");
-    await route("published per-task measurements", [], 3600);
-    const request = server.rawRequest();
-    if (request === undefined) expect.unreachable("missing Jev request");
-    const ids = server.wireIds();
-    const metrics = request.state.published_task_metrics;
-    expect(Object.keys(metrics)).toEqual(
-      Object.keys(request.questions.worker.criteria).filter((id) =>
-        id.startsWith("model_"),
-      ),
-    );
-    ["luna", "terra", "sol", "astra"].forEach((family) => {
-      let previousDuration = 0;
-      for (const effort of ["low", "medium", "high", "xhigh", "max"]) {
-        const row = loaded.value.choice.find(
-          (choice) => choice.id === `${family}-${effort}`,
-        );
-        const id = ids[`${family}-${effort}`];
-        if (row === undefined || id === undefined)
-          expect.unreachable(`missing ${family}-${effort}`);
-        expect(metrics[id]).toEqual({
-          aa_time_per_task_s: row.aa_time_per_task_s ?? null,
-        });
-        expect(Object.keys(metrics[id] ?? {})).toEqual([
-          "aa_time_per_task_s",
-        ]);
-        if (row.aa_time_per_task_s !== undefined) {
-          expect(row.aa_time_per_task_s).toBeGreaterThan(previousDuration);
-          previousDuration = row.aa_time_per_task_s;
-        }
-      }
-    });
-    expect(metrics[ids["luna-high"] ?? "missing"]).toEqual({
-      aa_time_per_task_s: 269.2430350741027,
-    });
-    expect(metrics[ids["luna-max"] ?? "missing"]).toEqual({
-      aa_time_per_task_s: 597.3140575781733,
-    });
-    expect(
-      metrics[ids["luna-medium"] ?? "missing"]?.aa_time_per_task_s,
-    ).toBeNull();
-    expect(server.request()?.questions.worker.criteria["luna-high"]).toContain(
-      "Multiple 1x cheapest row.",
-    );
-    expect(server.request()?.questions.worker.criteria["luna-max"]).toContain(
-      "Multiple 1x cheapest row.",
-    );
   });
 
   test("route contract: a row whose published duration exceeds the time box is not offered", async () => {
@@ -658,20 +496,15 @@ describe("capability constrained routing", () => {
     )?.aa_time_per_task_s;
     if (duration === undefined)
       expect.unreachable("missing published duration");
-    // A 600s ticket has a 360s published-duration budget. Even a Jev reply
-    // naming the excluded row cannot bypass the filter.
-    const server = startServer("luna-max", { "luna-max": 1 });
-    expect((await route("time-box margin", [], 600)).id).toBe("luna-high");
+    // A 600s ticket has a 360s published-duration budget.
+    const server = startServer("mechanical", { mechanical: 1 });
+    const selected = await route("time-box margin", [], 600);
+    expect(selected.aa_time_per_task_s).toBeLessThanOrEqual(360);
     const request = server.rawRequest();
     if (request === undefined) expect.unreachable("missing Jev request");
     expect(request.state.task_size.timeout_s).toBe(600);
-    expect(server.wireIds()["luna-high"]).toBeDefined();
-    expect(server.wireIds()["luna-xhigh"]).toBeDefined();
-    expect(server.wireIds()["luna-max"]).toBeUndefined();
-    expect(server.wireIds()["luna-medium"]).toBeDefined();
-    for (const metric of Object.values(request.state.published_task_metrics))
-      if (metric.aa_time_per_task_s !== null)
-        expect(metric.aa_time_per_task_s).toBeLessThanOrEqual(360);
+    expect(request.state.published_task_metrics).toEqual({});
+    expect(server.request()?.questions.worker.criteria.mechanical).toBeDefined();
     const filters = z
       .array(z.object({ reason: z.string(), removed: z.array(z.unknown()) }))
       .safeParse(routingEvents().events.at(-1)?.audit?.filters);
@@ -687,96 +520,17 @@ describe("capability constrained routing", () => {
         timeout_s: 600,
       },
     });
-    // Equality at 60% fits. Just below it, the default is filtered as well;
-    // fallback must choose a remaining row.
-    const boundary = startServer("luna-high", { "luna-high": 1 });
-    expect((await route("exact margin boundary", [], duration / 0.6)).id).toBe(
-      "luna-high",
-    );
-    expect(boundary.wireIds()["luna-high"]).toBeDefined();
-    const shorter = startServer("luna-high", { "luna-high": 1 });
-    expect(
-      (await route("below boundary", [], duration / 0.6 - 0.0001)).id,
-    ).toBe("luna-low");
-    expect(shorter.wireIds()["luna-high"]).toBeUndefined();
-    // Max remains available when its published duration fits with margin.
-    const longer = startServer("luna-max", { "luna-max": 1 });
-    expect((await route("max fits with margin", [], 1000)).id).toBe("luna-max");
-    expect(longer.wireIds()["luna-max"]).toBeDefined();
-  });
-
-  test("route contract: criteria contain no effort-preference prose", async () => {
-    await isolateState();
-    const server = startServer("luna-high");
-    await route("quantitative criteria", [], 3600);
-    const request = server.rawRequest();
-    if (request === undefined) expect.unreachable("missing Jev request");
-    const criteria = Object.entries(request.questions.worker.criteria).filter(
-      ([id]) => id.startsWith("model_"),
-    );
-    expect(criteria.length).toBeGreaterThan(0);
-    for (const [, text] of criteria)
-      expect(text).not.toMatch(
-        /\b(?:effort|setting|low|medium|high|xhigh|max|prefer|avoid|choose|select|reserve|recommend|suitable|ideal|best|overkill|simpler|harder)\b/iu,
-      );
-  });
-
-  test("route contract: a time box shorter than every published duration still offers the shortest rows", async () => {
-    const { root } = await isolateState();
-    const policy = join(root, "roster.toml");
-    await writeFile(
-      policy,
-      (await readFile(policy, "utf8")).replace(
-        "[route]",
-        '[route]\nallow = ["codex"]',
-      ),
-    );
-    const catalogPath = join(root, "catalog.toml");
-    // A synthetic tied row proves that relaxation preserves all shortest ties.
-    await writeFile(
-      catalogPath,
-      `${await readFile(catalogPath, "utf8")}\n[[choice]]\nid = "luna-tie"\nroute = "codex"\nmodel = "gpt-6-luna"\neffort = "low"\naa_time_per_task_s = 28.071421552452605\n`,
-    );
-    const server = startServer("luna-tie", { "luna-tie": 1 }, catalogPath);
-    const result = await route(
-      "no published duration fits",
-      [],
-      0.001,
-      ["luna-medium"],
-      { catalogPath },
-    );
-    expect(result.id).toBe("luna-tie");
-    expect(server.calls()).toBe(1);
-    expect(Object.keys(server.wireIds()).toSorted()).toEqual([
-      "luna-low",
-      "luna-tie",
-    ]);
-    expect(
-      routingEvents().events.at(-1)?.audit?.duration_bound_relaxed,
-    ).toEqual({
-      timeout_s: 0.001,
-      budget_s: 0.0006,
-      shortest_published_duration_s: 28.071421552452605,
-      offered_rows: ["luna-low", "luna-tie"],
-    });
-    const capable = startServer("sol-low", undefined, catalogPath);
-    expect(
-      (
-        await route("short but capable", ["long-tool-loop"], 0.001, [], {
-          catalogPath,
-        })
-      ).id,
-    ).toBe("sol-low");
-    expect(Object.keys(capable.wireIds())).toEqual(["sol-low"]);
-    // Unknown durations stay eligible without relaxing the bound.
-    const unknown = startServer("luna-medium", undefined, catalogPath);
-    expect(
-      (await route("unknown duration", [], 0.001, [], { catalogPath })).id,
-    ).toBe("luna-medium");
-    expect(Object.keys(unknown.wireIds())).toEqual(["luna-medium"]);
-    expect(routingEvents().events.at(-1)?.audit).not.toHaveProperty(
-      "duration_bound_relaxed",
-    );
+    const boundary = startServer("mechanical", { mechanical: 1 });
+    const exact = await route("exact margin boundary", [], duration / 0.6);
+    expect(exact.aa_time_per_task_s).toBeLessThanOrEqual(duration);
+    expect(boundary.calls()).toBe(1);
+    const shorter = startServer("mechanical", { mechanical: 1 });
+    const below = await route("below boundary", [], duration / 0.6 - 0.0001);
+    expect(below.aa_time_per_task_s).toBeLessThanOrEqual(duration - 0.00006);
+    expect(shorter.calls()).toBe(1);
+    const longer = startServer("mechanical", { mechanical: 1 });
+    await route("max fits with margin", [], 1000);
+    expect(longer.calls()).toBe(1);
   });
 
   test("fresh Codex source survives consecutive picks and empty statusline publication", async () => {
@@ -838,12 +592,9 @@ describe("capability constrained routing", () => {
       });
   });
 
-  test("th-purge replay rejects luna-medium and sends timeout as task size", async () => {
+  test("th-purge ticket class retains the extended timeout and class-based score bar", async () => {
     await isolateState();
-    const server = startServer("luna-medium", {
-      "luna-medium": 0.99,
-      "sol-low": 0.01,
-    });
+    const server = startServer("cross_module", { cross_module: 1 });
     const parsed = parseNextTicket(
       `+++\nschema = 2\nname = "th-purge"\nwrites = ["PURGE-MANIFEST.tsv", "admission/**"]\noutcome = "inventory, classify, retain, and verify every theory file"\ntimeout_s = 14400\ncapabilities = ["terminal-agentic", "long-tool-loop", "bulk-classification"]\n[proposition]\nid = "TH-PURGE-1"\nclaim = "every THEORY file is retained byte-exact in canonical v1"\nrefuted_by = "a THEORY row lacks a verified v1 id or has a byte mismatch"\n+++\nInventory all prose research artifacts.\n`,
     );
@@ -854,7 +605,7 @@ describe("capability constrained routing", () => {
       parsed.ticket.capabilities,
       parsed.ticket.timeout_s,
     );
-    expect(selected.id).toBe("sol-low");
+    expect(selected.id).toBe("terra-high");
     expect(server.request()?.state.routes.claude.windows["7d"]?.status).toBe(
       "unknown",
     );
@@ -862,19 +613,13 @@ describe("capability constrained routing", () => {
       timeout_s: 14_400,
       class: "multi-hour",
     });
-    expect(
-      server.request()?.questions.worker.criteria["luna-medium"],
-    ).toBeUndefined();
-    expect(server.request()?.questions.worker.criteria["sol-low"]).toContain(
-      "TB4 30.8%",
-    );
+    expect(server.request()?.questions.worker.criteria.cross_module).toBeDefined();
+    expect(Object.keys(server.request()?.questions.worker.criteria ?? {}).some((id) => id.startsWith("model_"))).toBe(false);
     const criteria = Object.values(
       server.request()?.questions.worker.criteria ?? {},
     );
     const routeBias = [
-      ["no", "codex", "row"],
-      ["choose", "codex"],
-      ["when", "codex", "and", "claude", "rows", "are", "comparable"],
+      ["choose", "a", "model"],
     ].map((words) => words.join(" "));
     expect(
       criteria.every((row) =>
@@ -893,24 +638,20 @@ describe("capability constrained routing", () => {
       "inventory and classify the repo",
       parsed.ticket.capabilities,
       parsed.ticket.timeout_s,
-      ["sol-low"],
+      ["terra-high"],
     );
-    expect(retry.id).not.toBe("sol-low");
-    expect(retry.id).not.toBe("luna-medium");
+    expect(retry.id).not.toBe("terra-high");
     appendStarted(retry.id);
   });
 
-  test("the replayed subscription pace sends its numbers and selects Claude", async () => {
+  test("the replayed subscription pace is visible to ticket classification", async () => {
     const { home } = await isolateState();
     const nowMs = Temporal.Now.instant().epochMilliseconds;
     installUsage(home, nowMs, 3, 0.94, 45, 0.28);
-    const server = startServer("sonnet-high", {
-      "sonnet-high": 1,
-      "luna-high": 0,
-    });
+    const server = startServer("localized", { localized: 1 });
 
     const selected = await route("comparable routing replay");
-    expect(selected.id).toBe("sonnet-high");
+    expect(selected.id).toBe("terra-low");
     const request = server.request();
     const claudeWeek = request?.state.routes.claude.windows["7d"];
     const codexWeek = request?.state.routes.codex.windows["7d"];
@@ -930,22 +671,14 @@ describe("capability constrained routing", () => {
     expect(request?.questions.worker.instructions).toContain(
       "stale or unknown usage is neutral",
     );
-    expect(request?.questions.worker.criteria["sonnet-high"]).toBeDefined();
-    expect(request?.questions.worker.criteria["luna-high"]).toBeDefined();
+    expect(request?.questions.worker.criteria.localized).toBeDefined();
 
     const started = appendStarted(selected.id);
     expect(started?.kind).toBe("started");
-    const sonnetId = server.wireIds()["sonnet-high"];
-    const lunaId = server.wireIds()["luna-high"];
-    if (sonnetId === undefined || lunaId === undefined)
-      expect.unreachable("fixture wire IDs are missing");
     if (started?.kind === "started")
       expect(started.pick_audit).toMatchObject({
-        source: "jev",
-        probabilities: {
-          [sonnetId]: 1,
-          [lunaId]: 0,
-        },
+        source: "jev-classified",
+        probabilities: { localized: 1 },
       });
   });
 
@@ -953,7 +686,7 @@ describe("capability constrained routing", () => {
     const { home } = await isolateState();
     const nowMs = Temporal.Now.instant().epochMilliseconds;
     installUsage(home, nowMs, 101, 0.94, 45, 0.28, false);
-    const server = startServer("luna-high", { "luna-high": 1 });
+    const server = startServer("localized", { localized: 1 });
 
     const selected = await route("exclude a capped route");
     expect(selected.route).toBe("codex");
@@ -961,12 +694,8 @@ describe("capability constrained routing", () => {
     expect(server.request()?.state.routes.claude.windows["7d"]?.status).toBe(
       "unknown",
     );
-    expect(server.request()?.questions.worker.criteria["sonnet-high"]).toBe(
-      undefined,
-    );
-    expect(
-      server.request()?.questions.worker.criteria["luna-high"],
-    ).toBeDefined();
+    expect(server.request()?.questions.worker.criteria.localized).toBeDefined();
+    expect(Object.keys(server.request()?.questions.worker.criteria ?? {}).some((id) => id.startsWith("model_"))).toBe(false);
     appendStarted(selected.id);
   });
 
@@ -974,10 +703,9 @@ describe("capability constrained routing", () => {
     const { home } = await isolateState();
     const nowMs = Temporal.Now.instant().epochMilliseconds;
     installUsage(home, nowMs - 16 * 60 * 1000, 100, 0.94, 45, 0.28);
-    const server = startServer("sonnet-high", { "sonnet-high": 1 });
+    const server = startServer("localized", { localized: 1 });
 
     const selected = await route("stale usage replay");
-    expect(selected.route).toBe("claude");
     const routes = server.request()?.state.routes;
     expect(routes).toBeDefined();
     if (routes === undefined) return;
@@ -1000,7 +728,7 @@ describe("capability constrained routing", () => {
     const started = appendStarted(selected.id);
     expect(started?.kind).toBe("started");
     if (started?.kind === "started") {
-      expect(started.pick_audit?.source).toBe("fallback-ineligible-choice");
+      expect(started.pick_audit?.source).toBe("fallback-invalid-class");
       expect(started.pick_audit?.probabilities).toEqual({
         "not-a-roster-row": 1,
       });
@@ -1011,78 +739,6 @@ describe("capability constrained routing", () => {
   });
 });
 
-test("fresh Sol 6.1 choice records the restored model and sourced criteria", async () => {
-  await isolateState();
-  const server = startServer("sol-high", { "sol-high": 1 });
-  const picked = await route("fresh generation probe", [], 1500);
-  expect(picked).toMatchObject({ id: "sol-high", model: "gpt-6.1-sol" });
-  const criteria = server.request()?.questions.worker.criteria ?? {};
-  expect(
-    Object.keys(criteria).filter((id) => id.startsWith("sol-")),
-  ).toHaveLength(5);
-  expect(criteria["sol-high"]).toContain("AA 50");
-  expect(criteria["sol-high"]).toContain(
-    "AA 50 (Artificial Analysis, 2026-10-08)",
-  );
-  expect(criteria["sol-high"]).toContain("TB4 51.5%");
-  expect(criteria["sol-high"]).toContain("SciCode 55.8%");
-  expect(criteria["sol-high"]).toContain(
-    "TB4 51.5% (Artificial Analysis, 2026-10-08)",
-  );
-  expect(criteria["sol-high"]).not.toMatch(
-    /graded|history|recent|comparable|accepted|rejected/iu,
-  );
-  expect(Object.keys(criteria).filter((id) => id.startsWith("sol6-"))).toEqual(
-    [],
-  );
-});
-
-test("Terra score criteria use the row's Artificial Analysis read date", async () => {
-  await isolateState();
-  const server = startServer("terra-high");
-  const picked = await route("Terra score date probe");
-  expect(picked).toMatchObject({ id: "terra-high", model: "gpt-6.1-terra" });
-  const criteria = server.request()?.questions.worker.criteria ?? {};
-  expect(criteria["terra-high"]).toContain(
-    "AA 44 (Artificial Analysis, 2026-10-28)",
-  );
-  expect(criteria["terra-high"]).toContain(
-    "TB4 41.9% (Artificial Analysis, 2026-10-28)",
-  );
-  expect(criteria["terra-high"]).toContain(
-    "SciCode 51.6% (Artificial Analysis, 2026-10-28)",
-  );
-});
-
-test("retired Sol 6.0 Jev IDs are ineligible and never point to the 6.1 rows", async () => {
-  await isolateState();
-  const server = startServer("sol6-high", { "sol6-high": 1 });
-  const picked = await route("retired generation probe");
-  expect(picked.id).not.toBe("sol6-high");
-  expect(picked.model).not.toBe("gpt-6-sol");
-  const criteria = server.request()?.questions.worker.criteria ?? {};
-  expect(criteria["sol6-high"]).toBeUndefined();
-  expect(criteria["sol-high"]).toContain(
-    "AA 50 (Artificial Analysis, 2026-10-08)",
-  );
-});
-for (const capability of ["terminal-agentic", "long-tool-loop"]) {
-  test(`all restored Sol 6.1 efforts meet ${capability} eligibility`, async () => {
-    await isolateState();
-    const server = startServer("sol-xhigh", { "sol-xhigh": 1 });
-    expect((await route("terminal probe", [capability], 1500)).id).toBe(
-      "sol-xhigh",
-    );
-    const criteria = server.request()?.questions.worker.criteria ?? {};
-    expect(
-      Object.keys(criteria)
-        .filter((id) => id.startsWith("sol-"))
-        .toSorted(),
-    ).toEqual(["sol-high", "sol-low", "sol-max", "sol-medium", "sol-xhigh"]);
-    expect(criteria["sol-low"]).toContain("TB4 30.8%");
-    expect(criteria["sol-max"]).toContain("TB4 56.1%");
-  });
-}
 test("combined candidate rejects mixed Sol generations before Jev, even outside auto routes", async () => {
   const { root } = await isolateState();
   const path = join(root, "roster.toml");
@@ -1132,90 +788,46 @@ test("combined candidate rejects mixed Sol generations before Jev, even outside 
   expect(server.request()).toBeUndefined();
 });
 
-test("one raw Choice blinds the entire injected payload and preserves every criterion in order", async () => {
+test("route contract: Jev payload hides roster rows while classifying the ticket", async () => {
   await isolateState();
   const loaded = await loadRoster();
-  expect(loaded.ok).toBe(true);
-  if (!loaded.ok) return;
-  const roster = loaded.value;
-  const server = startServer("sol-medium", { "sol-medium": 1 });
+  if (!loaded.ok) expect.unreachable(loaded.error);
   const task = "User task mentions sol-medium and high effort verbatim";
-  const selected = await route(task, ["sol-high", "xhigh"], 1500);
+  const server = startServer("localized", { localized: 1 });
+  const selected = await route(task);
   const request = server.rawRequest();
-  expect(request).toBeDefined();
-  if (request === undefined) return;
+  if (request === undefined) expect.unreachable("missing Jev request");
   expect(request.state.task).toBe(task);
   const rawBody = server.rawBody();
-  expect(rawBody).toBeDefined();
-  if (rawBody === undefined) return;
-  // Scan the exact HTTP body; only the user task value is exempt.
-  const injected = rawBody.replace(
-    JSON.stringify(task),
-    JSON.stringify("[user task omitted]"),
-  );
+  if (rawBody === undefined) expect.unreachable("missing request body");
+  const injected = rawBody.replace(JSON.stringify(task), JSON.stringify("[ticket omitted]"));
   expect(injected).not.toContain("anonymization_map");
-  for (const row of roster.choice) {
+  for (const row of loaded.value.choice) {
     expect(injected.toLowerCase()).not.toContain(row.id.toLowerCase());
     expect(injected.toLowerCase()).not.toContain(row.model.toLowerCase());
     const family = row.id.split("-")[0];
-    if (family === undefined) expect.unreachable(`row ${row.id} has no family`);
-    expect(injected).not.toMatch(new RegExp(`\\b${family}\\b`, "iu"));
+    if (family === undefined) expect.unreachable("row " + row.id + " has no family");
+    expect(injected).not.toMatch(new RegExp("\\b" + family + "\\b", "iu"));
     for (const version of row.model.match(/\d+(?:[.-]\d+)+/gu) ?? [])
       expect(injected).not.toMatch(
-        new RegExp(
-          `(?<![\\d.])${version.replaceAll(".", "\\.")}(?![\\d.])`,
-          "u",
-        ),
+        new RegExp("(?<![\\d.])" + version.replaceAll(".", "\\.") + "(?![\\d.])", "u"),
       );
   }
   expect(injected).not.toMatch(/\b(low|medium|high|xhigh|max|effort)\b/iu);
   expect(Object.keys(request.questions)).toEqual(["worker"]);
-  const ordered = roster.choice.toSorted(
-    (a, b) =>
-      ["low", "medium", "high", "xhigh", "max"].indexOf(a.effort) -
-      ["low", "medium", "high", "xhigh", "max"].indexOf(b.effort),
-  );
   expect(Object.keys(request.questions.worker.criteria)).toEqual([
-    ...ordered.map((_, i) => `model_${i}`),
-    "split",
-    "uncheckable",
-    "contradiction",
-    "missing_input",
+    "mechanical", "localized", "cross_module", "split", "uncheckable", "contradiction", "missing_input",
   ]);
-  ordered.forEach((row, i) => {
-    const criterion = request.questions.worker.criteria[`model_${i}`];
-    expect(criterion).toContain(`Route ${row.route}.`);
-    expect(criterion).toContain("Price ");
-    expect(criterion).not.toMatch(
-      /Cost to run AA index|cheapest costed row|per-token price only/iu,
-    );
-  });
+  expect(request.state.published_task_metrics).toEqual({});
+  expect(selected.id).toBe("terra-low");
   expect(server.calls()).toBe(1);
-  const started = appendStarted(selected.id);
-  expect(started?.kind).toBe("started");
-  const solMediumId = server.wireIds()["sol-medium"];
-  if (solMediumId === undefined)
-    expect.unreachable("sol-medium fixture wire ID is missing");
-  if (started?.kind === "started")
-    expect(started.pick_audit).toMatchObject({
-      answer: { choice: solMediumId },
-      probabilities: { [solMediumId]: 1 },
-      anonymization_map: Object.fromEntries(
-        ordered.map((row, i) => [`model_${i}`, row.id]),
-      ),
-    });
 });
 
-for (const reason of [
-  "split",
-  "uncheckable",
-  "contradiction",
-  "missing_input",
-]) {
+for (const reason of ["split", "uncheckable", "contradiction", "missing_input"] as const) {
   test(
     reason === "missing_input"
       ? "dispatch contract: a Jev missing_input reply is recorded as refused with its reason"
-      : `return ${reason} exits 2, records the answer and never reaches worker startup`,
+      : "return " + reason + " exits 2, records the answer and never reaches worker startup",
     async () => {
       const { root } = await isolateState();
       const server = startServer(reason, { [reason]: 1, model_0: 0 });
@@ -1223,7 +835,7 @@ for (const reason of [
         [
           process.execPath,
           "--eval",
-          `import {route} from ${JSON.stringify(new URL("../../src/next/route.ts", import.meta.url).pathname)}; await route("return fixture"); await Bun.write(${JSON.stringify(join(root, "worker-started"))}, "started");`,
+          "import {route} from " + JSON.stringify(new URL("../../src/next/route.ts", import.meta.url).pathname) + "; await route('return fixture'); await Bun.write(" + JSON.stringify(join(root, "worker-started")) + ", 'started');",
         ],
         {
           env: { ...process.env, TYPESAFE_API_KEY: "routing-fixture-secret" },
@@ -1239,7 +851,7 @@ for (const reason of [
       ]);
       expect(exit).toBe(2);
       expect(stdout).toBe("");
-      expect(stderr).toContain(`ticket returned: ${reason}`);
+      expect(stderr).toContain("ticket returned: " + reason);
       if (reason === "missing_input")
         expect(stderr).toContain(
           "ticket returned: missing_input: verify requires $AGX_RUN_DIR/parity.tsv",
@@ -1257,20 +869,15 @@ for (const reason of [
             anonymization_map: z.record(z.string(), z.string()),
           }),
         }),
-      ).safeParse(
-        await readFile(join(root, "state", "routing-refusals.jsonl"), "utf8"),
-      );
+      ).safeParse(await readFile(join(root, "state", "routing-refusals.jsonl"), "utf8"));
       expect(parsedRecord.success).toBe(true);
       if (!parsedRecord.success) return;
       const record = parsedRecord.data;
       expect(record.reason).toBe(reason);
       if (reason === "missing_input")
-        expect(record.reason_detail).toBe(
-          "verify requires $AGX_RUN_DIR/parity.tsv",
-        );
+        expect(record.reason_detail).toBe("verify requires $AGX_RUN_DIR/parity.tsv");
       expect(record.pick_audit.answer.choice).toBe(reason);
       expect(record.pick_audit.probabilities[reason]).toBe(1);
-      expect(record.pick_audit.anonymization_map.model_0).toBeDefined();
     },
   );
 }
@@ -1399,111 +1006,6 @@ test("every shipped Jev option is readable and keeps its row measurements", asyn
   );
 });
 
-test("local record evidence stays in the pick audit and out of Jev criteria", async () => {
-  await isolateState();
-  const fixture = (row: string, count: number, accepted: number) => {
-    for (let i = 0; i < count; i++) {
-      const started = appendStarted(row);
-      if (started?.kind !== "started") return;
-      append({
-        kind: "ended",
-        id: started.id,
-        at: Temporal.Instant.from(started.at).add({ seconds: 306 }).toString(),
-        exit: 0,
-        report_path: null,
-        vendor_session: null,
-        verify: [],
-      });
-      append({
-        kind: "judged",
-        id: started.id,
-        at: now(),
-        decision: i < accepted ? "accept" : "reject",
-        note: "fixture",
-      });
-      // A later judgment replaces the previous one, rather than adding a run.
-      if (i === 0)
-        append({
-          kind: "judged",
-          id: started.id,
-          at: now(),
-          decision: "accept",
-          note: "rejudged fixture",
-        });
-    }
-  };
-  fixture("luna-high", 25, 21);
-  fixture("sol-medium", 5, 3);
-  fixture("luna-medium", 4, 4);
-  const stale = appendStarted("luna-high");
-  if (stale?.kind !== "started") return;
-  append({
-    kind: "ended",
-    id: stale.id,
-    at: Temporal.Instant.from(stale.at).add({ seconds: 86401 }).toString(),
-    exit: 0,
-    report_path: null,
-    vendor_session: null,
-    verify: [],
-  });
-  append({
-    kind: "started",
-    id: "running-fixture",
-    at: now(),
-    ticket: "running",
-    writes: [],
-    cwd: tmpdir(),
-    workspace: tmpdir(),
-    row: "luna-high",
-    dispatcher_session: null,
-    vendor_session: null,
-    pid: process.pid,
-  }); // Running records have no wall time.
-  const server = startServer("luna-high");
-  const selected = await route("local evidence fixture");
-  const request = server.request();
-  if (request === undefined)
-    expect.unreachable("route request was not captured");
-  const criteria = request.questions.worker.criteria;
-  expect(criteria["luna-high"]).toBeDefined();
-  expect(criteria["sol-medium"]).toBeDefined();
-  expect(criteria["luna-medium"]).toBeDefined();
-  const loaded = await loadRoster();
-  if (!loaded.ok) return;
-  const rawRequest = server.rawRequest();
-  if (rawRequest === undefined)
-    expect.unreachable("raw route request was not captured");
-  for (const text of Object.values(rawRequest.questions.worker.criteria)) {
-    expect(text).not.toContain("agx measured");
-    for (const row of loaded.value.choice) expect(text).not.toContain(row.id);
-  }
-  expect(request.questions.worker.instructions).toContain(
-    "Purpose: maximize productive throughput per cost: accepted results per unit of the owner's spend (cost to complete the workload) and per minute of waiting.",
-  );
-  expect(request.questions.worker.instructions).toContain(
-    "published scores and price against what the ticket requires",
-  );
-  expect(request.questions.worker.instructions).toContain(
-    "agx does not feed its own run outcomes back into this choice",
-  );
-  expect(request.questions.worker.instructions).not.toContain(
-    "A. Capability sufficiency (hard)",
-  );
-  const picked = appendStarted(selected.id);
-  if (picked?.kind !== "started") return;
-  const lunaId = server.wireIds()["luna-high"];
-  if (lunaId === undefined)
-    expect.unreachable("luna-high fixture wire ID is missing");
-  expect(picked.pick_audit?.measured_evidence?.[lunaId]).toEqual({
-    judged_runs: 25,
-    accepted_runs: 21,
-    accepted_percent: 84,
-    ended_runs: 25,
-    median_wall_minutes: 5.1,
-    text: "agx measured: 84% of 25 judged runs accepted, median 5.1 min.",
-  });
-});
-
 test("Jev request is byte-identical across opposite local run histories", async () => {
   await isolateState();
   const accepted = appendStarted("luna-high");
@@ -1615,16 +1117,10 @@ test("local accepted and rejected history cannot change the Jev request", async 
   expect(requests).toHaveLength(2);
   expect(requests[0]).toBe(requests[1]);
 }, 20_000);
-test("audit retains the exact request and replays the existing sampling guard", async () => {
+test("audit retains class probabilities, the bar, qualifying rows, and deterministic selection", async () => {
   await isolateState();
-  const server = startServer("sol-medium", {
-    "sol-medium": 0.36,
-    "sonnet-high": 0.32,
-    "sol-high": 0.32,
-  });
-  const selected = await route("x".repeat(3000), ["terminal-agentic"], 900, [
-    "sol-low",
-  ]);
+  const server = startServer("localized", { localized: 1 });
+  const selected = await route("class audit fixture");
   const journal = routingEvents();
   const decision = journal.events.at(-1);
   const audit = decision?.audit;
@@ -1634,39 +1130,73 @@ test("audit retains the exact request and replays the existing sampling guard", 
       .update(server.rawBody() ?? "")
       .digest("hex"),
   );
-  expect(audit?.input_truncated).toBe(true);
-  expect(audit?.timeout_class).toBe("extended");
-  expect(audit?.capability_tags).toEqual(["terminal-agentic"]);
-  expect(audit?.filters).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        reason: "masked",
-        removed: [{ row: "sol-low", detail: null }],
-      }),
-    ]),
-  );
-  expect(audit?.top_margin).toBeCloseTo(0.04);
-  const replay = z
-    .object({
-      choice_probabilities: z.record(z.string(), z.number()),
-      pick_temperature: z.number(),
-      sampling_seed: z.string(),
-    })
-    .safeParse(audit);
-  expect(replay.success).toBe(true);
-  if (!replay.success) return;
-  expect(
-    sampleRow(
-      replay.data.choice_probabilities,
-      replay.data.pick_temperature,
-      replay.data.sampling_seed,
-    )?.row,
-  ).toBe(
-    Object.entries(server.wireIds()).find(([id]) => id === selected.id)?.[1],
-  );
+  expect(audit?.input_truncated).toBe(false);
+  expect(audit?.requirement_class).toBe("localized");
+  expect(audit?.tb4_bar).toBe(15);
+  expect(audit?.qualifying_rows).toContain("terra-low");
+  expect(audit?.selected_row).toBe("terra-low");
+  expect(audit?.choice_probabilities).toEqual({ localized: 1 });
+  expect(selected.id).toBe("terra-low");
+  expect(server.rawRequest()?.questions.worker.criteria.localized).toBeDefined();
   const started = appendStarted(selected.id);
   if (started?.kind === "started")
     expect(started.pick_audit?.audit).toEqual(audit);
+});
+
+test("route contract: the selected row depends on the ticket class, and the choice list Jev sees contains no model rows", async () => {
+  await isolateState();
+  const selectClass = async (ticketClass: string) => {
+    const server = startServer(ticketClass);
+    const row = await route(`ticket-class:${ticketClass}`);
+    const request = server.rawRequest();
+    const criteria = request?.questions.worker.criteria ?? {};
+    expect(typeof criteria.mechanical).toBe("string");
+    expect(typeof criteria.localized).toBe("string");
+    expect(typeof criteria.cross_module).toBe("string");
+    expect(Object.keys(criteria).some((id) => id.startsWith("model_"))).toBe(false);
+    expect(request?.state.published_task_metrics).toEqual({});
+    return row.id;
+  };
+  const mechanical = await selectClass("mechanical");
+  await isolateState();
+  const localized = await selectClass("localized");
+  await isolateState();
+  const crossModule = await selectClass("cross_module");
+  expect(mechanical).toMatch(/^luna-/u);
+  expect(localized).toBe("terra-low");
+  expect(crossModule).toBe("terra-high");
+  expect(new Set([mechanical, localized, crossModule]).size).toBe(3);
+});
+
+test("bar_unmet audits and selects the highest TB4 row inside the published time box", async () => {
+  const { root } = await isolateState();
+  const catalogPath = join(root, "catalog.toml");
+  await writeFile(
+    catalogPath,
+    (await readFile(catalogPath, "utf8"))
+      .replaceAll(/^tb4 = .*$/gmu, "tb4 = 0")
+      .replace(/(id = "terra-high"[\s\S]*?\ntb4 = )0/u, "$1 10"),
+  );
+  const server = startServer("cross_module", { cross_module: 1 }, catalogPath);
+  const selected = await route("unmet bar fixture", [], 600, [], { catalogPath });
+  const audit = routingEvents().events.at(-1)?.audit;
+  expect(selected.id).toBe("terra-high");
+  expect(audit?.requirement_class).toBe("cross_module");
+  expect(audit?.tb4_bar).toBe(40);
+  expect(audit?.qualifying_rows).toEqual([]);
+  expect(audit?.bar_unmet).toBe(true);
+  expect(audit?.selected_row).toBe(selected.id);
+  expect(server.calls()).toBe(1);
+});
+
+test("Jev transport failure falls back to route.default", async () => {
+  await isolateState();
+  const loaded = await loadRoster();
+  if (!loaded.ok) expect.unreachable(loaded.error);
+  process.env.JEV_URL = "http://127.0.0.1:1/unreachable";
+  const selected = await route("unreachable Jev fixture");
+  expect(selected.id).toBe(loaded.value.default);
+  expect(routingEvents().events.at(-1)?.source).toBe("fallback-request-failed");
 });
 
 const auditFields = [
@@ -1689,7 +1219,7 @@ const auditFields = [
   "usage_id",
 ];
 
-for (const choice of ["sol-medium", "not-a-row"]) {
+for (const choice of ["localized", "not-a-class"]) {
   test(`audit field coverage for ${choice}`, async () => {
     await isolateState();
     startServer(choice);
@@ -1704,9 +1234,7 @@ for (const choice of ["sol-medium", "not-a-row"]) {
     const decision = routingEvents().events.at(-1);
     for (const field of auditFields)
       expect(Object.hasOwn(decision?.audit ?? {}, field)).toBe(true);
-    expect(decision?.audit?.raw_reply).toContain(
-      choice === "sol-medium" ? "model_" : choice,
-    );
+    expect(decision?.audit?.raw_reply).toContain(choice);
     expect(decision?.audit?.ticket_path).toBe("/fixture/ticket.md");
     expect(JSON.stringify(decision)).not.toContain("TYPESAFE_API_KEY");
   });

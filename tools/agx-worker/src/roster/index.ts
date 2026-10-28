@@ -5,6 +5,12 @@ export type AutoPolicy = Roster["auto"];
 export type JevEndpoint = AutoPolicy["jev"];
 export type RouteName = Choice["route"];
 export type WindowExhaustion = "continue" | "stop";
+export type RequirementClass = "mechanical" | "localized" | "cross_module";
+export const REQUIREMENT_BARS: Readonly<Record<RequirementClass, number>> = {
+  mechanical: 0,
+  localized: 15,
+  cross_module: 40,
+};
 
 /** The exhausted-window action per route; an omitted route declaration means "continue". */
 export const exhaustionPolicy = (
@@ -78,7 +84,7 @@ export type Graded = Readonly<{
 }>;
 
 export const ROUTING_OBJECTIVE =
-  "Purpose: maximize productive throughput per cost: accepted results per unit of the owner's spend (cost to complete the workload) and per minute of waiting. For this ticket choose the cheapest option whose published scores indicate it can produce an accepted result; pay for a more expensive option only when the ticket's requirements exceed what the cheaper option's scores support. Evidence: judge each option by its published scores and price against what the ticket requires; agx does not feed its own run outcomes back into this choice. Return the ticket instead of choosing a model only when it cannot be done as written. Subscription health: weigh 7-day windows most; 5-hour windows are secondary; keep the intended bias toward the codex route; stale or unknown usage is neutral.";
+  "Purpose: classify this ticket by the requirement it imposes. Use mechanical for an edit whose check is already stated, localized for a behavior fix inside one module, and cross_module when an invariant, public API, or behavior across modules must change. Return the ticket only when it cannot be done as written. Do not choose a worker. Subscription health: weigh 7-day windows most; 5-hour windows are secondary; stale or unknown usage is neutral.";
 
 /** What Jev reads about one row: its route, measured capability, and relative price. */
 export function criterionFor(r: Roster, c: Choice): string {

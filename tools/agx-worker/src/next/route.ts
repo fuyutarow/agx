@@ -1,21 +1,18 @@
-import { fromThrowable } from "neverthrow";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { jevEndpoint, postJev } from "../../../shared/src/jev-client.ts";
-import { sampleRow } from "../selection.ts";
 import {
   exhaustionPolicy,
   loadRoster,
   routeFilterLabel,
   ROUTING_OBJECTIVE,
   type Choice,
-  type Roster,
-  criterionFor,
   type LoadRosterOptions,
+  REQUIREMENT_BARS,
 } from "../roster/index.ts";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { exitWithError } from "./exit.ts";
 import { readRouteUsage } from "./usage.ts";
-import { foldedRuns, setPendingPickAudit } from "./store.ts";
+import { setPendingPickAudit } from "./store.ts";
 import { recordJevUsage } from "./jev-usage.ts";
 import {
   newRoutingAudit,
@@ -28,32 +25,16 @@ import {
 // for task variation and overhead instead of admitting a mean near the deadline.
 const PUBLISHED_TASK_DURATION_BUDGET_RATIO = 0.6;
 
-function criterionWithoutTaskCost(
-  roster: Roster,
-  row: Choice,
-): string {
-  const ownPrice =
-    row.price_in === undefined || row.price_out === undefined
-      ? undefined
-      : row.price_in + row.price_out;
-  const prices = roster.choice.flatMap((choice) =>
-    choice.price_in === undefined || choice.price_out === undefined
-      ? []
-      : [choice.price_in + choice.price_out],
-  );
-  const cheapest = prices.length === 0 ? undefined : Math.min(...prices);
-  const multiple =
-    ownPrice === undefined || cheapest === undefined
-      ? undefined
-      : Math.round((ownPrice / cheapest) * 10) / 10;
-  return criterionFor(roster, row)
-    .replace(/ \(per-token price only\)/u, "")
-    .replace(/ Cost to run AA index: \$\d+(?:\.\d+)?(?: \([^)]*\))?\./u, "")
-    .replace(
-      /Multiple (?:unknown|\d+(?:\.\d+)?)x cheapest costed row\./u,
-      `Multiple ${multiple ?? "unknown"}x cheapest row.`,
-    );
-}
+const comparePriceThenDuration = (a: Choice, b: Choice): number => {
+  const aPrice = (a.price_in ?? Infinity) + (a.price_out ?? Infinity);
+  const bPrice = (b.price_in ?? Infinity) + (b.price_out ?? Infinity);
+  const priceDifference = aPrice - bPrice;
+  if (priceDifference !== 0) return priceDifference;
+  return (a.aa_time_per_task_s ?? Infinity) - (b.aa_time_per_task_s ?? Infinity);
+};
+
+const compareTb4Descending = (a: Choice, b: Choice): number =>
+  (b.tb4 ?? Number.NEGATIVE_INFINITY) - (a.tb4 ?? Number.NEGATIVE_INFINITY);
 
 const Reply = z.looseObject({
   answers: z.record(
@@ -73,6 +54,7 @@ const ReturnReason = z.enum([
   "contradiction",
   "missing_input",
 ]);
+const RequirementClassSchema = z.enum(["mechanical", "localized", "cross_module"]);
 const returns = {
   split: {
     criterion:
@@ -265,18 +247,11 @@ export async function route(
   audit.policy_version = loaded.provenance.policy_version;
   audit.catalog_version = loaded.provenance.catalog_version;
   audit.pick_temperature = roster.auto.pick_temperature;
-  // Local outcomes remain auditable, but candidate availability never depends on them.
-  const runs = await foldedRuns();
   const endpoint = jevEndpoint(roster.auto.jev.url);
   if (!endpoint.ok) return refuse(`agx: ${endpoint.error}\n`, 2);
   let timeoutClass = "standard";
   if (timeoutS > 600) timeoutClass = "extended";
   if (timeoutS >= 3600) timeoutClass = "multi-hour";
-  const minimumTb4 = capabilities.some((tag) =>
-    ["terminal-agentic", "long-tool-loop"].includes(tag),
-  )
-    ? 30
-    : undefined;
   audit.timeout_class = timeoutClass;
   const filters: {
     reason: string;
@@ -319,21 +294,6 @@ export async function route(
       roster.auto.routes.includes(row.route),
   );
   eligible = filter(eligible, "masked", (row) => !maskedRows.includes(row.id));
-  const beforeTb4 = eligible.filter((row) => row.id.startsWith("luna-"));
-  eligible = filter(
-    eligible,
-    "TB4 gate",
-    (row) => minimumTb4 === undefined || (row.tb4 ?? 0) >= minimumTb4,
-    (row) => ({
-      tb4: row.tb4 ?? null,
-      minimum: minimumTb4,
-      triggering_tags: capabilities.filter((tag) =>
-        ["terminal-agentic", "long-tool-loop"].includes(tag),
-      ),
-    }),
-  );
-  audit.tb4_removed_all_luna =
-    beforeTb4.length > 0 && !eligible.some((row) => row.id.startsWith("luna-"));
   const beforeSort = eligible.map((row) => row.id);
   eligible = eligible.toSorted(
     (a, b) =>
@@ -357,120 +317,36 @@ export async function route(
   let candidates = filter(
     availableCandidates,
     "published duration exceeds time box",
-    (row) =>
-      row.aa_time_per_task_s === undefined ||
-      row.aa_time_per_task_s <= durationBudgetS,
+    (row) => row.aa_time_per_task_s !== undefined && row.aa_time_per_task_s <= durationBudgetS,
     (row) => ({
       aa_time_per_task_s: row.aa_time_per_task_s,
       timeout_s: timeoutS,
     }),
   );
-  if (candidates.length === 0 && availableCandidates.length > 0) {
-    const shortestDurationS = Math.min(
-      ...availableCandidates.flatMap((row) => row.aa_time_per_task_s ?? []),
-    );
-    // Relax only the duration budget; policy, capability, mask and route
-    // availability must still hold. Retain every tie for the shortest duration.
-    candidates = filter(
-      availableCandidates,
-      "published duration bound relaxed to shortest rows",
-      (row) => row.aa_time_per_task_s === shortestDurationS,
-    );
-    audit.duration_bound_relaxed = {
-      timeout_s: timeoutS,
-      budget_s: durationBudgetS,
-      shortest_published_duration_s: shortestDurationS,
-      offered_rows: candidates.map((row) => row.id),
-    };
-  }
   audit.filters = filters;
   audit.usage_snapshot = usage;
   if (candidates.length === 0 && eligible.length === 0 && options !== undefined)
     return { kind: "exhausted" };
-  if (candidates.length === 0)
-    return refuse(
-      eligible.length === 0
-        ? `agx: no roster row satisfies required capabilities (${routeFilterLabel(roster.auto)})\n`
-        : "agx: all capability-eligible routes are at their subscription limit\n",
-      2,
-    );
-  const anonymizationMap = Object.fromEntries(
-    candidates.map((row, index) => [`model_${index}`, row.id]),
-  );
-  const measuredEvidence = Object.fromEntries(
-    candidates.map((row, index) => {
-      const history = runs.filter((run) => run.row === row.id);
-      const judged = history.filter((run) => run.judgment !== null);
-      const accepted = judged.filter(
-        (run) => run.judgment?.decision === "accept",
-      ).length;
-      const minutes = history
-        .flatMap((run) => {
-          const endedAt = run.ended_at;
-          if (endedAt === null) return [];
-          const duration = fromThrowable(() =>
-            Temporal.Instant.from(endedAt)
-              .since(Temporal.Instant.from(run.started_at))
-              .total({ unit: "minutes" }),
-          )();
-          if (duration.isErr()) return [];
-          const elapsed = duration.value;
-          return Number.isFinite(elapsed) && elapsed >= 0 && elapsed <= 1440
-            ? [elapsed]
-            : [];
-        })
-        .toSorted((a, b) => a - b);
-      const middle = Math.floor(minutes.length / 2);
-      const upper = minutes[middle];
-      const lower = minutes[Math.floor((minutes.length - 1) / 2)];
-      const median =
-        upper === undefined || lower === undefined ? null : (upper + lower) / 2;
-      const share =
-        judged.length < 5 ? null : Math.round((100 * accepted) / judged.length);
-      const medianMinutes = median === null ? null : Number(median.toFixed(1));
-      const medianText =
-        medianMinutes === null ? "unknown" : medianMinutes.toFixed(1);
-      const text =
-        share === null
-          ? "agx measured: too few judged runs"
-          : `agx measured: ${share}% of ${judged.length} judged runs accepted, median ${medianText} min.`;
-      return [
-        `model_${index}`,
-        {
-          judged_runs: judged.length,
-          accepted_runs: accepted,
-          accepted_percent: share,
-          ended_runs: minutes.length,
-          median_wall_minutes: medianMinutes,
-          text,
-        },
-      ];
-    }),
-  );
+  if (availableCandidates.length === 0)
+    return refuse(`agx: no roster row satisfies required capabilities (${routeFilterLabel(roster.auto)})\n`, 2);
+  const anonymizationMap: Record<string, string> = {};
+  const measuredEvidence: Record<string, {
+    judged_runs: number;
+    accepted_runs: number;
+    accepted_percent: number | null;
+    ended_runs: number;
+    median_wall_minutes: number | null;
+    text: string;
+  }> = {};
   const criteria: Record<string, string> = {};
-  for (const [index, row] of candidates.entries()) {
-    const key = `model_${index}`;
-    const evidence = measuredEvidence[key];
-    if (evidence === undefined)
-      return refuse(`missing measured evidence for ${key}`, 2);
-    criteria[key] = blindCriterion(
-      criterionWithoutTaskCost(roster, row),
-      loaded.catalogRows,
-    );
-  }
+  for (const requirementClass of RequirementClassSchema.options)
+    criteria[requirementClass] = `Ticket class: ${requirementClass}. Classify only the ticket. mechanical: an edit whose check is already stated. localized: a behavior fix inside one module. cross_module: an invariant, a public API, or behavior across modules must change.`;
   for (const [reason, value] of Object.entries(returns))
     criteria[reason] = value.criterion;
   const request: Record<string, unknown> = {
     state: {
       task: brief.slice(0, Math.min(roster.auto.max_task_chars, 2400)),
-      published_task_metrics: Object.fromEntries(
-        candidates.map((row, index) => [
-          `model_${index}`,
-          {
-            aa_time_per_task_s: row.aa_time_per_task_s ?? null,
-          },
-        ]),
-      ),
+      published_task_metrics: {},
       routes: Object.fromEntries(
         Object.entries(usage).map(([name, value]) => [
           name,
@@ -505,7 +381,7 @@ export async function route(
     questions: {
       worker: {
         type: "choice",
-        instructions: `${ROUTING_OBJECTIVE} Pick a roster row for this ticket.`,
+        instructions: ROUTING_OBJECTIVE,
         criteria,
       },
     },
@@ -528,8 +404,7 @@ export async function route(
   audit.jev_model_version = post.ok ? (post.model ?? null) : null;
   audit.request_failure = post.ok ? null : post.reason;
   audit.http_status = post.ok ? post.status : null;
-  const fallback =
-    candidates.find((row) => row.id === roster.default) ?? candidates[0];
+  const fallback = availableCandidates.find((row) => row.id === roster.default) ?? availableCandidates[0];
   if (fallback === undefined) return refuse("no routing candidates", 2);
   let rawAnswer: unknown = null;
   const pickAudit = (
@@ -551,6 +426,7 @@ export async function route(
     source: string,
     probabilities: Record<string, number> | undefined,
   ): Choice => {
+    audit.selected_row = row.id;
     audit.anonymization_map = anonymizationMap;
     audit.measured_evidence = measuredEvidence;
     audit.answer = rawAnswer;
@@ -632,42 +508,27 @@ export async function route(
       2,
     );
   }
-  const selectedRow = candidates.find(
-    (row) => row.id === anonymizationMap[selected ?? ""],
-  );
-  if (selectedRow === undefined)
-    return routeChoice(
-      recordPick(
-        fallback,
-        answer === undefined
-          ? "fallback-missing-answer"
-          : "fallback-ineligible-choice",
-        probabilities,
-      ),
-    );
-  const modelProbabilities =
-    probabilities === undefined
-      ? undefined
-      : Object.fromEntries(
-          Object.entries(probabilities).filter(([id]) =>
-            Object.hasOwn(anonymizationMap, id),
-          ),
-        );
-  const samplingSeed = randomUUID();
-  audit.sampling_seed = samplingSeed;
-  const sampled =
-    modelProbabilities === undefined
-      ? undefined
-      : sampleRow(
-          modelProbabilities,
-          roster.auto.pick_temperature,
-          samplingSeed,
-        );
-  const sampledRow = candidates.find(
-    (row) => row.id === anonymizationMap[sampled?.row ?? ""],
-  );
-  selectionMode = sampled?.mode ?? "choice";
-  return routeChoice(
-    recordPick(sampledRow ?? selectedRow, "jev", probabilities),
-  );
+  if (answer === undefined)
+    return routeChoice(recordPick(fallback, "fallback-missing-answer", probabilities));
+  const parsedRequirementClass = RequirementClassSchema.safeParse(selected);
+  if (!parsedRequirementClass.success)
+    return routeChoice(recordPick(fallback, "fallback-invalid-class", probabilities));
+  const requirementClass = parsedRequirementClass.data;
+  const bar = REQUIREMENT_BARS[requirementClass];
+  const inTimeBox = availableCandidates.filter((row) => row.aa_time_per_task_s !== undefined && row.aa_time_per_task_s <= durationBudgetS);
+  if (inTimeBox.length === 0)
+    return routeChoice(recordPick(fallback, "fallback-no-row-in-time-box", probabilities));
+  const qualifying = inTimeBox.filter((row) => (row.tb4 ?? (bar === 0 ? 0 : Number.NEGATIVE_INFINITY)) >= bar);
+  const pool = qualifying.length > 0 ? qualifying : inTimeBox;
+  const ordered = qualifying.length > 0
+    ? pool.toSorted(comparePriceThenDuration)
+    : pool.toSorted(compareTb4Descending);
+  const chosen = ordered[0] ?? fallback;
+  audit.requirement_class = requirementClass;
+  audit.tb4_bar = bar;
+  audit.qualifying_rows = qualifying.map((row) => row.id);
+  audit.bar_unmet = qualifying.length === 0;
+  audit.choice_probabilities = probabilities ?? null;
+  selectionMode = "class";
+  return routeChoice(recordPick(chosen, "jev-classified", probabilities));
 }
