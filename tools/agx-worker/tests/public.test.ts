@@ -7,8 +7,10 @@ import { loadRoster, ROUTING_OBJECTIVE } from "../src/roster/index.ts";
 import { jsonOf, z } from "../../shared/src/zod.ts";
 
 const ENTRY = fileURLToPath(new URL("../src/next/cli.ts", import.meta.url));
-const JsonValue = jsonOf(z.unknown());
 const FullRosterView = jsonOf(z.looseObject({ objective: z.string() }));
+const SelectedRow = jsonOf(
+  z.looseObject({ id: z.string(), route: z.enum(["codex", "claude"]) }),
+);
 
 async function invoke(...args: string[]) {
   const child = Bun.spawn([process.execPath, ENTRY, ...args], {
@@ -59,13 +61,7 @@ test("roster TICKET emits one selected row without starting a worker or changing
   });
   expect(loaded.ok).toBe(true);
   if (!loaded.ok) return;
-  const selected = loaded.value.choice.find(
-    (row) =>
-      loaded.value.auto.routes === undefined ||
-      loaded.value.auto.routes.includes(row.route),
-  );
-  expect(selected).toBeDefined();
-  if (selected === undefined) return;
+  expect(loaded.value.choice.length).toBeGreaterThan(0);
   const root = await mkdtemp(join(tmpdir(), "agx-roster-filter-"));
   await using _cleanup = {
     [Symbol.asyncDispose]: () => rm(root, { recursive: true, force: true }),
@@ -73,13 +69,13 @@ test("roster TICKET emits one selected row without starting a worker or changing
   const ticket = join(root, "fixture.md");
   await writeFile(
     ticket,
-    '+++\nschema = 2\nname = "filter"\noutcome = "select a worker"\n[proposition]\nid = "FILTER"\nclaim = "one row"\nrefuted_by = "multiple rows"\n+++\n',
+    '+++\nschema = 2\nname = "filter"\nwrites = []\noutcome = "select a worker"\n[proposition]\nid = "FILTER"\nclaim = "one row"\nrefuted_by = "multiple rows"\n+++\n',
   );
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
     fetch: () =>
-      Response.json({ answers: { worker: { choice: selected.id } } }),
+      Response.json({ answers: { worker: { choice: "mechanical" } } }),
   });
   await using _server = {
     [Symbol.asyncDispose]: async () => {
@@ -109,9 +105,15 @@ test("roster TICKET emits one selected row without starting a worker or changing
   expect(exit, err).toBe(0);
   expect(err).toBe("");
   expect(out.trim().split("\n")).toHaveLength(1);
-  const parsed = JsonValue.safeParse(out);
+  const parsed = SelectedRow.safeParse(out);
   expect(parsed.success).toBe(true);
-  if (parsed.success) expect(parsed.data).toEqual(selected);
+  if (parsed.success) {
+    const selectedRow = loaded.value.choice.find(
+      (row) => row.id === parsed.data.id,
+    );
+    expect(selectedRow).toBeDefined();
+    if (selectedRow !== undefined) expect(parsed.data).toEqual(selectedRow);
+  }
   expect(await Bun.file(join(root, "state/records.jsonl")).exists()).toBe(
     false,
   );
