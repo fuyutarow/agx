@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.4 — 2026-10-29
+
+- Stop judge-lock test holders when their parent exits.
+
 ## 1.22.3 — 2026-10-29
 
 - Bind dispatch-resolved Claude ACK targets for sandboxed sends
