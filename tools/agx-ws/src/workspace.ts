@@ -1275,23 +1275,31 @@ async function trackedDiskDifferences(
   if (trunk.value === null)
     return bad("cannot compare broken workspace without trunk");
   const files = await jjOut(
-    ["file", "list", "-r", trunk.value, "-T", 'json(path) ++ "\\n"'],
+    ["file", "list", "-r", trunk.value, "-T", 'json(path) ++ "\\t" ++ file_type ++ "\\t" ++ normal_value ++ "\\n"'],
     repo.backing,
     true,
   );
   if (!files.ok) return files;
-  const paths: string[] = [];
+  const paths: { path: string; type: string; id: string }[] = [];
   for (const line of files.value.split("\n").filter(Boolean)) {
-    const parsed = jsonOf(z.string().min(1)).safeParse(line);
+    const [encoded, type, id] = line.split("\t");
+    const parsed = jsonOf(z.string().min(1)).safeParse(encoded);
     if (!parsed.success) return bad(`invalid tracked path from trunk: ${line}`);
-    paths.push(parsed.data);
+    if (type === undefined || id === undefined) return bad(`invalid trunk entry: ${line}`);
+    paths.push({ path: parsed.data, type, id });
   }
   const differing: string[] = [];
-  for (const path of paths) {
+  for (const { path, type, id } of paths) {
     const disk = await readDiskFile(join(dir, path));
     if (!disk.ok) return bad(`cannot read tracked file ${path}: ${msg(disk)}`);
     if (disk.value === undefined) {
       differing.push(path);
+      continue;
+    }
+    if (disk.value.symlink || type === "symlink") {
+      const content = disk.value.content;
+      const hash = createHash("sha1").update(`blob ${content.length}\0`).update(content).digest("hex");
+      differing.push(...(disk.value.symlink && type === "symlink" && hash === id ? [] : [path]));
       continue;
     }
     const saved = await runStep(
@@ -1312,15 +1320,20 @@ async function trackedDiskDifferences(
     if (!saved.ok) return bad(`cannot read trunk file ${path}: ${msg(saved)}`);
     if (saved.value.code !== 0)
       return bad(`cannot read trunk file ${path}: ${saved.value.err.trim()}`);
-    if (!disk.value.equals(saved.value.out)) differing.push(path);
+    if (!disk.value.content.equals(saved.value.out)) differing.push(path);
   }
   return good(differing);
 }
 
 async function readDiskFile(
   path: string,
-): Promise<Attempt<Buffer | undefined>> {
-  const result = await attempt(() => readFile(path));
+): Promise<Attempt<{ content: Buffer; symlink: boolean } | undefined>> {
+  const result = await attempt(async () => {
+    const info = await lstat(path);
+    const symlink = info.isSymbolicLink();
+    const content = symlink ? Buffer.from(await readlink(path)) : await readFile(path);
+    return { content, symlink };
+  });
   if (result.ok) return good(result.value);
   const missing = z
     .object({ code: z.literal("ENOENT") })

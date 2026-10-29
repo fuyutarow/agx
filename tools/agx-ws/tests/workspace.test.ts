@@ -175,6 +175,29 @@ async function repo(config?: string, colocate = true): Promise<string> {
 const wsDir = (path: string, slug: string): string =>
   join(path, "..", "proj.ws", `ws_${slug}`);
 
+test("ws contract: a tracked symlink to a directory is compared as a link", async () => {
+  const path = await repo();
+  await mkdir(join(path, "target"));
+  await symlink("target", join(path, "link"));
+  expect((await jj(["commit", "-m", "track link"], path)).code).toBe(0);
+  expect((await jj(["bookmark", "set", "main", "-r", "@-"], path)).code).toBe(0);
+  const clean = wsDir(path, "link-clean");
+  const changed = wsDir(path, "link-changed");
+  for (const dir of [clean, changed]) {
+    await mkdir(join(dir, "target"), { recursive: true });
+    await Bun.write(join(dir, "a.txt"), "a\n");
+  }
+  await symlink("target", join(clean, "link"));
+  await symlink("other", join(changed, "link"));
+  const refused = await ws(["rm", "link-changed"], path);
+  expect(refused.code).toBe(1);
+  expect(refused.err).toContain("tracked files differ from trunk(): link");
+  expect(existsSync(changed)).toBe(true);
+  const removed = await ws(["rm", "link-clean"], path);
+  expect(removed.code, removed.err).toBe(0);
+  expect(existsSync(clean)).toBe(false);
+});
+
 describe("workspace contract: trunk marker", () => {
   test("creates from alpha@origin when its git copy is behind local alpha", async () => {
     const path = await repo(undefined, false);
