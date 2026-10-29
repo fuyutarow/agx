@@ -11,6 +11,7 @@ import {
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
 import { writeChangeset } from "../changeset/changeset.ts";
 import { applyChangesets } from "../changeset/apply.ts";
 import { jsonOf, z } from "../zod.ts";
@@ -36,7 +37,9 @@ import { fixtureRun, fixtureRun as run } from "./fixture-runner.ts";
 const build = (pkg: string, target: string | undefined, root: string) =>
   productionBuild(pkg, target, root, run);
 const roots: string[] = [];
+const servers: Bun.Server<unknown>[] = [];
 afterEach(async () => {
+  await Promise.all(servers.splice(0).map((server) => server.stop()));
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
   );
@@ -1041,11 +1044,11 @@ test(
       ),
     ).toBe(true);
     expect(listing.stdout).not.toMatch(/(?:tests|\.changes)\//u);
-    const packed = await libraryRun(
+    const packageManifest = await libraryRun(
       ["tar", "-xOzf", result.value.archive, "package/package.json"],
       f.root,
     );
-    expect(packed.exit, packed.stderr).toBe(0);
+    expect(packageManifest.exit, packageManifest.stderr).toBe(0);
     const manifest = jsonOf(
       z.object({
         dependencies: z.record(z.string(), z.string()),
@@ -1055,8 +1058,8 @@ test(
           z.object({ optional: z.boolean() }),
         ),
       }),
-    ).safeParse(packed.stdout);
-    expect(manifest.success, packed.stdout).toBe(true);
+    ).safeParse(packageManifest.stdout);
+    expect(manifest.success, packageManifest.stdout).toBe(true);
     if (!manifest.success) return;
     expect(
       Object.keys(manifest.data.dependencies).filter(
@@ -1071,6 +1074,98 @@ test(
     });
     const consumer = await mkdtemp(join(tmpdir(), "library-consumer-"));
     roots.push(consumer);
+    const fixtures = join(consumer, "fixtures");
+    const nodeTypes = join(fixtures, "node-types");
+    const nodePackage = join(nodeTypes, "node");
+    await mkdir(nodePackage, { recursive: true });
+    await Bun.write(
+      join(nodePackage, "package.json"),
+      JSON.stringify({
+        name: "@types/node",
+        version: "22.20.2",
+        types: "index.d.ts",
+      }),
+    );
+    await Bun.write(
+      join(nodePackage, "index.d.ts"),
+      "declare namespace NodeJS { interface ProcessEnv { [key: string]: string | undefined } }\n",
+    );
+    const registryPackages = [
+      {
+        name: "@types/node",
+        version: "22.20.2",
+        directory: nodePackage,
+      },
+      {
+        name: "neverthrow",
+        version: "8.2.0",
+        directory: join(repository, "node_modules/neverthrow"),
+      },
+      {
+        name: "zod",
+        version: "4.6.5",
+        directory: join(repository, "node_modules/zod"),
+      },
+    ];
+    const registryRoot = join(fixtures, "registry");
+    await mkdir(registryRoot, { recursive: true });
+    const registryArchives = new Map<string, string>();
+    const registryRequests: string[] = [];
+    for (const pkg of registryPackages) {
+      const archive = join(
+        registryRoot,
+        `${pkg.name.replaceAll("/", "-")}-${pkg.version}.tgz`,
+      );
+      const packed = await productionRun(
+        [
+          process.execPath,
+          "pm",
+          "pack",
+          "--ignore-scripts",
+          "--filename",
+          archive,
+        ],
+        pkg.directory,
+      );
+      expect(packed.exit, packed.stderr + packed.stdout).toBe(0);
+      registryArchives.set(pkg.name, archive);
+    }
+    const registry: Bun.Server<unknown> = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const path = decodeURIComponent(new URL(request.url).pathname);
+        registryRequests.push(path);
+        const pkg = registryPackages.find((entry) => `/${entry.name}` === path);
+        if (pkg !== undefined) {
+          const archive = registryArchives.get(pkg.name);
+          if (archive === undefined)
+            return new Response("missing", { status: 404 });
+          const integrity = createHash("sha512")
+            .update(readFileSync(archive))
+            .digest("base64");
+          return Response.json({
+            name: pkg.name,
+            "dist-tags": { latest: pkg.version },
+            versions: {
+              [pkg.version]: {
+                name: pkg.name,
+                version: pkg.version,
+                dependencies: {},
+                dist: {
+                  tarball: `http://127.0.0.1:${registry.port}/${pkg.name.replaceAll("/", "-")}-${pkg.version}.tgz`,
+                  integrity: `sha512-${integrity}`,
+                },
+              },
+            },
+          });
+        }
+        const file = join(registryRoot, path.slice(1));
+        return existsSync(file)
+          ? new Response(Bun.file(file))
+          : new Response("missing", { status: 404 });
+      },
+    });
+    servers.push(registry);
     await Bun.write(
       join(consumer, "package.json"),
       JSON.stringify({
@@ -1080,13 +1175,19 @@ test(
         devDependencies: { "@types/node": "22.20.2" },
       }),
     );
-    // Lock an older major BEFORE adding the tarball. Both installs must use
-    // cached packages only: registry access must never turn this check green.
+    // Seed all dependencies from local files; no registry cache may turn this
+    // offline contract green.
     const baseline = await libraryRun(
-      [process.execPath, "install", "--offline"],
+      [
+        process.execPath,
+        "install",
+        "--registry",
+        `http://127.0.0.1:${registry.port}`,
+      ],
       consumer,
     );
     expect(baseline.exit, baseline.stdout + baseline.stderr).toBe(0);
+    expect(registryRequests).toContain("/@types/node");
     expect(await Bun.file(join(consumer, "bun.lock")).exists()).toBe(true);
     const nodeVersion = async () => {
       const parsed = jsonOf(z.object({ version: z.string() })).safeParse(
@@ -1100,10 +1201,18 @@ test(
     const before = await nodeVersion();
     expect(before).toBe("22.20.2");
     const installed = await libraryRun(
-      [process.execPath, "add", "--offline", result.value.archive],
+      [
+        process.execPath,
+        "add",
+        result.value.archive,
+        "--registry",
+        `http://127.0.0.1:${registry.port}`,
+      ],
       consumer,
     );
     expect(installed.exit, installed.stderr).toBe(0);
+    expect(registryRequests).toContain("/zod");
+    expect(registryRequests.every((path) => path.startsWith("/"))).toBe(true);
     expect(await nodeVersion()).toBe(before);
     const lockfile = await Bun.file(join(consumer, "bun.lock")).text();
     expect(lockfile).toContain("@types/node@22.20.2");
@@ -1131,12 +1240,7 @@ if (runs.length !== 0 || typeof onPrompt !== "function" || !RunSchema.safeParse(
     const typed = await libraryRun(
       [
         process.execPath,
-        "x",
-        "--bun",
-        "--offline",
-        "--package",
-        "typescript@6.0.3",
-        "tsc",
+        join(repository, "node_modules/typescript/bin/tsc"),
         "--noEmit",
         "--strict",
         "--module",

@@ -473,12 +473,7 @@ async function buildLibrary(
   const declarations = await runner(
     [
       process.execPath,
-      "x",
-      "--bun",
-      "--offline",
-      "--package",
-      "typescript@6.0.3",
-      "tsc",
+      join(root, "node_modules/typescript/bin/tsc"),
       "--project",
       join(dir, "tsconfig.release.json"),
       "--outDir",

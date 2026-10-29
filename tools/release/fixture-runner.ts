@@ -145,7 +145,12 @@ export async function fixtureRun(
     await Bun.write(outfile, "export {};\n");
     return success;
   }
-  if (fastLibrary && args[0] === "x" && args.includes("--listFiles")) {
+  if (
+    fastLibrary &&
+    (args[0] === "x" ||
+      (args[0]?.endsWith("/node_modules/typescript/bin/tsc") ?? false)) &&
+    args.includes("--listFiles")
+  ) {
     const outDir = args[args.indexOf("--outDir") + 1];
     if (outDir === undefined) return refused("Missing declaration outDir");
     await Bun.write(
@@ -190,12 +195,15 @@ export async function fixtureRun(
   const localBun =
     binary === process.execPath &&
     ((args[0] === "build" && !args.includes("--compile")) ||
+      (args[0]?.endsWith("/node_modules/typescript/bin/tsc") ?? false) ||
       (args[0] === "x" && args.includes("--offline")) ||
       (args[0] === "pm" &&
         args[1] === "pack" &&
         args.includes("--ignore-scripts")) ||
       ((args[0] === "install" || args[0] === "add") &&
-        (args.includes("--offline") || args.includes("--prefer-offline"))) ||
+        (args.includes("--offline") ||
+          args.includes("--prefer-offline") ||
+          args.some((arg) => arg.startsWith("http://127.0.0.1:")))) ||
       args[0] === "consumer.ts" ||
       (args[0]?.endsWith("/tools/release/build.ts") ?? false));
   const localExecutable = binary?.startsWith(join(cwd, "dist") + "/") ?? false;
