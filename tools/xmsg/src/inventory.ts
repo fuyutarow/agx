@@ -559,6 +559,7 @@ export async function codexInputs(
 export type CodexDelivery =
   | { kind: "delivered"; path: "steered" | "started" }
   | { kind: "unreachable"; error: Error }
+  | { kind: "unsupported"; error: Error }
   | { kind: "rejected"; error: Error };
 
 /** Send through the already-running local app-server; only a pre-upgrade failure is queueable. */
@@ -579,6 +580,7 @@ export async function codexDeliver(
     let nextId = 1;
     let stage: "initialize" | "read" | "deliver" = "initialize";
     let activeTurnId: string | undefined;
+    let turnsUnavailable = false;
     const requestIds = new Map<number, string>();
     const req = request({
       socketPath,
@@ -666,6 +668,17 @@ export async function codexDeliver(
         if (method === undefined) return;
         requestIds.delete(rpc.id);
         if (rpc.error !== undefined) {
+          const error = z.object({ code: z.number() }).safeParse(rpc.error);
+          if (
+            method === "thread/read" &&
+            !turnsUnavailable &&
+            error.success &&
+            error.data.code === -32601
+          ) {
+            turnsUnavailable = true;
+            send("thread/read", { threadId, includeTurns: false });
+            return;
+          }
           fail(
             new Error(
               `Codex ${method}: ${JSON.stringify(rpc.error).slice(0, 500)}`,
@@ -684,9 +697,9 @@ export async function codexDeliver(
               thread: z.object({
                 id: Id,
                 status: z.object({ type: z.string() }),
-                turns: z.array(
-                  z.object({ id: Id, status: z.string() }).loose(),
-                ),
+                turns: z
+                  .array(z.object({ id: Id, status: z.string() }).loose())
+                  .optional(),
               }),
             })
             .safeParse(rpc.result);
@@ -698,9 +711,22 @@ export async function codexDeliver(
             return;
           }
           const thread = parsedThread.data.thread;
-          const active = thread.turns.findLast(
+          if (!turnsUnavailable && thread.turns === undefined) {
+            fail(new Error("Invalid Codex delivery thread response"));
+            return;
+          }
+          const active = thread.turns?.findLast(
             (turn) => turn.status === "inProgress",
           );
+          if (turnsUnavailable && thread.status.type === "active") {
+            finish({
+              kind: "unsupported",
+              error: new Error(
+                "thread/read includeTurns is unsupported; use a server that supports turn listing to steer the active thread",
+              ),
+            });
+            return;
+          }
           if (thread.status.type === "active" && active === undefined) {
             fail(
               new Error(

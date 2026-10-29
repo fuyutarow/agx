@@ -212,6 +212,7 @@ async function run(
     }>;
     codexError?: boolean;
     codexDelivery?: "active" | "idle";
+    noTurnListing?: boolean;
     replyAfterReads?: number;
     inventory?: string;
     inventorySequence?: string[];
@@ -349,6 +350,21 @@ async function run(
             };
           }
           if (request.method === "thread/read") {
+            if (
+              options.noTurnListing === true &&
+              request.params.includeTurns === true
+            ) {
+              ws.send(
+                JSON.stringify({
+                  id: request.id,
+                  error: {
+                    code: -32601,
+                    message: "list_turns is not supported yet",
+                  },
+                }),
+              );
+              return;
+            }
             readCount++;
             const selectedThread = options.threads?.find(
               (t) => t.id === request.params.threadId,
@@ -1122,6 +1138,45 @@ test("Codex immediate turn start delivers to an idle thread", async () => {
     threadId: uuidA,
     input: [{ type: "text", text: envelope(message) }],
   });
+});
+
+test("msg contract: a Codex app-server without turn listing still receives the message", async () => {
+  const r = await run({
+    kind: "codex",
+    codexDelivery: "idle",
+    noTurnListing: true,
+    threads: [{ id: uuidA, status: { type: "idle" } }],
+    args: codexDeliveryArgs(uuidA),
+  });
+  expect(r.exit).toBe(0);
+  expect(r.stdout).toContain("path=started");
+  expect(r.rpcCalls.map((call) => call.method)).toEqual([
+    "initialize",
+    "thread/read",
+    "thread/read",
+    "turn/start",
+  ]);
+  expect(r.rpcCalls.at(-1)?.params).toEqual({
+    threadId: uuidA,
+    input: [{ type: "text", text: envelope(message) }],
+  });
+});
+
+test("Codex active thread without turn listing stops before sending", async () => {
+  const r = await run({
+    kind: "codex",
+    codexDelivery: "active",
+    noTurnListing: true,
+    threads: [{ id: uuidA, status: { type: "active" } }],
+    args: codexDeliveryArgs(uuidA),
+  });
+  expect(r.exit).toBe(3);
+  expect(r.stderr).toContain("thread/read includeTurns is unsupported");
+  expect(r.rpcCalls.map((call) => call.method)).toEqual([
+    "initialize",
+    "thread/read",
+    "thread/read",
+  ]);
 });
 
 test("Codex resolves an opaque thread ID before immediate turn start", async () => {

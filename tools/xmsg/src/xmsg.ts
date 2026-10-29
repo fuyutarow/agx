@@ -92,6 +92,10 @@ async function send(
       );
       return 1;
     }
+    if (delivered.kind === "unsupported") {
+      process.stderr.write(`agx msg: ${delivered.error.message}\n`);
+      return 3;
+    }
     const remaining = Math.floor(
       timeoutMs - (performance.now() - transportStarted),
     );
