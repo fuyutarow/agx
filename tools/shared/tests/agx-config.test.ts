@@ -406,6 +406,7 @@ test("config contract: an uncommitted edit to a tracked agx.toml is not read", a
       ready: ["trunk setup"],
     });
 });
+// measured 5009ms on alpha 1.22.5 under host load
 test("XDG L2 replaces per key and is selected by main checkout root", async () => {
   const f = await fixture('schema = 1\ntickets = "policy"\n');
   await writeFile(
@@ -426,7 +427,7 @@ test("XDG L2 replaces per key and is selected by main checkout root", async () =
   expect(await home(secondary)).toBe(join(f.root, "policy"));
   await f.writeLocal('schema = 1\ntickets = "relative-local"\n');
   expect(await home(secondary)).toBe(join(f.root, "relative-local"));
-});
+}, 11000);
 test("old workspace bases cannot supply policy or the retired-file refusal", async () => {
   const f = await fixture('schema = 1\ntickets = "trunk-tickets"\n');
   await writeFile(join(f.root, ".agx.toml"), "legacy\n");

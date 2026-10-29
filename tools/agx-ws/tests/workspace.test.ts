@@ -428,6 +428,7 @@ describe("ws contract: shared agx.toml [ws] policy", () => {
   };
 
   for (const source of ["L1", "L2 ready override and keep union"]) {
+    // Both policy cases measured over 5 seconds across workspace subprocesses.
     test(`${source}: add, rm, gc and doctor use the shared policy`, async () => {
       const l1 =
         source === "L1"
@@ -487,7 +488,7 @@ describe("ws contract: shared agx.toml [ws] policy", () => {
       );
       expect(existsSync(safe)).toBe(true);
       expect(existsSync(wsDir(path, "spare"))).toBe(false);
-    });
+    }, 12_000);
   }
 
   test("rejects invalid L2 policy instead of using L1", async () => {
@@ -761,6 +762,7 @@ test("ws contract: gc --all reports one refused row and continues", async () => 
 });
 
 describe("agx ws adopt", () => {
+  // Several workspace adoption subprocesses measured over 5 seconds.
   test("WS-ADOPT-2: strips layout prefixes, preserves run suffixes and re-homes adopted changes", async () => {
     const path = await repo('trunk = "main"\n');
     for (const [old, slug] of [
@@ -794,8 +796,9 @@ describe("agx ws adopt", () => {
       expect(await Bun.file(join(target, "work.txt")).text()).toBe(`${old}\n`);
       expect(await pathExists(dir)).toBe(false);
     }
-  });
+  }, 12000);
 
+  // measured 5266ms on the census of alpha under host load
   test("WS-ADOPT-2: fix-names plans and moves only prefixed adopted workspaces", async () => {
     const path = await repo('trunk = "main"\n');
     for (const slug of ["proj-arm-one", "proj-arm-two-deadbeef", "retained"])
@@ -832,8 +835,9 @@ describe("agx ws adopt", () => {
       ["--fix-names", "--repo", path, "--slug", "x"],
     ])
       expect((await ws(["adopt", ...args], path)).code).toBe(1);
-  });
+  }, 11000);
 
+  // measured 10314ms on the census of alpha under host load
   test("WS-ADOPT-2: every failure after add removes registration and directory, retaining source", async () => {
     const realJj = Bun.which("jj");
     expect(realJj).not.toBeNull();
@@ -897,7 +901,7 @@ process.exitCode = stage === "add" && args.includes("add") && code === 0 ? 1 : c
         "retain source\n",
       );
     }
-  });
+  }, 21000);
 
   test("dry-run inventories forgotten and plain orphan directories without adopting them", async () => {
     const path = await repo('trunk = "main"\n');
@@ -970,6 +974,7 @@ process.exitCode = stage === "add" && args.includes("add") && code === 0 ? 1 : c
     );
   });
 
+  // The workspace adoption integration case measured over 9 seconds.
   test("WS-ADOPT: unlanded and nested workspaces move intact; kept and live ones are refused", async () => {
     const path = await repo('trunk = "main"\nkeep = ["../Legacy_Kept"]\n');
     const parent = join(path, "..");
@@ -1057,7 +1062,7 @@ process.exitCode = stage === "add" && args.includes("add") && code === 0 ? 1 : c
       'remove the matching entry from agx.toml [ws].keep or L2 [ws].keep: "../Legacy_Kept"',
     );
     expect((await jj(["status"], wsDir(path, "chosen-name"))).code).toBe(0);
-  });
+  }, 20000);
 
   test("dry run leaves files and operation unchanged; refuses collisions and invalid selection", async () => {
     const path = await repo();
@@ -1148,6 +1153,7 @@ describe("agx ws add", () => {
     expect(reused.err).not.toContain(chatter);
   });
 
+  // The remote trunk recovery integration case measured over 11 seconds.
   test("fetches remote trunk, prefers a descendant local trunk, and supports failed-fetch recovery", async () => {
     const root = mkdtempSync(join(tmpdir(), "ws-fresh-base-"));
     const bare = join(root, "remote.git");
@@ -1281,7 +1287,7 @@ describe("agx ws add", () => {
       localReceipt.data.base.commit_id,
     );
     rmSync(root, { recursive: true, force: true });
-  });
+  }, 25000);
 
   test("uses sparse . even when the source workspace is narrowed", async () => {
     const path = await repo('ready = ["jj sparse list > sparse.out"]\n');
@@ -1308,6 +1314,7 @@ describe("agx ws add", () => {
     ).toBe(".\n");
   });
 
+  // The workspace refresh integration case measured over 9 seconds.
   test("refreshes a stale source before adding another slug and running readiness", async () => {
     const path = await repo('ready = ["jj status > ready.out"]\n');
     expect((await ws(["add", "source"], path)).code).toBe(0);
@@ -1340,8 +1347,9 @@ describe("agx ws add", () => {
     expect(
       await Bun.file(join(wsDir(path, "next"), "ready.out")).exists(),
     ).toBe(true);
-  });
+  }, 20000);
 
+  // The mise trust integration case measured over 6 seconds.
   test("trusts mise.toml without a readiness declaration", async () => {
     const path = await repo();
     await Bun.write(
@@ -1358,7 +1366,7 @@ describe("agx ws add", () => {
     expect(shown.code).toBe(0);
     expect(shown.out).toContain(`${config}: trusted`);
     expect(r.err).toContain(`ws: ready: trusted ${config}`);
-  });
+  }, 13_000);
 
   test.each([
     ["all tools are installed", "0", false],
@@ -2290,6 +2298,7 @@ describe("agx ws gc", () => {
     ...over,
   });
 
+  // measured 5087ms on the census of alpha under host load
   test("collects exactly terminal lineages with nothing unlanded; keeps live, continuing, unlanded", async () => {
     const path = await repo('trunk = "main"\n');
     for (const s of ["done", "live", "cont", "dirty", "orph"])
@@ -2344,7 +2353,7 @@ describe("agx ws gc", () => {
       "ws_dirty",
       "ws_live",
     ]);
-  });
+  }, 11000);
 
   test("an obsolete run-end commit does not retain a workspace with no current content", async () => {
     const path = await repo('trunk = "main"\n');
@@ -2773,6 +2782,7 @@ const recFor = (dir: string) => ({
 });
 
 describe("gc integration branches", () => {
+  // measured 5647ms on the census of alpha under host load
   test("AGX-WS-HARVEST-1025 copies once, leaves workspace bytes intact, and enables gc", async () => {
     const env = baseEnv({ AGX_STATE_DIR: join(scratch, "harvest-state") });
     const fixtureWs = (args: string[], cwd: string) => ws(args, cwd, env);
@@ -2851,7 +2861,7 @@ describe("gc integration branches", () => {
     expect(await Bun.file(join(live, "worker.result.md")).text()).toBe(
       "still running",
     );
-  });
+  }, 12000);
 
   test("GC keeps an empty saved checkout with unsnapshotted disk edits and never snapshots it", async () => {
     const path = await repo('trunk = "main"\n');
@@ -2949,6 +2959,7 @@ describe("gc integration branches", () => {
     expect(oversized.ok && oversized.value.count).toBe(2);
   });
 
+  // measured 5312ms on the census of alpha under host load
   test("fully rejected runs collect only when reachable and results are preserved", async () => {
     const path = await repo('trunk = "main"\n');
     for (const slug of [
@@ -3042,7 +3053,7 @@ describe("gc integration branches", () => {
     ])
       expect(existsSync(wsDir(path, slug))).toBe(true);
     expect(await Bun.file(copied).text()).toBe("measurement");
-  });
+  }, 11000);
 
   test("filesets select literal paths without selecting neighboring files", async () => {
     const path = await repo();
@@ -3110,6 +3121,7 @@ describe("gc integration branches", () => {
   });
 
   for (const integration of ["squash", "rebase", "continuation"]) {
+    // measured 5400ms on the census of alpha under host load
     test(`AGX-WS-GC-KEEP-BY-DIFF-1024: accepted ${integration} and real paths`, async () => {
       const path = await repo('trunk = "main"\n');
       setRecords([]);
@@ -3182,7 +3194,7 @@ describe("gc integration branches", () => {
       expect(collected.out).toContain(`${dir}\tws\tremovable\t`);
       expect(existsSync(dir)).toBe(false);
       setRecords([]);
-    });
+    }, 11000);
   }
 
   test("WS-GC-IMMUTABLE: collects without abandoning an immutable workspace commit", async () => {
@@ -3290,6 +3302,7 @@ describe("gc integration branches", () => {
     ).toContain(tip);
   });
 
+  // measured 8798ms on the census of alpha under host load
   test("WS-GC-UNACCEPTED: abandonment requires rejection; flags never override unjudged runs", async () => {
     const path = await repo('trunk = "main"\nkeep = ["ws_kept"]\n');
     const slugs = [
@@ -3442,7 +3455,7 @@ describe("gc integration branches", () => {
       expect(registered).toContain(`ws_${slug}`);
     }
     expect(collected.out).toContain(`${wsDir(path, "kept")}\tws\tkeep\t`);
-  });
+  }, 18000);
 
   test("WS-GC-LANDED-CONTENT: equal bytes in a non-ancestor do not count as landing", async () => {
     const path = await repo('trunk = "main"\n');
@@ -4042,6 +4055,7 @@ function stateTestEnv(): NodeJS.ProcessEnv {
 }
 
 describe("AGX-GC-DISCOVER-REPOS-1025", () => {
+  // measured 6753ms on the census of alpha under host load
   test("state and all records discover no-L2 repositories; unreachable roots stay intact", async () => {
     const stateRepo = await repo('trunk = "main"\nkeep = ["ws_protected"]\n');
     const recordRepo = await repo('trunk = "main"\n');
@@ -4134,5 +4148,5 @@ describe("AGX-GC-DISCOVER-REPOS-1025", () => {
     expect(existsSync(wsDir(stateRepo, "protected"))).toBe(true);
     expect(existsSync(wsDir(missingRepo, "missing"))).toBe(true);
     setRecords([]);
-  });
+  }, 14000);
 });

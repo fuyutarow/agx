@@ -171,6 +171,7 @@ async function snapshot(root: string): Promise<unknown[]> {
 }
 
 for (const existingState of [false, true])
+  // measured 5277ms on the census of alpha under host load
   test(`AGX-GC-DRYRUN-READONLY-PARENT-1025: single and all with ${existingState ? "existing" : "missing"} state`, async () => {
     const f = await fixture(["readonly"]);
     // Freeze only the human age column; real jj reads still determine every verdict.
@@ -222,7 +223,7 @@ ${delegateJj}`,
     })().finally(() => {
       for (const dir of protectedDirs) chmodSync(dir, 0o755);
     });
-  });
+  }, 11000);
 
 test("WS-GC-LOCK-SCOPE: dry runs neither acquire a held lock nor snapshot dirty files", async () => {
   const f = await fixture(["dirty"]);
@@ -267,6 +268,7 @@ ${delegateJj}`,
   );
 });
 
+// measured 31580ms on the census of alpha under host load
 test("WS-GC-LOCK-SCOPE: add acquires while the aggregate read-only classification is delayed", async () => {
   const f = await fixture(["a", "b", "c", "d", "e", "f"]);
   for (const slug of ["a", "b", "c", "d", "e", "f"]) {
@@ -296,7 +298,7 @@ ${delegateJj}`,
   const collected = await gc;
   expect(collected.code, collected.err).toBe(0);
   expect(collected.out).not.toContain("classification holds store lock");
-});
+}, 64000);
 
 test("WS-GC-LOCK-SCOPE: waiting add gets the next turn after one removal; wait names holder and time", async () => {
   const f = await fixture(["a"]);

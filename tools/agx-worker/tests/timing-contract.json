@@ -1,0 +1,602 @@
+[
+  {
+    "file": "tools/agx-status/tests/published-equality.test.ts",
+    "name": "published facts answer the same JSON as the full-replay oracle",
+    "timeout": 120000
+  },
+  {
+    "file": "tools/agx-ticket/tests/lifecycle.test.ts",
+    "name": "a workspace already removed by ws retains ticket state but cannot authorize GC",
+    "timeout": 12000
+  },
+  {
+    "file": "tools/agx-ticket/tests/lifecycle.test.ts",
+    "name": "configuration errors exit 2: $name",
+    "timeout": 16000
+  },
+  {
+    "file": "tools/agx-ticket/tests/lifecycle.test.ts",
+    "name": "declared directory, all five states, dry-run exactly eligible and GC only accepted+landed",
+    "timeout": 46000
+  },
+  {
+    "file": "tools/agx-ticket/tests/lifecycle.test.ts",
+    "name": "doctor inspects only L2-registered repositories and ignores root-scan env vars",
+    "timeout": 12000
+  },
+  {
+    "file": "tools/agx-ticket/tests/lifecycle.test.ts",
+    "name": "file default",
+    "timeout": 60000
+  },
+  {
+    "file": "tools/agx-ticket/tests/lifecycle.test.ts",
+    "name": "matching ticket metadata name, foreign repo exclusion, malformed agx fails closed",
+    "timeout": 13000
+  },
+  {
+    "file": "tools/agx-ticket/tests/lifecycle.test.ts",
+    "name": "new defaults, template escaping, overwrite refusal and three input lines; no state",
+    "timeout": 12000
+  },
+  {
+    "file": "tools/agx-ticket/tests/lifecycle.test.ts",
+    "name": "other operational failures retain exit 1",
+    "timeout": 12000
+  },
+  {
+    "file": "tools/agx-usehooks/tests/consumers.test.ts",
+    "name": "a consumer broken on alpha is PRE-EXISTING; an added consumer error FAILs naming it; nothing is written",
+    "timeout": 120000
+  },
+  {
+    "file": "tools/agx-usehooks/tests/consumers.test.ts",
+    "name": "CLI --all checks every L2 consumer with no library diff; default still skips",
+    "timeout": 120000
+  },
+  {
+    "file": "tools/agx-usehooks/tests/runtime.test.ts",
+    "name": "file default",
+    "timeout": 20000
+  },
+  {
+    "file": "tools/agx-worker/tests/capacity.test.ts",
+    "name": "route contract: capacity exhausts eligible rows within the ticket time box",
+    "timeout": 11000
+  },
+  {
+    "file": "tools/agx-worker/tests/capacity.test.ts",
+    "name": "route contract: capacity reroutes within one run and keeps a same-vendor session",
+    "timeout": 11000
+  },
+  {
+    "file": "tools/agx-worker/tests/codex.test.ts",
+    "name": "a run past --timeout-s is killed, exit 3, and says so; the wait is never silent",
+    "timeout": 20000
+  },
+  {
+    "file": "tools/agx-worker/tests/codex.test.ts",
+    "name": "a stalled stdin-wait diagnostic gets its own bounded outcome",
+    "timeout": 10000
+  },
+  {
+    "file": "tools/agx-worker/tests/codex.test.ts",
+    "name": "five identical tool errors stop early with a resumable spin receipt naming the cause",
+    "timeout": 20000
+  },
+  {
+    "file": "tools/agx-worker/tests/codex.test.ts",
+    "name": "O2: a timeout keeps the progress at the kill and codex's last error as the cause",
+    "timeout": 20000
+  },
+  {
+    "file": "tools/agx-worker/tests/dispatch.test.ts",
+    "name": "compiled dispatcher outside manager PATH pins its own executable",
+    "timeout": 40000
+  },
+  {
+    "file": "tools/agx-worker/tests/dispatch.test.ts",
+    "name": "continuation ignores a deleted registered sibling but refuses its own missing workspace",
+    "timeout": 11000
+  },
+  {
+    "file": "tools/agx-worker/tests/dispatch.test.ts",
+    "name": "dispatch check deadline is an operational timeout with exit 75",
+    "timeout": 75000
+  },
+  {
+    "file": "tools/agx-worker/tests/dispatch.test.ts",
+    "name": "dispatch contract: the inspection bound honours DISPATCH_COMMAND_TIMEOUT_MS",
+    "timeout": 15000
+  },
+  {
+    "file": "tools/agx-worker/tests/dispatch.test.ts",
+    "name": "dispatch passes resolved continuation sandbox and provenance (compiled=%s)",
+    "timeout": 40000
+  },
+  {
+    "file": "tools/agx-worker/tests/dispatch.test.ts",
+    "name": "preflight can finish beyond the former 30000ms subprocess deadline",
+    "timeout": 45000
+  },
+  {
+    "file": "tools/agx-worker/tests/dispatch.test.ts",
+    "name": "real jj continued workspace %s agrees with check (missing premise=%s)",
+    "timeout": 60000
+  },
+  {
+    "file": "tools/agx-worker/tests/host.test.ts",
+    "name": "final symlinks, including dangling ones, are never followed or replaced",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/host.test.ts",
+    "name": "help and usage failures do not create declarations",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/host.test.ts",
+    "name": "public agx host check and exclusive declare round trip through the launch reader",
+    "timeout": 11000
+  },
+  {
+    "file": "tools/agx-worker/tests/host.test.ts",
+    "name": "retired path blocks creation; current valid file takes precedence without migration",
+    "timeout": 11000
+  },
+  {
+    "file": "tools/agx-worker/tests/jj-read.test.ts",
+    "name": "installed jj reads neither snapshot, import/export refs nor integrate operations",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/continue.test.ts",
+    "name": "a missing original ticket does not prevent continuation",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/continue.test.ts",
+    "name": "a row without a published duration starts fresh on an eligible route",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/continue.test.ts",
+    "name": "a unique run id prefix resolves to the full prior id",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/continue.test.ts",
+    "name": "dispatch contract: rule 2 (ticket amended=%s)",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/continue.test.ts",
+    "name": "dispatch immediately after a ticket edit agrees on both attempts",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/continue.test.ts",
+    "name": "legacy ticket %s resumes on its pinned row",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/continue.test.ts",
+    "name": "sandbox precedence and receipts agree without adjacent source (compiled=%s)",
+    "timeout": 60000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/continue.test.ts",
+    "name": "the continuation prompt says when no judgment was recorded",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/continue.test.ts",
+    "name": "the continuation prompt starts with the prior judgment and ticket diff",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/continue.test.ts",
+    "name": "the ticket file is re-read on continue",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/incremental-fold.test.ts",
+    "name": "seeded random append batches equal a full fold after every batch",
+    "timeout": 15000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/intake-floor.test.ts",
+    "name": "intake refuses every launch entry before routing, logs hashes, and admits read-only review",
+    "timeout": 60000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/legacy-judgments.test.ts",
+    "name": "C3 equal-time imported ties are deterministic across discovery order, native ties win",
+    "timeout": 11000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/ls-selector.test.ts",
+    "name": "agx worker ls selects an id prefix and an exact ticket with newest last",
+    "timeout": 60000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/ls-speed-legacy.test.ts",
+    "name": "public ls hides malformed imports, counts them and normalizes moved reports within one second",
+    "timeout": 15000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/ls-wait.test.ts",
+    "name": "--wait on a running run returns its row after an ended record is appended",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/ls-wait.test.ts",
+    "name": "--wait on a ticket ignores old ended runs and waits for its running run",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/ls-wait.test.ts",
+    "name": "--wait on a ticket with only old ended runs waits for a new run to end",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/ls-wait.test.ts",
+    "name": "--wait on an already-ended run returns at once, in ls format",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/ls-wait.test.ts",
+    "name": "--wait on an unknown, ambiguous or missing selector fails at once",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/ls-wait.test.ts",
+    "name": "--wait returns a run whose process died without an ended record as ended lost",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/ls-wait.test.ts",
+    "name": "--wait writes no file",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/no-orphan.test.ts",
+    "name": "tsc accepts the closed state and rejects constructing orphaned",
+    "timeout": 120000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/outcome.test.ts",
+    "name": "ended fixtures retain measured outcomes while routing omits ungraded raw history",
+    "timeout": 180000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/outcome.test.ts",
+    "name": "outcome contract: malformed only when the returned report is unreadable",
+    "timeout": 180000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/preflight.test.ts",
+    "name": "check and run preserve operational environment failure as exit 75 without run artifacts",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/preflight.test.ts",
+    "name": "check and run report writes, home, mise, live workspace and premises together without launch artifacts",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/preflight.test.ts",
+    "name": "check warns only about overlapping runs whose ticket or workspace shares the ticket repository",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/preflight.test.ts",
+    "name": "public check warns about user bus and shared VCS store without changing ticket or sandbox",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/route.test.ts",
+    "name": "local accepted and rejected history cannot change the Jev request",
+    "timeout": 20000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/run-temp.test.ts",
+    "name": "a SIGKILLed run leaves its directory and the next run removes it",
+    "timeout": 45000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/run-temp.test.ts",
+    "name": "bare service environment shares user tools, mise PATH and temp with verify; records failure kinds",
+    "timeout": 15000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/run.test.ts",
+    "name": "dispatch contract: fake vendor adopts the reserved id without a second run id",
+    "timeout": 60000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/run.test.ts",
+    "name": "real run orders and records verify.always: %s",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/scratch-cd.test.ts",
+    "name": "repository ticket with %s --cd records worker provenance (failed check: %s)",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/session-persist.test.ts",
+    "name": "a lost run keeps and resumes the session reported before work",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/session-persist.test.ts",
+    "name": "a lost run with no reported session starts fresh and says so",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/ticket-home.test.ts",
+    "name": "a jj tree uses its recorded working-copy commit and committed home without taking a snapshot",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/ticket-home.test.ts",
+    "name": "a repository without agx.toml accepts its default home",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/ticket-home.test.ts",
+    "name": "an uncommitted declaration and a symlink escaping the home cannot bypass placement",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/ticket-home.test.ts",
+    "name": "base_rev mismatch names both ids before routing, artifacts or launch",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/ticket-home.test.ts",
+    "name": "check accepts an absolute home declared on the repository trunk",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/ticket-home.test.ts",
+    "name": "check refuses an undeclared /tmp ticket with refused, declared home and agx ticket new",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/ticket-home.test.ts",
+    "name": "committed relative and absolute homes and the default home are accepted, including /tmp",
+    "timeout": 60000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/ticket-home.test.ts",
+    "name": "conflicting replacement declarations refuse before launch",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/ticket-home.test.ts",
+    "name": "jj dispatch: $name",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/ticket-home.test.ts",
+    "name": "new dispatch refuses nonconforming names with agx ticket new repair, without artifacts",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/ticket-home.test.ts",
+    "name": "run preserves exact original bytes and hash, base and premise commits, replacement and continuation",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/ticket-home.test.ts",
+    "name": "ticket contract: a bare name resolves from the ticket home directory and from the repository root",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/ticket-home.test.ts",
+    "name": "ticket contract: an unknown bare name lists the searched paths",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/ticket-home.test.ts",
+    "name": "ticket repository wins over scratch --cd (fake parent: %s)",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/wait-cursor.test.ts",
+    "name": "unavailable watchers use a fallback no faster than five seconds",
+    "timeout": 10000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/workspace-lock.test.ts",
+    "name": "a live worker blocks both modes; another workspace and a run after completion start",
+    "timeout": 60000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/workspace-lock.test.ts",
+    "name": "file default",
+    "timeout": 60000
+  },
+  {
+    "file": "tools/agx-worker/tests/run-claude.test.ts",
+    "name": "file default",
+    "timeout": 20000
+  },
+  {
+    "file": "tools/agx-ws/tests/add-hang.test.ts",
+    "name": "WS-ADD-HANG-2: three piped adds have a fixed jj budget as history and workspace counts grow",
+    "timeout": 90000
+  },
+  {
+    "file": "tools/agx-ws/tests/deadline.test.ts",
+    "name": "agx ws add whole-command deadline identifies %s on stderr",
+    "timeout": 20000
+  },
+  {
+    "file": "tools/agx-ws/tests/gc-usecases.test.ts",
+    "name": "file default",
+    "timeout": 90000
+  },
+  {
+    "file": "tools/agx-ws/tests/gc-usecases.test.ts",
+    "name": "gc usecase: U2 removes a workspace whose non-empty change is reachable from a remote bookmark",
+    "timeout": 12000
+  },
+  {
+    "file": "tools/agx-ws/tests/lock-scope.test.ts",
+    "name": "AGX-GC-DRYRUN-READONLY-PARENT-1025: single and all with ${existingState ? \"existing\" : \"missing\"} state",
+    "timeout": 11000
+  },
+  {
+    "file": "tools/agx-ws/tests/lock-scope.test.ts",
+    "name": "file default",
+    "timeout": 60000
+  },
+  {
+    "file": "tools/agx-ws/tests/lock-scope.test.ts",
+    "name": "WS-GC-LOCK-SCOPE: add acquires while the aggregate read-only classification is delayed",
+    "timeout": 64000
+  },
+  {
+    "file": "tools/agx-ws/tests/workspace.test.ts",
+    "name": "${source}: add, rm, gc and doctor use the shared policy",
+    "timeout": 12000
+  },
+  {
+    "file": "tools/agx-ws/tests/workspace.test.ts",
+    "name": "AGX-WS-GC-KEEP-BY-DIFF-1024: accepted ${integration} and real paths",
+    "timeout": 11000
+  },
+  {
+    "file": "tools/agx-ws/tests/workspace.test.ts",
+    "name": "AGX-WS-HARVEST-1025 copies once, leaves workspace bytes intact, and enables gc",
+    "timeout": 12000
+  },
+  {
+    "file": "tools/agx-ws/tests/workspace.test.ts",
+    "name": "collects exactly terminal lineages with nothing unlanded; keeps live, continuing, unlanded",
+    "timeout": 11000
+  },
+  {
+    "file": "tools/agx-ws/tests/workspace.test.ts",
+    "name": "fetches remote trunk, prefers a descendant local trunk, and supports failed-fetch recovery",
+    "timeout": 25000
+  },
+  {
+    "file": "tools/agx-ws/tests/workspace.test.ts",
+    "name": "file default",
+    "timeout": 60000
+  },
+  {
+    "file": "tools/agx-ws/tests/workspace.test.ts",
+    "name": "fully rejected runs collect only when reachable and results are preserved",
+    "timeout": 11000
+  },
+  {
+    "file": "tools/agx-ws/tests/workspace.test.ts",
+    "name": "refreshes a stale source before adding another slug and running readiness",
+    "timeout": 20000
+  },
+  {
+    "file": "tools/agx-ws/tests/workspace.test.ts",
+    "name": "state and all records discover no-L2 repositories; unreachable roots stay intact",
+    "timeout": 14000
+  },
+  {
+    "file": "tools/agx-ws/tests/workspace.test.ts",
+    "name": "trusts mise.toml without a readiness declaration",
+    "timeout": 13000
+  },
+  {
+    "file": "tools/agx-ws/tests/workspace.test.ts",
+    "name": "WS-ADOPT-2: every failure after add removes registration and directory, retaining source",
+    "timeout": 21000
+  },
+  {
+    "file": "tools/agx-ws/tests/workspace.test.ts",
+    "name": "WS-ADOPT-2: fix-names plans and moves only prefixed adopted workspaces",
+    "timeout": 11000
+  },
+  {
+    "file": "tools/agx-ws/tests/workspace.test.ts",
+    "name": "WS-ADOPT-2: strips layout prefixes, preserves run suffixes and re-homes adopted changes",
+    "timeout": 12000
+  },
+  {
+    "file": "tools/agx-ws/tests/workspace.test.ts",
+    "name": "WS-ADOPT: unlanded and nested workspaces move intact; kept and live ones are refused",
+    "timeout": 20000
+  },
+  {
+    "file": "tools/agx-ws/tests/workspace.test.ts",
+    "name": "WS-GC-UNACCEPTED: abandonment requires rejection; flags never override unjudged runs",
+    "timeout": 18000
+  },
+  {
+    "file": "tools/agx/tests/doctor.test.ts",
+    "name": "default deadlines allow real-inventory durations and exit 1 findings",
+    "timeout": 45000
+  },
+  {
+    "file": "tools/release/release.test.ts",
+    "name": "brew update completes while a descendant holds output pipes for five minutes",
+    "timeout": 10000
+  },
+  {
+    "file": "tools/release/release.test.ts",
+    "name": "library tarball installs offline, imports and supplies checked public declarations",
+    "timeout": 550000
+  },
+  {
+    "file": "tools/release/release.test.ts",
+    "name": "persistent upload failure names asset and preserves a recoverable draft (${mode})",
+    "timeout": 18000
+  },
+  {
+    "file": "tools/release/release.test.ts",
+    "name": "publish and machine survive a three-minute fake brew update",
+    "timeout": 200000
+  },
+  {
+    "file": "tools/release/release.test.ts",
+    "name": "publish creates an empty draft, checks separate uploads and publishes (${mode})",
+    "timeout": 18000
+  },
+  {
+    "file": "tools/release/release.test.ts",
+    "name": "release contract: dist holds only the built version",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/release/release.test.ts",
+    "name": "release contract: size",
+    "timeout": 600000
+  },
+  {
+    "file": "tools/release/release.test.ts",
+    "name": "suite archive contains all commands with member versions and only its platform asset",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/shared/tests/agx-config.test.ts",
+    "name": "config read waits beyond the former 5000ms limit for a queued jj read",
+    "timeout": 20000
+  },
+  {
+    "file": "tools/shared/tests/agx-config.test.ts",
+    "name": "XDG L2 replaces per key and is selected by main checkout root",
+    "timeout": 11000
+  },
+  {
+    "file": "tools/shared/tests/cli-surface.test.ts",
+    "name": "${name}: version aliases, typed short flag, deterministic plain help",
+    "timeout": 20000
+  },
+  {
+    "file": "tools/shared/tests/cli-surface.test.ts",
+    "name": "agx ${command.join(\" \")}: command help is environment-independent",
+    "timeout": 11000
+  }
+]

@@ -171,11 +171,10 @@ process.env.MISE_DATA_DIR ??= join(
 );
 // Preserve the caller's Bun cache before isolating HOME; explicit overrides win.
 process.env.BUN_INSTALL_CACHE_DIR ??= join(homedir(), ".bun/install/cache");
-// Subprocess integration tests have 30 s child guards. Bun's 5 s default otherwise kills an
-// awaited child under load before its own guard can report a result. This is a hang guard;
-// deadline behavior is asserted separately with injected clocks.
+// Keep the effective Bun test timeout aligned with bunfig.toml. Longer tests declare
+// their exceptions explicitly in the timing contract ratchet.
 fromThrowable(() => {
-  setDefaultTimeout(30_000);
+  setDefaultTimeout(5_000);
 })();
 
 const originalEnv = new Map<string, string | undefined>();

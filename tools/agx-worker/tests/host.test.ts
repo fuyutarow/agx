@@ -85,6 +85,7 @@ function fixture() {
   };
 }
 
+// measured 5036ms on alpha 1.22.5 under host load
 test("public agx host check and exclusive declare round trip through the launch reader", async () => {
   using f = fixture();
   const absent = await f.invoke("check", "--json");
@@ -120,7 +121,7 @@ test("public agx host check and exclusive declare round trip through the launch 
     (await f.invoke("declare", "--unsandboxed-reason", "replacement")).exit,
   ).toBe(2);
   expect(readFileSync(f.path, "utf8")).toBe(original);
-});
+}, 11000);
 
 for (const content of [
   'schema = 2\nunsandboxed_reason = "box"',
@@ -165,6 +166,7 @@ test("final symlinks, including dangling ones, are never followed or replaced", 
   }
 }, 30_000);
 
+// measured 5060ms on alpha 1.22.5 under host load
 test("retired path blocks creation; current valid file takes precedence without migration", async () => {
   using f = fixture();
   const legacy = join(f.root, "config/codex-run/host.toml");
@@ -183,7 +185,7 @@ test("retired path blocks creation; current valid file takes precedence without 
   writeFileSync(f.path, 'schema = 1\nunsandboxed_reason = "current"\n');
   expect((await f.invoke("check", "--json")).exit).toBe(0);
   expect(readFileSync(legacy, "utf8")).toContain('"legacy"');
-});
+}, 11000);
 
 test("unreadable and non-file paths are invalid, override path is honored", async () => {
   using f = fixture();

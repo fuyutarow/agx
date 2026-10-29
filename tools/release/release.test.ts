@@ -799,6 +799,7 @@ async function ghState(root: string, library = false) {
 }
 
 for (const mode of ["success", "retry"]) {
+  // measured 8573ms on alpha 1.22.5 under host load
   test(`publish creates an empty draft, checks separate uploads and publishes (${mode})`, async () => {
     const f = await suiteFixture();
     const result = await previewCI(f, { RELEASE_TEST_GH_MODE: mode });
@@ -844,10 +845,11 @@ for (const mode of ["success", "retry"]) {
     expect(uploads).toHaveLength(mode === "retry" ? 9 : 5);
     expect(uploads[0]).not.toContain("--clobber");
     if (mode === "retry") expect(uploads[2]).toContain("--clobber");
-  });
+  }, 18000);
 }
 
 for (const mode of ["failure", "silent"]) {
+  // measured 8676ms on alpha 1.22.5 under host load
   test(`persistent upload failure names asset and preserves a recoverable draft (${mode})`, async () => {
     const f = await suiteFixture();
     const result = await previewCI(f, { RELEASE_TEST_GH_MODE: mode });
@@ -923,7 +925,7 @@ for (const mode of ["failure", "silent"]) {
         /\["release","create"/gu,
       ),
     ).toHaveLength(2);
-  });
+  }, 18000);
 }
 
 for (const mode of ["missing", "wrong-size", "starter", "malformed"]) {

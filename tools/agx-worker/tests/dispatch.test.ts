@@ -430,6 +430,7 @@ test.each([
   }
 });
 
+// measured 5026ms on alpha 1.22.5 under host load
 test("continuation ignores a deleted registered sibling but refuses its own missing workspace", async () => {
   const f = fixture();
   // Keep systemd and the worker fake, but exercise the actual jj registry.
@@ -468,7 +469,7 @@ test("continuation ignores a deleted registered sibling but refuses its own miss
   expect(missing.stderr).toContain(workspace);
   expect(missing.stdout).toBe("");
   expect(await Bun.file(f.unitArgs).exists()).toBe(false);
-});
+}, 11000);
 
 test.each(["foo-bar", "foo-bar-2", "another-ticket"])(
   "continuation keeps recorded workspace %s without creating one",
@@ -1360,7 +1361,9 @@ test("dispatch contract: the inspection bound honours DISPATCH_COMMAND_TIMEOUT_M
   chmodSync(slowWorkspaceAdd, 0o755);
   const expired = await invoke(overridden);
   expect(expired.exitCode, expired.stderr).toBe(75);
-  expect(expired.stderr).toContain("inspection timeout DISPATCH_COMMAND_TIMEOUT_MS=1000ms");
+  expect(expired.stderr).toContain(
+    "inspection timeout DISPATCH_COMMAND_TIMEOUT_MS=1000ms",
+  );
   expect(expired.stderr).toContain('"add"');
   expect(expired.stderr).toContain("--repo");
   expect(await Bun.file(overridden.unitArgs).exists()).toBe(false);

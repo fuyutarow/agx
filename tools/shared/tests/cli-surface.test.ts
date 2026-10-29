@@ -145,6 +145,7 @@ for await (const packagePath of new Bun.Glob("tools/*/package.json").scan({
     const canonicalName = isMsgAlias
       ? "agx msg"
       : Object.keys(pkg.bin ?? {})[0];
+    // This multi-process CLI matrix exceeded 5 seconds in the timeout measurement.
     test(`${name}: version aliases, typed short flag, deterministic plain help`, async () => {
       const root = await mkdtemp(join(tmpdir(), "cli-surface-"));
       await using _cleanup = {
@@ -198,7 +199,7 @@ for await (const packagePath of new Bun.Glob("tools/*/package.json").scan({
         }
         expect(error.stderr).not.toContain("--Z");
       }
-    });
+    }, 20_000);
   }
 }
 
@@ -211,6 +212,7 @@ for (const command of [
   ["ws", "add"],
   ["ticket", "new"],
 ]) {
+  // measured 5014ms on alpha 1.22.5 under host load
   test(`agx ${command.join(" ")}: command help is environment-independent`, async () => {
     const entry = join(ROOT, "tools/agx/src/agx.ts");
     const args = [...command, "--help"];
@@ -219,5 +221,5 @@ for (const command of [
     expect(plain.stdout).not.toContain("\u001B");
     for (const { tty, color } of environments)
       expect(await run(entry, args, tty, color)).toEqual(plain);
-  });
+  }, 11000);
 }

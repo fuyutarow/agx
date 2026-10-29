@@ -168,6 +168,7 @@ test("C3 real CLI imports lifecycle and dated rows by judgment time, preserving 
   });
 });
 
+// measured 5031ms on the census of alpha under host load
 test("C3 equal-time imported ties are deterministic across discovery order, native ties win", () => {
   const a = fixture();
   const b = fixture();
@@ -218,7 +219,7 @@ test("C3 equal-time imported ties are deterministic across discovery order, nati
     }) + "\n",
   );
   expect(a.listing()[0]?.judgment?.note).toBe("newer than native");
-}, 15_000);
+}, 11000);
 
 test("C3 compares instants with offsets and nanoseconds, and projects historical identity", () => {
   const f = fixture();
