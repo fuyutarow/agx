@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.2 — 2026-10-29
+
+- Route continuations away from rows whose published duration exceeds the ticket time box.
+
 ## 1.22.1 — 2026-10-29
 
 - Route workers by ticket requirement class and published TB4 score
