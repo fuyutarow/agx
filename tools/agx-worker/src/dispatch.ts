@@ -502,6 +502,7 @@ export async function dispatch(options: {
   unit?: string;
   sandbox?: string;
   continuation?: string;
+  session?: string;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
 }): Promise<number> {
@@ -574,6 +575,7 @@ export async function dispatch(options: {
   }
   const dispatcherSession =
     [
+      options.session,
       env.AGX_DISPATCHER_SESSION,
       env.CLAUDE_CODE_SESSION_ID,
       env.CODEX_SESSION_ID,
@@ -1017,6 +1019,7 @@ export async function dispatch(options: {
     sandbox,
     "--sandbox-source",
     sandbox_source,
+    ...(options.session === undefined ? [] : ["--session", options.session]),
     ...(previous === undefined ? [] : ["--continue", previous.id]),
   ];
   const launch = await attempt(() => invoke(args, cwd, env));
@@ -1065,6 +1068,10 @@ export async function dispatchMain(commandArgs: string[]): Promise<void> {
           description:
             "previous run to continue; waits up to 120 seconds for its unit to end",
         },
+        session: {
+          type: String,
+          description: "dispatching Claude Code or Codex session id",
+        },
       },
       strictFlags: true,
       ignoreArgv: rejectPrototypeFlag,
@@ -1089,6 +1096,9 @@ export async function dispatchMain(commandArgs: string[]): Promise<void> {
       ...(parsed.flags["continue"] === undefined
         ? {}
         : { continuation: parsed.flags["continue"] }),
+      ...(parsed.flags.session === undefined
+        ? {}
+        : { session: parsed.flags.session }),
     }),
   );
   if (result.ok) process.exitCode = result.value;

@@ -273,6 +273,31 @@ test("dispatch binds its Claude session when the ticket omits an ACK target", as
   );
 });
 
+test("dispatch contract: every flag the documentation names for dispatch is accepted", async () => {
+  const f = fixture();
+  f.env.AGX_DISPATCHER_SESSION = "environment-session";
+  const result = await invoke(f, "--session", "explicit-session");
+  expect(result.exitCode, result.stderr).toBe(0);
+  const eventSchema = z.looseObject({
+    dispatcher_session: z.string().nullable().optional(),
+  });
+  const events = readFileSync(join(f.env.AGX_STATE_DIR!, "records.jsonl"), "utf8")
+    .trim()
+    .split("\n");
+  const dispatchSessions = events.map((line) => {
+    const parsed = jsonOf(eventSchema).safeParse(line);
+    return parsed.success ? parsed.data.dispatcher_session : undefined;
+  });
+  expect(dispatchSessions.find((session) => session !== undefined)).toBe(
+    "explicit-session",
+  );
+  const unitArgs = readFileSync(f.unitArgs, "utf8").split("\n");
+  const divider = unitArgs.indexOf("--");
+  const command = unitArgs.slice(divider + 1);
+  expect(command).toContain("--session");
+  expect(command[command.indexOf("--session") + 1]).toBe("explicit-session");
+});
+
 function priorRun(
   f: ReturnType<typeof fixture>,
   workspace: string,

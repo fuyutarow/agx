@@ -10,7 +10,7 @@
 | `agx worker judge RUN_ID accept\|reject [--note TEXT]`                                         | Append an acceptance or rejection judgment.                                                                                           |
 | `agx worker stats [--import-legacy\|--routing\|--usage jev] [--window DURATION] [--host NAME]` | Report run counts, import legacy records, routing statistics, or Jev token usage.                                                     |
 | `agx worker probe --vendor codex --sandbox MODE --cd PATH --timeout-ms N --json`               | Run a bounded vendor diagnostic without a ticket or run record.                                                                       |
-| `agx worker dispatch TICKET [--ws SLUG] [--unit NAME] [--continue RUN_ID]`                     | Obtain a workspace through `agx ws`, or reuse a continuation's recorded workspace, and start a durable worker unit.                   |
+| `agx worker dispatch TICKET [--ws SLUG] [--unit NAME] [--continue RUN_ID] [--session ID]`      | Obtain a workspace through `agx ws`, or reuse a continuation's recorded workspace, and start a durable worker unit.                   |
 | `agx worker roster TICKET`                                                                     | Print one selected roster row. `roster --json` prints the full validated roster and routing objective.                                |
 | `agx worker doctor`                                                                            | Diagnose worker records as tool/object/finding/remedy JSON Lines.                                                                     |
 
@@ -176,6 +176,11 @@ repository. A missing, unusable or unregistered path exits 2 before starting a w
 with one diagnostic line naming the recorded path, reason and repair: restore/register
 that path with `agx ws add`, or start a fresh run. Registry inspection timeouts retain
 temporary-unavailability exit 75.
+
+`dispatch --session ID` sets the dispatching session identity, takes precedence over
+`AGX_DISPATCHER_SESSION`, `CLAUDE_CODE_SESSION_ID`, and `CODEX_SESSION_ID`, and passes the same
+value to the started `run --session ID`. This preserves the run command's explicit-session
+semantics across the durable dispatch boundary.
 
 Dispatch starts the exact running worker: a compiled executable uses the absolute
 `process.execPath`; a source invocation uses the absolute Bun executable followed by the

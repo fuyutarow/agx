@@ -41,13 +41,15 @@ repository source files.
 ## Durable dispatch
 
 ```sh
-agx-worker dispatch .agents/tickets/foo-bar.md [--ws other] [--unit agt_other-2] [--sandbox workspace-write] [--continue RUN_ID]
+agx-worker dispatch .agents/tickets/foo-bar.md [--ws other] [--unit agt_other-2] [--sandbox workspace-write] [--continue RUN_ID] [--session ID]
 ```
 
 Dispatch defaults to the ticket's `name` (or its filename without `.md`): `ws_<name>` and
 `agt_<name>`. `--ws` overrides the workspace slug passed to `agx ws add`; `--unit` overrides the
 systemd service name. The repository comes from the ticket's location, independently of the caller's
-working directory. Dispatch consumes `agx ws add --json` so readiness output cannot become a path.
+working directory. `--session` sets the dispatching session identity and takes precedence over
+session values from the environment, matching `agx worker run --session`. Dispatch consumes
+`agx ws add --json` so readiness output cannot become a path.
 Dispatch creates or reuses the workspace, refuses an active unit, verifies
 the ticket and workspace resolve to the same repository default workspace, then starts the unit.
 It waits for a run record containing its binding and prints a labeled dispatch receipt. It exits non-zero when the
