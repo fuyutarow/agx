@@ -116,6 +116,23 @@ export function standardCli(
     apply(target, _receiver, [options, callback, input]: Parameters<Parser>) {
       const argv = input ?? readArgv();
       if (printVersion(pkg, options.name ?? "cli", argv)) process.exit(0);
+      const name = options.name ?? "cli";
+      const first = argv[0];
+      const commands = options.commands?.map((entry) => entry.options.name);
+      let actions = commands;
+      if (name === "agx msg") actions = ["list", "send", "status", "wait"];
+      if (name === "agx-status" || name === "agx doctor") actions = [];
+      if (
+        first !== undefined &&
+        !first.startsWith("-") &&
+        actions !== undefined &&
+        !actions.includes(first)
+      ) {
+        process.stderr.write(
+          `${name}: unknown command ${JSON.stringify(first)}; use ${name} --help to list valid commands\n`,
+        );
+        process.exit(2);
+      }
       return target(surface(options, argv, suite.version), callback, argv);
     },
   });

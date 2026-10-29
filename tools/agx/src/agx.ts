@@ -76,7 +76,7 @@ async function main(): Promise<void> {
   }
   if (!tools.includes(first)) {
     process.stderr.write(
-      `agx: unknown tool '${first}'; expected worker, ticket, ws, status, msg, doctor, change\n`,
+      `agx: unknown command ${JSON.stringify(first)}; use agx --help to list valid commands\n`,
     );
     process.exitCode = 2;
     return;

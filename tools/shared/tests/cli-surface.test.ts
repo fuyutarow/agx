@@ -19,6 +19,61 @@ const environments = [
 
 const ROOT = resolve(import.meta.dir, "../../..");
 
+test("cli contract: an unknown command prints usage on stderr with exit 2", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cli-unknown-"));
+  await using _cleanup = {
+    [Symbol.asyncDispose]: () => rm(root, { recursive: true, force: true }),
+  };
+  for (const [name, source] of Object.entries({
+    "agx-worker": "tools/agx-worker/src/next/cli.ts",
+    "agx-ticket": "tools/agx-ticket/src/tkt.ts",
+    "agx-ws": "tools/agx-ws/src/ws.ts",
+    "agx-status": "tools/agx-status/src/status.ts",
+    "agx-msg": "tools/xmsg/src/xmsg.ts",
+  }))
+    await symlink(join(ROOT, source), join(root, name));
+  const env = { PATH: `${root}:${process.env.PATH ?? ""}` };
+  const cases = [
+    ["tools/agx/src/agx.ts", []],
+    ["tools/agx/src/agx.ts", ["worker"]],
+    ["tools/agx/src/agx.ts", ["ticket"]],
+    ["tools/agx/src/agx.ts", ["ws"]],
+    ["tools/agx/src/agx.ts", ["change"]],
+    ["tools/agx/src/agx.ts", ["msg"]],
+    ["tools/agx/src/agx.ts", ["status"]],
+    ["tools/agx/src/agx.ts", ["doctor"]],
+    ["tools/agx-worker/src/next/cli.ts", []],
+    ["tools/agx-ticket/src/tkt.ts", []],
+    ["tools/agx-ws/src/ws.ts", []],
+    ["tools/xmsg/src/xmsg.ts", []],
+    ["tools/agx-status/src/status.ts", []],
+  ] as const;
+  for (const [entry, prefix] of cases) {
+    const result = await run(
+      join(ROOT, entry),
+      [...prefix, "not-a-command"],
+      false,
+      false,
+      env,
+    );
+    expect(result.exit, `${entry} ${prefix.join(" ")}: ${result.stderr}`).toBe(
+      2,
+    );
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toMatch(/^[^\n]*not-a-command[^\n]*--help[^\n]*\n$/u);
+  }
+  const allowed = await run(
+    join(ROOT, "tools/agx/src/agx.ts"),
+    ["msg", "--help"],
+    false,
+    false,
+    env,
+  );
+  expect(allowed.exit).toBe(0);
+  expect(allowed.stderr).toBe("");
+  expect(allowed.stdout).toContain("list");
+});
+
 async function run(
   entry: string,
   args: string[],
