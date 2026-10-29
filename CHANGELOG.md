@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.26 — 2026-10-30
+
+- Report per-repository gc --all progress on stderr.
+
 ## 1.22.25 — 2026-10-30
 
 - Require acceptance or a consumed release note before treating copied workspace content as landed
