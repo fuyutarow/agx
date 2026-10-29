@@ -2997,11 +2997,25 @@ async function classifyGc(
     const changedPaths = new Set(
       pendingChange.changes.flatMap((commit) => commit.changedPaths),
     );
-    landedByContent =
+    const matchingContent =
       changedPaths.size > 0 &&
       [...changedPaths].every((path) =>
         sameTrackedFile(target.files.get(path), trunkTarget.files.get(path)),
       );
+    const unrecordedModern = !recorded && kind === "ws";
+    const consumed = matchingContent && !unrecordedModern
+      ? await consumedChangesets(repo, ws.target, trunk, [...changedPaths])
+      : good<string[]>([]);
+    if (!consumed.ok)
+      return verdict(
+        "broken",
+        `cannot judge consumed changesets: ${msg(consumed)}`,
+      );
+    landedByContent =
+      matchingContent &&
+      (unrecordedModern ||
+        lineage.some((record) => record.judgment?.decision === "accept") ||
+        consumed.value.length > 0);
     if (!landedByContent) {
       const description = pendingChange.change.description.trim();
       return verdict(

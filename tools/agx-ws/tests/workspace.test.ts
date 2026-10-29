@@ -1243,6 +1243,7 @@ describe("agx ws add", () => {
     if (!reusedJson.success) return;
     expect(reusedJson.data).toEqual({
       workspace: wsDir(path, "fleet-line-real"),
+      policy_source: "agx.toml (trunk)",
     });
     expect(reused.err).not.toContain(chatter);
   });
@@ -3702,9 +3703,12 @@ describe("gc integration branches", () => {
     // This test exercises the land lock; the staging residue must be restorable.
     expect((await jj(["status"], dir)).code).toBe(0);
     setRecords([]);
-    const dry = await ws(["gc", "--dry-run", "--legacy"], path);
+    const dry = await ws(
+      ["gc", "--dry-run", "--legacy", "--include-unrecorded"],
+      path,
+    );
     expect(dry.code, dry.err).toBe(0);
-    expect(dry.out).toContain(`${dir}\tlegacy\tkeep\t`);
+    expect(dry.out).toContain(`${dir}\tland\tkeep\t`);
     expect(dry.out).toContain("unlanded change");
     expect((await ws(["gc"], path)).code).toBe(0);
     expect(await Bun.file(join(dir, "a.txt")).exists()).toBe(true);
@@ -3717,7 +3721,7 @@ describe("gc integration branches", () => {
         since: Temporal.Now.instant().toString(),
       }),
     );
-    const held = await ws(["gc", "--legacy"], path);
+    const held = await ws(["gc", "--legacy", "--include-unrecorded"], path);
     expect(held.code, held.err).toBe(0);
     expect(held.out).toContain("land lock is held");
     expect(await Bun.file(join(dir, "a.txt")).exists()).toBe(true);
@@ -3730,9 +3734,12 @@ describe("gc integration branches", () => {
         since: Temporal.Now.instant().toString(),
       }),
     );
-    const collected = await ws(["gc", "--legacy"], path);
+    const collected = await ws(
+      ["gc", "--legacy", "--include-unrecorded"],
+      path,
+    );
     expect(collected.code, collected.err).toBe(0);
-    expect(collected.out).toContain(`${dir}\tlegacy\tkeep\t`);
+    expect(collected.out).toContain(`${dir}\tland\tkeep\t`);
     expect(await Bun.file(join(dir, "a.txt")).exists()).toBe(true);
     expect((await jj(["workspace", "list"], path)).out).toContain("lander");
   });
