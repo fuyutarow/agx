@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.27 — 2026-10-30
+
+- Report opt-in GC step timings on stderr; bound untracked inventory time per repository and report partial coverage when the budget is exhausted.
+
 ## 1.22.26 — 2026-10-30
 
 - Report per-repository gc --all progress on stderr.
