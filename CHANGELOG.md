@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.30 — 2026-10-30
+
+- Keep liveness probes outside the current-runs publication lock.
+
 ## 1.22.29 — 2026-10-30
 
 - Document the discard-broken patch location and landed rule in rm help.
