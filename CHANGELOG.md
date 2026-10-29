@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.6 — 2026-10-29
+
+- Wait for publication locks using the judge bound and report lock errors accurately.
+
 ## 1.22.5 — 2026-10-29
 
 - Deliver to idle Codex threads when turn listing is unavailable.
