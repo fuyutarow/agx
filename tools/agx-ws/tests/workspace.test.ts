@@ -198,6 +198,100 @@ test("ws contract: a tracked symlink to a directory is compared as a link", asyn
   expect(existsSync(clean)).toBe(false);
 });
 
+
+test("ws contract: a refused rm leaves the directory and the jj entry untouched", async () => {
+  const path = await repo('trunk = "main"\n');
+  setRecords([]);
+  expect((await ws(["add", "compare-failure"], path)).code).toBe(0);
+  const dir = wsDir(path, "compare-failure");
+  const before = (await jj(["workspace", "list"], path)).out;
+  const realJj = Bun.which("jj");
+  const wrapper = join(scratch, "compare-failure-bin");
+  const marker = join(scratch, "compare-failure-once");
+  await mkdir(wrapper);
+  await Bun.write(
+    join(wrapper, "jj"),
+    `#!/usr/bin/env bun
+const args = process.argv.slice(2);
+if (process.cwd() === ${JSON.stringify(dir)} && args.includes("log")) process.exit(1);
+if (args.includes("file") && args.includes("show") && args.includes("a.txt") && !await Bun.file(${JSON.stringify(marker)}).exists()) {
+  await Bun.write(${JSON.stringify(marker)}, "failed");
+  process.stderr.write("injected comparison failure\\n");
+  process.exit(1);
+}
+const child = Bun.spawn([${JSON.stringify(realJj)}, ...args], {stdout:"inherit", stderr:"inherit"});
+process.exitCode = await child.exited;
+`,
+  );
+  await chmod(join(wrapper, "jj"), 0o755);
+  const result = await ws(
+    ["rm", "compare-failure"],
+    path,
+    baseEnv({ PATH: `${wrapper}:${bin}:${process.env.PATH}` }),
+  );
+  expect(result.code).toBe(1);
+  expect(result.err).toContain("injected comparison failure");
+  expect(await Bun.file(join(dir, "a.txt")).text()).toBe("a\n");
+  expect((await jj(["workspace", "list"], path)).out).toBe(before);
+});
+
+test("ws contract: rm finishes a workspace whose directory is already gone", async () => {
+  const path = await repo('trunk = "main"\n');
+  setRecords([]);
+  expect((await ws(["add", "missing"], path)).code).toBe(0);
+  expect((await ws(["add", "neighbor"], path)).code).toBe(0);
+  rmSync(wsDir(path, "missing"), { recursive: true });
+  const result = await ws(["rm", "missing"], path);
+  expect(result.code, result.err).toBe(0);
+  const names = (await jj(["workspace", "list"], path)).out;
+  expect(names).not.toContain("ws_missing:");
+  expect(names).toContain("ws_neighbor:");
+  expect(await Bun.file(join(wsDir(path, "neighbor"), "a.txt")).text()).toBe(
+    "a\n",
+  );
+});
+
+test("ws contract: rm finishes a workspace forgotten before rename", async () => {
+  const path = await repo('trunk = "main"\n');
+  setRecords([]);
+  expect((await ws(["add", "forgotten"], path)).code).toBe(0);
+  const dir = wsDir(path, "forgotten");
+  expect((await jj(["workspace", "forget", "ws_forgotten"], path)).code).toBe(
+    0,
+  );
+  expect(existsSync(dir)).toBe(true);
+  const result = await ws(["rm", "forgotten"], path);
+  expect(result.code, result.err).toBe(0);
+  expect(existsSync(dir)).toBe(false);
+  expect((await jj(["workspace", "list"], path)).out).not.toContain(
+    "ws_forgotten:",
+  );
+});
+
+test("ws contract: cleanup failure reports the already removed workspace as removed", async () => {
+  const path = await repo('trunk = "main"\n');
+  setRecords([]);
+  expect((await ws(["add", "cleanup-failure"], path)).code).toBe(0);
+  const wrapper = join(scratch, "cleanup-failure-bin");
+  await mkdir(wrapper);
+  await Bun.write(
+    join(wrapper, "rip"),
+    "#!/bin/sh\necho injected cleanup failure >&2\nexit 1\n",
+  );
+  await chmod(join(wrapper, "rip"), 0o755);
+  const result = await ws(
+    ["rm", "cleanup-failure"],
+    path,
+    baseEnv({ PATH: `${wrapper}:${bin}:${process.env.PATH}` }),
+  );
+  expect(result.code, result.err).toBe(0);
+  expect(result.err).toContain("tombstone cleanup failed");
+  expect(existsSync(wsDir(path, "cleanup-failure"))).toBe(false);
+  expect((await jj(["workspace", "list"], path)).out).not.toContain(
+    "ws_cleanup-failure:",
+  );
+});
+
 describe("workspace contract: trunk marker", () => {
   test("creates from alpha@origin when its git copy is behind local alpha", async () => {
     const path = await repo(undefined, false);

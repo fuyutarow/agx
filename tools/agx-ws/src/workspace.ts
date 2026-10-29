@@ -68,6 +68,7 @@ type MissingWorkspaceForget = {
   commit: string;
   trunk: string | null;
   owner?: "land";
+  rm?: true;
 };
 
 /** jj string literals allow raw UTF-8; only backslashes and double quotes need escaping. */
@@ -1200,7 +1201,6 @@ export async function remove(options: {
     return bad(
       `${dir} is kept by [ws].keep in agx.toml or L2 repository config`,
     );
-  if (!existsSync(dir)) return bad(`${dir} does not exist`);
   const result = await withLock<string | TombstonedWorkspace>(
     repo.value,
     `agx ws rm ${options.slug}`,
@@ -1210,6 +1210,30 @@ export async function remove(options: {
       const registered = names.value.includes(name.value);
       if (!registered && !existsSync(dir))
         return bad(`${name.value} is not registered and ${dir} does not exist`);
+      if (!existsSync(dir)) {
+        const listed = await workspaces(repo.value);
+        if (!listed.ok) return listed;
+        const entry = listed.value.find(
+          (workspace) => workspace.name === name.value,
+        );
+        if (entry?.commit === undefined || realOr(entry.dir) !== realOr(dir))
+          return bad("cannot verify missing workspace registration");
+        const trunk = await trunkCommit(repo.value, cfg.value);
+        if (!trunk.ok) return trunk;
+        const forgot = await jjOut(
+          ["workspace", "forget", name.value],
+          repo.value.backing,
+          false,
+          {
+            name: name.value,
+            dir,
+            commit: entry.commit,
+            trunk: trunk.value,
+            rm: true,
+          },
+        );
+        return forgot.ok ? good(dir) : forgot;
+      }
       const occupied = busy(realOr(dir));
       if (occupied !== undefined) return bad(occupied);
       const owner = jjWorkspace(dir);
@@ -1235,6 +1259,7 @@ export async function remove(options: {
         return bad(`${dir} is not a local workspace of ${repo.value.backing}`);
       const work = await unlanded(repo.value, cfg.value, dir, name.value, []);
       if (!work.ok) {
+        if (!msg(work).startsWith(`cannot judge ${dir}:`)) return work;
         const broken = await removeBrokenWorkspace(
           repo.value,
           cfg.value,
@@ -1259,9 +1284,11 @@ export async function remove(options: {
     graveyard.value,
     result.value.tombstone,
   );
-  return tombstoned.ok
-    ? good(dir)
-    : bad(`workspace removed but tombstone cleanup failed: ${msg(tombstoned)}`);
+  if (!tombstoned.ok)
+    process.stderr.write(
+      `ws: workspace removed; tombstone cleanup failed: ${msg(tombstoned)}\n`,
+    );
+  return good(dir);
 }
 
 /** A broken checkout is removable only when every trunk-tracked path still matches on disk. */
@@ -1357,6 +1384,8 @@ async function removeBrokenWorkspace(
     );
   const guarded = await removalGuard(repo, dir);
   if (!guarded.ok) return guarded;
+  if (Bun.which("rip") === null)
+    return bad("rip is not on PATH: mise run install:tools");
   if (registered) {
     const forgotten = await jjOut(
       ["workspace", "forget", name],
@@ -1365,8 +1394,6 @@ async function removeBrokenWorkspace(
     );
     if (!forgotten.ok) return forgotten;
   }
-  if (Bun.which("rip") === null)
-    return bad("rip is not on PATH: mise run install:tools");
   const moved = await exec(["rip", dir], dirname(dir), {
     GRAVEYARD: graveyard.path,
     RIP_GRAVEYARD: graveyard.path,
@@ -1826,6 +1853,25 @@ async function verifyMissingWorkspaceForget(
     record.commit !== missing.commit
   )
     return bad("workspace registration changed before forgetting");
+
+  if (missing.rm === true) {
+    const cfg = await readConfig(repo);
+    if (!cfg.ok) return cfg;
+    if (
+      protectedWorkspace(repo, cfg.value, {
+        name: missing.name,
+        dir: missing.dir,
+      })
+    )
+      return bad("workspace is kept by [ws].keep");
+    const guard = await removalGuard(repo, missing.dir, missing.commit);
+    if (!guard.ok) return guard;
+    const work = await unlanded(repo, cfg.value, missing.dir, missing.name, []);
+    if (!work.ok) return work;
+    return work.value.length === 0
+      ? good(undefined)
+      : bad(`workspace has unlanded changes: ${work.value.join(", ")}`);
+  }
 
   const reachable = await workspaceCommitReachable(
     repo,
