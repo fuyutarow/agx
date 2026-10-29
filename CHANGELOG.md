@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.32 — 2026-10-30
+
+- Make workspace removal share GC safety checks and ignore regenerable content.
+
 ## 1.22.31 — 2026-10-30
 
 - Preserve relative symlink targets in broken workspace patches.

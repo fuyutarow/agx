@@ -1,6 +1,6 @@
 {
   "name": "agx-usehooks",
-  "version": "1.22.31",
+  "version": "1.22.32",
   "private": true,
   "type": "module",
   "source": "./src/index.ts",
