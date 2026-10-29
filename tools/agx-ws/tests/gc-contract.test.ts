@@ -322,19 +322,43 @@ test("ws contract: gc trace reports each step on stderr only when asked", async 
   expect(traced.code).toBe(0);
   const normalReport = parseOutput(normal.out);
   const tracedReport = parseOutput(traced.out);
-  expect(tracedReport?.rows.map((row) => row.filter((_, index) => index !== 4))).toEqual(
+  expect(
+    tracedReport?.rows.map((row) => row.filter((_, index) => index !== 4)),
+  ).toEqual(
     normalReport?.rows.map((row) => row.filter((_, index) => index !== 4)),
   );
   expect(tracedReport?.counts).toEqual(normalReport?.counts);
   expect(tracedReport?.complete).toBe(normalReport?.complete);
   expect(normal.err).toBe("");
   const lines = traced.err.trim().split("\n");
-  const steps = ["workspace list", "run records", "aggregate jj graph generation", "graph parsing", "per-workspace classification", "untracked inventory", "comparison"];
+  const steps = [
+    "workspace list",
+    "run records",
+    "aggregate jj graph generation",
+    "graph parsing",
+    "per-workspace classification",
+    "untracked inventory",
+    "comparison",
+  ];
   const progress = lines.splice(4, 1)[0];
-  expect(progress).toMatch(/^gc trace: cumulative: workspaces=\d+\/\d+ classification=\d+\.\d{3} ms inventory=\d+\.\d{3} ms count=\d+ comparison=\d+\.\d{3} ms slowest=".*" ms=\d+\.\d{3} step=(classification|inventory|comparison)$/u);
+  expect(progress).toMatch(
+    /^gc trace: cumulative: workspaces=\d+\/\d+ classification=\d+\.\d{3} ms inventory=\d+\.\d{3} ms count=\d+ comparison=\d+\.\d{3} ms slowest=".*" ms=\d+\.\d{3} step=(classification|inventory|comparison)$/u,
+  );
   expect(lines).toHaveLength(steps.length);
   for (const [index, step] of steps.entries()) {
-    expect(lines[index]).toMatch(new RegExp("^gc trace: " + step + ": [0-9]+\\.[0-9]{3} ms" + (step === "per-workspace classification" || step === "untracked inventory" ? " count=[0-9]+" : "") + "$", "u"));
+    expect(lines[index]).toMatch(
+      new RegExp(
+        "^gc trace: " +
+          step +
+          ": [0-9]+\\.[0-9]{3} ms" +
+          (step === "per-workspace classification" ||
+          step === "untracked inventory"
+            ? " count=[0-9]+"
+            : "") +
+          "$",
+        "u",
+      ),
+    );
   }
 });
 
@@ -382,6 +406,59 @@ test("gc usecase: a change landed as a copy is removable by rm", async () => {
   expect(result.code, `${result.err}\n${result.out}`).toBe(0);
   expect(result.out).toContain("removed");
   expect(existsSync(workspace)).toBe(false);
+});
+
+test("ws contract: gc and rm agree on a landed copy with ignored node_modules", async () => {
+  const f = await fixture(1);
+  const workspace = f.workspaces[0];
+  expect(workspace).toBeDefined();
+  if (workspace === undefined) return;
+  writeFileSync(join(workspace, ".gitignore"), "node_modules/\n");
+  writeFileSync(join(workspace, "copied.txt"), "copied work\n");
+  await jjRun(["commit", "-m", "workspace copy"], workspace, f.baseEnv);
+  writeFileSync(join(f.repo, ".gitignore"), "node_modules/\n");
+  writeFileSync(join(f.repo, "copied.txt"), "copied work\n");
+  await jjRun(["commit", "-m", "same change on trunk"], f.repo, f.baseEnv);
+  await jjRun(["bookmark", "set", "main", "-r", "@-"], f.repo, f.baseEnv);
+  mkdirSync(join(workspace, "node_modules", "pkg"), { recursive: true });
+  writeFileSync(
+    join(workspace, "node_modules", "pkg", "index.js"),
+    "generated\n",
+  );
+  const dry = await gc(f);
+  expect(
+    parseOutput(dry.out)?.rows.find((row) => row[0] === workspace)?.[2],
+  ).toBe("removable");
+  const removed = await wsCommand(f, ["rm", "1"]);
+  expect(removed.code, removed.err).toBe(0);
+  expect(existsSync(workspace)).toBe(false);
+});
+
+test("ws contract: untracked inventory ignores ignored and regenerable paths but keeps a real untracked file", async () => {
+  const f = await fixture(1, 'trunk = "main"\nregenerable = ["generated/"]\n');
+  const workspace = f.workspaces[0];
+  expect(workspace).toBeDefined();
+  if (workspace === undefined) return;
+  writeFileSync(join(workspace, ".gitignore"), "node_modules/\n");
+  await jjRun(["commit", "-m", "ignore"], workspace, f.baseEnv);
+  await jjRun(["bookmark", "set", "main", "-r", "@-"], workspace, f.baseEnv);
+  mkdirSync(join(workspace, "node_modules"));
+  mkdirSync(join(workspace, "generated"));
+  writeFileSync(join(workspace, "node_modules", "ignored"), "ignored");
+  writeFileSync(join(workspace, "generated", "rebuild"), "generated");
+  writeFileSync(join(workspace, "real.txt"), "keep");
+  const inventory = await untrackedContent(workspace, ["generated/"]);
+  expect(inventory.ok).toBe(true);
+  if (!inventory.ok) return;
+  expect(inventory.value.count).toBe(1);
+  expect(inventory.value.paths).toEqual(["real.txt"]);
+  const dry = await gc(f);
+  expect(
+    parseOutput(dry.out)?.rows.find((row) => row[0] === workspace)?.[2],
+  ).toBe("keep");
+  const removed = await wsCommand(f, ["rm", "1"]);
+  expect(removed.code).not.toBe(0);
+  expect(existsSync(join(workspace, "real.txt"))).toBe(true);
 });
 
 test("gc usecase: a change not on trunk stays kept", async () => {
@@ -615,7 +692,9 @@ test("ws contract: gc inventory budget keeps unexamined workspaces and reports i
   for (const workspace of f.workspaces)
     writeFileSync(join(workspace, "untracked.txt"), "keep\n");
   const wrapper = join(f.parent, "clock.ts");
-  writeFileSync(wrapper, `
+  writeFileSync(
+    wrapper,
+    `
 const now = performance.now.bind(performance);
 let inventoryClockCalls = 0;
 Object.defineProperty(performance, "now", { value: () => {
@@ -627,18 +706,41 @@ Object.defineProperty(performance, "now", { value: () => {
   return now();
 }});
 await import(${JSON.stringify(wsCli)});
-`);
+`,
+  );
   const result = await run(
-    ["bun", wrapper, "gc", "--dry-run", "--include-unrecorded", "--grace-minutes", "0", "--inventory-budget-seconds", "1", "--json", "--repo", f.repo],
+    [
+      "bun",
+      wrapper,
+      "gc",
+      "--dry-run",
+      "--include-unrecorded",
+      "--grace-minutes",
+      "0",
+      "--inventory-budget-seconds",
+      "1",
+      "--json",
+      "--repo",
+      f.repo,
+    ],
     f.repo,
     f.baseEnv,
   );
   expect(result.code, result.err).toBe(0);
   const parsed = parseOutput(result.out);
-  const rows = parsed?.rows.filter((row) => f.workspaces.includes(row[0] ?? "")) ?? [];
+  const rows =
+    parsed?.rows.filter((row) => f.workspaces.includes(row[0] ?? "")) ?? [];
   expect(rows).toHaveLength(3);
-  expect(rows.filter((row) => row[5]?.includes("untracked content") === true)).toHaveLength(1);
-  expect(rows.filter((row) => row[2] === "keep" && row[5]?.includes("inventory budget exhausted") === true)).toHaveLength(2);
+  expect(
+    rows.filter((row) => row[5]?.includes("untracked content") === true),
+  ).toHaveLength(1);
+  expect(
+    rows.filter(
+      (row) =>
+        row[2] === "keep" &&
+        row[5]?.includes("inventory budget exhausted") === true,
+    ),
+  ).toHaveLength(2);
   expect(parsed?.counts.collectable).toBe(0);
   expect(parsed?.complete).toBe(false);
 });

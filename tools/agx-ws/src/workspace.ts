@@ -510,9 +510,10 @@ export async function unlanded(
   endCommits: string[],
   registeredOnly = false,
 ): Promise<Attempt<string[]>> {
-  const here = existsSync(dir) && !registeredOnly
-    ? await unlandedFrom(dir, "@", cfg.trunk, false)
-    : await unlandedFrom(repo.backing, `${name}@`, cfg.trunk, true);
+  const here =
+    existsSync(dir) && !registeredOnly
+      ? await unlandedFrom(dir, "@", cfg.trunk, false)
+      : await unlandedFrom(repo.backing, `${name}@`, cfg.trunk, true);
   // A registered workspace's working-copy view can be unavailable from its own
   // directory (for example, an old layout or a damaged working-copy pointer).
   // In that case, try the registered workspace commit from the backing checkout
@@ -541,7 +542,8 @@ export async function unlanded(
   const trunk = await trunkCommit(repo, cfg);
   if (!trunk.ok) return trunk;
   if (trunk.value === null) return good(found);
-  const tipRepo = registeredOnly || retried || !existsSync(dir) ? repo.backing : dir;
+  const tipRepo =
+    registeredOnly || retried || !existsSync(dir) ? repo.backing : dir;
   const tipRevision = tipRepo === repo.backing ? `${name}@` : "@";
   const tip = await jjOut(
     ["log", "--no-graph", "-r", tipRevision, "-T", "commit_id"],
@@ -1217,8 +1219,15 @@ export async function remove(options: {
       const registered = names.value.includes(name.value);
       if (!registered && !existsSync(dir))
         return bad(`${name.value} is not registered and ${dir} does not exist`);
-      if (registered) {
-        const work = await unlanded(repo.value, cfg.value, dir, name.value, [], true);
+      if (registered && !existsSync(dir)) {
+        const work = await unlanded(
+          repo.value,
+          cfg.value,
+          dir,
+          name.value,
+          [],
+          true,
+        );
         if (!work.ok) return work;
         if (work.value.length > 0)
           return bad(
@@ -1256,6 +1265,14 @@ export async function remove(options: {
         ? undefined
         : brokenWorkspaceReason(owner.error);
       if (brokenMetadata !== undefined) {
+        const work = registered
+          ? await unlanded(repo.value, cfg.value, dir, name.value, [], true)
+          : good<string[]>([]);
+        if (!work.ok) return work;
+        if (work.value.length > 0)
+          return bad(
+            `${dir} has unlanded changes; land or abandon them first:\n${work.value.join("\n")}`,
+          );
         const removed = await removeBrokenWorkspace(
           repo.value,
           cfg.value,
@@ -1273,24 +1290,78 @@ export async function remove(options: {
           owner.value.backingRoot !== repo.value.backing)
       )
         return bad(`${dir} is not a local workspace of ${repo.value.backing}`);
-      const work = await unlanded(repo.value, cfg.value, dir, name.value, []);
-      if (!work.ok) {
-        if (!msg(work).startsWith(`cannot judge ${dir}:`)) return work;
-        const broken = await removeBrokenWorkspace(
-          repo.value,
-          cfg.value,
-          graveyard.value,
-          name.value,
-          dir,
-          registered,
-          options.discardBroken === true,
-        );
-        return broken.ok ? good(dir) : broken;
+      const localRevision = await jjOut(
+        ["log", "--no-graph", "-r", "@", "-T", "commit_id"],
+        dir,
+        true,
+      );
+      if (!localRevision.ok || !registered) {
+        const recorded = registered
+          ? await unlanded(repo.value, cfg.value, dir, name.value, [], true)
+          : good<string[]>([]);
+        if (!recorded.ok) return recorded;
+        if (recorded.value.length > 0)
+          return bad(
+            `${dir} has unlanded changes; land or abandon them first:\n${recorded.value.join("\n")}`,
+          );
+        const work = await unlanded(repo.value, cfg.value, dir, name.value, []);
+        if (!work.ok && !msg(work).startsWith(`cannot judge ${dir}:`)) return work;
+        if (!work.ok) {
+          const broken = await removeBrokenWorkspace(
+            repo.value,
+            cfg.value,
+            graveyard.value,
+            name.value,
+            dir,
+            registered,
+            options.discardBroken === true,
+          );
+          return broken.ok ? good(dir) : bad(`${msg(broken)}; ${msg(work)}`);
+        }
+        if (work.value.length > 0)
+          return bad(
+            `${dir} has unlanded changes; land or abandon them first:\n${work.value.join("\n")}`,
+          );
+        if (!registered) return forgetAndTombstone(repo.value, name.value, dir);
       }
-      if (work.value.length > 0)
+      const listed = await workspaces(repo.value);
+      if (!listed.ok) return listed;
+      const current = listed.value.find(
+        (workspace) => workspace.name === name.value,
+      );
+      if (current === undefined)
+        return bad(`cannot verify workspace registration: ${name.value}`);
+      const records = await agxRecords(repo.value.backing);
+      if (!records.ok) return records;
+      const trunk = await trunkCommit(repo.value, cfg.value);
+      if (!trunk.ok) return trunk;
+      const graph = await gcCommitGraph(repo.value, trunk.value);
+      if (!graph.ok) return graph;
+      const decision = await classifyGc(
+        repo.value,
+        cfg.value,
+        current,
+        "ws",
+        records.value,
+        graph.value,
+        undefined,
+        trunk.value,
+        {
+          repo: repo.value.backing,
+          dryRun: true,
+          includeUnrecorded: true,
+          legacy: true,
+          graceMinutes: 0,
+        },
+      );
+      if (!decision.collect && decision.reason.startsWith("unlanded change ")) {
+        const pending = unlandedWorkspaceChange(current, graph.value);
         return bad(
-          `${dir} has unlanded changes; land or abandon them first:\n${work.value.map((l) => `  ${l}`).join("\n")}`,
+          `${dir} has unlanded changes; land or abandon them first:\n${pending.changes.map((change) => `  ${change.change} ${change.description}`).join("\n")}`,
         );
+      }
+      if (!decision.collect)
+        return bad(`${dir}: unlanded or protected content: ${decision.reason}`);
       const done = await forgetAndTombstone(repo.value, name.value, dir);
       return done;
     },
@@ -3682,6 +3753,15 @@ export async function untrackedContent(
     files = new Set(trackedFiles);
   }
   const roots = regenerable.map((path) => path.replace(/\/$/u, ""));
+  const owner = jjWorkspace(dir);
+  if (!owner.ok) return owner;
+  const store = join(owner.value.backingRoot, ".jj", "repo", "store");
+  const gitTarget = await attempt(() =>
+    readFile(join(store, "git_target"), "utf8"),
+  );
+  if (!gitTarget.ok)
+    return bad(`cannot locate ignore rules: ${msg(gitTarget)}`);
+  const gitDir = resolve(store, gitTarget.value.trim());
   const isRegenerable = (path: string): boolean =>
     roots.some((root) => path === root || path.startsWith(`${root}/`));
   let expired = false;
@@ -3743,12 +3823,50 @@ export async function untrackedContent(
       readdir(join(dir, parent), { withFileTypes: true }),
     );
     if (!entries.ok) return entries;
+    const candidates = entries.value.map((entry) =>
+      parent === "" ? entry.name : `${parent}/${entry.name}`,
+    );
+    const ignoredResult =
+      candidates.length === 0
+        ? undefined
+        : await runStep(
+            [
+              "git",
+              `--git-dir=${gitDir}`,
+              `--work-tree=${dir}`,
+              "-c",
+              "core.excludesFile=/dev/null",
+              "check-ignore",
+              "--no-index",
+              "-z",
+              "--stdin",
+            ],
+            dir,
+            {
+              input: candidates.join("\0") + "\0",
+              timeoutMs: Math.max(1, Math.ceil(deadline - performance.now())),
+            },
+          );
+    if (ignoredResult !== undefined && !ignoredResult.ok) return ignoredResult;
+    if (ignoredResult?.ok === true && ignoredResult.value.code > 1)
+      return bad(`ignore inventory failed: ${ignoredResult.value.err.trim()}`);
+    const ignored = new Set(
+      ignoredResult?.ok === true
+        ? ignoredResult.value.out.toString().split("\0").filter(Boolean)
+        : [],
+    );
     for (const entry of entries.value) {
       if (timedOut()) return timeoutDiagnostic();
       entriesInventoried++;
       const path = parent === "" ? entry.name : `${parent}/${entry.name}`;
       if (entry.name === ".jj" || entry.name === ".git") continue;
       if (isRegenerable(path)) continue;
+      if (
+        ignored.has(path) &&
+        !files.has(path) &&
+        ![...files].some((file) => file.startsWith(`${path}/`))
+      )
+        continue;
       const expected = trackedDetails?.get(path);
       if (expected !== undefined) {
         seenTracked.add(path);

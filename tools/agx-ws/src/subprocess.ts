@@ -23,6 +23,7 @@ export async function runStep(
     env?: Record<string, string> | undefined;
     output?: "capture" | "inherit" | "json";
     timeoutMs?: number;
+    input?: string;
   } = {},
 ): Promise<Attempt<StepResult>> {
   requireJjTemplateVersion(cmd, { ...process.env, ...options.env });
@@ -33,7 +34,7 @@ export async function runStep(
     const child = Bun.spawn(cmd, {
       cwd,
       env: { ...process.env, ...options.env },
-      stdin: "ignore",
+      stdin: options.input === undefined ? "ignore" : "pipe",
       stdout: "pipe",
       stderr: "pipe",
       signal,
@@ -73,6 +74,18 @@ export async function runStep(
       }
     }),
   );
+  if (
+    options.input !== undefined &&
+    child.stdin !== null &&
+    child.stdin !== undefined
+  ) {
+    const stdin = child.stdin;
+    const input = options.input;
+    void (async () => {
+      await stdin.write(input);
+      await stdin.end();
+    })().catch(() => {});
+  }
   let timer: ReturnType<typeof setTimeout> | undefined;
   const result = await attempt(async () => {
     const code = await Promise.race([child.exited, deadline.promise]);
