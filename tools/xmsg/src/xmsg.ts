@@ -82,6 +82,18 @@ function claudePrompt(target: string, message: string): string {
   ].join("\n");
 }
 
+async function relayClaudeTarget(
+  uuid: string,
+  timeoutMs: number,
+  snapshot?: Awaited<ReturnType<typeof selectedInventory>>,
+): Promise<string | Error> {
+  const inventory = snapshot ?? await selectedInventory("claude", timeoutMs);
+  if (!inventory.evidence.available || inventory.recipients.length === 0)
+    return uuid;
+  const resolved = await resolveClaudeTarget(uuid, timeoutMs, inventory);
+  return resolved.ok ? resolved.name : new Error(resolved.reason);
+}
+
 async function send(
   kind: "codex" | "claude",
   id: string,
@@ -89,6 +101,7 @@ async function send(
   timeoutMs: number,
   sender: string,
   relayTarget = id,
+  deferredUuid = false,
 ): Promise<number> {
   const transportStarted = performance.now();
   // Headers precede the blank line; never parse or strip the caller's body.
@@ -231,8 +244,8 @@ async function send(
     return 3;
   }
   if (receipt?.accepted === false) {
-    process.stderr.write("agx msg: SendMessage rejected the request\n");
-    return 1;
+    process.stderr.write(`agx msg: SendMessage rejected the request: ${receipt.reason.slice(0, 1200)}\n`);
+    return deferredUuid ? 3 : 1;
   }
   if (receipt === undefined)
     return unknown(
@@ -586,16 +599,16 @@ async function main(): Promise<number> {
     args.flags.exact !== true &&
     boundClaudeName === undefined
   ) {
-    const resolved = await resolveClaudeTarget(
+    const resolved = await relayClaudeTarget(
       uuid,
       Math.max(1, Math.floor(deadline - performance.now())),
       claudeSnapshot,
     );
-    if (!resolved.ok) {
-      process.stderr.write(`agx msg: ${resolved.reason}\n`);
+    if (resolved instanceof Error) {
+      process.stderr.write(`agx msg: ${resolved.message}\n`);
       return 3;
     }
-    relayTarget = resolved.name;
+    relayTarget = resolved;
   }
   const remaining = Math.floor(deadline - performance.now());
   if (remaining < 1) {
@@ -613,6 +626,7 @@ async function main(): Promise<number> {
     remaining,
     sender,
     relayTarget,
+    kind === "claude" && uuid !== undefined && relayTarget === uuid,
   );
   if (args.flags.timing === true) {
     process.stderr.write(

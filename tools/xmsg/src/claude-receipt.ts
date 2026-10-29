@@ -48,7 +48,7 @@ const Receipt = z.object({
 
 export type ClaudeReceipt =
   | { accepted: true; msgId: string }
-  | { accepted: false }
+  | { accepted: false; reason: string }
   | {
       accepted: "no-send";
       topLevelSendCalls: 0;
@@ -63,7 +63,7 @@ export type ClaudeReceipt =
 function receiptFromText(text: string): ClaudeReceipt[] {
   const receipt = jsonOf(Receipt).safeParse(text);
   if (!receipt.success) return [];
-  if (!receipt.data.success) return [{ accepted: false }];
+  if (!receipt.data.success) return [{ accepted: false, reason: text }];
   const msgId = z.uuid().safeParse(receipt.data.msg_id);
   return msgId.success ? [{ accepted: true, msgId: msgId.data }] : [];
 }
@@ -133,7 +133,10 @@ class ReceiptReader {
     }
     if (!this.matching.has(result.data.tool_use_id)) return;
     if (result.data.is_error === true) {
-      this.receipts.push({ accepted: false });
+      const reason = typeof result.data.content === "string"
+        ? result.data.content
+        : result.data.content.map((part) => part.text).join("\n");
+      this.receipts.push({ accepted: false, reason });
       return;
     }
     const texts =

@@ -1562,7 +1562,6 @@ test("xmsg contract: an unbound claude target still resolves through the registr
 });
 
 test.each([
-  { records: [], reason: "found 0 live registrations" },
   {
     records: [{ sessionId: uuidB, name: "peer", status: "completed" }],
     reason: "found 0 live registrations",
@@ -1596,19 +1595,60 @@ test.each([
   },
 );
 
-test("unavailable Claude UUID inventory names the target and searched source without relay", async () => {
+test("msg contract: a uuid target with an empty sender inventory is handed to the child unchanged", async () => {
+  const r = await run({
+    inventory: "[]",
+    args: sendArgs(`claude:${uuidB}`),
+    output: completeStream(listUse, listResult),
+  });
+  expect(r.exit).toBe(3);
+  expect(r.calls).toHaveLength(2);
+  expect(r.argv.at(-1)).toContain(`Target: ${JSON.stringify(uuidB)}`);
+  expect(r.stderr).toContain("ListAgents tool_use_id");
+  expect(r.stderr).not.toContain("inventory schema");
+});
+
+test("deferred UUID relay reports a SendMessage refusal", async () => {
+  const r = await run({
+    inventory: "[]",
+    args: sendArgs(`claude:${uuidB}`),
+    output: completeStream(uuidUse(uuidB), result("recipient not found", "send-1", true)),
+  });
+  expect(r.exit).toBe(3);
+  expect(r.stderr).toContain("recipient not found");
+});
+
+test("msg contract: an unknown uuid with a visible inventory is refused with its reason", async () => {
+  const r = await run({ inventory: globalAgents(uuidA), args: sendArgs(`claude:${uuidB}`) });
+  expect(r.exit).toBe(3);
+  expect(r.calls).toEqual([["agents", "--json"]]);
+  expect(r.stderr).toContain("found 0 live registrations");
+});
+
+test("msg contract: claude uuid target resolves against the current inventory shape", async () => {
+  const fixture = await Bun.file(resolve(import.meta.dir, "./host-inventory.sanitized.json")).text();
+  const inventory = fixture.replace('"uuid-5"', JSON.stringify(uuidB));
+  const r = await run({ inventory, args: sendArgs(`claude:${uuidB}`), output: completeStream(uuidUse(uuidB), accepted) });
+  expect(r.exit).toBe(0);
+  expect(r.argv.at(-1)).toContain('Target: "agx-agt_df65"');
+  expect(r.stderr).not.toContain("inventory schema");
+});
+
+test("unavailable Claude UUID inventory defers to the relay", async () => {
   const r = await run({
     inventory: "invalid",
     args: sendArgs(`claude:${uuidB}`),
+    output: completeStream(listUse, listResult),
   });
   expect(r.exit).toBe(3);
-  expect(r.calls).toEqual([
+  expect(r.calls.slice(0, 2)).toEqual([
     ["agents", "--json"],
     ["agents", "--json"],
   ]);
+  expect(r.calls[2]?.[0]).toBe("--print");
   expect(r.stderr).toContain(uuidB);
-  expect(r.stderr).toContain("Invalid Claude inventory schema");
-  expect(r.stderr).toContain("searched claude agents --json");
+  expect(r.stderr).toContain("relay step failed");
+  expect(r.stderr).not.toContain("Invalid Claude inventory schema");
 });
 
 test.each([

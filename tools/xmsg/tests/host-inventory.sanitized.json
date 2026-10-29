@@ -1,0 +1,92 @@
+[
+  {
+    "pid": 12345,
+    "cwd": "path-11",
+    "kind": "interactive",
+    "startedAt": 1792872423328,
+    "sessionId": "uuid-1",
+    "name": "dotfiles-agt_5eqw",
+    "status": "idle"
+  },
+  {
+    "pid": 12345,
+    "cwd": "path-12",
+    "kind": "interactive",
+    "startedAt": 1792872423389,
+    "sessionId": "uuid-2",
+    "name": "qoed-agt_y5yd",
+    "status": "idle"
+  },
+  {
+    "pid": 12345,
+    "cwd": "path-13",
+    "kind": "interactive",
+    "startedAt": 1792872423496,
+    "sessionId": "uuid-3",
+    "name": "coralbase-agt_xgnp",
+    "status": "idle"
+  },
+  {
+    "pid": 12345,
+    "cwd": "path-14",
+    "kind": "interactive",
+    "startedAt": 1792872423556,
+    "sessionId": "uuid-4",
+    "name": "qinotebook-agt_shm9",
+    "status": "idle"
+  },
+  {
+    "pid": 12345,
+    "cwd": "path-15",
+    "kind": "interactive",
+    "startedAt": 1792872424785,
+    "sessionId": "uuid-5",
+    "name": "agx-agt_df65",
+    "status": "busy"
+  },
+  {
+    "pid": 12345,
+    "cwd": "path-16",
+    "kind": "interactive",
+    "startedAt": 1792988405099,
+    "sessionId": "uuid-6",
+    "name": "standard-skills-agt_e4za",
+    "status": "idle"
+  },
+  {
+    "pid": 12345,
+    "cwd": "path-17",
+    "kind": "interactive",
+    "startedAt": 1792988737408,
+    "sessionId": "uuid-7",
+    "name": "firedancer-agt_sjpk",
+    "status": "busy"
+  },
+  {
+    "pid": 12345,
+    "cwd": "path-18",
+    "kind": "interactive",
+    "startedAt": 1793021609699,
+    "sessionId": "uuid-8",
+    "name": "soks-agt_xkc8",
+    "status": "idle"
+  },
+  {
+    "pid": 12345,
+    "cwd": "path-19",
+    "kind": "interactive",
+    "startedAt": 1793025950511,
+    "sessionId": "uuid-9",
+    "name": "dx-agt_2hqv",
+    "status": "idle"
+  },
+  {
+    "pid": 12345,
+    "cwd": "path-17",
+    "kind": "interactive",
+    "startedAt": 1793066637572,
+    "sessionId": "uuid-10",
+    "name": "firedancer-agt_xoxo",
+    "status": "busy"
+  }
+]
