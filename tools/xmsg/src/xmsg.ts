@@ -496,9 +496,22 @@ async function main(): Promise<number> {
     /^[0-9a-f-]+$/iu.test(id)
   ) {
     if (kind !== "codex" && kind !== "claude") return 2;
-    const inventory = await selectedInventory(kind, timeoutMs);
+    const remaining = Math.floor(deadline - performance.now());
+    if (remaining < 1) {
+      process.stderr.write(
+        "agx msg: discovery exhausted the send deadline; no send attempted\n",
+      );
+      return 3;
+    }
+    const inventory = await selectedInventory(kind, remaining);
     const { recipients, evidence } = inventory;
     if (kind === "claude") claudeSnapshot = inventory;
+    if (performance.now() >= deadline) {
+      process.stderr.write(
+        "agx msg: discovery exhausted the send deadline; no send attempted\n",
+      );
+      return 3;
+    }
     const resolution = resolveRecipientSelector(
       `${kind}:${id}`,
       recipients,

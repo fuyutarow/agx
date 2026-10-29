@@ -372,9 +372,7 @@ async function run(
             const statusType =
               options.codexDelivery ?? selectedThread?.status.type;
             let turns: unknown[] = [];
-            const shouldLoadReadTurns =
-              options.codexDelivery === undefined &&
-              request.params.includeTurns === true;
+            const shouldLoadReadTurns = request.params.includeTurns === true;
             if (options.codexDelivery === "active")
               turns = [{ id: "turn-active", status: "inProgress" }];
             else if (shouldLoadReadTurns)
@@ -1492,7 +1490,7 @@ test("prefix discovery timeout sends nothing", async () => {
   const r = await run({
     inventory: "[]",
     inventoryDelay: 5000,
-    args: sendArgs("claude:dead", "80"),
+    args: sendArgs("claude:dead", "300"),
   });
   expect(r.exit).toBe(3);
   expect(r.calls).toEqual([["agents", "--json"]]);
