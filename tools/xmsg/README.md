@@ -14,6 +14,11 @@ agx msg send --to 01a15424 --message 'Can you check this?'
 agx msg send --to 'review (v2)' --message 'Can you check this?'
 ```
 
+| Proven sender    | Claude target                                                 | Codex target |
+| ---------------- | ------------------------------------------------------------- | ------------ |
+| Claude           | Refused before delivery; use Claude Code's native SendMessage | agx msg      |
+| Codex or unknown | agx msg                                                       | agx msg      |
+
 Qualification is optional for a globally unique full UUID, UUID front prefix (at least
 4 hexadecimal digits, case-insensitive with canonical hyphens), or literal exact native
 name. Unqualified selectors query both native inventories concurrently and require both
@@ -133,7 +138,9 @@ deduplicates caller text as existing headers. Claude receipt correlation checks
 the exact composed envelope plus body.
 
 Sender selection is `--from` first, then the explicit `AGX_MSG_FROM` declaration,
-then the exact `AGX_RUN_ID` run's recorded vendor session and route, then unknown.
+then the exact `AGX_RUN_ID` run's recorded vendor session and route, then the
+proven `CODEX_THREAD_ID` from the nearest Codex vendor process's own environment,
+then unknown.
 The run lookup uses the existing worker record reader and live progress projection;
 unknown runs, missing sessions, unsupported routes and non-UUID sessions stay unknown.
 Both declarations accept the same full addresses and UUID
@@ -141,10 +148,10 @@ canonicalization. An invalid selected declaration (including an empty value) exi
 2 before discovery or transport; a valid `--from` overrides even an invalid
 `AGX_MSG_FROM`. List, status and wait ignore `AGX_MSG_FROM`; wait requires explicit addresses.
 
-Without either declaration or a recorded full run session, the first line is `from: unknown (caller identity unavailable or inherited; use --from backend:<full-session-id>)`.
-Sends still work with truthful missing attribution. `CODEX_THREAD_ID`,
-`CODEX_SESSION_ID`, `CLAUDE_CODE_SESSION_ID` and other native session variables
-are never consulted: they may belong to a parent, even when they agree. No cwd,
+Without a proven sender, the first line reports unknown identity and checked and
+missing sources. Sends still work with truthful missing attribution. Inherited
+native session variables do not prove identity. A nearer Claude process or a
+missing or unreadable Codex ID does not prove a Codex sender. No cwd,
 inventory, transcript, latest session, name or lookup order determines the sender.
 No recipient inventory is used for sender selection.
 

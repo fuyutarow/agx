@@ -36,6 +36,28 @@ function explicitSender(value: string): string | undefined {
   return match === null || id === undefined ? undefined : `${match[1]}:${id}`;
 }
 
+type Vendor = "codex" | "claude";
+type Route =
+  | { kind: "native"; target: string }
+  | { kind: "agx"; target: string; vendor: Vendor };
+
+function route(
+  sender: Vendor | "unknown",
+  vendor: Vendor,
+  target: string,
+): Route {
+  return sender === "claude" && vendor === "claude"
+    ? { kind: "native", target }
+    : { kind: "agx", target, vendor };
+}
+
+function refuseNative(target: string): number {
+  process.stderr.write(
+    `agx msg: Claude-to-Claude messaging requires Claude Code's native messenger (SendMessage); use it for ${target}\n`,
+  );
+  return 2;
+}
+
 function unknown(reason: string, output = "", relaySessionId?: string): number {
   process.stderr.write(
     `agx msg: acceptance unknown (${reason}); do not resend without checking\n`,
@@ -281,7 +303,7 @@ async function main(): Promise<number> {
       },
       help: {
         description:
-          "Wait for exact reply input with agx msg wait --to codex:<full-UUID> --from backend:<full-UUID> --message TEXT [--timeout-ms N] (0 observed, 3 unobservable, 4 deadline; Claude inbox unsupported). List recipients with agx msg list [--json], send once with agx msg send, or inspect a Claude relay with agx msg status --relay <session-UUID>. Sender: --from > AGX_MSG_FROM > recorded AGX_RUN_ID session > proven CODEX_THREAD_ID from the nearest Codex vendor process's own environment > unknown. Never infer from unproven inherited native session variables. The envelope from: line is caller attribution, not authentication. Claude from-name is relay transport and includes the resolved sender diagnostic. List exits 0 complete, 3 incomplete. Send/status exit: 0 accepted, 1 rejected, 2 usage, 3 unreachable, 4 acceptance unknown.",
+          "Wait for exact reply input with agx msg wait --to codex:<full-UUID> --from backend:<full-UUID> --message TEXT [--timeout-ms N] (0 observed, 3 unobservable, 4 deadline; Claude inbox unsupported). List recipients with agx msg list [--json], send once with agx msg send, or inspect a Claude relay with agx msg status --relay <session-UUID>. Routing: Claude to Claude is refused; use native SendMessage. Claude to Codex, Codex to either, and unknown to either use agx msg. Sender: --from > AGX_MSG_FROM > recorded AGX_RUN_ID session > proven CODEX_THREAD_ID from the nearest Codex vendor process's own environment > unknown. Never infer from unproven inherited native session variables. The envelope from: line is caller attribution, not authentication. Claude from-name is relay transport and includes the resolved sender diagnostic. List exits 0 complete, 3 incomplete. Send/status exit: 0 accepted, 1 rejected, 2 usage, 3 unreachable, 4 acceptance unknown.",
       },
     }),
   );
@@ -414,6 +436,11 @@ async function main(): Promise<number> {
     );
     return 2;
   }
+  let senderVendor: Vendor | "unknown" = "unknown";
+  if (sender.startsWith("claude:")) senderVendor = "claude";
+  else if (sender.startsWith("codex:")) senderVendor = "codex";
+  if (kind === "claude" && route(senderVendor, kind, id).kind === "native")
+    return refuseNative(`claude:${id}`);
   const started = performance.now();
   const deadline = started + timeoutMs;
   let boundClaudeName: string | undefined;
@@ -524,6 +551,20 @@ async function main(): Promise<number> {
       return 2;
     }
   }
+  if (kind !== "codex" && kind !== "claude") return 2;
+  const selectedRoute = route(senderVendor, kind, target);
+  // The route contract explicitly requires an exhaustive executor switch.
+  // oxlint-disable-next-line eslint-js/no-restricted-syntax
+  switch (selectedRoute.kind) {
+    case "native":
+      return refuseNative(`claude:${selectedRoute.target}`);
+    case "agx":
+      break;
+    default: {
+      const unreachable: never = selectedRoute;
+      return unreachable;
+    }
+  }
   let relayTarget = boundClaudeName ?? target;
   const uuid = canonicalUuid(target);
   if (
@@ -553,8 +594,8 @@ async function main(): Promise<number> {
   if (kind !== "codex" && kind !== "claude") return 2;
   const transportStarted = performance.now();
   const outcome = await send(
-    kind,
-    target,
+    selectedRoute.vendor,
+    selectedRoute.target,
     message,
     remaining,
     sender,

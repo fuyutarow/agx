@@ -570,11 +570,70 @@ test("a complete clean relay with zero SendMessage calls is unavailable, not unk
   expect(r.stdout).not.toContain("accepted for");
 });
 
-test.each(["codex", "claude"])(
-  "%s sender gets target-resolution evidence when a live registration UUID is absent from relay peers",
-  async (sender) => {
+test("msg contract: claude to claude is refused before any delivery and names the native messenger", async () => {
+  for (const args of [
+    sendArgs(`claude:${uuidB}`),
+    [...sendArgs("claude:peer"), "--exact"],
+  ]) {
+    const r = await run({ args: [...args, "--from", `claude:${uuidA}`] });
+    expect(r.exit).toBe(2);
+    expect(r.stdout).toBe("");
+    expect(r.stderr.trim().split("\n")).toHaveLength(1);
+    expect(r.stderr).toContain("SendMessage");
+    expect(r.called).toBe(false);
+    expect(r.rpcCalls).toHaveLength(0);
+  }
+  const recorded = await run({
+    args: sendArgs(`claude:${uuidB}`),
+    runRecord: { route: "claude", session: uuidA },
+    env: { AGX_RUN_ID: "worker-run" },
+  });
+  expect(recorded.exit).toBe(2);
+  expect(recorded.stderr).toContain("SendMessage");
+  expect(recorded.called).toBe(false);
+});
+
+test("msg contract: a codex or unknown sender still reaches a claude target", async () => {
+  for (const sender of [`codex:${uuidA}`, undefined]) {
+    const effective = sender ?? callerSender;
+    const sentUse = {
+      ...use,
+      message: {
+        ...use.message,
+        content: [
+          {
+            ...use.message.content[0],
+            input: { to: "peer", message: envelope(message, effective) },
+          },
+        ],
+      },
+    };
+    const r = await run({
+      args: [
+        ...sendArgs("claude:peer"),
+        ...(sender === undefined ? [] : ["--from", sender]),
+      ],
+      output: completeStream(sentUse, accepted),
+    });
+    expect(r.exit).toBe(0);
+    expect(r.calls).toHaveLength(1);
+  }
+});
+
+test("msg contract: claude to codex is still carried", async () => {
+  const r = await run({
+    kind: "codex",
+    args: [...sendArgs(`codex:${uuidB}`), "--from", `claude:${uuidA}`],
+  });
+  expect(r.exit).toBe(0);
+  expect(r.argv.at(-1)).toBe(envelope(message, `claude:${uuidA}`));
+});
+
+test.each(["full", "prefix"])(
+  "codex sender gets target-resolution evidence for a %s UUID absent from relay peers",
+  async (shape) => {
     const target = "deadbeef-1234-4abc-8def-0123456789ab";
-    const selector = sender === "codex" ? target : "deadbeef";
+    const selector = shape === "full" ? target : "deadbeef";
     const listing =
       "Peer sessions (1):\n  intended-peer [a80909] · interactive · busy";
     const r = await run({
@@ -583,7 +642,7 @@ test.each(["codex", "claude"])(
         "--to",
         `claude:${selector}`,
         "--from",
-        `${sender}:${target}`,
+        `codex:${target}`,
         "--message",
         message,
       ],
@@ -1782,6 +1841,12 @@ test.each(["codex", "claude"])(
           AGX_WORKER: "1",
         },
       });
+      if (backend === "claude" && kind === "claude") {
+        expect(r.exit).toBe(2);
+        expect(r.called).toBe(false);
+        expect(r.stderr).toContain("SendMessage");
+        continue;
+      }
       expect(r.exit).toBe(0);
       expect(r.calls).toHaveLength(1);
       if (kind === "codex")
@@ -2011,7 +2076,7 @@ test.each(["codex", "claude"])(
   "explicit AGX_MSG_FROM reaches the %s transport and Claude relay name",
   async (kind) => {
     if (kind !== "codex" && kind !== "claude") return;
-    const sender = `claude:${uuidA}`;
+    const sender = `${kind === "claude" ? "codex" : "claude"}:${uuidA}`;
     const sentUse = {
       ...use,
       message: {
@@ -2027,7 +2092,7 @@ test.each(["codex", "claude"])(
     const r = await run({
       kind,
       env: {
-        AGX_MSG_FROM: `claude:${uuidA.replaceAll("-", "").toUpperCase()}`,
+        AGX_MSG_FROM: `${kind === "claude" ? "codex" : "claude"}:${uuidA.replaceAll("-", "").toUpperCase()}`,
         CODEX_THREAD_ID: uuidB,
         CLAUDE_CODE_SESSION_ID: uuidB,
       },
