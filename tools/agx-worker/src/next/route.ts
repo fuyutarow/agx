@@ -25,6 +25,10 @@ import {
 // for task variation and overhead instead of admitting a mean near the deadline.
 const PUBLISHED_TASK_DURATION_BUDGET_RATIO = 0.6;
 
+export const fitsPublishedTimeBox = (row: Choice, timeoutS: number): boolean =>
+  row.aa_time_per_task_s !== undefined && row.aa_time_per_task_s !== null &&
+  row.aa_time_per_task_s <= timeoutS * PUBLISHED_TASK_DURATION_BUDGET_RATIO;
+
 const comparePriceThenDuration = (a: Choice, b: Choice): number => {
   const aPrice = (a.price_in ?? Infinity) + (a.price_out ?? Infinity);
   const bPrice = (b.price_in ?? Infinity) + (b.price_out ?? Infinity);
@@ -200,6 +204,7 @@ export type CapacityRetryRouteResult =
 type CapacityRetryRouteOptions = {
   capacityRetry: true;
   timeoutMs: number;
+  inspect?: boolean;
 };
 
 export function route(
@@ -235,7 +240,7 @@ export async function route(
   ): CapacityRetryRouteResult | never => {
     audit.reason = message;
     audit.outcome_kind = "held";
-    recordRoutingPick(null, "refusal", audit, "refusal");
+    if (options?.inspect !== true) recordRoutingPick(null, "refusal", audit, "refusal");
     if (options?.capacityRetry === true)
       return { kind: "refused", message, exitCode: code };
     return exitWithError(message, code);
@@ -313,11 +318,10 @@ export async function route(
     (row) => usage[row.route].available,
     (row) => usage[row.route],
   );
-  const durationBudgetS = timeoutS * PUBLISHED_TASK_DURATION_BUDGET_RATIO;
   let candidates = filter(
     availableCandidates,
     "published duration exceeds time box",
-    (row) => row.aa_time_per_task_s !== undefined && row.aa_time_per_task_s <= durationBudgetS,
+    (row) => fitsPublishedTimeBox(row, timeoutS),
     (row) => ({
       aa_time_per_task_s: row.aa_time_per_task_s,
       timeout_s: timeoutS,
@@ -398,7 +402,7 @@ export async function route(
       ? roster.auto.timeout_ms
       : Math.min(roster.auto.timeout_ms, Math.max(1, options.timeoutMs)),
   );
-  const usageId = recordJevUsage(post, roster);
+  const usageId = options?.inspect === true ? undefined : recordJevUsage(post, roster);
   audit.usage_id = usageId;
   audit.raw_reply = post.ok ? post.text : null;
   audit.jev_model_version = post.ok ? (post.model ?? null) : null;
@@ -448,13 +452,13 @@ export async function route(
       source.includes("missing-answer")
     )
       audit.outcome_kind = "invalid reply";
-    recordRoutingPick(
+    if (options?.inspect !== true) recordRoutingPick(
       row,
       source,
       audit,
       selectionMode === "fallback" ? "fallback" : "selected",
     );
-    setPendingPickAudit({
+    if (options?.inspect !== true) setPendingPickAudit({
       ...pickAudit(source, probabilities),
       audit,
       chosen_row: row.id,
@@ -488,8 +492,8 @@ export async function route(
     audit.measured_evidence = measuredEvidence;
     audit.answer = rawAnswer;
     audit.choice_probabilities = probabilities ?? null;
-    recordRoutingPick(null, "jev-return", audit, "refusal");
-    recordRoutingRefusal({
+    if (options?.inspect !== true) recordRoutingPick(null, "jev-return", audit, "refusal");
+    if (options?.inspect !== true) recordRoutingRefusal({
       ticket: brief,
       reason: reason.data,
       ...(answer?.reason_code === undefined
@@ -515,7 +519,7 @@ export async function route(
     return routeChoice(recordPick(fallback, "fallback-invalid-class", probabilities));
   const requirementClass = parsedRequirementClass.data;
   const bar = REQUIREMENT_BARS[requirementClass];
-  const inTimeBox = availableCandidates.filter((row) => row.aa_time_per_task_s !== undefined && row.aa_time_per_task_s <= durationBudgetS);
+  const inTimeBox = availableCandidates.filter((row) => fitsPublishedTimeBox(row, timeoutS));
   if (inTimeBox.length === 0)
     return routeChoice(recordPick(fallback, "fallback-no-row-in-time-box", probabilities));
   const qualifying = inTimeBox.filter((row) => (row.tb4 ?? (bar === 0 ? 0 : Number.NEGATIVE_INFINITY)) >= bar);

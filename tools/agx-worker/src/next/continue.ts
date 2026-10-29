@@ -5,7 +5,8 @@ import { exhaustionPolicy, loadRoster, type Choice } from "../roster/index.ts";
 import { exitWithError } from "./exit.ts";
 import { foldedRuns, stateDir } from "./store.ts";
 import { readRouteUsage } from "./usage.ts";
-import { route } from "./route.ts";
+import { fitsPublishedTimeBox, route } from "./route.ts";
+import { parseNextTicket } from "./ticket.ts";
 import { resolveRunId } from "./run-id.ts";
 
 export type PinnedContinuation = Readonly<{
@@ -165,36 +166,35 @@ export async function pinContinuation(
         resolve(stateDir(), "runs", previous.id, "ticket.orig.md"),
     };
   }
-  if (row === undefined) {
-    const usage = await readRouteUsage(
-      undefined,
-      exhaustionPolicy(loaded.value.auto),
+  const parsedTicket = routing === undefined
+    ? parseNextTicket(await Bun.file(ticketPath).text().catch(() => ""))
+    : undefined;
+  const timeoutS = routing?.timeoutS ?? (parsedTicket?.success === true ? parsedTicket.ticket.timeout_s ?? 600 : undefined);
+  const outsideBox = row !== undefined && timeoutS !== undefined && !fitsPublishedTimeBox(row, timeoutS);
+  if (row === undefined || outsideBox) {
+    if (routing === undefined && parsedTicket?.success !== true) return null;
+    const inspected = parsedTicket?.success === true ? parsedTicket : undefined;
+    const brief = routing?.brief ?? `Proposition ${inspected?.ticket.proposition.id}: ${inspected?.ticket.proposition.claim}\n${inspected?.prose}`;
+    const result = await route(
+      brief,
+      routing?.capabilities ?? inspected?.ticket.capabilities ?? [],
+      timeoutS ?? 600,
+      routing?.maskedRows ?? [],
+      {},
+      null,
+      { capacityRetry: true, timeoutMs: loaded.value.auto.timeout_ms, inspect: routing === undefined },
     );
-    const minimumTb4 = routing?.capabilities.some((tag) =>
-      ["terminal-agentic", "long-tool-loop"].includes(tag),
-    )
-      ? 30
-      : undefined;
-    const eligible = loaded.value.choice.filter(
-      (entry) =>
-        entry.id !== previous.row &&
-        (loaded.value.auto.routes === undefined ||
-          loaded.value.auto.routes.includes(entry.route)) &&
-        usage[entry.route].available &&
-        (minimumTb4 === undefined || (entry.tb4 ?? 0) >= minimumTb4),
-    );
-    const next =
-      eligible.find(
-        (entry) =>
-          entry.route === previous.route && entry.effort === previous.effort,
-      ) ??
-      eligible.find((entry) => entry.route === previous.route) ??
-      eligible[0];
-    if (next === undefined)
-      return refuse(`no eligible roster row can replace retired row ${previous.row}`);
+    if (result.kind !== "selected")
+      return refuse(result.kind === "refused" ? result.message.trim() : "no eligible roster row can replace the prior row");
+    const next = result.row;
+    if (!fitsPublishedTimeBox(next, timeoutS ?? 600))
+      return refuse(`fresh routing selected row ${next.id} outside the ${timeoutS ?? 600} s time box`);
+    const sessionDescription = previous.route === next.route ? "resuming the vendor session" : "with a fresh vendor session";
     if (routing !== undefined)
       process.stderr.write(
-        `agx: retired row ${previous.row}; continuing ${previous.id} on ${next.id} (${next.model}) ${previous.route === next.route ? "resuming the vendor session" : "with a fresh vendor session"}\n`,
+        outsideBox
+          ? `agx: row ${previous.row} is outside the ${timeoutS} s time box; continuing ${previous.id} on ${next.id}\n`
+          : `agx: retired row ${previous.row}; continuing ${previous.id} on ${next.id} (${next.model}) ${sessionDescription}\n`,
       );
     return {
       previousId: previous.id,
