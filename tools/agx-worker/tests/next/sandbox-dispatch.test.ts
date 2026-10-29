@@ -77,6 +77,7 @@ async function fixture(input: { verify: string[]; always?: string[] }) {
   await writeExecutable(
     "jj",
     [
+      'if [ "$1" = "--version" ]; then echo "jj 0.46.0"; exit 0; fi',
       'case " $* " in',
       `  *" workspace root "*) printf '%s\\n' "$FAKE_REPO" ;;`,
       '  *" workspace list "*) printf \'"%s"\\n\' "$FAKE_REPO"; printf \'"%s"\\n\' "$FAKE_WORKSPACE" ;;',

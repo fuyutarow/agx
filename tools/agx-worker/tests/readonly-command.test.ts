@@ -77,6 +77,7 @@ test("a killable jj read leaves no early or delayed shared ref mutation", async 
   await writeFile(
     jj,
     `#!${process.execPath}
+if (process.argv[2] === "--version") { process.stdout.write("jj 0.46.0\\n"); process.exit(0); }
 await Bun.write(${JSON.stringify(target)}, "early").catch(() => {});
 process.stdout.write("ready\\n");
 await Bun.sleep(5000);

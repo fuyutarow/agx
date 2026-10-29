@@ -364,17 +364,22 @@ test("config contract: an untracked agx.toml is the policy when trunk has none",
   expect(result.ok, result.ok ? "" : String(result.error)).toBe(true);
   if (result.ok)
     expect(result.value).toMatchObject({
-      policySource:
-        "agx.toml (untracked, default workspace; trunk has none)",
+      policySource: "agx.toml (untracked, default workspace; trunk has none)",
       ready: ["mise trust", "bun install"],
     });
 });
 test("config contract: trunk agx.toml wins over an untracked working copy", async () => {
-  const f = await fixture(
-    'schema = 1\n[ws]\nready = ["trunk setup"]\n',
-  );
+  const f = await fixture('schema = 1\n[ws]\nready = ["trunk setup"]\n');
   const secondary = join(f.parent, "secondary");
-  await f.jj(["workspace", "add", "--name", "secondary", "-r", "root()", secondary]);
+  await f.jj([
+    "workspace",
+    "add",
+    "--name",
+    "secondary",
+    "-r",
+    "root()",
+    secondary,
+  ]);
   await writeFile(
     join(secondary, "agx.toml"),
     'schema = 1\n[ws]\nready = ["local setup"]\n',
@@ -388,9 +393,7 @@ test("config contract: trunk agx.toml wins over an untracked working copy", asyn
     });
 });
 test("config contract: an uncommitted edit to a tracked agx.toml is not read", async () => {
-  const f = await fixture(
-    'schema = 1\n[ws]\nready = ["trunk setup"]\n',
-  );
+  const f = await fixture('schema = 1\n[ws]\nready = ["trunk setup"]\n');
   await writeFile(
     join(f.root, "agx.toml"),
     'schema = 1\n[ws]\nready = ["uncommitted setup"]\n',
@@ -580,7 +583,11 @@ test("silent config command failure includes command, cwd and child exit", async
   const f = await fixture();
   const bin = join(f.parent, "bin");
   await mkdir(bin);
-  await writeFile(join(bin, "jj"), "#!/bin/sh\nexit 9\n", { mode: 0o755 });
+  await writeFile(
+    join(bin, "jj"),
+    '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "jj 0.46.0"; exit 0; fi\nexit 9\n',
+    { mode: 0o755 },
+  );
   const originalPath = process.env.PATH;
   process.env.PATH = `${bin}:${originalPath}`;
   const result = await resolveAgxConfig(f.root).finally(() => {

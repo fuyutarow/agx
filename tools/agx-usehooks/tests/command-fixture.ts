@@ -8,6 +8,7 @@ type CommandFixture = {
   appendPath?: string;
   sleepMs?: number;
   match?: { arg: string; stdout: string };
+  version?: string;
 };
 
 // Data is single-quoted; printf uses a fixed format, so quotes and shell syntax stay literal.
@@ -19,6 +20,10 @@ export function commandFixture(
   options: CommandFixture = {},
 ): void {
   const lines = ["#!/bin/sh"];
+  if (options.version !== undefined)
+    lines.push(
+      `[ "$1" = "--version" ] && { printf '%s\\n' ${shellQuote(options.version)}; exit 0; }`,
+    );
   if (options.appendPath !== undefined)
     lines.push(`printf '%s' x >> ${shellQuote(options.appendPath)}`);
   for (const [index, arg] of (options.argv ?? []).entries())

@@ -105,6 +105,7 @@ function fixture() {
     adapter,
     `import { readFileSync } from "node:fs";\n` +
       `const args = Bun.argv.slice(2);\n` +
+      `if (args[0] === "--version") { process.stdout.write("jj 0.46.0\\n"); process.exit(0); }\n` +
       `const project = args[args.indexOf("-p") + 1] ?? ".";\n` +
       `if (args.includes("--showConfig")) {\n` +
       `  const config = Bun.JSONC.parse(readFileSync(project + "/tsconfig.json", "utf8"));\n` +

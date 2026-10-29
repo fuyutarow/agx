@@ -667,6 +667,44 @@ test("config contract: gc names committed revision when working copy differs", a
   expect(result.err).toContain("missing required schema; expected schema = 1");
 });
 
+test("ws contract: an older jj is refused before any call with the required version", async () => {
+  const path = await repo('trunk = "main"\n');
+  const fakeBin = join(scratch, "old-jj-bin");
+  mkdirSync(fakeBin);
+  const trace = join(scratch, "old-jj-calls");
+  const realJj = Bun.which("jj");
+  expect(realJj).not.toBeNull();
+  const fake = join(fakeBin, "jj");
+  await Bun.write(
+    fake,
+    `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(trace)}\nif [ "$1" = "--version" ]; then echo 'jj 0.45.1'; exit 0; fi\nexec ${JSON.stringify(realJj)} "$@"\n`,
+  );
+  chmodSync(fake, 0o755);
+  const directory = join(scratch, "config", "agx", "repos");
+  await mkdir(directory, { recursive: true });
+  const configPath = join(directory, "old-jj.toml");
+  await Bun.write(configPath, `schema = 1\nroot = ${JSON.stringify(path)}\n`);
+  localPolicyFiles.push(configPath);
+  const result = await ws(
+    ["gc", "--all", "--dry-run"],
+    path,
+    baseEnv({ PATH: `${fakeBin}:${bin}:${process.env.PATH}` }),
+  );
+  expect(result.code).not.toBe(0);
+  expect(result.err).toBe(
+    "agx: jj 0.46.0 or newer required; found jj 0.45.1\n",
+  );
+  expect(result.out).toBe("");
+  const calls = await Bun.file(trace).text();
+  expect(
+    calls
+      .trim()
+      .split("\n")
+      .filter((line) => line === "--version"),
+  ).toHaveLength(1);
+  expect(calls).not.toMatch(/(?:^|\s)-T(?:\s|$)/u);
+});
+
 test("ws contract: gc --all reports one refused row and continues", async () => {
   const legacyRepo = await repo('trunk = "main"\n');
   const normalRepo = await repo('trunk = "main"\n');

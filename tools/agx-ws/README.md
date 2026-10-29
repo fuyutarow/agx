@@ -3,6 +3,8 @@
 `tools/agx-ws/` is the sole owner of the run-workspace lifecycle: where a workspace lives, how it
 is made ready, when it may be removed. Use `agx ws` or the `agx-ws` bin from the suite distribution. Repository behavior comes from jj and explicit policy.
 
+Template-based agx commands require jj 0.46.0 or newer. The version on PATH is checked before the first template call.
+
 ## Lifecycle guarantees
 
 `add` creates the declared path and runs readiness. `rm` refuses unlanded work. GC derives

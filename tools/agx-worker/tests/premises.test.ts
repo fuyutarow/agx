@@ -234,7 +234,10 @@ describe("premise checks", () => {
     mkdirSync(bin, { recursive: true });
     for (const [name, script] of Object.entries(tools)) {
       const path = join(bin, name);
-      writeFileSync(path, `#!/bin/sh\n${script}\n`);
+      writeFileSync(
+        path,
+        `#!/bin/sh\n${name === "jj" ? 'if [ "$1" = "--version" ]; then echo "jj 0.46.0"; exit 0; fi\n' : ""}${script}\n`,
+      );
       chmodSync(path, 0o755);
     }
     const oldPath = process.env.PATH;

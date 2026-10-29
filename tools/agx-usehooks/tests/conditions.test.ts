@@ -53,7 +53,7 @@ function jjFixture(
 ): void {
   const bin = join(dir, "bin");
   mkdirSync(bin, { recursive: true });
-  commandFixture(join(bin, "jj"), options);
+  commandFixture(join(bin, "jj"), { ...options, version: "jj 0.46.0" });
   process.env.PATH = bin;
 }
 

@@ -2,6 +2,7 @@
 import { attempt, type Attempt } from "../../shared/src/attempt.ts";
 import { enterStep, watchChild } from "./deadline.ts";
 import { timing } from "./timing.ts";
+import { requireJjTemplateVersion } from "../../shared/src/jj-version.ts";
 
 export class StepFailure extends Error {
   constructor(
@@ -24,6 +25,7 @@ export async function runStep(
     timeoutMs?: number;
   } = {},
 ): Promise<Attempt<StepResult>> {
+  requireJjTemplateVersion(cmd, { ...process.env, ...options.env });
   const spawned = await attempt(() => {
     const timeoutMs = options.timeoutMs ?? STEP_TIMEOUT_MS;
     const signal = AbortSignal.timeout(timeoutMs);

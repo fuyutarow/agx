@@ -23,6 +23,7 @@ import {
 } from "../../shared/src/attempt.ts";
 import { jsonOf, z } from "../../shared/src/zod.ts";
 import { JJ_READ_ARGS } from "../../shared/src/jj-read.ts";
+import { requireJjTemplateVersion } from "../../shared/src/jj-version.ts";
 import { listAgxRepos, resolveAgxConfig } from "../../shared/src/agx-config.ts";
 import { resolveAgxBinary } from "../../shared/src/path-dispatch.ts";
 import { validateSlug } from "../../shared/src/slug.ts";
@@ -202,6 +203,7 @@ async function command(
   cwd: string,
   quiet = false,
 ): Promise<Attempt<string>> {
+  requireJjTemplateVersion(args);
   if (!quiet) process.stderr.write(`tkt: reading ${args[0]} ${args[1]}\n`);
   const ran = await attempt(async () => {
     const child = Bun.spawn(args, {
