@@ -122,7 +122,7 @@ process.stdout.write(JSON.stringify({ exit: 0, report: { summary: "done", change
     port: 0,
     fetch: () =>
       Response.json({
-        answers: { worker: { choice: "luna-high", confidence: 0.9 } },
+        answers: { worker: { choice: "mechanical", confidence: 0.9 } },
       }),
   });
   servers.push(server);
@@ -293,7 +293,7 @@ describe("worker contract: session persist", () => {
         timeout: 15_000,
       },
     );
-    expect(result.exitCode, result.stderr.toString()).toBe(0);
+    expect(result.exitCode, `stdout=${result.stdout.toString()}\nstderr=${result.stderr.toString()}`).toBe(0);
     const resumedArgs = jsonOf(z.array(z.string())).safeParse(
       readFileSync(f.argvPath, "utf8").trim(),
     );
@@ -334,7 +334,7 @@ describe("worker contract: session persist", () => {
         timeout: 15_000,
       },
     );
-    expect(result.exitCode, result.stderr.toString()).toBe(0);
+    expect(result.exitCode, `stdout=${result.stdout.toString()}\nstderr=${result.stderr.toString()}`).toBe(0);
     expect(result.stderr.toString()).toContain(
       `run ${previousId} was lost before the vendor reported a session; continuing with a fresh session`,
     );
