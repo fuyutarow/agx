@@ -86,13 +86,12 @@ async function main(): Promise<void> {
     return;
   }
   if (first === "change") {
-    await change(remaining);
+    change(remaining);
     return;
   }
-  process.exitCode = await forwardPath(
-    await resolveSuiteTool(`agx-${first}`),
-    remaining,
-  );
+  const target = await resolveSuiteTool(`agx-${first}`);
+  const exitCode = await forwardPath(target, remaining);
+  process.exitCode = exitCode;
 }
 await main().catch((error: unknown) => {
   process.stderr.write(`agx: ${String(error)}\n`);
