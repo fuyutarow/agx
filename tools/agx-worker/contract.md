@@ -604,18 +604,19 @@ Schema 1 fields:
 | `schema`                            | Public response version, currently 1.                                                         |
 | `observation`                       | `start`, `end`, `window`, `duration_ms`, and `interval`.                                      |
 | `host`                              | Selected routing host name.                                                                   |
-| `jev.pick_count`, `jev.denominator` | Equal counts of recorded selections with source Jev, matching host and bounds.                |
+| `jev.pick_count`, `jev.denominator` | Equal counts of class-mode selections and legacy source Jev selections, matching host and bounds.                |
 | `jev.codex_pick_count`              | Subset of those selections whose selected route was Codex.                                    |
 | `jev.codex_share`                   | Codex count divided by denominator, a fraction in [0,1]; null when denominator is zero.       |
-| `fallback_count`                    | Recorded non-Jev selections in the same host and interval, excluded from the Jev denominator. |
+| `selection_count`                   | Row selections plus refusal events in the host and interval.                                |
+| `selection_mode_counts`             | Counts by recorded source, except class-mode selections use `class` and refusals use `refusal`; the counts sum to `selection_count`. |
+| `fallback_count`                    | Recorded selections whose source starts with `fallback-`, excluded from the Jev denominator. |
 | `routes.codex`, `routes.claude`     | Current local route assessment described below; unrelated to historical pick success.         |
 | `coverage`                          | Explicit limits on the observed counts, described below.                                      |
 
-One count means one completed routing selection. The owner now captures every
+A row selection counts once; a recorded refusal also counts once in `selection_count` and `selection_mode_counts`. Refusals are journal events and may include multiple events from one routing attempt. The owner captures every
 Jev or fallback selection at selection time, with host, timestamp, row, route and
 source, before a worker starts. `roster TICKET` selections and retries count too;
-explicit row choices and continuations that do not route do not count. Failed
-routing attempts without a selected row do not count. Selections are retained
+explicit row choices and continuations that do not route do not count. Pre-start failures without a selected row are counted separately and excluded from `selection_count`. Selections are retained
 independently of run completion; run events are never added to these counts, so
 audit copies cannot double count. The owner's event storage is private: consumers
 must discover and read these metrics through this command, not through file paths.

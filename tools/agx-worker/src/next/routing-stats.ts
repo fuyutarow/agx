@@ -49,7 +49,17 @@ export async function routingStats(
         return event.host === host && at >= bounds.startMs && at < bounds.endMs;
       });
       const selections = selected.filter((event) => event.row !== null);
-      const picks = selections.filter((event) => event.source === "jev");
+      const picks = selections.filter(
+        (event) => event.audit?.selection_mode === "class" || event.source === "jev",
+      );
+      const refusals = selected.filter((event) => event.outcome === "refusal");
+      const modeCounts: Record<string, number> = {};
+      for (const event of [...selections, ...refusals]) {
+        let mode = event.source;
+        if (event.audit?.selection_mode === "class") mode = "class";
+        if (event.outcome === "refusal") mode = "refusal";
+        modeCounts[mode] = (modeCounts[mode] ?? 0) + 1;
+      }
       const perRow = Object.fromEntries(
         [...new Set(selections.map((event) => event.row))].map((row) => [
           row ?? "unknown",
@@ -96,7 +106,9 @@ export async function routingStats(
           codex_pick_count: codex,
           codex_share: picks.length === 0 ? null : codex / picks.length,
         },
-        fallback_count: selections.length - picks.length,
+        selection_count: selections.length + refusals.length,
+        selection_mode_counts: modeCounts,
+        fallback_count: selections.filter((event) => event.source.startsWith("fallback-")).length,
         per_row_pick_counts: perRow,
         top1_minus_top2_margins: {
           count: margins.length,
@@ -106,8 +118,7 @@ export async function routingStats(
         tb4_removed_all_luna_pick_count: selections.filter(
           (event) => event.audit?.tb4_removed_all_luna === true,
         ).length,
-        refusal_count: selected.filter((event) => event.outcome === "refusal")
-          .length,
+        refusal_count: refusals.length,
         pre_start_failure_count: selected.filter(
           (event) => event.outcome === "pre-start failure",
         ).length,

@@ -164,6 +164,30 @@ const event = (
   source,
 });
 
+test("stats contract: designed selections are not counted as fallback", () => {
+  const { root, env } = fixture();
+  writeFileSync(join(root, "state/routing.jsonl"), [
+    { ...event(1, "codex", hostname(), "jev-classified"), audit: { selection_mode: "class" } },
+    { ...event(1, "codex", hostname(), "fallback-missing-answer"), audit: { selection_mode: "fallback" } },
+    { ...event(1, "codex", hostname(), "fallback-invalid-class"), audit: { selection_mode: "fallback" } },
+    { ...event(1), row: null, route: null, outcome: "refusal" },
+  ].map((row) => JSON.stringify(row)).join("\n") + "\n");
+  const result = stats(env);
+  expect(result.exitCode, result.stderr.toString()).toBe(0);
+  const parsed = jsonOf(z.object({
+    selection_count: z.number(),
+    selection_mode_counts: z.record(z.string(), z.number()),
+    fallback_count: z.number(),
+    per_row_pick_counts: z.record(z.string(), z.number()),
+  })).safeParse(result.stdout.toString());
+  expect(parsed.success).toBe(true);
+  if (!parsed.success) return;
+  expect(parsed.data.selection_count).toBe(4);
+  expect(parsed.data.selection_mode_counts).toEqual({ class: 1, "fallback-missing-answer": 1, "fallback-invalid-class": 1, refusal: 1 });
+  expect(parsed.data.fallback_count).toBe(2);
+  expect(parsed.data.per_row_pick_counts).toEqual({ fixture: 3 });
+});
+
 test("public CLI filters window and host, with Jev denominator excluding fallbacks", () => {
   const { root, env } = fixture();
   writeFileSync(
@@ -344,21 +368,7 @@ test("real roster CLI selections are persisted before any worker starts", async 
   const { root, env } = fixture();
   const server = Bun.serve({
     port: 0,
-    fetch: async (request) => {
-      const parsed = jsonOf(
-        z.object({
-          questions: z.object({
-            worker: z.object({ criteria: z.record(z.string(), z.string()) }),
-          }),
-        }),
-      ).safeParse(await request.text());
-      const choice = parsed.success
-        ? Object.entries(parsed.data.questions.worker.criteria).find(
-            ([, text]) => text.includes("AA 33,"),
-          )?.[0]
-        : undefined;
-      return Response.json({ answers: { worker: { choice } } });
-    },
+    fetch: () => Response.json({ answers: { worker: { choice: "mechanical" } } }),
   });
   await using _cleanup = { [Symbol.asyncDispose]: () => server.stop(true) };
   {
@@ -379,7 +389,7 @@ test("real roster CLI selections are persisted before any worker starts", async 
       child.exited,
     ]);
     expect(exit, err).toBe(0);
-    expect(out).toContain("luna-high");
+    expect(out).toContain("luna-low");
     const data = report(stats(env));
     expect(data.jev.denominator).toBe(1);
     expect(data.jev.codex_share).toBe(1);
