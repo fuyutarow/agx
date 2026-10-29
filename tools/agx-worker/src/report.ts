@@ -201,6 +201,21 @@ const normalizeReportCheckExits = (value: unknown): unknown => {
   return { ...report.data, checks };
 };
 
+/** Preserve string results and serialize other JSON values without accepting a missing result. */
+const normalizeReportCheckResults = (value: unknown): unknown => {
+  const report = z.record(z.string(), z.unknown()).safeParse(value);
+  if (!report.success || !Array.isArray(report.data.checks)) return value;
+  const checks = report.data.checks.map((check: unknown) => {
+    const parsed = z.record(z.string(), z.unknown()).safeParse(check);
+    if (!parsed.success || typeof parsed.data.result === "string") return check;
+    const result = z.json().safeParse(parsed.data.result);
+    return result.success
+      ? { ...parsed.data, result: JSON.stringify(result.data) }
+      : check;
+  });
+  return { ...report.data, checks };
+};
+
 /** The report in a worker's final message (a structured value from the vendor, else its text). */
 export function parseReport(
   structured: unknown,
@@ -217,7 +232,7 @@ export function parseReport(
       ? z.unknown().safeParse(structured)
       : jsonText.safeParse(candidateText);
   const parsed = candidate.success
-    ? WorkerReport.safeParse(normalizeReportCheckExits(candidate.data))
+    ? WorkerReport.safeParse(normalizeReportCheckResults(normalizeReportCheckExits(candidate.data)))
     : undefined;
   if (parsed?.success === true) return { ok: true, report: parsed.data };
   if (structured === undefined) {
@@ -228,7 +243,7 @@ export function parseReport(
         );
         if (!decoded.success) return [];
         const report = WorkerReport.safeParse(
-          normalizeReportCheckExits(decoded.data),
+          normalizeReportCheckResults(normalizeReportCheckExits(decoded.data)),
         );
         return report.success ? [{ ...span, report: report.data }] : [];
       })
