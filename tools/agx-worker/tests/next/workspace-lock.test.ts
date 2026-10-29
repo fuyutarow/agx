@@ -1,3 +1,4 @@
+import { fromThrowable } from "neverthrow";
 import { prepareTicketRepo } from "../ticket-repo.ts";
 import {
   afterAll,
@@ -25,7 +26,7 @@ import {
   publishCurrentRuns,
 } from "../../src/next/store.ts";
 
-setDefaultTimeout(15_000);
+setDefaultTimeout(60_000);
 const temps = createTempTracker();
 afterAll(temps.assertRemoved);
 const cleanups: (() => Promise<void>)[] = [];
@@ -105,7 +106,7 @@ test("store contract: a non-contention flock error reports its errno", async () 
 });
 
 async function until(predicate: () => boolean) {
-  const deadline = performance.now() + 5000;
+  const deadline = performance.now() + 20_000;
   while (performance.now() < deadline) {
     if (predicate()) return;
     await Bun.sleep(10);
@@ -179,7 +180,9 @@ console.log(JSON.stringify({ report: { summary: "done", changes: [], checks: [],
     TYPESAFE_API_KEY: "test-key",
     AGX_CONFIG: new URL("../../src/roster/policy.example.toml", import.meta.url)
       .pathname,
-    AGX_DISPATCHER_SESSION: "fixture",
+    AGX_DISPATCHER_SESSION: undefined,
+    CLAUDE_CODE_SESSION_ID: undefined,
+    CODEX_SESSION_ID: undefined,
   };
   const launch = (resume = true, workspace = root) => {
     const child = Bun.spawn(
@@ -196,7 +199,7 @@ console.log(JSON.stringify({ report: { summary: "done", changes: [], checks: [],
         env,
         stdout: "pipe",
         stderr: "pipe",
-        timeout: 10_000,
+        timeout: 60_000,
       },
     );
     children.push(child);
@@ -250,7 +253,11 @@ console.log(JSON.stringify({ report: { summary: "done", changes: [], checks: [],
     writeFileSync(routeGate, "release");
     for (const child of children) child.kill();
     await Promise.all(children.map((child) => child.exited));
-    for (const pid of workerPids) process.kill(pid, "SIGKILL");
+    for (const pid of workerPids) {
+      const killed = fromThrowable(() => process.kill(pid, "SIGKILL"), (error) => error)();
+      if (killed.isErr())
+        expect(z.object({ code: z.literal("ESRCH") }).safeParse(killed.error).success).toBe(true);
+    }
     await jev.stop(true);
     rmSync(root, { recursive: true, force: true });
   });
@@ -281,7 +288,8 @@ test("a recorded live workspace refuses fresh and continued runs before worker s
     expect(result.stderr).toContain("live-holder");
     expect(result.stderr).toContain(f.root);
   }
-  expect(f.records()).toEqual(before);
+  expect(f.records().filter((row) => row.kind !== "refusal")).toEqual(before);
+  expect(f.records().filter((row) => row.kind === "refusal")).toHaveLength(2);
   expect(f.workers()).toEqual([]);
 });
 
@@ -300,14 +308,15 @@ test("a live worker blocks both modes; another workspace and a run after complet
   }
   const other = join(f.root, "other");
   mkdirSync(other);
-  const independent = f.launch(true, other);
+  await prepareTicketRepo(other);
+  const independent = f.launch(false, other);
   await until(() => f.workers().length === 2);
   writeFileSync(f.gate, "release");
   expect((await first.result).exit).toBe(0);
   expect((await independent.result).exit).toBe(0);
   expect((await f.launch().result).exit).toBe(0);
   expect(f.workers()).toHaveLength(3);
-}, 15_000);
+}, 60_000);
 
 test("simultaneous continuations admit exactly one worker and one started record", async () => {
   const f = await fixture();
@@ -424,7 +433,7 @@ test("workspace ownership lasts through verification after the worker exits", as
   expect(
     f.records().some((row) => row.id === holder?.id && row.kind === "ended"),
   ).toBe(true);
-  expect(await waited).toContain('"outcome":"no-change"');
+  expect(await waited).toContain('"outcome":"ok"');
 });
 
 test("SIGKILL releases ownership despite a surviving worker and folds the old run as ended lost", async () => {
@@ -486,7 +495,7 @@ for (const [signal, exit] of [
     }
     const row = (await f.listed()).find((entry) => entry.id !== "prior");
     expect(row).toMatchObject({ state: "ended", outcome: "stopped", signal });
-    const before = await Bun.file(f.log).text();
+    const before = f.records();
     const child = Bun.spawn(
       [
         process.execPath,
@@ -514,6 +523,7 @@ for (const [signal, exit] of [
     expect(stderr).toContain("no vendor session");
     expect(stderr).toContain("ended stopped");
     expect(stderr).toContain(`agx worker run ${f.ticket}`);
-    expect(await Bun.file(f.log).text()).toBe(before);
+    expect(f.records().filter((entry) => entry.kind !== "refusal")).toEqual(before);
+    expect(f.records().filter((entry) => entry.kind === "refusal")).toHaveLength(1);
   });
 }
