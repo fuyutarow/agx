@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.9 — 2026-10-29
+
+- Accept verified read-only no-change runs without an override.
+
 ## 1.22.8 — 2026-10-29
 
 - Correct routing statistics for class-then-code selections.
