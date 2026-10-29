@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.21 — 2026-10-29
+
+- Serialize doctor refreshes and return fresh results to concurrent callers.
+
 ## 1.22.20 — 2026-10-29
 
 - Accept --session on durable dispatch and forward its dispatcher identity to run
