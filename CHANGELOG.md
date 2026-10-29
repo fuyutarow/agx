@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.22 — 2026-10-29
+
+- Preserve current workspace GC contracts and lock-scope verification
+
 ## 1.22.21 — 2026-10-29
 
 - Serialize doctor refreshes and return fresh results to concurrent callers.
