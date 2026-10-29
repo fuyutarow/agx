@@ -1571,6 +1571,7 @@ export type GcOptions = {
   includeUnrecorded: boolean;
   graceMinutes?: number;
   inventorySeconds?: number;
+  inventoryBudgetSeconds?: number;
   legacy?: boolean;
   abandoned?: boolean;
   /** Nested all-repository inventories retain their historical main-row omission. */
@@ -1770,9 +1771,12 @@ function parseJjTreeFiles(encoded: string): Attempt<Map<string, JjTreeFile>> {
   return good(files);
 }
 
+type GcTrace = { inventoryMs: number; inventoryCount: number; comparisonMs: number };
+
 async function gcCommitGraph(
   repo: Repo,
   trunk: string | null,
+  trace?: (step: string, ms: number) => void,
 ): Promise<Attempt<Map<string, JjCommit>>> {
   const trunkTest =
     trunk === null
@@ -1796,12 +1800,15 @@ async function gcCommitGraph(
     ', self.files().map(|file| json({"path" => file.path(), "object" => if(file.normal_value(), stringify(file.normal_value()), ""), "type" => file.file_type(), "executable" => file.executable()})).join("\\0"), "")), "changedPaths" => stringify(' +
     changedPathsTest +
     ')}) ++ "\\n"';
+  const graphStart = performance.now();
   const output = await jjOut(
     ["-R", repo.backing, "log", "--no-graph", "-r", revisions, "-T", template],
     repo.backing,
     true,
   );
+  trace?.("aggregate jj graph generation", performance.now() - graphStart);
   if (!output.ok) return output;
+  const parseStart = performance.now();
   const commits = new Map<string, JjCommit>();
   for (const line of output.value.trim().split("\n").filter(Boolean)) {
     const parsed = jsonOf(JjCommitSchema).safeParse(line);
@@ -1820,6 +1827,7 @@ async function gcCommitGraph(
       changedPaths: row.changedPaths.split("\0").filter(Boolean),
     });
   }
+  trace?.("graph parsing", performance.now() - parseStart);
   return good(commits);
 }
 
@@ -2883,6 +2891,8 @@ async function classifyGc(
   graphError: string | undefined,
   trunk: string | null,
   options: GcOptions,
+  trace?: GcTrace,
+  budget?: { remainingMs: number; exhausted: boolean },
 ): Promise<Classification> {
   const change = ws.change.length > 0 ? ws.change : "?";
   const age = ws.age.length > 0 ? ws.age : "?";
@@ -3012,6 +3022,7 @@ async function classifyGc(
         "broken",
         `cannot compare workspace content with trunk ${trunk}`,
       );
+    const comparisonStart = performance.now();
     const changedPaths = new Set(
       pendingChange.changes.flatMap((commit) => commit.changedPaths),
     );
@@ -3024,6 +3035,7 @@ async function classifyGc(
     const consumed = matchingContent && !unrecordedModern
       ? await consumedChangesets(repo, ws.target, trunk, [...changedPaths])
       : good<string[]>([]);
+    if (trace !== undefined) trace.comparisonMs += performance.now() - comparisonStart;
     if (!consumed.ok)
       return verdict(
         "broken",
@@ -3060,13 +3072,24 @@ async function classifyGc(
         .filter((record) => /^[a-zA-Z0-9_-]+$/u.test(record.id))
         .map((record) => join(stateDir(), "runs", record.id))
     : [];
+  if (budget !== undefined && budget.remainingMs <= 0) {
+    budget.exhausted = true;
+    return verdict("keep", "inventory budget exhausted");
+  }
+  const inventoryStart = performance.now();
   const inventory = await untrackedContent(
     ws.dir,
     cfg.regenerable,
-    gcInventoryTimeoutMs(options),
+    Math.min(gcInventoryTimeoutMs(options), budget?.remainingMs ?? Infinity),
     resultDirs,
     target.files,
   );
+  const inventoryElapsed = performance.now() - inventoryStart;
+  if (budget !== undefined) budget.remainingMs -= inventoryElapsed;
+  if (trace !== undefined) {
+    trace.inventoryMs += inventoryElapsed;
+    trace.inventoryCount++;
+  }
   if (!inventory.ok)
     return verdict("broken", `untracked inventory failed: ${msg(inventory)}`);
   if (inventory.value.trackedDifference !== undefined)
@@ -3703,18 +3726,38 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
     if (!cfg.ok) return cfg;
     const trunk = await resolveTrunk(repo, cfg.value);
     if (!trunk.ok) return trunk;
+    const tracing = process.env.AGX_WS_GC_TRACE === "1";
+    const report = (step: string, ms: number, count?: number) => {
+      if (tracing) process.stderr.write(`gc trace: ${step}: ${ms.toFixed(3)} ms${count === undefined ? "" : ` count=${count}`}\n`);
+    };
+    let stepStart = performance.now();
     const candidates = await workspaces(repo, options.includeMain ?? true);
+    report("workspace list", performance.now() - stepStart);
     if (!candidates.ok) return candidates;
+    stepStart = performance.now();
     const recordsResult = await agxRecords(repo.backing);
+    report("run records", performance.now() - stepStart);
     const records = recordsResult.ok ? recordsResult.value : [];
-    const graphResult = await gcCommitGraph(repo, trunk.value.commit);
+    const graphResult = await gcCommitGraph(repo, trunk.value.commit, report);
     const commits = graphResult.ok
       ? graphResult.value
       : new Map<string, JjCommit>();
     const lines: string[] = [];
     const failed: string[] = [];
     const broken: string[] = [];
+    const trace: GcTrace = { inventoryMs: 0, inventoryCount: 0, comparisonMs: 0 };
+    const budget = { remainingMs: (options.inventoryBudgetSeconds ?? 120) * 1000, exhausted: false };
+    let classificationMs = 0;
+    let completed = 0;
+    let slowest: { workspace: string; ms: number; step: string } | undefined;
+    const reportProgress = () => {
+      if (!tracing) return;
+      process.stderr.write(`gc trace: cumulative: workspaces=${completed}/${candidates.value.length} classification=${Math.max(0, classificationMs - trace.inventoryMs - trace.comparisonMs).toFixed(3)} ms inventory=${trace.inventoryMs.toFixed(3)} ms count=${trace.inventoryCount} comparison=${trace.comparisonMs.toFixed(3)} ms slowest=${JSON.stringify(slowest?.workspace ?? null)} ms=${(slowest?.ms ?? 0).toFixed(3)} step=${slowest?.step ?? "none"}\n`);
+    };
     for (const ws of candidates.value) {
+      const inventoryBefore = trace.inventoryMs;
+      const comparisonBefore = trace.comparisonMs;
+      const classificationStart = performance.now();
       const land = landState(ws);
       let kind = "legacy";
       if (ws.main) kind = "main";
@@ -3791,8 +3834,19 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
           undefined,
           trunk.value.commit,
           options,
+          trace,
+          budget,
         );
       }
+      const elapsed = performance.now() - classificationStart;
+      classificationMs += elapsed;
+      const inventory = trace.inventoryMs - inventoryBefore;
+      const comparison = trace.comparisonMs - comparisonBefore;
+      const classification = Math.max(0, elapsed - inventory - comparison);
+      let step = "classification";
+      if (inventory >= comparison && inventory >= classification) step = "inventory";
+      else if (comparison >= classification) step = "comparison";
+      if (slowest === undefined || elapsed > slowest.ms) slowest = { workspace: ws.dir, ms: elapsed, step };
       let reason = c.reason;
       if (c.verdict === "broken") broken.push(ws.dir);
       const missingCommit = ws.commit;
@@ -3952,6 +4006,8 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
               undefined,
               currentTrunk.value,
               options,
+              trace,
+              budget,
             );
             if (!checked.collect) return good({ classification: checked });
             const removed = await collectWorkspace(
@@ -4010,7 +4066,13 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
           .map((field) => field.replaceAll("\t", "\\t").replaceAll("\n", "\\n"))
           .join("\t"),
       );
+      completed++;
+      if (completed % 50 === 0) reportProgress();
     }
+    if (completed % 50 !== 0 || completed === 0) reportProgress();
+    report("per-workspace classification", Math.max(0, classificationMs - trace.inventoryMs - trace.comparisonMs), candidates.value.length);
+    report("untracked inventory", trace.inventoryMs, trace.inventoryCount);
+    report("comparison", trace.comparisonMs);
     const result = {
       lines,
       failed,
@@ -4019,6 +4081,7 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
       complete:
         failed.length === 0 &&
         broken.length === 0 &&
+        !budget.exhausted &&
         !lines.some((line) => line.split("\t")[2] === "broken"),
     };
     if (!options.dryRun && failed.length === 0)
@@ -4287,6 +4350,7 @@ export async function gcAll(
       failed.length === 0 &&
       broken.length === 0 &&
       refused.length === 0 &&
+      repositories.every((repo) => repo.status === "complete") &&
       !lines.some((line) =>
         ["unknown", "broken"].includes(line.split("\t")[2] ?? ""),
       ),

@@ -312,6 +312,32 @@ function parseOutput(output: string) {
   return parsed.success ? parsed.data : undefined;
 }
 
+test("ws contract: gc trace reports each step on stderr only when asked", async () => {
+  const f = await fixture(1);
+  delete f.baseEnv.AGX_WS_GC_TRACE;
+  const normal = await gc(f);
+  f.baseEnv.AGX_WS_GC_TRACE = "1";
+  const traced = await gc(f);
+  expect(normal.code).toBe(0);
+  expect(traced.code).toBe(0);
+  const normalReport = parseOutput(normal.out);
+  const tracedReport = parseOutput(traced.out);
+  expect(tracedReport?.rows.map((row) => row.filter((_, index) => index !== 4))).toEqual(
+    normalReport?.rows.map((row) => row.filter((_, index) => index !== 4)),
+  );
+  expect(tracedReport?.counts).toEqual(normalReport?.counts);
+  expect(tracedReport?.complete).toBe(normalReport?.complete);
+  expect(normal.err).toBe("");
+  const lines = traced.err.trim().split("\n");
+  const steps = ["workspace list", "run records", "aggregate jj graph generation", "graph parsing", "per-workspace classification", "untracked inventory", "comparison"];
+  const progress = lines.splice(4, 1)[0];
+  expect(progress).toMatch(/^gc trace: cumulative: workspaces=\d+\/\d+ classification=\d+\.\d{3} ms inventory=\d+\.\d{3} ms count=\d+ comparison=\d+\.\d{3} ms slowest=".*" ms=\d+\.\d{3} step=(classification|inventory|comparison)$/u);
+  expect(lines).toHaveLength(steps.length);
+  for (const [index, step] of steps.entries()) {
+    expect(lines[index]).toMatch(new RegExp("^gc trace: " + step + ": [0-9]+\\.[0-9]{3} ms" + (step === "per-workspace classification" || step === "untracked inventory" ? " count=[0-9]+" : "") + "$", "u"));
+  }
+});
+
 test("gc usecase: a change landed as a copy is removable", async () => {
   const f = await fixture(1);
   const workspace = f.workspaces[0];
@@ -582,4 +608,37 @@ test.concurrent("gc contract: declared regenerable path prunes a large node_modu
 
 afterAll(() => {
   rmSync(scratch, { recursive: true, force: true });
+});
+
+test("ws contract: gc inventory budget keeps unexamined workspaces and reports incomplete", async () => {
+  const f = await fixture(3);
+  for (const workspace of f.workspaces)
+    writeFileSync(join(workspace, "untracked.txt"), "keep\n");
+  const wrapper = join(f.parent, "clock.ts");
+  writeFileSync(wrapper, `
+const now = performance.now.bind(performance);
+let inventoryClockCalls = 0;
+Object.defineProperty(performance, "now", { value: () => {
+  const stack = new Error().stack ?? "";
+  if (stack.includes("classifyGc") && !stack.includes("untrackedContent")) {
+    inventoryClockCalls++;
+    return now() + (inventoryClockCalls >= 2 ? 1100 : 0);
+  }
+  return now();
+}});
+await import(${JSON.stringify(wsCli)});
+`);
+  const result = await run(
+    ["bun", wrapper, "gc", "--dry-run", "--include-unrecorded", "--grace-minutes", "0", "--inventory-budget-seconds", "1", "--json", "--repo", f.repo],
+    f.repo,
+    f.baseEnv,
+  );
+  expect(result.code, result.err).toBe(0);
+  const parsed = parseOutput(result.out);
+  const rows = parsed?.rows.filter((row) => f.workspaces.includes(row[0] ?? "")) ?? [];
+  expect(rows).toHaveLength(3);
+  expect(rows.filter((row) => row[5]?.includes("untracked content") === true)).toHaveLength(1);
+  expect(rows.filter((row) => row[2] === "keep" && row[5]?.includes("inventory budget exhausted") === true)).toHaveLength(2);
+  expect(parsed?.counts.collectable).toBe(0);
+  expect(parsed?.complete).toBe(false);
 });

@@ -274,6 +274,10 @@ const gcCommand = command(
         description:
           "limit untracked-file inventory to this many seconds per workspace (default: 10)",
       },
+      inventoryBudgetSeconds: {
+        type: Number,
+        description: "limit total untracked-file inventory time per repository (default: 120 seconds)",
+      },
       repo: repoFlag,
     },
   },
@@ -299,6 +303,15 @@ const gcCommand = command(
       fail("--inventory-seconds must be an integer from 1 to 2147483");
       return;
     }
+    if (
+      argv.flags.inventoryBudgetSeconds !== undefined &&
+      (!Number.isSafeInteger(argv.flags.inventoryBudgetSeconds) ||
+        argv.flags.inventoryBudgetSeconds < 1 ||
+        argv.flags.inventoryBudgetSeconds > 86400)
+    ) {
+      fail("--inventory-budget-seconds must be an integer from 1 to 86400");
+      return;
+    }
     const options = {
       dryRun: argv.flags.dryRun === true,
       includeUnrecorded: argv.flags.includeUnrecorded === true,
@@ -306,6 +319,7 @@ const gcCommand = command(
       abandoned: argv.flags.abandoned === true,
       graceMinutes: argv.flags.graceMinutes ?? 30,
       inventorySeconds: argv.flags.inventorySeconds ?? 10,
+      inventoryBudgetSeconds: argv.flags.inventoryBudgetSeconds ?? 120,
     };
     const done = await (argv.flags.all === true
       ? gcAll(options)
