@@ -1084,6 +1084,7 @@ export async function listingHistory(workspace?: string, root = stateDir()) {
 async function readFoldedRuns(
   root: string,
   malformed?: Record<string, unknown>[],
+  probes?: Map<string, ListedRun>,
 ) {
   const path = recordPath(root);
   if (!existsSync(path)) return [];
@@ -1144,7 +1145,11 @@ async function readFoldedRuns(
     runs: [...runs.values()],
     malformed: malformedRows,
   });
-  return liveRuns(runs, stat, root);
+  return liveRuns(runs, stat, root, undefined, probes);
+}
+
+export async function recordedRuns(root = stateDir()) {
+  return readFoldedRuns(root, undefined, new Map());
 }
 
 const foldCache = new Map<string, z.output<typeof SnapshotSchema>>();
@@ -1274,6 +1279,7 @@ async function liveRuns(
   before: { size: number; ino: number; dev: number } | null,
   root = stateDir(),
   reread?: () => Promise<ListedRun[]>,
+  probes?: Map<string, ListedRun>,
 ): Promise<ListedRun[]> {
   const listed: ListedRun[] = [];
   const losses = new Set<string>();
@@ -1340,7 +1346,14 @@ async function liveRuns(
       );
       continue;
     }
-    const evidence = await lossEvidence(lease);
+    const probed = probes?.get(run.id);
+    const matchingProbe =
+      probed !== undefined &&
+      JSON.stringify(probed.lease) === JSON.stringify(lease);
+    let evidence: z.output<typeof Evidence> | undefined;
+    if (probes === undefined) evidence = await lossEvidence(lease);
+    else if (matchingProbe && probed.outcome === "lost")
+      evidence = probed.evidence;
     if (evidence === undefined)
       listed.push(
         withHealth(
@@ -1364,7 +1377,7 @@ async function liveRuns(
       );
     }
   }
-  if (losses.size === 0) return listed;
+  if (losses.size === 0 || probes !== undefined) return listed;
   const after = await recordStat(recordPath(root)).catch(() => null);
   if (
     before !== null &&
@@ -1462,7 +1475,7 @@ export async function endedFacts(runs: ListedRun[], at: number) {
   return { endedRuns, acceptedRuns };
 }
 
-/** Called only under the publication lock; the workspace lock excludes the run owner. */
+/** The workspace lock excludes the run owner while sealing a confirmed loss. */
 async function reconcileLostRuns(root: string): Promise<void> {
   const candidates = (await readFoldedRuns(root)).filter(
     (run) => run.outcome === "lost" && run.ended_at === null,
@@ -1518,6 +1531,13 @@ export async function publishCurrentRuns(
   clock?: WorkspaceLockWaitClock,
 ): Promise<void> {
   const path = join(root, "current-runs.json");
+  // Probe and reconcile before acquiring the publication lock. A judge already
+  // holding it publishes recorded state immediately without probing.
+  let probes = new Map<string, ListedRun>();
+  if (ownership === undefined) {
+    await reconcileLostRuns(root);
+    probes = new Map((await readFoldedRuns(root)).map((run) => [run.id, run]));
+  }
   const lock =
     ownership ??
     (await acquireWorkspaceLockUntilAvailable(path, root, undefined, clock));
@@ -1530,9 +1550,8 @@ export async function publishCurrentRuns(
   const held = lock;
   const result = await fromPromise(
     (async () => {
-      await reconcileLostRuns(root);
       const source = await recordIdentity(root);
-      const runs = await readFoldedRuns(root);
+      const runs = await readFoldedRuns(root, undefined, probes);
       await publishWorkspaceRuns(root, source);
       const output = JSON.stringify({
         runs: listingRows(

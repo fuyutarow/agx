@@ -329,3 +329,109 @@ await child.exited;
     );
   });
 });
+
+async function stalledPublication(root: string) {
+  const { chmod } = await import("node:fs/promises");
+  const probe = join(root, "systemctl");
+  const started = join(root, "probe-started");
+  const release = join(root, "probe-release");
+  await writeFile(
+    probe,
+    `#!${process.execPath}\nawait Bun.write(${JSON.stringify(started)}, "started");\nwhile (!(await Bun.file(${JSON.stringify(release)}).exists())) await Bun.sleep(10);\nprocess.stdout.write("inactive\\n");\n`,
+  );
+  await chmod(probe, 0o755);
+  appendFileSync(
+    join(root, "records.jsonl"),
+    JSON.stringify({
+      kind: "started",
+      id: "slow-probe",
+      at: "2026-10-27T00:00:00Z",
+      ticket: "slow",
+      writes: [],
+      cwd: root,
+      workspace: join(root, "slow"),
+      row: "fixture",
+      dispatcher_session: null,
+      vendor_session: null,
+      pid: 2147483647,
+      lease: { pid: 2147483647, start: null, unit: "slow.service" },
+    }) + "\n",
+  );
+  const child = Bun.spawn(
+    [
+      process.execPath,
+      "-e",
+      `import { publishCurrentRuns } from ${JSON.stringify(store)}; await publishCurrentRuns(${JSON.stringify(root)});`,
+    ],
+    {
+      env: { ...process.env, PATH: `${root}:${process.env.PATH ?? ""}` },
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 10000,
+    },
+  );
+  const deadline = performance.now() + 4000;
+  while (!(await Bun.file(started).exists()) && performance.now() < deadline)
+    await Bun.sleep(10);
+  expect(await Bun.file(started).exists()).toBe(true);
+  return {
+    child,
+    release: async () => {
+      await Bun.write(release, "release");
+    },
+    stderr: () => child.stderr.text(),
+  };
+}
+
+test("worker contract: judge succeeds while publication probes are slow", async () => {
+  const { root, id } = await fixture(true);
+  const publication = await stalledPublication(root);
+  await (async () => {
+    await using cleanup = {
+      [Symbol.asyncDispose]: async () => {
+        await publication.release();
+        expect(await publication.child.exited).toBe(0);
+      },
+    };
+    void cleanup;
+    const judge = launchJudge(root, id);
+    const result = await judge.result;
+    expect(result.exit).toBe(0);
+    expect(result.stdout).toContain('"verdict":"accept"');
+    expect(publication.child.exitCode).toBeNull();
+  })();
+});
+
+test("worker contract: publication does not lose a concurrent judge", async () => {
+  const { root, id } = await fixture(true);
+  const publication = await stalledPublication(root);
+  await (async () => {
+    await using cleanup = {
+      [Symbol.asyncDispose]: async () => {
+        await publication.release();
+        expect(await publication.child.exited).toBe(0);
+      },
+    };
+    void cleanup;
+    const result = await launchJudge(root, id).result;
+    expect(result.exit).toBe(0);
+  })();
+  const snapshot = jsonOf(
+    z.object({
+      acceptedRuns: z.array(
+        z.object({
+          id: z.string(),
+          judgment: z.object({ decision: z.string() }).nullable(),
+        }),
+      ),
+    }),
+  ).safeParse(await readFile(join(root, "current-runs.json"), "utf8"));
+  expect(snapshot.success).toBe(true);
+  if (!snapshot.success) expect.unreachable("invalid snapshot");
+  expect(
+    snapshot.data.acceptedRuns.find((run) => run.id === id)?.judgment,
+  ).toEqual({ decision: "accept" });
+  expect(await readFile(join(root, "records.jsonl"), "utf8")).toContain(
+    '"decision":"accept"',
+  );
+});

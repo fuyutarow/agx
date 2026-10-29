@@ -28,6 +28,7 @@ import {
   now,
   overlapWarnings,
   publishCurrentRuns,
+  recordedRuns,
   recordPath,
   runningWorkspaceRun,
   stateDir,
@@ -420,13 +421,18 @@ export async function run(flags: Flags): Promise<number> {
     normalizeClaudeSelector(ticket.ack_target) !==
       boundAckTarget.binding.selector
   )
-    return fatal("dispatch-bound Claude target does not match ticket ack_target");
+    return fatal(
+      "dispatch-bound Claude target does not match ticket ack_target",
+    );
   const requestedAckTarget =
     ticket.ack_target ??
     (boundAckTarget.kind === "present"
       ? boundAckTarget.binding.selector
       : undefined);
-  const ackTarget = process.env.AGX_DISPATCH_ACK_UNBOUND === "1" ? undefined : requestedAckTarget;
+  const ackTarget =
+    process.env.AGX_DISPATCH_ACK_UNBOUND === "1"
+      ? undefined
+      : requestedAckTarget;
   const timeoutMs = (ticket.timeout_s ?? 600) * 1000;
   const deadline = AbortSignal.timeout(timeoutMs);
   const runStartedAt = performance.now();
@@ -1242,7 +1248,7 @@ export async function judgeRun(
   if (decision !== "accept" && decision !== "reject")
     return fatal("judge decision must be accept or reject", 2);
   const root = runtime.root ?? stateDir();
-  const resolution = resolveRunId(await foldedRuns(root), id);
+  const resolution = resolveRunId(await recordedRuns(root), id);
   if (resolution.kind === "error") return fatal(resolution.error, 2);
   const overrideReason = flags.override?.trim();
   if (flags.override !== undefined && overrideReason === "")
