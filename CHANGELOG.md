@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.22.34 — 2026-10-30
+
+- Expose workspace accumulation in doctor output.
+- Report workspace gc and doctor accumulation counts.
+
 ## 1.22.33 — 2026-10-30
 
 - Defer Claude UUID resolution to the relay when sender inventory is unavailable.
