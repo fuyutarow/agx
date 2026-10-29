@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DoctorResponse } from "../src/refresh.ts";
+import { DoctorResponse, refreshDoctor } from "../src/refresh.ts";
 import { jsonOf, z } from "../../shared/src/zod.ts";
 
 const entry = join(import.meta.dir, "../src/agx.ts");
@@ -177,6 +177,7 @@ test("public doctor refreshes, publishes exact output, and status reads the owne
   expect((await readdir(f.state)).toSorted()).toEqual([
     "doctor-aggregate.json",
     "doctor-refresh.sqlite",
+    "doctor-refresh.sqlite.lock",
   ]);
   await f.member("status", `process.exit(99);`);
   // Use the real status entrypoint, with the same isolated owner state.
@@ -278,6 +279,7 @@ test("failed publication exits 2 and leaves the old target intact", async () => 
   expect((await readdir(f.state)).toSorted()).toEqual([
     "doctor-aggregate.json",
     "doctor-refresh.sqlite",
+    "doctor-refresh.sqlite.lock",
   ]);
 });
 
@@ -412,6 +414,91 @@ async function waitFor(path: string) {
     await Bun.sleep(10);
   expect(await Bun.file(path).exists(), path).toBe(true);
 }
+
+function barrier() {
+  let release: (() => void) | undefined;
+  const promise = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return {
+    promise,
+    release: () => {
+      release?.();
+    },
+  };
+}
+
+test("doctor contract: a caller that arrives during a refresh returns the next refresh, never the one already running", async () => {
+  await using f = await fixture();
+  const previous = process.env.AGX_STATE_DIR;
+  process.env.AGX_STATE_DIR = f.state;
+  using _restoreEnv = {
+    [Symbol.dispose]: () => {
+      if (previous === undefined) delete process.env.AGX_STATE_DIR;
+      else process.env.AGX_STATE_DIR = previous;
+    },
+  };
+  const firstStarted = barrier();
+  const firstFinish = barrier();
+  const secondStarted = barrier();
+  const secondFinish = barrier();
+  const oldWaiting = barrier();
+  const oldResume = barrier();
+  const newerWaiting = barrier();
+  const newerResume = barrier();
+  let generation = 0;
+  const collect = async () => {
+    generation += 1;
+    const current = generation;
+    if (current === 1) {
+      firstStarted.release();
+      await firstFinish.promise;
+    }
+    if (current === 2) {
+      secondStarted.release();
+      await secondFinish.promise;
+    }
+    return {
+      schema: 1 as const,
+      findings: [],
+      kinds: {},
+      total: 0,
+      lost: 0,
+      captured_at: current,
+      complete: true,
+      members: (["agx-worker", "agx-ws", "agx-ticket"] as const).map(
+        (tool) => ({
+          tool,
+          exit: 0,
+          complete: true,
+        }),
+      ),
+    };
+  };
+  const first = refreshDoctor(collect, 10000, 10000);
+  await firstStarted.promise;
+  const old = refreshDoctor(collect, 10000, 10000, async () => {
+    oldWaiting.release();
+    await oldResume.promise;
+  });
+  await oldWaiting.promise;
+  const second = refreshDoctor(collect, 10000, 10000);
+  firstFinish.release();
+  await secondStarted.promise;
+  const newer = refreshDoctor(collect, 10000, 10000, async () => {
+    newerWaiting.release();
+    await newerResume.promise;
+  });
+  await newerWaiting.promise;
+  secondFinish.release();
+  expect((await second).captured_at).toBe(2);
+  newerResume.release();
+  expect((await newer).captured_at).toBe(3);
+  oldResume.release();
+  expect((await old).captured_at).toBe(3);
+  expect((await first).captured_at).toBe(1);
+  expect(generation).toBe(3);
+});
 
 test("concurrent CLI refreshes serialize all members and coalesce callers into one pending round", async () => {
   await using f = await fixture();

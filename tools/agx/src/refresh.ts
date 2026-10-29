@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
-import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { dlopen, FFIType, ptr, read as ffiRead } from "bun:ffi";
+import { mkdir, open, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { attempt } from "../../shared/src/attempt.ts";
 import {
@@ -113,12 +114,6 @@ async function readResponse(
   return parsed.success ? parsed.data : null;
 }
 
-type Queue = {
-  active: string | null;
-  pending: number;
-  completed: number;
-  response: string | null;
-};
 type Collection = (timeout: number) => Promise<DoctorAggregate>;
 
 async function publish(response: DoctorResponse) {
@@ -174,72 +169,92 @@ async function collectAndPublish(
       );
 }
 
-function admission(db: Database, token: string, target?: number) {
-  return db
-    .transaction(() => {
-      const row = db
-        .query<Queue, []>("SELECT * FROM refresh WHERE id = 1")
-        .get();
-      if (row === null) return null;
-      if (target !== undefined && row.completed >= target)
-        return { owner: false, target, response: row.response };
-      if (row.active === null) {
-        db.query("UPDATE refresh SET active = ?, pending = 0 WHERE id = 1").run(
-          token,
-        );
-        return { owner: true, target: row.completed + 1, response: null };
-      }
-      db.run("UPDATE refresh SET pending = 1 WHERE id = 1");
-      return {
-        owner: false,
-        target: target ?? row.completed + 2,
-        response: null,
-      };
-    })
-    .immediate();
-}
-
-async function runQueue(
-  db: Database,
-  collect: Collection,
-  timeoutMs: number,
-  deadline: number,
-) {
-  const token = `${process.pid}:${crypto.randomUUID()}`;
-  let next = admission(db, token);
-  const target = next?.target;
-  if (target === undefined)
-    return failure(await snapshot(), "refresh queue unavailable");
-  while (next !== null && (next.owner || performance.now() < deadline)) {
-    if (next.owner) {
-      const response = await collectAndPublish(collect, timeoutMs, deadline);
-      db.query(
-        "UPDATE refresh SET response = ?, completed = completed + 1, active = NULL WHERE id = 1 AND active = ?",
-      ).run(JSON.stringify(response), token);
-      return response;
-    }
-    if (next.response !== null) {
-      const parsed = jsonOf(DoctorResponse).safeParse(next.response);
-      return parsed.success
-        ? parsed.data
-        : failure(await snapshot(), "invalid refresh response");
-    }
-    await Bun.sleep(Math.min(20, Math.max(1, deadline - performance.now())));
-    if (performance.now() < deadline) next = admission(db, token, target);
-  }
-  // A caller's wait timeout never cancels the shared owner or replaces its result.
-  return failure(await snapshot(), "refresh deadline exceeded while waiting");
-}
-
-/** SQLite serializes admission only; no database lock is held while children run. */
+/** A stable inode serializes collection across processes; it must never be unlinked. */
 export async function refreshDoctor(
   collect: Collection,
   timeoutMs: number,
   deadlineMs: number,
+  beforeLock?: () => Promise<void>,
 ): Promise<DoctorResponse> {
   const deadline = performance.now() + deadlineMs;
   const result = await attempt(async () => {
+    // Bun's process.hrtime has a process-local origin; clock_gettime is shared.
+    const clock = dlopen(
+      process.platform === "darwin" ? "libSystem.B.dylib" : "libc.so.6",
+      {
+        clock_gettime: {
+          args: [FFIType.i32, FFIType.ptr],
+          returns: FFIType.i32,
+        },
+      },
+    );
+    using _clockCleanup = {
+      [Symbol.dispose]: () => {
+        clock.close();
+      },
+    };
+    const timestamp = () => {
+      const value = new BigInt64Array(2);
+      if (
+        clock.symbols.clock_gettime(
+          process.platform === "darwin" ? 6 : 1,
+          ptr(value),
+        ) !== 0
+      )
+        return null;
+      return (value[0] ?? 0n) * 1_000_000_000n + (value[1] ?? 0n);
+    };
+    const started = timestamp();
+    if (started === null)
+      return failure(await snapshot(), "monotonic clock unavailable");
+    const boot =
+      process.platform === "darwin"
+        ? Bun.spawnSync(["/usr/sbin/sysctl", "-n", "kern.boottime"])
+            .stdout.toString()
+            .trim()
+        : (await Bun.file("/proc/sys/kernel/random/boot_id").text()).trim();
+    if (boot.length === 0)
+      return failure(await snapshot(), "boot identity unavailable");
     await mkdir(dirname(queuePath()), { recursive: true });
+    const errnoSymbol =
+      process.platform === "darwin" ? "__error" : "__errno_location";
+    const library = dlopen(
+      process.platform === "darwin" ? "libSystem.B.dylib" : "libc.so.6",
+      {
+        flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
+        [errnoSymbol]: { args: [], returns: FFIType.ptr },
+      },
+    );
+    using _libraryCleanup = {
+      [Symbol.dispose]: () => {
+        library.close();
+      },
+    };
+    await using lock = await open(`${queuePath()}.lock`, "a", 0o600);
+    await beforeLock?.();
+    while (library.symbols.flock(lock.fd, 2 | 4) !== 0) {
+      const pointer = library.symbols[errnoSymbol]?.();
+      const errno =
+        pointer === null || pointer === undefined
+          ? undefined
+          : ffiRead.i32(pointer, 0);
+      if (errno !== (process.platform === "darwin" ? 35 : 11))
+        return failure(
+          await snapshot(),
+          `flock failed: errno ${errno ?? "unavailable"}`,
+        );
+      if (performance.now() >= deadline)
+        return failure(
+          await snapshot(),
+          "refresh deadline exceeded while waiting",
+        );
+      await Bun.sleep(Math.min(20, Math.max(1, deadline - performance.now())));
+    }
+    if (performance.now() >= deadline)
+      return failure(
+        await snapshot(),
+        "refresh deadline exceeded while waiting",
+      );
     // append creates a private file if absent, without truncating another caller's database.
     await writeFile(queuePath(), "", { flag: "a", mode: 0o600 });
     using db = new Database(queuePath(), { create: true, strict: true });
@@ -250,7 +265,31 @@ export async function refreshDoctor(
       completed INTEGER NOT NULL DEFAULT 0, response TEXT
     )`);
     db.run("INSERT OR IGNORE INTO refresh (id) VALUES (1)");
-    return await runQueue(db, collect, timeoutMs, deadline);
+    const row = db
+      .query<{ active: string | null; response: string | null }, []>(
+        "SELECT active, response FROM refresh WHERE id = 1",
+      )
+      .get();
+    if (
+      row?.active !== null &&
+      row?.active !== undefined &&
+      row.active.startsWith(`${boot}:`) &&
+      /^\d+$/u.test(row.active.slice(boot.length + 1)) &&
+      BigInt(row.active.slice(boot.length + 1)) > started &&
+      row.response !== null
+    ) {
+      const parsed = jsonOf(DoctorResponse).safeParse(row.response);
+      if (parsed.success) return parsed.data;
+    }
+    const refreshStarted = timestamp();
+    if (refreshStarted === null)
+      return failure(await snapshot(), "monotonic clock unavailable");
+    const response = await collectAndPublish(collect, timeoutMs, deadline);
+    db.query("UPDATE refresh SET active = ?, response = ? WHERE id = 1").run(
+      `${boot}:${refreshStarted}`,
+      JSON.stringify(response),
+    );
+    return response;
   });
   return result.ok
     ? result.value
