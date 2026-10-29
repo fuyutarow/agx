@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.8 — 2026-10-29
+
+- Correct routing statistics for class-then-code selections.
+
 ## 1.22.7 — 2026-10-29
 
 - Route unnamed return answers to the fallback instead of refusing dispatch.
