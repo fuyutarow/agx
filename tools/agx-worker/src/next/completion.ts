@@ -49,6 +49,13 @@ export function completionFor(run: ListedRun): CompletionResult {
   if (run.state === "running") return { completion: null, facts };
   if (run.outcome === "ok") return { completion: "done", facts };
   if (
+    run.outcome === "no-change" &&
+    run.writes.length === 0 &&
+    verifyPassed &&
+    workspaceDiffNonempty === false
+  )
+    return { completion: "done", facts };
+  if (
     run.outcome === "timeout" &&
     verifyPassed &&
     workspaceDiffNonempty === true

@@ -25,6 +25,7 @@ function fixture(
     verify: { cmd: string; exit: number; log_path: string }[];
     changed_files?: number;
   },
+  writes: string[] = [],
 ) {
   const root = mkdtempSync(join(tmpdir(), "agx-completion-contract-"));
   roots.push(root);
@@ -41,7 +42,7 @@ function fixture(
       id,
       at: "2026-10-28T00:00:00Z",
       ticket: "completion-contract",
-      writes: [],
+      writes,
       cwd: workspace,
       workspace,
       row: "fixture-row",
@@ -200,4 +201,63 @@ test("judge contract: accept permits a done run without an override", () => {
   const result = command(["judge", run.id, "accept"], run.state);
   expect(result.exit).toBe(0);
   expect(result.stderr).toBe("");
+});
+
+test("completion contract: a read-only ticket with passing verify is complete without override", () => {
+  const run = fixture("readonly-accept", {
+    outcome: "no-change",
+    exit: 0,
+    verify: [{ cmd: "bun check", exit: 0, log_path: "unused" }],
+    changed_files: 0,
+  });
+  const result = command(["judge", run.id, "accept"], run.state);
+  expect(result.exit).toBe(0);
+  expect(result.stderr).toBe("");
+  const events = readFileSync(join(run.state, "records.jsonl"), "utf8");
+  expect(events).toContain('"decision":"accept"');
+  expect(events).not.toContain('"override_reason"');
+});
+
+test("a no-change run of a ticket with writes is still incomplete", () => {
+  const run = fixture(
+    "writes-incomplete",
+    {
+      outcome: "no-change",
+      exit: 0,
+      verify: [{ cmd: "bun check", exit: 0, log_path: "unused" }],
+      changed_files: 0,
+    },
+    ["work.txt"],
+  );
+  const original = readFileSync(join(run.state, "records.jsonl"), "utf8");
+  const result = command(["judge", run.id, "accept"], run.state);
+  expect(result.exit).toBe(2);
+  expect(result.stderr).toContain("completion=incomplete");
+  expect(readFileSync(join(run.state, "records.jsonl"), "utf8")).toBe(original);
+});
+
+test("completion contract: read-only no-change needs passing verify and a known empty diff", () => {
+  const cases = [
+    { name: "missing-verify", verify: [], changed_files: 0 },
+    {
+      name: "failed-verify",
+      verify: [{ cmd: "check", exit: 1, log_path: "unused" }],
+      changed_files: 0,
+    },
+    {
+      name: "unknown-diff",
+      verify: [{ cmd: "check", exit: 0, log_path: "unused" }],
+    },
+    {
+      name: "nonempty-diff",
+      verify: [{ cmd: "check", exit: 0, log_path: "unused" }],
+      changed_files: 1,
+    },
+  ];
+  for (const item of cases) {
+    const run = fixture(item.name, { outcome: "no-change", exit: 0, ...item });
+    const result = command(["judge", run.id, "accept"], run.state);
+    expect(result.exit).toBe(2);
+    expect(result.stderr).toContain("completion=incomplete");
+  }
 });
