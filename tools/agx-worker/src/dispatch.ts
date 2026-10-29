@@ -584,18 +584,20 @@ export async function dispatch(options: {
     env,
   );
   let boundAckTarget: string | undefined;
+  let unboundAck: { target: string; error: string } | undefined;
   if (ackSelector !== undefined) {
     const resolved = await resolveClaudeDeliveryTarget(
       ackSelector,
       DISPATCH_CHECK_TIMEOUT_MS,
     );
     if (!resolved.ok) {
+      unboundAck = { target: ackSelector, error: resolved.reason };
       process.stderr.write(
-        `agx worker dispatch: cannot bind ACK target ${JSON.stringify(ackSelector)}: ${resolved.reason}\n`,
+        `agx worker dispatch: ACK target ${JSON.stringify(ackSelector)} is unbound; ACK will not be delivered by agx msg: ${resolved.reason.replaceAll(/[\r\n]+/gu, " ")}\n`,
       );
-      return 3;
+    } else {
+      boundAckTarget = encodeBoundClaudeTarget(resolved.binding);
     }
-    boundAckTarget = encodeBoundClaudeTarget(resolved.binding);
   }
   const wsSlug = options.ws ?? slug;
   const ticketRepo = await defaultRepositoryRoot(dirname(ticketPath), env);
@@ -958,6 +960,7 @@ export async function dispatch(options: {
     sandbox,
     sandbox_source,
     dispatcher_session: dispatcherSession,
+    ...(unboundAck === undefined ? {} : { ack: { status: "unbound", ...unboundAck } }),
     vendor_session: null,
     continues: previous?.id ?? null,
     supersedes: null,
@@ -1001,6 +1004,7 @@ export async function dispatch(options: {
     ...(boundAckTarget === undefined
       ? []
       : [`--setenv=${BOUND_CLAUDE_TARGET_ENV}=${boundAckTarget}`]),
+    ...(unboundAck === undefined ? [] : ["--setenv=AGX_DISPATCH_ACK_UNBOUND=1"]),
     "--",
     ...workerCommand,
     "run",

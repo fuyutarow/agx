@@ -242,6 +242,23 @@ test("dispatch passes the ticket ACK target to the run as a bound address", asyn
   );
 });
 
+test("dispatch contract: an unresolvable ACK target never fails the dispatch", async () => {
+  const f = fixture();
+  const target = "claude:12345678-1234-4123-8123-123456789abc";
+  f.env.CLAUDE_CODE_SESSION_ID = target.slice("claude:".length);
+  const result = await invoke(f);
+  expect(result.exitCode, result.stderr).toBe(0);
+  expect(result.stderr).toContain("ACK will not be delivered by agx msg");
+  const args = readFileSync(f.unitArgs, "utf8");
+  expect(args).toContain("--setenv=AGX_DISPATCH_ACK_UNBOUND=1");
+  expect(args).not.toContain(`--setenv=${BOUND_CLAUDE_TARGET_ENV}=`);
+  const event = jsonOf(z.object({ ack: z.object({ status: z.literal("unbound"), target: z.string(), error: z.string().min(1) }) })).safeParse(
+    readFileSync(join(f.env.AGX_STATE_DIR!, "records.jsonl"), "utf8").trim().split("\n")[0]!,
+  );
+  expect(event.success).toBe(true);
+  if (event.success) expect(event.data.ack.target).toBe(target);
+});
+
 test("dispatch binds its Claude session when the ticket omits an ACK target", async () => {
   const f = fixture();
   f.env.AGX_DISPATCHER_SESSION = undefined;

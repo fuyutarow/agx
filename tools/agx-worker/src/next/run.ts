@@ -421,11 +421,12 @@ export async function run(flags: Flags): Promise<number> {
       boundAckTarget.binding.selector
   )
     return fatal("dispatch-bound Claude target does not match ticket ack_target");
-  const ackTarget =
+  const requestedAckTarget =
     ticket.ack_target ??
     (boundAckTarget.kind === "present"
       ? boundAckTarget.binding.selector
       : undefined);
+  const ackTarget = process.env.AGX_DISPATCH_ACK_UNBOUND === "1" ? undefined : requestedAckTarget;
   const timeoutMs = (ticket.timeout_s ?? 600) * 1000;
   const deadline = AbortSignal.timeout(timeoutMs);
   const runStartedAt = performance.now();
