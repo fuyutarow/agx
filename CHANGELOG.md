@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.18 — 2026-10-29
+
+- Report unknown commands with a help hint.
+
 ## 1.22.17 — 2026-10-29
 
 - Accept JSON values in worker check results.
