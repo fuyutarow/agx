@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.24 — 2026-10-30
+
+- Preserve workspaces on removal refusal and finish missing-directory removals.
+
 ## 1.22.23 — 2026-10-29
 
 - Enforce a frozen test timeout ratchet.
