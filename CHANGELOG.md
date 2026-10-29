@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.19 — 2026-10-29
+
+- Allow dispatch to continue when its ACK target cannot be resolved.
+
 ## 1.22.18 — 2026-10-29
 
 - Report unknown commands with a help hint.
