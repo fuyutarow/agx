@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.10 — 2026-10-29
+
+- Fix agx TypeScript lint errors in forwarded exit handling
+
 ## 1.22.9 — 2026-10-29
 
 - Accept verified read-only no-change runs without an override.
