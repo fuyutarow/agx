@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.22.3 — 2026-10-29
+
+- Bind dispatch-resolved Claude ACK targets for sandboxed sends
+- Pass dispatch-bound ACK targets into sandboxed worker runs
+
 ## 1.22.2 — 2026-10-29
 
 - Route continuations away from rows whose published duration exceeds the ticket time box.
