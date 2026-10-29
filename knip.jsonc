@@ -22,6 +22,8 @@
         "tools/jj-precommit.ts",
         "tools/jj-push.ts",
         "tools/release/build.ts",
+        // release.ts stages this by path and passes it to `bun build --compile`.
+        "tools/release/launcher.ts",
         "tools/release/publish.ts",
         "tools/release/machine.ts",
         "tools/changeset/changeset.ts",
