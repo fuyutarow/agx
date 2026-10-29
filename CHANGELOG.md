@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.13 — 2026-10-29
+
+- Restore roster TICKET output to the documented selected-row JSON shape.
+
 ## 1.22.12 — 2026-10-29
 
 - Compare tracked symlinks by their targets when checking workspaces.
