@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.16 — 2026-10-29
+
+- Require jj 0.46.0 before running templates to avoid per-repository failures.
+
 ## 1.22.15 — 2026-10-29
 
 - Bound UUID-prefix discovery by the send deadline
