@@ -65,6 +65,8 @@ test("repeatable evidence appends exactly one opaque judgment with byte digests 
     expect.unreachable("evidence fixture paths are missing");
   const result = await judge([
     "accept",
+    "--override",
+    "exercise evidence recording on an incomplete fixture",
     "--evidence",
     firstPath,
     "--evidence",

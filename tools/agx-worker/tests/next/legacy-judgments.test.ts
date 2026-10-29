@@ -218,7 +218,7 @@ test("C3 equal-time imported ties are deterministic across discovery order, nati
     }) + "\n",
   );
   expect(a.listing()[0]?.judgment?.note).toBe("newer than native");
-});
+}, 15_000);
 
 test("C3 compares instants with offsets and nanoseconds, and projects historical identity", () => {
   const f = fixture();

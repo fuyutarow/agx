@@ -167,7 +167,7 @@ test("real CLI sums only in-window evidence, and missing historical usage is nev
     (150 * 0.042) / 1_000_000,
   );
   expect(data.pricing.source).toContain("catalog");
-  expect(data.pricing.as_of).toBe("2026-10-08");
+  expect(data.pricing.as_of).toBe("2026-10-28");
   expect(
     Temporal.Instant.from(data.to).epochMilliseconds -
       Temporal.Instant.from(data.from).epochMilliseconds,

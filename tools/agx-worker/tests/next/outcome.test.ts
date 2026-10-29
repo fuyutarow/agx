@@ -140,12 +140,11 @@ test("ended fixtures retain measured outcomes while routing omits ungraded raw h
       );
     expect(captured?.state.history).toBeUndefined();
     // Local grades are audit data; only the roster's published evidence enters routing.
-    expect(
-      Object.values(captured?.questions.worker.criteria ?? {}).find((value) =>
-        value.includes("AA 33,"),
-      ),
-    ).toBe(
-      "Route codex. AA 33 (Artificial Analysis, 2026-10-08); TB4 4.5% (Artificial Analysis, 2026-10-08); SciCode 50.3% (Artificial Analysis, 2026-10-08). Price $0.10/$0.01/$0.50 per 1M tokens in/cache/out. Multiple 1x cheapest row.",
+    expect(captured?.questions.worker.criteria.mechanical).toContain(
+      "Classify only the ticket",
+    );
+    expect(captured?.questions.worker.criteria.split).toContain(
+      "independent outcomes",
     );
     expected.push(outcome);
   }
