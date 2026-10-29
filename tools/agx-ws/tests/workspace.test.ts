@@ -252,6 +252,30 @@ test("ws contract: rm --discard-broken saves the patch then removes a broken wor
   );
 });
 
+test("ws contract: rm --discard-broken saves a patch for a broken workspace with tracked symlinks", async () => {
+  const fixture = await brokenFixture("link-patch");
+  await symlink("old-target", join(fixture.path, "link"));
+  expect((await jj(["commit", "-m", "track link"], fixture.path)).code).toBe(0);
+  expect((await jj(["bookmark", "set", "main", "-r", "@-"], fixture.path)).code).toBe(0);
+  await symlink("missing-target", join(fixture.dir, "link"));
+  const state = join(scratch, "link-patch-state", "nested");
+  const result = await ws(["rm", "--discard-broken", "link-patch"], fixture.path, {
+    ...fixture.env,
+    AGX_STATE_DIR: state,
+  });
+  expect(result.code, result.err).toBe(0);
+  const patch = result.err.match(/ws: saved patch ([^\n]+)/u)?.[1];
+  expect(patch).toBeDefined();
+  const contents = await Bun.file(patch ?? "").text();
+  expect(contents).toContain("-old-target");
+  expect(contents).toContain("+missing-target");
+  expect(contents).toContain("120000");
+  const applied = await run(["git", "apply", "-p2", patch ?? ""], fixture.path);
+  expect(applied.code, applied.err).toBe(0);
+  expect(readlinkSync(join(fixture.path, "link"))).toBe("missing-target");
+  expect(existsSync(fixture.dir)).toBe(false);
+});
+
 for (const flag of [true, false]) {
   test(
     flag

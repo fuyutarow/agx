@@ -1466,6 +1466,7 @@ async function buildBrokenPatch(
     cp(dir, after, {
       recursive: true,
       dereference: false,
+      verbatimSymlinks: true,
       filter: (source) =>
         source !== join(dir, ".jj") && source !== join(dir, ".git"),
     }),
@@ -1501,8 +1502,15 @@ async function materializeTrunkFile(
   if (!parsed.success || type === undefined)
     return bad(`invalid trunk entry: ${line}`);
   const target = join(before, parsed.data);
+  const gitStore = join(repo.backing, ".jj", "repo", "store");
+  const gitTarget = type === "symlink"
+    ? await attempt(() => readFile(join(gitStore, "git_target"), "utf8"))
+    : undefined;
+  if (gitTarget !== undefined && !gitTarget.ok) return gitTarget;
   const content = await runStep(
-    [
+    gitTarget?.ok
+      ? ["git", "--git-dir", resolve(gitStore, gitTarget.value.trim()), "show", `${trunk}:${parsed.data}`]
+      : [
       "jj",
       "--no-pager",
       "--color=never",
@@ -1513,7 +1521,7 @@ async function materializeTrunkFile(
       trunk,
       "--",
       parsed.data,
-    ],
+        ],
     repo.backing,
   );
   if (!content.ok) return content;
