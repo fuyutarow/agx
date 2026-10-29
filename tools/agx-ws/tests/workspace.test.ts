@@ -175,12 +175,131 @@ async function repo(config?: string, colocate = true): Promise<string> {
 const wsDir = (path: string, slug: string): string =>
   join(path, "..", "proj.ws", `ws_${slug}`);
 
+async function brokenFixture(slug: string, unlanded = false) {
+  const path = await repo('trunk = "main"\n');
+  setRecords([]);
+  expect((await ws(["add", slug], path)).code).toBe(0);
+  const dir = wsDir(path, slug);
+  if (unlanded) {
+    await Bun.write(join(dir, "a.txt"), "revision change\n");
+    expect((await jj(["commit", "-m", "unlanded fixture"], dir)).code).toBe(0);
+  }
+  await Bun.write(join(dir, "a.txt"), "disk change\n");
+  const realJj = Bun.which("jj");
+  const wrapper = join(scratch, `wrapper-${slug}`);
+  await mkdir(wrapper);
+  await Bun.write(
+    join(wrapper, "jj"),
+    `#!/usr/bin/env bun
+const args = process.argv.slice(2);
+if (process.cwd() === ${JSON.stringify(dir)} && args.includes("log")) { process.stderr.write("working copy revision not found\\n"); process.exit(1); }
+const child = Bun.spawn([${JSON.stringify(realJj)}, ...args], {stdout:"inherit", stderr:"inherit"});
+process.exitCode = await child.exited;
+`,
+  );
+  await chmod(join(wrapper, "jj"), 0o755);
+  return {
+    path,
+    dir,
+    env: baseEnv({ PATH: `${wrapper}:${bin}:${process.env.PATH}` }),
+  };
+}
+
+test("ws contract: rm --discard-broken saves the patch then removes a broken workspace", async () => {
+  const fixture = await brokenFixture("save-patch");
+  await Bun.write(
+    join(fixture.dir, "binary.dat"),
+    new Uint8Array([0, 1, 2, 255]),
+  );
+  const result = await ws(
+    ["rm", "--discard-broken", "save-patch"],
+    fixture.path,
+    fixture.env,
+  );
+  expect(result.code, result.err).toBe(0);
+  const patch = result.err.match(/ws: saved patch ([^\n]+)/u)?.[1];
+  expect(patch).toBeDefined();
+  expect(await Bun.file(patch ?? "").text()).toContain("+disk change");
+  const applied = await run(["git", "apply", "-p2", patch ?? ""], fixture.path);
+  expect(applied.code, applied.err).toBe(0);
+  expect(await Bun.file(join(fixture.path, "a.txt")).text()).toBe(
+    "disk change\n",
+  );
+  expect([
+    ...new Uint8Array(
+      await Bun.file(join(fixture.path, "binary.dat")).arrayBuffer(),
+    ),
+  ]).toEqual([0, 1, 2, 255]);
+  expect(existsSync(fixture.dir)).toBe(false);
+  expect((await jj(["workspace", "list"], fixture.path)).out).not.toContain(
+    "ws_save-patch:",
+  );
+});
+
+for (const flag of [true, false]) {
+  test(
+    flag
+      ? "ws contract: rm --discard-broken still refuses an unlanded change"
+      : "ws contract: plain rm of a broken workspace refuses an unlanded change",
+    async () => {
+      const fixture = await brokenFixture(
+        flag ? "unlanded-flag" : "unlanded-plain",
+        true,
+      );
+      const slug = flag ? "unlanded-flag" : "unlanded-plain";
+      const result = await ws(
+        ["rm", ...(flag ? ["--discard-broken"] : []), slug],
+        fixture.path,
+        fixture.env,
+      );
+      expect(result.code).toBe(1);
+      expect(result.err).toContain("unlanded fixture");
+      expect(existsSync(fixture.dir)).toBe(true);
+      expect((await jj(["workspace", "list"], fixture.path)).out).toContain(
+        `ws_${slug}:`,
+      );
+    },
+  );
+}
+
+test("ws contract: rm --discard-broken accepts a landed copy and saves disk changes", async () => {
+  const fixture = await brokenFixture("landed-copy", true);
+  await Bun.write(join(fixture.path, "a.txt"), "revision change\n");
+  expect((await jj(["commit", "-m", "landed copy"], fixture.path)).code).toBe(0);
+  expect((await jj(["bookmark", "set", "main", "-r", "@-"], fixture.path)).code).toBe(0);
+  const result = await ws(["rm", "--discard-broken", "landed-copy"], fixture.path, fixture.env);
+  expect(result.code, result.err).toBe(0);
+  const patch = result.err.match(/ws: saved patch ([^\n]+)/u)?.[1];
+  expect(patch).toBeDefined();
+  expect(await Bun.file(patch ?? "").text()).toContain("+disk change");
+  expect(existsSync(fixture.dir)).toBe(false);
+});
+
+test("ws contract: rm --discard-broken removes nothing when the patch cannot be written", async () => {
+  const fixture = await brokenFixture("patch-failure");
+  const blocked = join(scratch, "not-a-directory");
+  await Bun.write(blocked, "file");
+  const result = await ws(
+    ["rm", "--discard-broken", "patch-failure"],
+    fixture.path,
+    { ...fixture.env, AGX_STATE_DIR: blocked },
+  );
+  expect(result.code).toBe(1);
+  expect(result.err).toContain("cannot save broken workspace patch");
+  expect(existsSync(fixture.dir)).toBe(true);
+  expect((await jj(["workspace", "list"], fixture.path)).out).toContain(
+    "ws_patch-failure:",
+  );
+});
+
 test("ws contract: a tracked symlink to a directory is compared as a link", async () => {
   const path = await repo();
   await mkdir(join(path, "target"));
   await symlink("target", join(path, "link"));
   expect((await jj(["commit", "-m", "track link"], path)).code).toBe(0);
-  expect((await jj(["bookmark", "set", "main", "-r", "@-"], path)).code).toBe(0);
+  expect((await jj(["bookmark", "set", "main", "-r", "@-"], path)).code).toBe(
+    0,
+  );
   const clean = wsDir(path, "link-clean");
   const changed = wsDir(path, "link-changed");
   for (const dir of [clean, changed]) {
@@ -197,7 +316,6 @@ test("ws contract: a tracked symlink to a directory is compared as a link", asyn
   expect(removed.code, removed.err).toBe(0);
   expect(existsSync(clean)).toBe(false);
 });
-
 
 test("ws contract: a refused rm leaves the directory and the jj entry untouched", async () => {
   const path = await repo('trunk = "main"\n');
@@ -1982,7 +2100,7 @@ process.exitCode = await child.exited;
       baseEnv({ PATH: `${wrapper}:${bin}:${process.env.PATH}` }),
     );
     expect(refused.code).toBe(1);
-    expect(refused.err).toContain("tracked files differ from main: a.txt");
+    expect(refused.err).toContain("injected missing working-copy revision");
     expect(existsSync(dir)).toBe(true);
     expect(await Bun.file(join(dir, "a.txt")).text()).toBe("changed on disk\n");
     expect((await jj(["workspace", "list"], path)).out).toContain(
@@ -1990,7 +2108,7 @@ process.exitCode = await child.exited;
     );
   });
 
-  test("forgets and buries a broken workspace when trunk-tracked files match", async () => {
+  test("refuses a broken workspace when its registered revision cannot be judged", async () => {
     const path = await repo('trunk = "main"\n');
     await ws(["add", "broken-clean"], path);
     const dir = wsDir(path, "broken-clean");
@@ -2018,9 +2136,10 @@ process.exitCode = await child.exited;
       path,
       baseEnv({ PATH: `${wrapper}:${bin}:${process.env.PATH}` }),
     );
-    expect(removed.code, removed.err).toBe(0);
-    expect(existsSync(dir)).toBe(false);
-    expect((await jj(["workspace", "list"], path)).out).not.toContain(
+    expect(removed.code).toBe(1);
+    expect(removed.err).toContain("injected missing working-copy revision");
+    expect(existsSync(dir)).toBe(true);
+    expect((await jj(["workspace", "list"], path)).out).toContain(
       "ws_broken-clean",
     );
   });

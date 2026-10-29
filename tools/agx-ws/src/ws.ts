@@ -109,9 +109,7 @@ const addCommand = command(
           `ws: base change_id=${base.change_id} commit_id=${base.commit_id} ref=${base.ref} fetch=${base.fetch}\n`,
         );
       }
-      process.stderr.write(
-        `ws: policy source: ${done.value.policy_source}\n`,
-      );
+      process.stderr.write(`ws: policy source: ${done.value.policy_source}\n`);
       await new Promise<void>((resolve) => {
         process.stdout.write(
           `${argv.flags.json === true ? JSON.stringify(done.value) : done.value.workspace}\n`,
@@ -189,12 +187,19 @@ const rmCommand = command(
       description:
         "Forget and rip ws_<slug>; refuses only non-empty changes unreachable from trunk and every remote bookmark.",
     },
-    flags: { repo: repoFlag },
+    flags: {
+      repo: repoFlag,
+      discardBroken: {
+        type: Boolean,
+        description: "save a patch and remove a broken workspace",
+      },
+    },
   },
   async (argv) => {
     const done = await remove({
       slug: argv._.slug,
       repo: argv.flags.repo ?? process.cwd(),
+      discardBroken: argv.flags.discardBroken === true,
     });
     if (!done.ok) {
       fail(done.error);
@@ -276,7 +281,8 @@ const gcCommand = command(
       },
       inventoryBudgetSeconds: {
         type: Number,
-        description: "limit total untracked-file inventory time per repository (default: 120 seconds)",
+        description:
+          "limit total untracked-file inventory time per repository (default: 120 seconds)",
       },
       repo: repoFlag,
     },

@@ -23,8 +23,12 @@ import {
   rm,
   rmdir,
   stat,
+  cp,
+  mkdtemp,
+  symlink as createSymlink,
+  chmod,
 } from "node:fs/promises";
-import { homedir, hostname } from "node:os";
+import { homedir, hostname, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { projectSlug } from "../../shared/src/agent-name.ts";
 import {
@@ -504,15 +508,16 @@ export async function unlanded(
   dir: string,
   name: string,
   endCommits: string[],
+  registeredOnly = false,
 ): Promise<Attempt<string[]>> {
-  const here = existsSync(dir)
+  const here = existsSync(dir) && !registeredOnly
     ? await unlandedFrom(dir, "@", cfg.trunk, false)
     : await unlandedFrom(repo.backing, `${name}@`, cfg.trunk, true);
   // A registered workspace's working-copy view can be unavailable from its own
   // directory (for example, an old layout or a damaged working-copy pointer).
   // In that case, try the registered workspace commit from the backing checkout
   // before reporting an unknown result.
-  const retried = !here.ok && existsSync(dir);
+  const retried = !here.ok && existsSync(dir) && !registeredOnly;
   const resolved = retried
     ? await unlandedFrom(repo.backing, `${name}@`, cfg.trunk, true)
     : here;
@@ -536,7 +541,7 @@ export async function unlanded(
   const trunk = await trunkCommit(repo, cfg);
   if (!trunk.ok) return trunk;
   if (trunk.value === null) return good(found);
-  const tipRepo = retried || !existsSync(dir) ? repo.backing : dir;
+  const tipRepo = registeredOnly || retried || !existsSync(dir) ? repo.backing : dir;
   const tipRevision = tipRepo === repo.backing ? `${name}@` : "@";
   const tip = await jjOut(
     ["log", "--no-graph", "-r", tipRevision, "-T", "commit_id"],
@@ -1186,6 +1191,7 @@ export async function refresh(options: {
 export async function remove(options: {
   slug: string;
   repo: string;
+  discardBroken?: boolean;
 }): Promise<Attempt<string>> {
   const name = legacyWorkspaceName(options.slug);
   if (!name.ok) return name;
@@ -1211,6 +1217,14 @@ export async function remove(options: {
       const registered = names.value.includes(name.value);
       if (!registered && !existsSync(dir))
         return bad(`${name.value} is not registered and ${dir} does not exist`);
+      if (registered) {
+        const work = await unlanded(repo.value, cfg.value, dir, name.value, [], true);
+        if (!work.ok) return work;
+        if (work.value.length > 0)
+          return bad(
+            `${dir} has unlanded changes; land or abandon them first:\n${work.value.map((line) => `  ${line}`).join("\n")}`,
+          );
+      }
       if (!existsSync(dir)) {
         const listed = await workspaces(repo.value);
         if (!listed.ok) return listed;
@@ -1249,6 +1263,7 @@ export async function remove(options: {
           name.value,
           dir,
           registered,
+          options.discardBroken === true,
         );
         return removed.ok ? good(dir) : removed;
       }
@@ -1268,6 +1283,7 @@ export async function remove(options: {
           name.value,
           dir,
           registered,
+          options.discardBroken === true,
         );
         return broken.ok ? good(dir) : broken;
       }
@@ -1386,6 +1402,131 @@ async function readDiskFile(
   return missing.success ? good(undefined) : bad(msg(result));
 }
 
+/** Materialize trunk and the disk tree separately so broken jj metadata is never read. */
+async function saveBrokenPatch(
+  repo: Repo,
+  cfg: Config,
+  name: string,
+  dir: string,
+): Promise<Attempt<string>> {
+  const trunk = await trunkCommit(repo, cfg);
+  if (!trunk.ok) return trunk;
+  if (trunk.value === null) return bad("cannot save patch without trunk");
+  const trunkId = trunk.value;
+  const files = await jjOut(
+    [
+      "file",
+      "list",
+      "-r",
+      trunk.value,
+      "-T",
+      'json(path) ++ "\\t" ++ file_type ++ "\\n"',
+    ],
+    repo.backing,
+    true,
+  );
+  if (!files.ok) return files;
+  const temp = await attempt(() => mkdtemp(join(tmpdir(), "agx-ws-patch-")));
+  if (!temp.ok) return bad(`cannot save broken workspace patch: ${msg(temp)}`);
+  const result = await buildBrokenPatch(
+    repo,
+    trunkId,
+    files.value,
+    name,
+    dir,
+    temp.value,
+  );
+  const cleanup = await attempt(() =>
+    rm(temp.value, { recursive: true, force: true }),
+  );
+  if (!cleanup.ok)
+    return bad(`cannot clean patch staging directory: ${msg(cleanup)}`);
+  return result.ok
+    ? good(result.value)
+    : bad(`cannot save broken workspace patch: ${msg(result)}`);
+}
+
+async function buildBrokenPatch(
+  repo: Repo,
+  trunk: string,
+  files: string,
+  name: string,
+  dir: string,
+  temp: string,
+): Promise<Attempt<string>> {
+  const before = join(temp, "before");
+  const after = join(temp, "after");
+  const made = await attempt(() => mkdir(before));
+  if (!made.ok) return made;
+  for (const line of files.split("\n").filter(Boolean)) {
+    const saved = await materializeTrunkFile(repo, trunk, before, line);
+    if (!saved.ok) return saved;
+  }
+  const copied = await attempt(() =>
+    cp(dir, after, {
+      recursive: true,
+      dereference: false,
+      filter: (source) =>
+        source !== join(dir, ".jj") && source !== join(dir, ".git"),
+    }),
+  );
+  if (!copied.ok) return copied;
+  const diff = await runStep(
+    ["git", "diff", "--no-index", "--binary", "--", "before", "after"],
+    temp,
+  );
+  if (!diff.ok) return diff;
+  if (diff.value.code !== 0 && diff.value.code !== 1)
+    return bad(diff.value.err);
+  return attempt(async () => {
+    const destination = join(stateDir(), "ws-rm");
+    await mkdir(destination, { recursive: true });
+    const path = join(
+      destination,
+      `${name}-${Temporal.Now.instant().toString().replaceAll(":", "-")}-${crypto.randomUUID()}.patch`,
+    );
+    await writeFile(path, diff.value.out, { flag: "wx" });
+    return path;
+  });
+}
+
+async function materializeTrunkFile(
+  repo: Repo,
+  trunk: string,
+  before: string,
+  line: string,
+): Promise<Attempt<void>> {
+  const [encoded, type] = line.split("\t");
+  const parsed = jsonOf(z.string().min(1)).safeParse(encoded);
+  if (!parsed.success || type === undefined)
+    return bad(`invalid trunk entry: ${line}`);
+  const target = join(before, parsed.data);
+  const content = await runStep(
+    [
+      "jj",
+      "--no-pager",
+      "--color=never",
+      "--ignore-working-copy",
+      "file",
+      "show",
+      "-r",
+      trunk,
+      "--",
+      parsed.data,
+    ],
+    repo.backing,
+  );
+  if (!content.ok) return content;
+  if (content.value.code !== 0) return bad(content.value.err);
+  return attempt(async () => {
+    await mkdir(dirname(target), { recursive: true });
+    if (type === "symlink")
+      return createSymlink(content.value.out.toString(), target);
+    await writeFile(target, content.value.out);
+    if (type === "executable") await chmod(target, 0o755);
+  });
+}
+
 async function removeBrokenWorkspace(
   repo: Repo,
   cfg: Config,
@@ -1393,17 +1534,23 @@ async function removeBrokenWorkspace(
   name: string,
   dir: string,
   registered: boolean,
+  discardBroken: boolean,
 ): Promise<Attempt<void>> {
   const differences = await trackedDiskDifferences(repo, cfg, dir);
   if (!differences.ok) return differences;
-  if (differences.value.length > 0)
+  if (differences.value.length > 0 && !discardBroken)
     return bad(
-      `${dir} is broken; tracked files differ from ${cfg.trunk}: ${differences.value.join(", ")}; refusing removal`,
+      `${dir} is broken; tracked files differ from ${cfg.trunk}: ${differences.value.join(", ")}; use --discard-broken to save a patch and remove it`,
     );
   const guarded = await removalGuard(repo, dir);
   if (!guarded.ok) return guarded;
   if (Bun.which("rip") === null)
     return bad("rip is not on PATH: mise run install:tools");
+  if (discardBroken) {
+    const saved = await saveBrokenPatch(repo, cfg, name, dir);
+    if (!saved.ok) return saved;
+    process.stderr.write(`ws: saved patch ${saved.value}\n`);
+  }
   if (registered) {
     const forgotten = await jjOut(
       ["workspace", "forget", name],
@@ -1500,8 +1647,15 @@ async function removalGuard(
           true,
         )
       : good(forgottenCommit);
-  if (!tip.ok) return tip;
-  const work = await outstanding(repo, tip.value.trim(), trunk.value);
+  const resolvedTip = tip.ok
+    ? tip
+    : await jjOut(
+        ["log", "--no-graph", "-r", `${basename(dir)}@`, "-T", "commit_id"],
+        repo.backing,
+        true,
+      );
+  if (!resolvedTip.ok) return resolvedTip;
+  const work = await outstanding(repo, resolvedTip.value.trim(), trunk.value);
   if (!work.ok) return work;
   return work.value.differing.length === 0
     ? good(undefined)
@@ -1771,7 +1925,11 @@ function parseJjTreeFiles(encoded: string): Attempt<Map<string, JjTreeFile>> {
   return good(files);
 }
 
-type GcTrace = { inventoryMs: number; inventoryCount: number; comparisonMs: number };
+type GcTrace = {
+  inventoryMs: number;
+  inventoryCount: number;
+  comparisonMs: number;
+};
 
 async function gcCommitGraph(
   repo: Repo,
@@ -3032,10 +3190,12 @@ async function classifyGc(
         sameTrackedFile(target.files.get(path), trunkTarget.files.get(path)),
       );
     const unrecordedModern = !recorded && kind === "ws";
-    const consumed = matchingContent && !unrecordedModern
-      ? await consumedChangesets(repo, ws.target, trunk, [...changedPaths])
-      : good<string[]>([]);
-    if (trace !== undefined) trace.comparisonMs += performance.now() - comparisonStart;
+    const consumed =
+      matchingContent && !unrecordedModern
+        ? await consumedChangesets(repo, ws.target, trunk, [...changedPaths])
+        : good<string[]>([]);
+    if (trace !== undefined)
+      trace.comparisonMs += performance.now() - comparisonStart;
     if (!consumed.ok)
       return verdict(
         "broken",
@@ -3728,7 +3888,10 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
     if (!trunk.ok) return trunk;
     const tracing = process.env.AGX_WS_GC_TRACE === "1";
     const report = (step: string, ms: number, count?: number) => {
-      if (tracing) process.stderr.write(`gc trace: ${step}: ${ms.toFixed(3)} ms${count === undefined ? "" : ` count=${count}`}\n`);
+      if (tracing)
+        process.stderr.write(
+          `gc trace: ${step}: ${ms.toFixed(3)} ms${count === undefined ? "" : ` count=${count}`}\n`,
+        );
     };
     let stepStart = performance.now();
     const candidates = await workspaces(repo, options.includeMain ?? true);
@@ -3745,14 +3908,23 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
     const lines: string[] = [];
     const failed: string[] = [];
     const broken: string[] = [];
-    const trace: GcTrace = { inventoryMs: 0, inventoryCount: 0, comparisonMs: 0 };
-    const budget = { remainingMs: (options.inventoryBudgetSeconds ?? 120) * 1000, exhausted: false };
+    const trace: GcTrace = {
+      inventoryMs: 0,
+      inventoryCount: 0,
+      comparisonMs: 0,
+    };
+    const budget = {
+      remainingMs: (options.inventoryBudgetSeconds ?? 120) * 1000,
+      exhausted: false,
+    };
     let classificationMs = 0;
     let completed = 0;
     let slowest: { workspace: string; ms: number; step: string } | undefined;
     const reportProgress = () => {
       if (!tracing) return;
-      process.stderr.write(`gc trace: cumulative: workspaces=${completed}/${candidates.value.length} classification=${Math.max(0, classificationMs - trace.inventoryMs - trace.comparisonMs).toFixed(3)} ms inventory=${trace.inventoryMs.toFixed(3)} ms count=${trace.inventoryCount} comparison=${trace.comparisonMs.toFixed(3)} ms slowest=${JSON.stringify(slowest?.workspace ?? null)} ms=${(slowest?.ms ?? 0).toFixed(3)} step=${slowest?.step ?? "none"}\n`);
+      process.stderr.write(
+        `gc trace: cumulative: workspaces=${completed}/${candidates.value.length} classification=${Math.max(0, classificationMs - trace.inventoryMs - trace.comparisonMs).toFixed(3)} ms inventory=${trace.inventoryMs.toFixed(3)} ms count=${trace.inventoryCount} comparison=${trace.comparisonMs.toFixed(3)} ms slowest=${JSON.stringify(slowest?.workspace ?? null)} ms=${(slowest?.ms ?? 0).toFixed(3)} step=${slowest?.step ?? "none"}\n`,
+      );
     };
     for (const ws of candidates.value) {
       const inventoryBefore = trace.inventoryMs;
@@ -3844,9 +4016,11 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
       const comparison = trace.comparisonMs - comparisonBefore;
       const classification = Math.max(0, elapsed - inventory - comparison);
       let step = "classification";
-      if (inventory >= comparison && inventory >= classification) step = "inventory";
+      if (inventory >= comparison && inventory >= classification)
+        step = "inventory";
       else if (comparison >= classification) step = "comparison";
-      if (slowest === undefined || elapsed > slowest.ms) slowest = { workspace: ws.dir, ms: elapsed, step };
+      if (slowest === undefined || elapsed > slowest.ms)
+        slowest = { workspace: ws.dir, ms: elapsed, step };
       let reason = c.reason;
       if (c.verdict === "broken") broken.push(ws.dir);
       const missingCommit = ws.commit;
@@ -4070,7 +4244,11 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
       if (completed % 50 === 0) reportProgress();
     }
     if (completed % 50 !== 0 || completed === 0) reportProgress();
-    report("per-workspace classification", Math.max(0, classificationMs - trace.inventoryMs - trace.comparisonMs), candidates.value.length);
+    report(
+      "per-workspace classification",
+      Math.max(0, classificationMs - trace.inventoryMs - trace.comparisonMs),
+      candidates.value.length,
+    );
     report("untracked inventory", trace.inventoryMs, trace.inventoryCount);
     report("comparison", trace.comparisonMs);
     const result = {
