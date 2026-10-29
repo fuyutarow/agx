@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.7 — 2026-10-29
+
+- Route unnamed return answers to the fallback instead of refusing dispatch.
+
 ## 1.22.6 — 2026-10-29
 
 - Wait for publication locks using the judge bound and report lock errors accurately.
