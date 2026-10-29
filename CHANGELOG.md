@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.5 — 2026-10-29
+
+- Deliver to idle Codex threads when turn listing is unavailable.
+
 ## 1.22.4 — 2026-10-29
 
 - Stop judge-lock test holders when their parent exits.
