@@ -48,6 +48,7 @@ async function fixture(ended: boolean) {
       id,
       at: "2026-10-27T00:01:00Z",
       exit: 0,
+      outcome: "ok",
       report_path: null,
       vendor_session: null,
       verify: [],
@@ -59,13 +60,16 @@ async function fixture(ended: boolean) {
   return { root, id, records };
 }
 
-function launchJudge(root: string, id: string, timeout = 5_000) {
-  const child = Bun.spawn([process.execPath, cli, "judge", id, "accept"], {
-    env: { ...process.env, AGX_STATE_DIR: root },
-    stdout: "pipe",
-    stderr: "pipe",
-    timeout,
-  });
+function launchJudge(root: string, id: string, extra: string[] = []) {
+  const child = Bun.spawn(
+    [process.execPath, cli, "judge", id, "accept", ...extra],
+    {
+      env: { ...process.env, AGX_STATE_DIR: root },
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 5_000,
+    },
+  );
   return {
     child,
     result: Promise.all([
@@ -94,7 +98,7 @@ async function readLine(
   }
 }
 
-async function holdPublicationLock(root: string) {
+async function writeHolder(root: string) {
   const script = join(root, "judge-lock-holder.ts");
   await writeFile(
     script,
@@ -104,12 +108,20 @@ const root = process.argv[2];
 if (root === undefined) throw new Error("missing lock fixture root");
 const lock = await acquireWorkspaceLock(join(root, "current-runs.json"), root);
 if (!lock.ok) throw new Error(lock.error);
-const released = new Promise<void>((resolve) => process.stdin.once("data", () => resolve()));
+const released = new Promise<void>((resolve) => {
+  process.stdin.once("data", () => resolve());
+  process.stdin.once("end", () => resolve());
+});
 process.stdout.write(String(process.pid) + "\\n");
 await released;
 await lock.release();
 `,
   );
+  return script;
+}
+
+async function holdPublicationLock(root: string) {
+  const script = await writeHolder(root);
   const child = Bun.spawn([process.execPath, script, root], {
     stdin: "pipe",
     stdout: "pipe",
@@ -179,6 +191,57 @@ function capturedJudge(
 }
 
 describe("worker contract: judge lock", () => {
+  test("worker contract: judge lock holder exits when its test process dies", async () => {
+    const { root } = await fixture(true);
+    const script = await writeHolder(root);
+    const parentScript = join(root, "holder-parent.ts");
+    await writeFile(
+      parentScript,
+      `
+const child = Bun.spawn([process.execPath, process.argv[2], process.argv[3]], {
+  stdin: "pipe", stdout: "inherit", stderr: "inherit",
+});
+await child.exited;
+`,
+    );
+    const parent = Bun.spawn([process.execPath, parentScript, script, root], {
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 5_000,
+    });
+    let pid: number | undefined;
+    await using _cleanup = {
+      [Symbol.asyncDispose]: async () => {
+        parent.kill();
+        const cleanupPid = pid;
+        if (
+          cleanupPid !== undefined &&
+          Number.isInteger(cleanupPid) &&
+          cleanupPid > 0
+        )
+          await Promise.try(() => process.kill(cleanupPid, "SIGKILL")).catch(
+            () => {},
+          );
+      },
+    };
+    const pidText = await readLine(parent.stdout);
+    pid = Number(pidText);
+    expect(pidText).toBeDefined();
+    expect(Number.isInteger(pid)).toBe(true);
+    expect(pid).toBeGreaterThan(0);
+    parent.kill("SIGKILL");
+    await parent.exited;
+    const deadline = performance.now() + 2_000;
+    let alive = true;
+    while (alive && performance.now() < deadline) {
+      alive = await Promise.try(() => process.kill(pid, 0)).then(
+        () => true,
+        () => false,
+      );
+      if (alive) await Bun.sleep(20);
+    }
+    expect(alive).toBe(false);
+  });
   test("waits for a 2 s publication lock held by another process", async () => {
     const { root, id } = await fixture(true);
     const holder = await holdPublicationLock(root);
@@ -228,28 +291,35 @@ describe("worker contract: judge lock", () => {
     expect(await readFile(records, "utf8")).toBe(original);
   });
 
-  test("records against the run id before its end is published", async () => {
+  test("refuses an unended run and records an override after an incomplete end", async () => {
     const { root, id, records } = await fixture(false);
     const noticeAt = performance.now();
     const result = await launchJudge(root, id).result;
     const judgedAt = performance.now();
-    expect(result.exit).toBe(0);
+    expect(result.exit).not.toBe(0);
+    expect(result.stderr).toContain("before it ends");
+    const prematureOverride = await launchJudge(root, id, [
+      "--override",
+      "reviewed",
+    ]).result;
+    expect(prematureOverride.exit).not.toBe(0);
+    expect(prematureOverride.stderr).toContain("before it ends");
+    expect(await readFile(records, "utf8")).not.toContain('"judged"');
     expect(judgedAt - noticeAt).toBeLessThan(1000);
     appendFileSync(
       records,
       `${JSON.stringify({ kind: "ended", id, at: "2026-10-27T00:01:00Z", exit: 0, report_path: null, vendor_session: null, verify: [] })}\n`,
     );
+    const overridden = await launchJudge(root, id, ["--override", "reviewed"])
+      .result;
+    expect(overridden.exit).toBe(0);
     const log = (await readFile(records, "utf8")).trimEnd().split("\n");
     expect(
       log.flatMap((line) => {
         const record = logRecordSchema.safeParse(line);
         return record.success ? [record.data.kind] : [];
       }),
-    ).toEqual([
-      "started",
-      "judged",
-      "ended",
-    ]);
+    ).toEqual(["started", "ended", "judged"]);
     const { foldedRuns } = await import("../../src/next/store.ts");
     expect((await foldedRuns(root)).find((run) => run.id === id)).toMatchObject(
       {
