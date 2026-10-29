@@ -185,13 +185,13 @@ const rmCommand = command(
     ignoreArgv: rejectPrototypeFlag,
     help: {
       description:
-        "Forget and rip ws_<slug>; refuses only non-empty changes unreachable from trunk and every remote bookmark.",
+        "Forget and rip ws_<slug>. A change is landed if reachable from trunk or a remote bookmark, or if its content already landed on trunk; its commit need not be a trunk ancestor.",
     },
     flags: {
       repo: repoFlag,
       discardBroken: {
         type: Boolean,
-        description: "save a patch and remove a broken workspace",
+        description: "save broken workspace working-copy differences to $AGX_STATE_DIR/ws-rm/<slug>-<UTC>-<UUID>.patch (default state dir: ~/.local/state/agx; XDG_STATE_HOME overrides ~/.local/state), then remove it",
       },
     },
   },

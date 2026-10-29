@@ -22,7 +22,7 @@ import {
   rmSync,
 } from "node:fs";
 import { tmpdir, hostname } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import {
   mkdir,
   chmod,
@@ -204,6 +204,22 @@ process.exitCode = await child.exited;
     env: baseEnv({ PATH: `${wrapper}:${bin}:${process.env.PATH}` }),
   };
 }
+
+test("ws contract: rm help names the discard-broken patch path and the landed rule", async () => {
+  const fixture = await brokenFixture("help-patch");
+  const help = await ws(["rm", "--help"], fixture.path, fixture.env);
+  expect(help.code, help.err).toBe(0);
+  expect(help.out).toContain("$AGX_STATE_DIR/ws-rm/<slug>-<UTC>-<UUID>.patch");
+  expect(help.out).toContain("~/.local/state/agx");
+  expect(help.out).toContain("reachable from trunk or a remote bookmark");
+  expect(help.out).toContain("content already landed on trunk");
+  expect(help.out).toContain("commit need not be a trunk ancestor");
+  const removed = await ws(["rm", "--discard-broken", "help-patch"], fixture.path, fixture.env);
+  expect(removed.code, removed.err).toBe(0);
+  const patch = removed.err.match(/ws: saved patch ([^\n]+)/u)?.[1];
+  expect(patch).toBeDefined();
+  expect(dirname(patch ?? "")).toBe(join(fixture.env.AGX_STATE_DIR ?? "", "ws-rm"));
+});
 
 test("ws contract: rm --discard-broken saves the patch then removes a broken workspace", async () => {
   const fixture = await brokenFixture("save-patch");
