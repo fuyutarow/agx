@@ -13,31 +13,48 @@ test("WS-ADD-HANG-2: three piped adds have a fixed jj budget as history and work
   const repo = join(root, "repo");
   const bin = join(root, "bin");
   const calls = join(root, "jj-calls.jsonl");
+  const home = join(root, "home");
+  const xdgConfig = join(root, "config");
   const realJj = Bun.which("jj");
   expect(realJj).not.toBeNull();
   if (realJj === null) return;
   await mkdir(bin);
-  const env = {
+  const env: NodeJS.ProcessEnv = {
     ...stateTestEnv(),
     PATH: `${bin}:${process.env.PATH}`,
+    HOME: home,
+    XDG_CONFIG_HOME: xdgConfig,
     JJ_USER: "test",
     JJ_EMAIL: "test@example.com",
     RIP_GRAVEYARD: join(root, "graveyard"),
     AGX_STATE_DIR: join(root, "state"),
   };
+  await mkdir(home);
+  await mkdir(xdgConfig, { recursive: true });
+  await Bun.write(
+    join(xdgConfig, "jjconfig.toml"),
+    '[revset-aliases]\n"trunk()" = "bookmarks(main)"\n',
+  );
+  env.JJ_CONFIG = join(xdgConfig, "jjconfig.toml");
   for (const [name, body] of [
     ["stat", 'process.stdout.write("ext4\\n");'],
     ["agx", 'process.stdout.write("[]\\n");'],
     [
       "jj",
-      `import {appendFile} from "node:fs/promises";
+      `import { appendFile } from "node:fs/promises";
 const args = process.argv.slice(2);
 const sharedConfigRead = process.cwd() === ${JSON.stringify(repo)} && args.includes("--at-operation=@") && (
   (args.includes("workspace") && args.includes("root") && args.includes("default")) ||
   (args.includes("file") && (args.includes("list") || args.includes("show")) && (args.includes("agx.toml") || args.includes(".agx.toml"))));
-if (!sharedConfigRead) await appendFile(${JSON.stringify(calls)}, JSON.stringify(args) + "\\n");
-const child = Bun.spawn([${JSON.stringify(realJj)}, ...args], {stdin:"ignore", stdout:"inherit", stderr:"inherit", timeout: 20000});
-process.exitCode = await child.exited;`,
+const child = Bun.spawn([${JSON.stringify(realJj)}, ...args], {stdin:"ignore", stdout:"inherit", stderr:"pipe", timeout: 20000});
+const [code, errors] = await Promise.all([child.exited, new Response(child.stderr).text()]);
+if (!sharedConfigRead) {
+  process.stderr.write("JJ_ENV " + JSON.stringify({home:process.env.HOME,xdg:process.env.XDG_CONFIG_HOME,jjConfig:process.env.JJ_CONFIG}) + "\\n");
+  try { await appendFile(process.env.WS_JJ_CALLS, JSON.stringify({args,home:process.env.HOME,xdg:process.env.XDG_CONFIG_HOME,jjConfig:process.env.JJ_CONFIG,cwd:process.cwd()}) + "\\n"); }
+  catch (error) { process.stderr.write("JJ_TRACE_ERROR " + String(error) + "\\n"); }
+}
+process.stderr.write(errors);
+process.exitCode = code;`,
     ],
   ] as const) {
     const file = join(bin, name);
@@ -48,7 +65,7 @@ process.exitCode = await child.exited;`,
     const signal = AbortSignal.timeout(30_000);
     const child = Bun.spawn(cmd, {
       cwd,
-      env,
+      env: { ...env, WS_JJ_CALLS: calls },
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
@@ -112,6 +129,11 @@ process.exitCode = await child.exited;`,
     );
     await run([realJj, "commit", "-m", "base"], repo);
     await run([realJj, "bookmark", "create", "main", "-r", "@-"], repo);
+    const trunk = await run(
+      [realJj, "log", "--no-graph", "-r", "trunk()", "-T", "commit_id"],
+      repo,
+    );
+    expect(trunk.out.trim()).toMatch(/^[a-f0-9]{40}$/u);
     for (const stage of ["small", "history", "workspaces"]) {
       if (stage === "history") await growHistory();
       if (stage === "workspaces") await growWorkspaces();
@@ -138,6 +160,7 @@ process.exitCode = await child.exited;`,
     expect(diffs).toEqual([]);
   });
   await rm(root, { recursive: true, force: true });
+  await rm(calls, { force: true });
   expect(checked.ok, checked.ok ? undefined : String(checked.error)).toBe(true);
 }, 90_000);
 
@@ -145,6 +168,6 @@ process.exitCode = await child.exited;`,
 function stateTestEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env };
   delete env.AGX_NEXT_STATE_DIR;
-  env.JJ_CONFIG = "";
+  delete env.JJ_CONFIG;
   return env;
 }

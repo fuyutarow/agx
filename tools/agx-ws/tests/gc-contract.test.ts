@@ -73,12 +73,15 @@ async function fixture(
   mkdirSync(bin);
   mkdirSync(home);
   mkdirSync(join(home, ".config", "jj", "repos"), { recursive: true });
+  writeFileSync(
+    join(home, ".config", "jj", "config.toml"),
+    '[revset-aliases]\n"trunk()" = "bookmarks(main)"\n',
+  );
   const statShim = join(bin, "stat");
   writeFileSync(statShim, "#!/bin/sh\nprintf 'ext4\\n'\n");
   chmodSync(statShim, 0o755);
   const baseEnv = {
     ...process.env,
-    JJ_CONFIG: "",
     PATH: `${bin}:${process.env.PATH}`,
     HOME: home,
     XDG_STATE_HOME: state,
@@ -242,7 +245,7 @@ function addJjCounter(f: Fixture) {
   const wrapper = join(f.bin, "jj");
   writeFileSync(
     wrapper,
-    `#!/usr/bin/env bun\nimport { appendFileSync } from "node:fs";\nconst args = process.argv.slice(2);\nconst rootProbe = args.includes("workspace") && args.includes("root") && args.includes("default");\nconst policyFileRead = args.includes("file") && (args.includes("list") || args.includes("show")) && (args.includes("agx.toml") || args.includes(".agx.toml"));\nconst sharedConfigRead = process.cwd() === ${JSON.stringify(f.repo)} && args.includes("--at-operation=@") && (rootProbe || policyFileRead);\nif (!sharedConfigRead) appendFileSync(process.env.GC_CALLS_FILE ?? ${JSON.stringify(trace)}, JSON.stringify({cwd:process.cwd(),args}) + "\\n");\nconst child = Bun.spawn([${JSON.stringify(jj)}, ...args], { stdin: "ignore", stdout: "inherit", stderr: "inherit" });\nprocess.exitCode = await child.exited;\n`,
+    `#!/usr/bin/env bun\nimport { appendFileSync } from "node:fs";\nconst args = process.argv.slice(2);\nconst rootProbe = args.includes("workspace") && args.includes("root") && args.includes("default");\nconst policyFileRead = args.includes("file") && (args.includes("list") || args.includes("show")) && (args.includes("agx.toml") || args.includes(".agx.toml"));\nconst sharedConfigRead = process.cwd() === ${JSON.stringify(f.repo)} && args.includes("--at-operation=@") && (rootProbe || policyFileRead);\nif (!sharedConfigRead) { try { appendFileSync(process.env.GC_CALLS_FILE ?? ${JSON.stringify(trace)}, JSON.stringify({cwd:process.cwd(),args}) + "\\n"); } catch (error) { process.stderr.write(String(error) + "\\n"); } }\nconst child = Bun.spawn([${JSON.stringify(jj)}, ...args], { stdin: "ignore", stdout: "inherit", stderr: "inherit" });\nprocess.exitCode = await child.exited;\n`,
   );
   chmodSync(wrapper, 0o755);
   return trace;
