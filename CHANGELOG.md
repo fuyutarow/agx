@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.22.15 — 2026-10-29
+
+- Bound UUID-prefix discovery by the send deadline
+- Bound UUID-prefix discovery by the send deadline
+- Fix wait fixture to expose native reply turns
+- Make discovery deadline test deterministic
+
 ## 1.22.14 — 2026-10-29
 
 - Use the repository-pinned TypeScript compiler for library declarations
