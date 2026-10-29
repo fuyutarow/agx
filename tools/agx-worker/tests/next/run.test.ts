@@ -490,6 +490,7 @@ describe("agx-worker run", () => {
 
   test("dispatch contract: fake vendor adopts the reserved id without a second run id", async () => {
     const root = await scratch("next-run-");
+    registerTempDir(join(root, "agx-tmp"));
     const state = join(root, "state");
     const ticket = join(root, "ticket.md");
     const worker = join(root, "fake-worker.ts");
@@ -515,7 +516,7 @@ describe("agx-worker run", () => {
     }
     writeFileSync(
       ticket,
-      `+++\nschema = 2\nname = "fake"\nwrites = ["src/**"]\noutcome = "run fake worker"\nconsumer = "legacy consumer field"\nfirst_return = "legacy return field"\nfirst_return_s = 1\ntimeout_s = 60\nread_only_diagnostic = true\ntimeout_reason = "legacy reason"\nverify = []\ncapabilities = ["routine-check"]\n[proposition]\nid = "T1"\nclaim = "fake worker runs"\nrefuted_by = "worker does not run"\ndecides = "infrastructure"\nserves = ["coordination-throughput"]\ngraph_node = "legacy-node"\n+++\nRESOURCE-CLASS(NONCOMPUTE): test fixture\nDo the test.\n`,
+      `+++\nschema = 2\nname = "fake"\nwrites = ["src/**"]\noutcome = "run fake worker"\nconsumer = "legacy consumer field"\nfirst_return = "legacy return field"\nfirst_return_s = 1\ntimeout_s = 450\nread_only_diagnostic = true\ntimeout_reason = "legacy reason"\nverify = []\ncapabilities = ["routine-check"]\n[proposition]\nid = "T1"\nclaim = "fake worker runs"\nrefuted_by = "worker does not run"\ndecides = "infrastructure"\nserves = ["coordination-throughput"]\ngraph_node = "legacy-node"\n+++\nRESOURCE-CLASS(NONCOMPUTE): test fixture\nDo the test.\n`,
     );
     const interim = JSON.stringify({
       interim: true,
@@ -583,7 +584,7 @@ describe("agx-worker run", () => {
       `${JSON.stringify({
         kind: "dispatching",
         id: binding.id,
-        at: "2026-10-26T10:00:00Z",
+        at: now(),
         ticket: binding.ticket,
         writes: ["src/**"],
         cwd: root,
@@ -797,10 +798,12 @@ describe("agx-worker run", () => {
         "accept",
         "--note",
         "test acceptance",
+        "--override",
+        "reviewed incomplete dispatch fixture",
       ],
       { cwd: process.cwd(), env: { ...workerEnv, AGX_STATE_DIR: state } },
     );
-    expect(accepted.exitCode).toBe(0);
+    expect(accepted.exitCode, accepted.stderr.toString()).toBe(0);
 
     const continued = Bun.spawnSync(
       [
@@ -817,7 +820,7 @@ describe("agx-worker run", () => {
       ],
       { cwd: process.cwd(), env: workerEnv, timeout: 10_000 },
     );
-    expect(continued.exitCode).toBe(0);
+    expect(continued.exitCode, continued.stderr.toString()).toBe(0);
     expect(continued.stderr.toString().trim().split("\n")).toHaveLength(1);
     expect(continued.stderr.toString()).toStartWith(
       "WARN ignored legacy ticket fields:",
@@ -1005,6 +1008,7 @@ describe("agx-worker run", () => {
         "report_path",
         "returned",
         "changed_files",
+        "completion",
         "row",
         "route",
         "model",
