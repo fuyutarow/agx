@@ -1282,15 +1282,18 @@ cat "$FAKE_RECORDS"
 
 test("dispatch check deadline is an operational timeout with exit 75", async () => {
   const f = fixture();
+  // Run the slow check in the process that dispatch can kill. A wrapper which
+  // spawns another Bun leaves its descendant holding the stderr pipe open.
   writeFileSync(
-    join(f.root, "bin/agx-worker"),
-    `#!/usr/bin/env bun
-if (Bun.argv[2] === "check") {
+    f.entry,
+    `import { dispatchMain } from ${JSON.stringify(fileURLToPath(new URL("../src/dispatch.ts", import.meta.url)))};
+if (Bun.argv[2] === "dispatch") await dispatchMain(Bun.argv.slice(3));
+else if (Bun.argv[2] === "check") {
   await Bun.sleep(65_000);
   console.error("late check verdict");
   process.exit(2);
 }
-process.exit(1);
+else process.exit(1);
 `,
   );
   const child = Bun.spawn([process.execPath, f.entry, "dispatch", f.ticket], {
