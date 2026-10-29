@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.23 — 2026-10-29
+
+- Enforce a frozen test timeout ratchet.
+
 ## 1.22.22 — 2026-10-29
 
 - Preserve current workspace GC contracts and lock-scope verification
