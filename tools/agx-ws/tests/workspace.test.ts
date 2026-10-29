@@ -831,7 +831,17 @@ test("ws contract: gc --all reports one refused row and continues", async () => 
     baseEnv({ AGX_STATE_DIR: join(scratch, "gc-all-state") }),
   );
   expect(result.code, result.err).toBe(2);
-  expect(result.err, result.out).toBe("");
+  const roots = [legacyRepo, normalRepo].map((root) =>
+    root.replaceAll(/[.*+?^${}()|[\]\\]/gu, "\\$&"),
+  );
+  const progress = new RegExp(
+    `^gc --all (?:start (?:${roots.join("|")})|end (?:${roots.join("|")}) elapsed=\\d+\\.\\d{3}s (?:rows=\\d+(?: failure=incomplete)?|failure=(?:refused|unreachable|FAILED)))\\n`,
+    "gmu",
+  );
+  expect(result.err.replaceAll(progress, ""), result.out).toBe("");
+  expect(`${result.err}unexpected stderr\n`.replaceAll(progress, "")).toBe(
+    "unexpected stderr\n",
+  );
   const parsed = jsonOf(
     z.object({
       rows: z.array(z.array(z.string())),

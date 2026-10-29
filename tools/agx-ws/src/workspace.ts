@@ -46,6 +46,7 @@ import { jjWorkspace, refLocks } from "./jj-workspace.ts";
 import { withWorkspaceLock } from "./lock.ts";
 import { runStep, StepFailure } from "./subprocess.ts";
 import { enterStep } from "./deadline.ts";
+import { requireJjTemplateVersion } from "../../shared/src/jj-version.ts";
 
 for (const retired of ["AGX_DOCTOR_HOME", "AGX_DOCTOR_WORKSPACE"]) {
   if (process.env[retired] !== undefined) {
@@ -1302,7 +1303,14 @@ async function trackedDiskDifferences(
   if (trunk.value === null)
     return bad("cannot compare broken workspace without trunk");
   const files = await jjOut(
-    ["file", "list", "-r", trunk.value, "-T", 'json(path) ++ "\\t" ++ file_type ++ "\\t" ++ normal_value ++ "\\n"'],
+    [
+      "file",
+      "list",
+      "-r",
+      trunk.value,
+      "-T",
+      'json(path) ++ "\\t" ++ file_type ++ "\\t" ++ normal_value ++ "\\n"',
+    ],
     repo.backing,
     true,
   );
@@ -1312,7 +1320,8 @@ async function trackedDiskDifferences(
     const [encoded, type, id] = line.split("\t");
     const parsed = jsonOf(z.string().min(1)).safeParse(encoded);
     if (!parsed.success) return bad(`invalid tracked path from trunk: ${line}`);
-    if (type === undefined || id === undefined) return bad(`invalid trunk entry: ${line}`);
+    if (type === undefined || id === undefined)
+      return bad(`invalid trunk entry: ${line}`);
     paths.push({ path: parsed.data, type, id });
   }
   const differing: string[] = [];
@@ -1325,8 +1334,15 @@ async function trackedDiskDifferences(
     }
     if (disk.value.symlink || type === "symlink") {
       const content = disk.value.content;
-      const hash = createHash("sha1").update(`blob ${content.length}\0`).update(content).digest("hex");
-      differing.push(...(disk.value.symlink && type === "symlink" && hash === id ? [] : [path]));
+      const hash = createHash("sha1")
+        .update(`blob ${content.length}\0`)
+        .update(content)
+        .digest("hex");
+      differing.push(
+        ...(disk.value.symlink && type === "symlink" && hash === id
+          ? []
+          : [path]),
+      );
       continue;
     }
     const saved = await runStep(
@@ -1358,7 +1374,9 @@ async function readDiskFile(
   const result = await attempt(async () => {
     const info = await lstat(path);
     const symlink = info.isSymbolicLink();
-    const content = symlink ? Buffer.from(await readlink(path)) : await readFile(path);
+    const content = symlink
+      ? Buffer.from(await readlink(path))
+      : await readFile(path);
     return { content, symlink };
   });
   if (result.ok) return good(result.value);
@@ -4186,8 +4204,18 @@ export async function gcAll(
   for (const [path, sources] of [...roots].toSorted(([a], [b]) =>
     a.localeCompare(b),
   )) {
+    const started = performance.now();
     const repo = resolveRepo(path);
+    if (repo.ok) requireJjTemplateVersion(["jj", "-T"]);
+    process.stderr.write(`gc --all start ${path}\n`);
+    const report = (outcome: string) => {
+      const seconds = ((performance.now() - started) / 1000).toFixed(3);
+      process.stderr.write(
+        `gc --all end ${path} elapsed=${seconds}s ${outcome}\n`,
+      );
+    };
     if (!repo.ok) {
+      report("failure=unreachable");
       failed.push(path);
       repositories.push({
         root: path,
@@ -4204,6 +4232,9 @@ export async function gcAll(
       repo: repo.value.backing,
     });
     if (done.ok) {
+      report(
+        `rows=${done.value.lines.length}${done.value.complete ? "" : " failure=incomplete"}`,
+      );
       repositories.push({
         root: path,
         sources: [...sources].toSorted(),
@@ -4216,6 +4247,7 @@ export async function gcAll(
       continue;
     }
     if (done.error instanceof LegacyWorkspaceConfigError) {
+      report("failure=refused");
       refused.push(path);
       repositories.push({
         root: path,
@@ -4227,6 +4259,7 @@ export async function gcAll(
       continue;
     }
     failed.push(path);
+    report("failure=FAILED");
     repositories.push({
       root: path,
       sources: [...sources].toSorted(),

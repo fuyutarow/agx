@@ -190,6 +190,61 @@ async function gc(f: Fixture, extra: string[] = [], trace?: string) {
   );
 }
 
+test("ws contract: gc --all reports each repository on stderr as it goes", async () => {
+  const first = await fixture(1);
+  const second = await fixture(1);
+  await jjRun(["workspace", "root"], second.repo, first.baseEnv);
+  const records = [first, second].map((f, index) => ({
+    id: `record-${index}`,
+    state: "ended",
+    cwd: f.repo,
+    workspace: f.workspaces[0],
+  }));
+  writeFileSync(
+    join(first.bin, "agx"),
+    `#!/bin/sh\ncat <<'EOF'\n${JSON.stringify(records)}\nEOF\n`,
+  );
+  for (const format of [[], ["--json"]]) {
+    const result = await run(
+      [
+        "bun",
+        wsCli,
+        "gc",
+        "--all",
+        "--dry-run",
+        "--include-unrecorded",
+        "--grace-minutes",
+        "0",
+        ...format,
+      ],
+      first.repo,
+      first.baseEnv,
+    );
+    expect(result.code, result.err + result.out).toBe(0);
+    const progress = result.err
+      .split("\n")
+      .filter((line) => line.startsWith("gc --all "));
+    expect(progress).toHaveLength(4);
+    for (const [index, repo] of [first.repo, second.repo]
+      .toSorted()
+      .entries()) {
+      expect(progress[index * 2]).toBe(`gc --all start ${repo}`);
+      expect(progress[index * 2 + 1]).toMatch(
+        new RegExp(`^gc --all end .* elapsed=\\d+\\.\\d{3}s rows=\\d+$`, "u"),
+      );
+      expect(progress[index * 2 + 1]).toContain(`end ${repo} `);
+    }
+    expect(result.out).not.toContain("gc --all ");
+    if (format.length > 0) {
+      const parsed = jsonOf(
+        z.object({ repositories: z.array(z.unknown()) }),
+      ).safeParse(result.out);
+      expect(parsed.success).toBe(true);
+      expect(parsed.success && parsed.data.repositories).toHaveLength(2);
+    }
+  }
+});
+
 async function addLandWorkspace(f: Fixture) {
   const stateRoot = f.baseEnv.AGX_STATE_DIR;
   expect(stateRoot).toBeDefined();
