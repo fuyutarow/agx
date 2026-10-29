@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.31 — 2026-10-30
+
+- Preserve relative symlink targets in broken workspace patches.
+
 ## 1.22.30 — 2026-10-30
 
 - Keep liveness probes outside the current-runs publication lock.
