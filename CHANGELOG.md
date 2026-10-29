@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.12 — 2026-10-29
+
+- Compare tracked symlinks by their targets when checking workspaces.
+
 ## 1.22.11 — 2026-10-29
 
 - Refuse Claude-to-Claude messages and direct callers to native SendMessage.
