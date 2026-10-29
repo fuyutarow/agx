@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.14 — 2026-10-29
+
+- Use the repository-pinned TypeScript compiler for library declarations
+
 ## 1.22.13 — 2026-10-29
 
 - Restore roster TICKET output to the documented selected-row JSON shape.
