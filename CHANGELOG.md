@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.11 — 2026-10-29
+
+- Refuse Claude-to-Claude messages and direct callers to native SendMessage.
+
 ## 1.22.10 — 2026-10-29
 
 - Fix agx TypeScript lint errors in forwarded exit handling
