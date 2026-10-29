@@ -49,6 +49,7 @@ const WorkspaceConfig = z.strictObject({
   trunk: z.string().min(1).optional(),
   keep: NonEmptyStrings.optional(),
   regenerable: RegenerablePaths.optional(),
+  unjudged_warn_hours: z.number().nonnegative().optional(),
 });
 const LocalWorkspaceConfig = z.strictObject({
   ready: NonEmptyStrings.optional(),
@@ -178,6 +179,7 @@ type ResolvedAgxConfig = {
   trunkConfigured: boolean;
   keep: string[];
   regenerable: string[];
+  unjudgedWarnHours: number;
   verifyAlways: string[];
 };
 export type ResolvedAgxConfigWithProvenance = ResolvedAgxConfig & {
@@ -488,6 +490,7 @@ async function resolveConfig(
   let trunkConfigured = false;
   let keep: string[] = [];
   let regenerable: string[] = [];
+  let unjudgedWarnHours = 24;
   let verifyAlways: string[] = [];
   if (policy !== undefined) {
     const text = policy.text;
@@ -527,6 +530,7 @@ async function resolveConfig(
     trunkConfigured = parsed.data.ws?.trunk !== undefined;
     keep = parsed.data.ws?.keep ?? keep;
     regenerable = parsed.data.ws?.regenerable ?? regenerable;
+    unjudgedWarnHours = parsed.data.ws?.unjudged_warn_hours ?? unjudgedWarnHours;
     verifyAlways = parsed.data.verify?.always ?? verifyAlways;
   }
   const local = await localConfig(root);
@@ -547,6 +551,7 @@ async function resolveConfig(
     trunkConfigured,
     keep,
     regenerable,
+    unjudgedWarnHours,
     verifyAlways,
     policyRevision: committed.value.revision,
     workingCopyPolicyDiffers,
@@ -570,6 +575,7 @@ export async function resolveAgxConfig(
     trunkConfigured: config.trunkConfigured,
     keep: config.keep,
     regenerable: config.regenerable,
+    unjudgedWarnHours: config.unjudgedWarnHours,
     verifyAlways: config.verifyAlways,
   });
 }

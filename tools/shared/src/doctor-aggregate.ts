@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { DoctorRecord } from "./doctor-record.ts";
+import { DoctorRecord, WorkspaceDoctorSummary } from "./doctor-record.ts";
 import { stateDir } from "./state-dir.ts";
 import { z } from "./zod.ts";
 
@@ -8,6 +8,7 @@ const count = z.number().int().nonnegative();
 export const DoctorAggregate = z.object({
   schema: z.literal(1),
   findings: z.array(DoctorRecord),
+  workspaces: z.array(WorkspaceDoctorSummary).optional(),
   kinds: z.record(z.string(), count),
   total: count,
   lost: count,

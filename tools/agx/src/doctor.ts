@@ -1,7 +1,7 @@
 import { attempt } from "../../shared/src/attempt.ts";
 import { cli as cleyeCli } from "cleye";
 import { standardCli } from "../../shared/src/cli.ts";
-import { DoctorRecord } from "../../shared/src/doctor-record.ts";
+import { DoctorRecord, WorkspaceDoctorSummary } from "../../shared/src/doctor-record.ts";
 import { doctorTools } from "../../shared/src/doctor-aggregate.ts";
 import { resolveSuiteTool } from "../../shared/src/path-dispatch.ts";
 import { checkState } from "../../shared/src/state-dir.ts";
@@ -43,6 +43,7 @@ async function readBounded(
 
 async function collect(tool: (typeof doctorTools)[number], timeout: number) {
   const findings: DoctorRecord[] = [];
+  const workspaces: WorkspaceDoctorSummary[] = [];
   let exit: number | null = null;
   let complete = true;
   let timedOut = false;
@@ -85,6 +86,8 @@ async function collect(tool: (typeof doctorTools)[number], timeout: number) {
     if (timedOut) complete = false;
     for (const line of stdout.split(/\r?\n/u)) {
       if (line.trim() === "") continue;
+      const summary = jsonOf(WorkspaceDoctorSummary).safeParse(line);
+      if (summary.success && tool === "agx-ws") { workspaces.push(summary.data); continue; }
       const parsed = jsonOf(DoctorRecord).safeParse(line);
       if (!parsed.success || parsed.data.tool !== tool) {
         complete = false;
@@ -111,6 +114,7 @@ async function collect(tool: (typeof doctorTools)[number], timeout: number) {
     );
   return {
     findings,
+    workspaces,
     member: {
       tool,
       exit,
@@ -202,6 +206,7 @@ async function collectAggregate(timeout: number): Promise<DoctorAggregate> {
   const aggregate: DoctorAggregate = {
     schema: 1,
     findings,
+    workspaces: results.flatMap((result) => result.workspaces),
     kinds,
     total: findings.length,
     lost: kinds.lost ?? 0,

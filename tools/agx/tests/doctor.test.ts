@@ -620,3 +620,16 @@ test("a waiting caller has its own deadline and does not cancel the owner", asyn
   expect(status.exit, status.stderr).toBe(0);
   expect(status.stdout).toContain('"error":null');
 });
+
+
+test("doctor contract: ws counts and the oldest unjudged run age per repository", async () => {
+  await using f = await fixture();
+  const summary = { type: "workspace_summary" as const, repo: "/repo", workspace_count: 2, unjudged_returned_runs: 1, oldest_unjudged_age_hours: 30, unjudged_warn_hours: 24 };
+  const warning = { tool: "agx-ws", object: "/repo/runs", finding: "unjudged-age", remedy: "judge returned runs" };
+  await f.member("ws", `process.stdout.write(${JSON.stringify(JSON.stringify(summary) + "\n" + JSON.stringify(warning) + "\n")}); process.exitCode = 1;`);
+  const result = await f.run();
+  expect(result.exit, result.stderr).toBe(1);
+  const data = decode(result.stdout);
+  expect(data.workspaces).toEqual([summary]);
+  expect(data.kinds["unjudged-age"]).toBe(1);
+});

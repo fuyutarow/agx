@@ -10,6 +10,7 @@ import {
   add,
   adopt,
   doctor as doctorWorkspaces,
+  doctorSummaries,
   gc,
   gcAll,
   harvest,
@@ -354,10 +355,12 @@ const gcCommand = command(
         );
       for (const repo of (done.value.repositories ?? []).filter(
         (candidate) => candidate.status !== "refused",
-      ))
+      )) {
+        const { total, unlanded, collectable, legacy } = repo.counts;
         process.stdout.write(
-          `${repo.root}\trepo\t${repo.status}\t${repo.sources.join(",")}\t${JSON.stringify(repo.counts)}\n`,
+          `${repo.root}\trepo\t${repo.status}\t${repo.sources.join(",")}\t${JSON.stringify({ total, unlanded, collectable, legacy })}\n`,
         );
+      }
       for (const line of done.value.lines) process.stdout.write(`${line}\n`);
     }
     if (done.value.failed.length > 0)
@@ -451,6 +454,13 @@ const doctorCommand = command(
       )
         process.stderr.write("agx ws doctor: error\n");
       return;
+    }
+    const summaries = await doctorSummaries();
+    if (!summaries.ok) { fail(summaries.error); return; }
+    for (const summary of summaries.value) {
+      process.stdout.write(JSON.stringify(summary) + "\n");
+      if (summary.oldest_unjudged_age_hours !== null && summary.oldest_unjudged_age_hours > summary.unjudged_warn_hours)
+        done.value.push(["agx-ws", summary.repo, "runs", "unjudged-age", `judge returned runs older than ${summary.unjudged_warn_hours} hours`].join("\t"));
     }
     const output = doctorOutput(done.value);
     if (!output.ok) {

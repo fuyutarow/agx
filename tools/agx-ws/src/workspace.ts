@@ -92,6 +92,7 @@ export type Config = {
   trunkConfigured: boolean;
   keep: string[];
   regenerable: string[];
+  unjudgedWarnHours?: number;
   policyRevision: string | undefined;
   workingCopyPolicyDiffers: boolean | undefined;
 };
@@ -224,6 +225,7 @@ export async function readConfig(repo: Repo): Promise<Attempt<ResolvedConfig>> {
     trunkConfigured: shared.value.trunkConfigured,
     keep: shared.value.keep,
     regenerable: shared.value.regenerable,
+    unjudgedWarnHours: shared.value.unjudgedWarnHours,
     policyRevision: shared.value.policyRevision,
     workingCopyPolicyDiffers: shared.value.workingCopyPolicyDiffers,
   });
@@ -1661,6 +1663,7 @@ const RunRecord = z.looseObject({
   continues: z.string().nullable().optional(),
   end_commit: z.string().nullable().optional(),
   ended_at: z.string().nullable().optional(),
+  returned: z.boolean().optional(),
   outcome: z.string().nullable().optional(),
   judgment: z.looseObject({ decision: z.string() }).nullable().optional(),
 });
@@ -3597,19 +3600,22 @@ async function classify(
   };
 }
 
-function gcCounts(lines: string[]) {
-  const rows = lines
-    .map((line) => line.split("\t"))
-    .filter((row) => row[1] !== "repo" && row[2] !== "collected");
-  return {
-    total: rows.length,
-    unlanded: rows.filter(
-      (row) =>
-        row[2] === "keep" && row[5]?.includes("unlanded change ") === true,
-    ).length,
-    collectable: rows.filter((row) => row[2] === "removable").length,
-    legacy: rows.filter((row) => row[1] === "legacy").length,
-  };
+export function gcCounts(lines: string[]) {
+  const rows = lines.map((line) => line.split("\t")).filter((row) => row[1] !== "repo" && row[1] !== "main");
+  const kept = { unlanded: 0, unjudged_run: 0, untracked_content: 0, inventory_budget_exhausted: 0, broken: 0, other: 0 };
+  let removed = 0;
+  for (const row of rows) {
+    const reason = row[5] ?? "";
+    if (row[2] === "collected" || reason.endsWith("; removed")) { removed++; continue; }
+    if (row[2] === "broken") kept.broken++;
+    else if (reason.includes("unlanded change ")) kept.unlanded++;
+    else if (reason.includes(" is unjudged; keep")) kept.unjudged_run++;
+    else if (reason.includes("untracked content:")) kept.untracked_content++;
+    else if (reason.includes("inventory budget exhausted")) kept.inventory_budget_exhausted++;
+    else kept.other++;
+  }
+  const originalRows = lines.map((line) => line.split("\t")).filter((row) => row[1] !== "repo" && row[2] !== "collected");
+  return { total: originalRows.length, unlanded: originalRows.filter((row) => row[2] === "keep" && row[5]?.includes("unlanded change ") === true).length, collectable: originalRows.filter((row) => row[2] === "removable").length, legacy: originalRows.filter((row) => row[1] === "legacy").length, removed, kept };
 }
 
 type GcResult = {
@@ -4492,6 +4498,35 @@ export async function doctorInventory(
 }
 
 const doctorClean = (value: string) => value.replaceAll(/[\t\r\n]/gu, " ");
+
+export async function doctorSummaries() {
+  const paths = await registeredRepoPaths();
+  if (!paths.ok) return paths;
+  const records = await agxRecords(process.cwd());
+  if (!records.ok) return records;
+  const summaries = [];
+  for (const path of paths.value) {
+    const resolved = resolveRepo(path);
+    if (!resolved.ok) return resolved;
+    const repo = resolved.value;
+    const cfg = await readConfig(repo);
+    if (!cfg.ok) return cfg;
+    const candidates = await workspaces(repo);
+    if (!candidates.ok) return candidates;
+    const runs = records.value.filter((run) =>
+      run.state === "ended" && run.returned !== undefined && (run.judgment === null || run.judgment === undefined) &&
+      (within(run.workspace, repo.backing) || within(run.cwd, repo.backing) || within(run.workspace, repo.wsRoot) || within(run.cwd, repo.wsRoot) ||
+       candidates.value.some((ws) => within(run.workspace, realOr(ws.dir)) || within(run.cwd, realOr(ws.dir))))
+    );
+    const dates = runs.flatMap((run) => {
+      const parsed = fromThrowable(() => Temporal.Instant.from(run.ended_at ?? "").epochMilliseconds)();
+      return parsed.isOk() ? [parsed.value] : [];
+    });
+    const age = dates.length === 0 || dates.length !== runs.length ? null : Math.max(0, (Temporal.Now.instant().epochMilliseconds - Math.min(...dates)) / 3_600_000);
+    summaries.push({ type: "workspace_summary" as const, repo: repo.backing, workspace_count: candidates.value.length, unjudged_returned_runs: runs.length, oldest_unjudged_age_hours: age, unjudged_warn_hours: cfg.value.unjudgedWarnHours ?? 24 });
+  }
+  return good(summaries);
+}
 
 /** Map gc classifier outcomes to doctor findings; kept rows remain deliberately silent. */
 export async function doctor(): Promise<Attempt<string[]>> {

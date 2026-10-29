@@ -12,7 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { jsonOf, z } from "../../shared/src/zod.ts";
-import { untrackedContent } from "../src/workspace.ts";
+import { gcCounts, untrackedContent } from "../src/workspace.ts";
 
 const scratch = mkdtempSync(join(tmpdir(), "agx-ws-gc-contract-"));
 const wsCli = process.env.GC_WS_CLI ?? join(import.meta.dir, "../src/ws.ts");
@@ -743,4 +743,65 @@ await import(${JSON.stringify(wsCli)});
   ).toHaveLength(2);
   expect(parsed?.counts.collectable).toBe(0);
   expect(parsed?.complete).toBe(false);
+});
+
+
+test("ws contract: gc summary counts removed and kept by reason", async () => {
+  const rows = [
+    ["a", "ws", "removable", "", "", "nothing unlanded; removed"],
+    ["b", "ws", "keep", "", "", "unlanded change abc"],
+    ["c", "ws", "keep", "", "", "run abc is unjudged; keep"],
+    ["d", "ws", "keep", "", "", "untracked content: 1 files"],
+    ["e", "ws", "keep", "", "", "inventory budget exhausted"],
+    ["f", "ws", "broken", "", "", "missing"],
+    ["g", "ws", "keep", "", "", "protected"],
+  ].map((row) => row.join("\t"));
+  expect(gcCounts(rows)).toMatchObject({ removed: 1, kept: { unlanded: 1, unjudged_run: 1, untracked_content: 1, inventory_budget_exhausted: 1, broken: 1, other: 1 } });
+  const f = await fixture(1);
+  const result = await gc(f);
+  expect(result.code, result.err).toBe(0);
+  const parsed = jsonOf(z.object({ counts: z.object({ removed: z.number(), kept: z.object({ other: z.number() }) }) })).safeParse(result.out);
+  expect(result.err).toBe("");
+  expect(parsed.success).toBe(true);
+  if (parsed.success) expect(parsed.data.counts.kept.other + parsed.data.counts.removed).toBe(1);
+  const repos = join(f.baseEnv.XDG_CONFIG_HOME ?? "", "agx", "repos");
+  mkdirSync(repos, { recursive: true });
+  writeFileSync(join(repos, "test.toml"), `schema = 1\nroot = ${JSON.stringify(f.repo)}\n`);
+  const args = ["bun", wsCli, "gc", "--all", "--dry-run", "--include-unrecorded", "--grace-minutes", "0"];
+  const all = await run([...args, "--json"], f.repo, f.baseEnv);
+  expect(all.code, all.err).toBe(0);
+  const counts = z.object({ removed: z.number(), kept: z.object({ unlanded: z.number(), unjudged_run: z.number(), untracked_content: z.number(), inventory_budget_exhausted: z.number(), broken: z.number(), other: z.number() }) });
+  const allParsed = jsonOf(z.object({ counts, repositories: z.array(z.object({ root: z.string(), counts })) })).safeParse(all.out);
+  expect(allParsed.success).toBe(true);
+  if (allParsed.success) {
+    const repo = allParsed.data.repositories.find((entry) => entry.root === f.repo);
+    expect(repo?.counts).toEqual(allParsed.data.counts);
+    expect(repo?.counts.kept.other).toBe(1);
+  }
+  const plain = await run(args, f.repo, f.baseEnv);
+  expect(plain.code, plain.err).toBe(0);
+  const repoLine = plain.out.split("\n").find((line) => line.startsWith(`${f.repo}\trepo\t`));
+  expect(repoLine?.split("\t")[4]).toMatch(/^\{"total":\d+,"unlanded":\d+,"collectable":\d+,"legacy":\d+\}$/u);
+});
+
+test("ws doctor inventories returned runs and warns by age", async () => {
+  const f = await fixture(1);
+  const repos = join(f.baseEnv.XDG_CONFIG_HOME ?? "", "agx", "repos");
+  mkdirSync(repos, { recursive: true });
+  writeFileSync(join(repos, "test.toml"), `schema = 1\nroot = ${JSON.stringify(f.repo)}\n`);
+  const endedAt = Temporal.Now.instant().subtract({ hours: 30 }).toString();
+  const record = { id: "returned", state: "ended", returned: false, judgment: null, ended_at: endedAt, workspace: f.workspaces[0] };
+  writeFileSync(join(f.bin, "agx"), `#!/bin/sh\nprintf '%s\n' '${JSON.stringify([record])}'\n`);
+  const doctor = await run(["bun", wsCli, "doctor", "--quiet"], f.repo, f.baseEnv);
+  expect(doctor.code, doctor.err).toBe(1);
+  const schema = z.object({ type: z.literal("workspace_summary"), workspace_count: z.number(), unjudged_returned_runs: z.number(), oldest_unjudged_age_hours: z.number(), unjudged_warn_hours: z.number() });
+  const summary = doctor.out.split("\n").map((line) => jsonOf(schema).safeParse(line)).find((item) => item.success);
+  expect(summary?.success).toBe(true);
+  if (summary?.success) {
+    expect(summary.data.workspace_count).toBe(1);
+    expect(summary.data.unjudged_returned_runs).toBe(1);
+    expect(summary.data.oldest_unjudged_age_hours).toBeGreaterThanOrEqual(30);
+    expect(summary.data.unjudged_warn_hours).toBe(24);
+  }
+  expect(doctor.out).toContain('"finding":"unjudged-age"');
 });
