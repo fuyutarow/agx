@@ -1,7 +1,7 @@
 // Run-workspace lifecycle: add, rm, gc. Repository policy comes from shared agx.toml config.
 // Explicit GC observations publish the owner-written verdict inventory for small-file readers.
 // Store locks and foreground waiter markers are transient and removed on completion.
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   accessSync,
   constants,
@@ -1307,7 +1307,8 @@ export async function remove(options: {
             `${dir} has unlanded changes; land or abandon them first:\n${recorded.value.join("\n")}`,
           );
         const work = await unlanded(repo.value, cfg.value, dir, name.value, []);
-        if (!work.ok && !msg(work).startsWith(`cannot judge ${dir}:`)) return work;
+        if (!work.ok && !msg(work).startsWith(`cannot judge ${dir}:`))
+          return work;
         if (!work.ok) {
           const broken = await removeBrokenWorkspace(
             repo.value,
@@ -1576,24 +1577,31 @@ async function materializeTrunkFile(
     return bad(`invalid trunk entry: ${line}`);
   const target = join(before, parsed.data);
   const gitStore = join(repo.backing, ".jj", "repo", "store");
-  const gitTarget = type === "symlink"
-    ? await attempt(() => readFile(join(gitStore, "git_target"), "utf8"))
-    : undefined;
+  const gitTarget =
+    type === "symlink"
+      ? await attempt(() => readFile(join(gitStore, "git_target"), "utf8"))
+      : undefined;
   if (gitTarget !== undefined && !gitTarget.ok) return gitTarget;
   const content = await runStep(
     gitTarget?.ok
-      ? ["git", "--git-dir", resolve(gitStore, gitTarget.value.trim()), "show", `${trunk}:${parsed.data}`]
+      ? [
+          "git",
+          "--git-dir",
+          resolve(gitStore, gitTarget.value.trim()),
+          "show",
+          `${trunk}:${parsed.data}`,
+        ]
       : [
-      "jj",
-      "--no-pager",
-      "--color=never",
-      "--ignore-working-copy",
-      "file",
-      "show",
-      "-r",
-      trunk,
-      "--",
-      parsed.data,
+          "jj",
+          "--no-pager",
+          "--color=never",
+          "--ignore-working-copy",
+          "file",
+          "show",
+          "-r",
+          trunk,
+          "--",
+          parsed.data,
         ],
     repo.backing,
   );
@@ -3770,6 +3778,49 @@ export async function untrackedContent(
   const gitDir = resolve(store, gitTarget.value.trim());
   const isRegenerable = (path: string): boolean =>
     roots.some((root) => path === root || path.startsWith(`${root}/`));
+  // An empty index makes Git apply ignore rules independently of the backing
+  // checkout's index; jj's saved snapshot is the authority for tracked files.
+  const listing = await runStep(
+    [
+      "git",
+      `--git-dir=${gitDir}`,
+      `--work-tree=${dir}`,
+      "-c",
+      "core.excludesFile=/dev/null",
+      "ls-files",
+      "--others",
+      "--exclude-standard",
+      "-z",
+      "--",
+      ".",
+      ...roots.map((root) => `:(exclude,literal)${root}`),
+    ],
+    dir,
+    {
+      env: {
+        GIT_INDEX_FILE: join(tmpdir(), `agx-empty-index-${randomUUID()}`),
+      },
+      timeoutMs: Math.max(1, Math.ceil(deadline - performance.now())),
+    },
+  );
+  if (!listing.ok)
+    return performance.now() >= deadline ||
+      msg(listing).includes("deadline exceeded")
+      ? timeoutFailure()
+      : listing;
+  if (listing.value.code !== 0)
+    return bad(`ignore inventory failed: ${listing.value.err.trim()}`);
+  const visible = new Set(
+    listing.value.out.toString().split("\0").filter(Boolean),
+  );
+  const visibleDirs = new Set<string>();
+  for (const path of [...visible, ...files, ...roots]) {
+    let parent = dirname(path);
+    while (parent !== "." && !visibleDirs.has(parent)) {
+      visibleDirs.add(parent);
+      parent = dirname(parent);
+    }
+  }
   let expired = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const paths: string[] = [];
@@ -3829,49 +3880,13 @@ export async function untrackedContent(
       readdir(join(dir, parent), { withFileTypes: true }),
     );
     if (!entries.ok) return entries;
-    const candidates = entries.value.map((entry) =>
-      parent === "" ? entry.name : `${parent}/${entry.name}`,
-    );
-    const ignoredResult =
-      candidates.length === 0
-        ? undefined
-        : await runStep(
-            [
-              "git",
-              `--git-dir=${gitDir}`,
-              `--work-tree=${dir}`,
-              "-c",
-              "core.excludesFile=/dev/null",
-              "check-ignore",
-              "--no-index",
-              "-z",
-              "--stdin",
-            ],
-            dir,
-            {
-              input: candidates.join("\0") + "\0",
-              timeoutMs: Math.max(1, Math.ceil(deadline - performance.now())),
-            },
-          );
-    if (ignoredResult !== undefined && !ignoredResult.ok) return ignoredResult;
-    if (ignoredResult?.ok === true && ignoredResult.value.code > 1)
-      return bad(`ignore inventory failed: ${ignoredResult.value.err.trim()}`);
-    const ignored = new Set(
-      ignoredResult?.ok === true
-        ? ignoredResult.value.out.toString().split("\0").filter(Boolean)
-        : [],
-    );
     for (const entry of entries.value) {
       if (timedOut()) return timeoutDiagnostic();
       entriesInventoried++;
       const path = parent === "" ? entry.name : `${parent}/${entry.name}`;
       if (entry.name === ".jj" || entry.name === ".git") continue;
       if (isRegenerable(path)) continue;
-      if (
-        ignored.has(path) &&
-        !files.has(path) &&
-        ![...files].some((file) => file.startsWith(`${path}/`))
-      )
+      if (!visible.has(path) && !files.has(path) && !visibleDirs.has(path))
         continue;
       const expected = trackedDetails?.get(path);
       if (expected !== undefined) {

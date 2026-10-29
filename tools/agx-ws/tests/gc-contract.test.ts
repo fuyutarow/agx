@@ -461,6 +461,43 @@ test("ws contract: untracked inventory ignores ignored and regenerable paths but
   expect(existsSync(join(workspace, "real.txt"))).toBe(true);
 });
 
+test("ws contract: untracked inventory makes one VCS listing call per workspace", async () => {
+  const f = await fixture(1);
+  const workspace = f.workspaces[0];
+  expect(workspace).toBeDefined();
+  if (workspace === undefined) return;
+  mkdirSync(join(workspace, "one", "two"), { recursive: true });
+  writeFileSync(join(workspace, "one", "two", "real.txt"), "keep");
+  const wrapper = join(f.parent, "inventory.ts");
+  writeFileSync(
+    wrapper,
+    `
+import { untrackedContent } from ${JSON.stringify(join(import.meta.dir, "../src/workspace.ts"))};
+const original = Bun.spawn;
+const commands = [];
+Bun.spawn = (...args) => { commands.push(args[0]); return original(...args); };
+const result = await untrackedContent(${JSON.stringify(workspace)}, [], 10000, [], new Set(["tracked.txt", "agx.toml"]));
+console.log(JSON.stringify({ result, commands }));
+`,
+  );
+  const result = await run(["bun", wrapper], workspace, f.baseEnv);
+  expect(result.code, result.err).toBe(0);
+  const parsed = jsonOf(
+    z.object({
+      result: z.object({
+        ok: z.literal(true),
+        value: z.object({ paths: z.array(z.string()) }),
+      }),
+      commands: z.array(z.array(z.string())),
+    }),
+  ).safeParse(result.out);
+  expect(parsed.success, result.out).toBe(true);
+  if (!parsed.success) return;
+  expect(parsed.data.result.value.paths).toContain("one/two/real.txt");
+  expect(parsed.data.commands).toHaveLength(1);
+  expect(parsed.data.commands[0]).toContain("ls-files");
+});
+
 test("gc usecase: a change not on trunk stays kept", async () => {
   const f = await fixture(1);
   const workspace = f.workspaces[0];
