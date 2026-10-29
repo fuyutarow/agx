@@ -3471,6 +3471,7 @@ describe("gc integration branches", () => {
     setRecords([recFor(landed), recFor(partial)]);
     const before = await ws(["gc", "--dry-run"], path);
     expect(before.out).toContain(`${landed}\tws\tkeep\t`);
+    expect(before.out).toContain(`${partial}\tws\tkeep\t`);
     expect(before.out).toContain("unlanded change");
     await unlink(join(path, "agx.toml"));
     expect((await jj(["commit", "-m", "land deletion"], path)).code).toBe(0);

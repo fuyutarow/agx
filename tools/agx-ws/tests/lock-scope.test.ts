@@ -67,6 +67,31 @@ async function fixture(slugs: string[]) {
         ? ["--grace-minutes", "0"]
         : []),
     ]);
+  const commandWithEnv = (args: string[]) => {
+    const commandEnv = { ...env, PATH: `${bin}:${process.env.PATH}` };
+    const child = Bun.spawn(
+      [
+        process.execPath,
+        ws,
+        ...args,
+        ...(args[0] === "gc" && !args.includes("--grace-minutes")
+          ? ["--grace-minutes", "0"]
+          : []),
+      ],
+      {
+        cwd: repo,
+        env: commandEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        signal: AbortSignal.timeout(45_000),
+      },
+    );
+    return Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]).then(([out, err, code]) => ({ out, err, code }));
+  };
   const shim = async (name: string, body: string) => {
     const file = join(bin, name);
     await Bun.write(file, `#!/usr/bin/env bun\n${body}\n`);
@@ -111,7 +136,7 @@ async function fixture(slugs: string[]) {
     ).toBe(0);
   await shim("stat", 'process.stdout.write("ext4\\n");');
   await shim("agx", 'process.stdout.write("[]");');
-  return { root, repo, lock, run, jj, command, shim, dir };
+  return { root, repo, lock, run, jj, command, commandWithEnv, shim, dir };
 }
 
 async function waitFor(file: string) {
@@ -253,7 +278,7 @@ test("WS-GC-LOCK-SCOPE: add acquires while the aggregate read-only classificatio
     "jj",
     `
 const args = process.argv.slice(2);
-if (args.includes("log") && args.includes("::working_copies()")) {
+if (args.includes("log") && args.some(arg => arg.includes("::working_copies()"))) {
   const holder = Bun.file(${JSON.stringify(join(f.lock, "owner.json"))});
   if (await holder.exists() && (await holder.text()).includes('"what":"agx ws gc')) { process.stderr.write("classification holds store lock"); process.exit(9); }
   await Bun.write(${JSON.stringify(gate)}, "started");
@@ -261,10 +286,10 @@ if (args.includes("log") && args.includes("::working_copies()")) {
 }
 ${delegateJj}`,
   );
-  const gc = f.command(["gc", "--include-unrecorded"]);
+  const gc = f.commandWithEnv(["gc", "--include-unrecorded"]);
   await waitFor(gate);
   const started = performance.now();
-  const added = await f.command(["add", "admitted"]);
+  const added = await f.commandWithEnv(["add", "admitted"]);
   expect(added.code, added.err).toBe(0);
   expect(performance.now() - started).toBeLessThan(7_000);
   expect(await Bun.file(join(f.dir("admitted"), "a.txt")).exists()).toBe(true);
@@ -359,7 +384,7 @@ process.stdout.write(JSON.stringify(recheck ? ${JSON.stringify(row)} : []));`,
         "jj",
         `
 const args = process.argv.slice(2);
-if (args.includes("log") && args.includes("::working_copies()")) {
+if (args.includes("log") && args.some(arg => arg.includes("::working_copies()"))) {
   const previouslyClassified = await Bun.file(${JSON.stringify(initial)}).exists();
   const locked = await Bun.file(${JSON.stringify(join(f.lock, "owner.json"))}).exists();
   if (!previouslyClassified) await Bun.write(${JSON.stringify(initial)}, "first classification seen");
@@ -371,7 +396,7 @@ if (args.includes("log") && args.includes("::working_copies()")) {
 ${delegateJj}`,
       );
     }
-    const collected = await f.command(["gc", "--include-unrecorded"]);
+    const collected = await f.commandWithEnv(["gc", "--include-unrecorded"]);
     expect(collected.code, collected.err).toBe(0);
     expect(await Bun.file(gate).text()).toBe("under lock");
     const reason = {
@@ -399,7 +424,7 @@ test("WS-GC-LOCK-SCOPE: gc skips a repository locked by add", async () => {
       since: Temporal.Now.instant().toString(),
     }),
   );
-  const collected = await f.command(["gc", "--include-unrecorded"]);
+    const collected = await f.commandWithEnv(["gc", "--include-unrecorded"]);
   expect(collected.code, collected.err).toBe(0);
   expect(collected.out).toContain("agx ws add owner");
   expect(collected.out).toContain("collection skipped");
