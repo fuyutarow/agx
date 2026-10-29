@@ -177,6 +177,10 @@ function startServer(
         requestBody = parsed.data;
       }
       const wireChoice = wireIds[choice] ?? choice;
+      let reasonCode: string | undefined;
+      if (choice === "missing_input") reasonCode = "verify requires $AGX_RUN_DIR/parity.tsv";
+      else if (["split", "uncheckable", "contradiction"].includes(choice))
+        reasonCode = `specific ${choice} reason`;
       const wireProbabilities =
         probabilities === undefined
           ? undefined
@@ -190,9 +194,7 @@ function startServer(
         answers: {
           worker: {
             choice: wireChoice,
-            ...(choice === "missing_input"
-              ? { reason_code: "verify requires $AGX_RUN_DIR/parity.tsv" }
-              : {}),
+            ...(reasonCode === undefined ? {} : { reason_code: reasonCode }),
             ...(wireProbabilities === undefined
               ? {}
               : { probabilities: wireProbabilities }),
@@ -455,7 +457,7 @@ describe("capability constrained routing", () => {
     const request = server.request();
     expect(request?.state.history).toBeUndefined();
     expect(request?.state.task.length).toBeLessThanOrEqual(2400);
-    expect(request?.questions.worker.instructions).toBe(ROUTING_OBJECTIVE);
+    expect(request?.questions.worker.instructions).toContain(ROUTING_OBJECTIVE);
     expect(request?.questions.worker.instructions).toContain("classify this ticket");
     expect(request?.questions.worker.instructions).not.toContain(
       "A. Capability sufficiency (hard)",
@@ -856,7 +858,7 @@ for (const reason of ["split", "uncheckable", "contradiction", "missing_input"] 
         expect(stderr).toContain(
           "ticket returned: missing_input: verify requires $AGX_RUN_DIR/parity.tsv",
         );
-      else expect(stderr).toContain("Fix:");
+      else expect(stderr).toContain(`specific ${reason} reason`);
       expect(await Bun.file(join(root, "worker-started")).exists()).toBe(false);
       expect(server.calls()).toBe(1);
       const parsedRecord = jsonOf(
@@ -881,6 +883,25 @@ for (const reason of ["split", "uncheckable", "contradiction", "missing_input"] 
     },
   );
 }
+
+test("route contract: an unnamed return never refuses a dispatch", async () => {
+  const { root } = await isolateState();
+  const server = startServer("unused");
+  for (const reasonCode of [undefined, "", "   "]) {
+    server.server.reload({ fetch: () => Response.json({ answers: { worker: {
+      choice: "missing_input", reason_code: reasonCode,
+    } } }) });
+    const picked = await route("unnamed return fixture");
+    expect(picked.id).toBe("luna-high");
+    const started = appendStarted(picked.id);
+    if (started?.kind === "started")
+      expect(started.pick_audit).toMatchObject({
+        source: "fallback-unnamed-return",
+        answer: { choice: "missing_input" },
+      });
+  }
+  expect(await Bun.file(join(root, "state", "routing-refusals.jsonl")).exists()).toBe(false);
+});
 
 test("missing worker answer uses the default and records the missing-answer fallback", async () => {
   await isolateState();

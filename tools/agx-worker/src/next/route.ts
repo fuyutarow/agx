@@ -385,7 +385,7 @@ export async function route(
     questions: {
       worker: {
         type: "choice",
-        instructions: ROUTING_OBJECTIVE,
+        instructions: `${ROUTING_OBJECTIVE} For a return, provide reason_code naming the specific missing input, conflict, or other reason.`,
         criteria,
       },
     },
@@ -448,6 +448,7 @@ export async function route(
     if (selectionMode === "fallback") audit.outcome_kind = "fallback";
     if (
       source.includes("invalid") ||
+      source.includes("unnamed-return") ||
       source.includes("ineligible") ||
       source.includes("missing-answer")
     )
@@ -485,6 +486,8 @@ export async function route(
   const selected = answer?.choice;
   const probabilities = answer?.probabilities;
   const reason = ReturnReason.safeParse(selected);
+  if (reason.success && (answer?.reason_code?.trim().length ?? 0) === 0)
+    return routeChoice(recordPick(fallback, "fallback-unnamed-return", probabilities));
   if (reason.success) {
     audit.outcome_kind = "held";
     audit.selection_mode = "return";
@@ -505,12 +508,7 @@ export async function route(
       pick_audit: pickAudit("jev-return", probabilities),
     });
     const detail = answer?.reason_code;
-    return refuse(
-      detail === undefined
-        ? `agx: ticket returned: ${reason.data}: ${returns[reason.data].criterion} Fix: ${returns[reason.data].fix}\n`
-        : `agx: ticket returned: ${reason.data}: ${detail}\n`,
-      2,
-    );
+    return refuse(`agx: ticket returned: ${reason.data}: ${detail}\n`, 2);
   }
   if (answer === undefined)
     return routeChoice(recordPick(fallback, "fallback-missing-answer", probabilities));
