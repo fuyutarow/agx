@@ -841,8 +841,11 @@ test("dispatch contract: launch failure is recorded before systemd-run and visib
   f.env.FAKE_ASSERT_PRELAUNCH_RECORD = "yes";
   const result = await invoke(f);
   expect(result.exitCode).not.toBe(0);
-  const id = result.stdout.trim().split(/\s/u)[0];
-  if (id === undefined) expect.unreachable("dispatch printed no run id");
+  expect(result.stdout).toBe("");
+  const binding = jsonOf(DispatchBindingSchema).safeParse(readFileSync(f.bindingFile, "utf8"));
+  expect(binding.success).toBe(true);
+  if (!binding.success) return;
+  const id = binding.data.id;
   const listed = Bun.spawnSync(
     [process.execPath, ENTRY, "ls", "--json", "--all"],
     { cwd: f.repo, env: f.env, timeout: 5_000 },
@@ -868,6 +871,47 @@ test("dispatch contract: launch failure is recorded before systemd-run and visib
     launch_stderr: "fixture unit failure\n",
   });
   expect(result.stderr).toContain("fixture unit failure");
+});
+
+test("worker contract: a unit that fails to start makes dispatch exit non-zero with a recorded reason", async () => {
+  const f = fixture();
+  f.env.FAKE_START_FAIL = "yes";
+  const result = await invoke(f);
+  expect(result.exitCode).not.toBe(0);
+  expect(result.stdout).toBe("");
+  expect(result.stderr).toContain("fixture unit failure");
+  const events = readFileSync(join(f.env.AGX_STATE_DIR!, "records.jsonl"), "utf8");
+  expect(events).toContain('"outcome":"launch-failed"');
+  expect(events).toContain("fixture unit failure");
+});
+
+test("worker contract: dispatch returns its receipt only after the unit starts", async () => {
+  const f = fixture();
+  const runner = f.env.FAKE_SYSTEMD_RUN_SCRIPT!;
+  const source = readFileSync(runner, "utf8");
+  writeFileSync(runner, `await Bun.write(${JSON.stringify(join(f.root, "entered"))}, "yes");\nwhile (!(await Bun.file(${JSON.stringify(join(f.root, "release"))}).exists())) await Bun.sleep(10);\n` + source);
+  const child = Bun.spawn([process.execPath, f.entry, "dispatch", f.ticket], { cwd: f.repo, env: f.env, stdout: "pipe", stderr: "pipe", timeout: 5000 });
+  const reader = child.stdout.getReader();
+  const first = reader.read();
+  while (!(await Bun.file(join(f.root, "entered")).exists())) await Bun.sleep(10);
+  const early = await Promise.race([first.then(() => true), Bun.sleep(100).then(() => false)]);
+  expect(early).toBe(false);
+  await Bun.write(join(f.root, "release"), "yes");
+  expect(new TextDecoder().decode((await first).value)).toContain("workspace=");
+  expect(await child.exited).toBe(0);
+});
+
+test("worker contract: the unit command uses the stable executable path", async () => {
+  const f = fixture();
+  const executable = join(f.root, "Cellar/agx/1.2.3/bin/agx-worker");
+  mkdirSync(join(f.root, "Cellar/agx/1.2.3/bin"), { recursive: true });
+  const built = Bun.spawnSync([process.execPath, "build", "--compile", f.entry, "--outfile", executable], { stdout: "pipe", stderr: "pipe", timeout: 30000 });
+  expect(built.exitCode, built.stderr.toString()).toBe(0);
+  const child = Bun.spawn([executable, "dispatch", f.ticket], { cwd: f.repo, env: f.env, stdout: "pipe", stderr: "pipe", timeout: 5000 });
+  const [, err, exit] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+  expect(exit, err).toBe(0);
+  const args = readFileSync(f.unitArgs, "utf8").split("\n");
+  expect(args[args.indexOf("--") + 1]).toBe(join(f.root, "opt/agx/bin/agx-worker"));
 });
 
 test("dispatch contract: --continue returns with its record before a child record", async () => {

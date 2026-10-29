@@ -983,11 +983,13 @@ export async function dispatch(options: {
     sandbox_effective: null,
     sandbox_effective_source: null,
   };
-  process.stdout.write(
-    options.json === true
-      ? JSON.stringify(receipt) + "\n"
-      : `${binding.id} workspace=${JSON.stringify(workspace)} row=unknown route=unknown model=unknown effort=unknown sandbox=${sandbox} sandbox_source=${JSON.stringify(sandbox_source)} sandbox_effective=unknown sandbox_effective_source=null\n`,
-  );
+  // Homebrew replaces Cellar versions during upgrades; the opt link survives them.
+  const unitCommand = [...workerCommand];
+  if (unitCommand.length === 1) {
+    const cellar = /^(.*)\/Cellar\/agx\/[^/]+\/bin\/agx-worker$/u.exec(unitCommand[0] ?? "");
+    if (cellar?.[1] !== undefined)
+      unitCommand[0] = join(cellar[1], "opt", "agx", "bin", "agx-worker");
+  }
   const args = [
     "systemd-run",
     "--user",
@@ -1008,7 +1010,7 @@ export async function dispatch(options: {
       : [`--setenv=${BOUND_CLAUDE_TARGET_ENV}=${boundAckTarget}`]),
     ...(unboundAck === undefined ? [] : ["--setenv=AGX_DISPATCH_ACK_UNBOUND=1"]),
     "--",
-    ...workerCommand,
+    ...unitCommand,
     "run",
     ticketPath,
     "--cd",
@@ -1044,6 +1046,11 @@ export async function dispatch(options: {
     );
     return started.code;
   }
+  process.stdout.write(
+    options.json === true
+      ? JSON.stringify(receipt) + "\n"
+      : `${binding.id} workspace=${JSON.stringify(workspace)} row=unknown route=unknown model=unknown effort=unknown sandbox=${sandbox} sandbox_source=${JSON.stringify(sandbox_source)} sandbox_effective=unknown sandbox_effective_source=null\n`,
+  );
   return 0;
 }
 
