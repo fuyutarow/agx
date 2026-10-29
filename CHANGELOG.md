@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.35 — 2026-10-30
+
+- Wait for unit startup before returning dispatch receipts and use a stable Homebrew executable path.
+
 ## 1.22.34 — 2026-10-30
 
 - Expose workspace accumulation in doctor output.
