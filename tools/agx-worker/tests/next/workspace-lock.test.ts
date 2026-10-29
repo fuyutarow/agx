@@ -1,5 +1,12 @@
 import { prepareTicketRepo } from "../ticket-repo.ts";
-import { afterAll, afterEach, expect, test, setDefaultTimeout } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  expect,
+  test,
+  setDefaultTimeout,
+  spyOn,
+} from "bun:test";
 import {
   appendFileSync,
   existsSync,
@@ -13,6 +20,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { createTempTracker } from "../temp.ts";
+import {
+  acquireWorkspaceLock,
+  publishCurrentRuns,
+} from "../../src/next/store.ts";
 
 setDefaultTimeout(15_000);
 const temps = createTempTracker();
@@ -20,6 +31,77 @@ afterAll(temps.assertRemoved);
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) await cleanup();
+});
+
+test("store contract: run publication waits for a held lock like judge and names the holder", async () => {
+  const root = temps.register(mkdtempSync(join(tmpdir(), "agx-publish-lock-")));
+  const script = join(root, "publication-holder.ts");
+  const store = new URL("../../src/next/store.ts", import.meta.url).pathname;
+  writeFileSync(
+    script,
+    `import { join } from "node:path";
+import { acquireWorkspaceLock } from ${JSON.stringify(store)};
+const root = process.argv[2];
+if (root === undefined) throw new Error("missing root");
+const lock = await acquireWorkspaceLock(join(root, "current-runs.json"), root);
+if (!lock.ok) throw new Error(lock.error);
+const released = new Promise<void>((resolve) => {
+  process.stdin.once("data", () => resolve());
+  process.stdin.once("end", () => resolve());
+});
+process.stdout.write(String(process.pid) + "\\n");
+await released;
+await lock.release();
+`,
+  );
+  const holder = Bun.spawn([process.execPath, script, root], {
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 10_000,
+  });
+  await using _cleanup = {
+    [Symbol.asyncDispose]: async () => {
+      await holder.stdin.end();
+      await holder.exited;
+      rmSync(root, { recursive: true, force: true });
+    },
+  };
+  const reader = holder.stdout.getReader();
+  const first = await reader.read();
+  reader.releaseLock();
+  expect(new TextDecoder().decode(first.value).trim()).toBe(String(holder.pid));
+  let elapsed = 0;
+  const stderr = spyOn(process.stderr, "write").mockImplementation(() => true);
+  using _restore = {
+    [Symbol.dispose]: () => {
+      stderr.mockRestore();
+    },
+  };
+  await publishCurrentRuns(root, undefined, {
+    now: () => elapsed,
+    sleep: (ms) => {
+      elapsed += ms;
+      return Promise.resolve();
+    },
+    pollIntervalMs: 5000,
+  });
+  expect(elapsed).toBe(30_000);
+  const output = stderr.mock.calls.map(([value]) => String(value)).join("");
+  expect(output).toContain("stayed busy past 30000ms");
+  expect(output).toContain(`holder pid=${holder.pid}`);
+  expect(output).toContain("publication-holder.ts");
+});
+
+test("store contract: a non-contention flock error reports its errno", async () => {
+  const root = temps.register(mkdtempSync(join(tmpdir(), "agx-flock-error-")));
+  using _cleanup = {
+    [Symbol.dispose]: () => {
+      rmSync(root, { recursive: true, force: true });
+    },
+  };
+  const lock = await acquireWorkspaceLock(root, root, () => -1);
+  expect(lock).toEqual({ ok: false, error: "flock failed: errno 9" });
 });
 
 async function until(predicate: () => boolean) {

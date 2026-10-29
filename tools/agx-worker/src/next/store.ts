@@ -21,7 +21,7 @@ import {
   writeFile,
   stat as recordStat,
 } from "node:fs/promises";
-import { dlopen, FFIType } from "bun:ffi";
+import { dlopen, FFIType, read as ffiRead } from "bun:ffi";
 import { basename, dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fromPromise, fromThrowable } from "neverthrow";
@@ -388,10 +388,14 @@ function lockHolder(
 export async function acquireWorkspaceLock(
   workspace: string,
   root = stateDir(),
+  lockFd: (fd: number) => number = (fd) => fd,
 ): Promise<WorkspaceLock> {
+  const errnoSymbol =
+    process.platform === "darwin" ? "__error" : "__errno_location";
   const library = fromThrowable(() =>
     dlopen(process.platform === "darwin" ? "libSystem.B.dylib" : "libc.so.6", {
       flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
+      [errnoSymbol]: { args: [], returns: FFIType.ptr },
     }),
   )();
   if (library.isErr())
@@ -409,10 +413,21 @@ export async function acquireWorkspaceLock(
   const file = opened.value;
   // LOCK_EX | LOCK_NB on both Linux and macOS. Node opens the descriptor close-on-exec,
   // so workers cannot inherit ownership and keep a dead dispatcher's lock alive.
-  if (library.value.symbols.flock(file.fd, 2 | 4) !== 0) {
+  if (library.value.symbols.flock(lockFd(file.fd), 2 | 4) !== 0) {
+    const errnoPointer = library.value.symbols[errnoSymbol]?.();
+    const errno =
+      errnoPointer === null || errnoPointer === undefined
+        ? undefined
+        : ffiRead.i32(errnoPointer, 0);
     await file.close();
     library.value.close();
-    return { ok: false, error: WORKSPACE_LOCK_BUSY };
+    // EWOULDBLOCK is 11 on Linux and 35 on Darwin.
+    if (errno === (process.platform === "darwin" ? 35 : 11))
+      return { ok: false, error: WORKSPACE_LOCK_BUSY };
+    return {
+      ok: false,
+      error: `flock failed: errno ${errno ?? "unavailable"}`,
+    };
   }
   return {
     ok: true,
@@ -1500,17 +1515,12 @@ async function sealWorkspaceLosses(
 export async function publishCurrentRuns(
   root = stateDir(),
   ownership?: AcquiredWorkspaceLock,
+  clock?: WorkspaceLockWaitClock,
 ): Promise<void> {
   const path = join(root, "current-runs.json");
-  let lock: WorkspaceLock =
-    ownership ?? (await acquireWorkspaceLock(path, root));
-  if (ownership === undefined) {
-    const deadline = performance.now() + 5000;
-    while (!lock.ok && performance.now() < deadline) {
-      await Bun.sleep(5);
-      lock = await acquireWorkspaceLock(path, root);
-    }
-  }
+  const lock =
+    ownership ??
+    (await acquireWorkspaceLockUntilAvailable(path, root, undefined, clock));
   if (!lock.ok) {
     process.stderr.write(
       "agx: cannot publish current runs: " + lock.error + "\n",
