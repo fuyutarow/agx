@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.17 — 2026-10-29
+
+- Accept JSON values in worker check results.
+
 ## 1.22.16 — 2026-10-29
 
 - Require jj 0.46.0 before running templates to avoid per-repository failures.
