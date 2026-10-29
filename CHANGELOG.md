@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.25 — 2026-10-30
+
+- Require acceptance or a consumed release note before treating copied workspace content as landed
+
 ## 1.22.24 — 2026-10-30
 
 - Preserve workspaces on removal refusal and finish missing-directory removals.
