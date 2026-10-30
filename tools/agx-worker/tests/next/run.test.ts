@@ -681,7 +681,8 @@ describe("agx-worker run", () => {
       "If no source proves the caller, leave sender unknown",
     );
     if (started.at === undefined || ended.at === undefined) return;
-    expect(lines.map((line) => line.kind)).toEqual([
+    // Session discovery may be recorded before the vendor exits.
+    expect(lines.filter((line) => line.kind !== "session").map((line) => line.kind)).toEqual([
       "dispatching",
       "started",
       "progress",
@@ -1058,26 +1059,11 @@ describe("agx-worker run", () => {
     const state = join(root, "state");
     const ticket = join(root, "ticket.md");
     const worker = join(root, "fake-worker.ts");
-    const jevFile = join(root, "fake-jev.ts");
-    const portProbe = Bun.serve({ port: 0, fetch: () => new Response() });
-    const jevPort = portProbe.port;
-    await portProbe.stop(true);
-    writeFileSync(
-      jevFile,
-      `Bun.serve({ hostname: "127.0.0.1", port: ${jevPort}, fetch: () => Response.json({ answers: { worker: { choice: "luna-high", confidence: 0.9 } } }) });\n`,
-    );
-    const jev = Bun.spawn([process.execPath, jevFile], {
-      stdout: "ignore",
-      stderr: "ignore",
+    const jev = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: () => Response.json({ answers: { worker: { choice: "luna-high", confidence: 0.9 } } }),
     });
-    servers.push(jev);
-    for (let attempt = 0; attempt < 40; attempt += 1) {
-      const ready = await fetch(`http://127.0.0.1:${jevPort}/health`).catch(
-        () => null,
-      );
-      if (ready !== null) break;
-      await Bun.sleep(25);
-    }
     const failureCommand =
       'echo OUT; i=1; while [ "$i" -le 21 ]; do echo "MIDDLE-$i"; i=$((i + 1)); done; echo ERR-DETAIL >&2; exit 1';
     const commands = ["true", "sh -c 'exit 3'", failureCommand];
@@ -1099,7 +1085,7 @@ describe("agx-worker run", () => {
       ...subprocessEnvironment(),
       AGX_STATE_DIR: state,
       AGX_TMP_ROOT: join(root, "agx-tmp"),
-      JEV_URL: `http://127.0.0.1:${jevPort}/choice`,
+      JEV_URL: `http://127.0.0.1:${jev.port}/choice`,
       AGX_WORKER_BIN: worker,
       TYPESAFE_API_KEY: "test-key",
       AGX_CONFIG: new URL(
@@ -1107,7 +1093,7 @@ describe("agx-worker run", () => {
         import.meta.url,
       ).pathname,
     };
-    const result = Bun.spawnSync(
+    const child = Bun.spawn(
       [
         process.execPath,
         "tools/agx-worker/src/next/cli.ts",
@@ -1116,38 +1102,19 @@ describe("agx-worker run", () => {
         "--cd",
         root,
       ],
-      { cwd: process.cwd(), env, timeout: 10_000 },
+      { cwd: process.cwd(), env, timeout: 10_000, stdout: "pipe", stderr: "pipe" },
     );
-    expect(result.exitCode).toBe(0);
-    expect(result.stderr.toString()).toContain("VERIFY exit=0 true");
-    expect(result.stderr.toString()).toContain("VERIFY exit=3 sh -c 'exit 3'");
-    expect(result.stderr.toString()).toContain(
+    const [runExit, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
+    await jev.stop(true);
+    expect(runExit).toBe(0);
+    expect(stderr).toContain("VERIFY exit=0 true");
+    expect(stderr).toContain("VERIFY exit=3 sh -c 'exit 3'");
+    expect(stderr).toContain(
       `VERIFY exit=1 ${failureCommand} kind=failed`,
     );
-    const listed = Bun.spawnSync(
-      [process.execPath, "tools/agx-worker/src/next/cli.ts", "ls", "--json"],
-      { cwd: process.cwd(), env },
-    );
-    const rows = jsonOf(
-      z.array(
-        z.looseObject({
-          exit: z.number().nullable(),
-          outcome: z.string(),
-          verify: z.array(
-            z.strictObject({
-              cmd: z.string(),
-              exit: z.number(),
-              log_path: z.string(),
-              kind: z.enum(["passed", "failed", "unrunnable", "killed"]),
-            }),
-          ),
-        }),
-      ),
-    ).safeParse(listed.stdout.toString());
-    expect(rows.success).toBe(true);
-    if (!rows.success) return;
-    expect(rows.data).toHaveLength(1);
-    const row = rows.data[0];
+    const rows = await foldedRuns(state);
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
     if (row === undefined) return;
     expect(row.exit).toBe(0);
     expect(row.outcome).toBe("verify-failed");

@@ -23,14 +23,16 @@ const tempDirs = createTempTracker();
 afterAll(tempDirs.assertRemoved);
 
 const servers: ReturnType<typeof Bun.spawn>[] = [];
+const jevServers: ReturnType<typeof Bun.serve>[] = [];
 const roots: string[] = [];
 const makeWritable = (path: string) => {
   if (!existsSync(path) || !lstatSync(path).isDirectory()) return;
   chmodSync(path, 0o700);
   for (const name of readdirSync(path)) makeWritable(join(path, name));
 };
-afterEach(() => {
+afterEach(async () => {
   for (const server of servers.splice(0)) server.kill();
+  for (const server of jevServers.splice(0)) await server.stop(true);
   for (const root of roots.splice(0)) {
     makeWritable(root);
     rmSync(root, { recursive: true, force: true });
@@ -53,37 +55,24 @@ async function fixture(workerBody: string, verify: string | string[]) {
   const tempRoot = join(root, "agx-tmp");
   const ticket = join(root, "ticket.md");
   const worker = join(root, "fake-worker.ts");
-  const jevFile = join(root, "fake-jev.ts");
-  const portProbe = Bun.serve({ port: 0, fetch: () => new Response() });
-  const jevPort = portProbe.port;
-  await portProbe.stop(true);
-  writeFileSync(
-    jevFile,
-    `Bun.serve({ hostname: "127.0.0.1", port: ${jevPort}, fetch: () => Response.json({ answers: { worker: { choice: "luna-high", confidence: 0.9 } } }) });\n`,
-  );
-  servers.push(
-    Bun.spawn([process.execPath, jevFile], {
-      stdout: "ignore",
-      stderr: "ignore",
-    }),
-  );
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    if (
-      (await fetch(`http://127.0.0.1:${jevPort}/health`).catch(() => null)) !==
-      null
-    )
-      break;
-    await Bun.sleep(25);
-  }
+  const jev = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: () => Response.json({ answers: { worker: { choice: "luna-high", confidence: 0.9 } } }),
+  });
+  jevServers.push(jev);
   writeFileSync(
     ticket,
     `+++\nschema = 2\nname = "temp-fixture"\nwrites = []\noutcome = "temp fixture"\nverify = ${JSON.stringify(Array.isArray(verify) ? verify : [verify])}\n[proposition]\nid = "TMP-1"\nclaim = "run owns temp"\nrefuted_by = "leftover"\n+++\nRun the fixture.\n`,
   );
   writeFileSync(worker, workerBody);
+  const home = join(root, "fixture-home");
   const env = {
     ...subprocessEnvironment(),
+    HOME: home,
+    AGX_WORKER_PATH_SOURCE: "dispatcher",
     AGX_STATE_DIR: join(root, "state"),
-    JEV_URL: `http://127.0.0.1:${jevPort}/choice`,
+    JEV_URL: `http://127.0.0.1:${jev.port}/choice`,
     AGX_WORKER_BIN: worker,
     AGX_TMP_ROOT: tempRoot,
     TYPESAFE_API_KEY: "test-key",
@@ -211,7 +200,7 @@ describe("agx worker run owns its temp space", () => {
       `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(seen)}, [process.env.TMPDIR, process.env.TMP, process.env.TEMP].join("\\n"));\n${DONE}`,
       `printf %s "$TMPDIR" > ${join(root0, "verify.txt")}`,
     );
-    const result = Bun.spawnSync(
+    const result = Bun.spawn(
       [process.execPath, CLI, "run", f.ticket, "--cd", f.root],
       {
         cwd: process.cwd(),
@@ -219,7 +208,7 @@ describe("agx worker run owns its temp space", () => {
         timeout: 10_000,
       },
     );
-    expect(result.exitCode).toBe(0);
+    expect(await result.exited).toBe(0);
     const [tmpdirSeen, tmpSeen, tempSeen] = readFileSync(seen, "utf8").split(
       "\n",
     );
@@ -262,11 +251,11 @@ describe("agx worker run owns its temp space", () => {
     expect(leftover).toHaveLength(1);
 
     writeFileSync(join(stuck.root, "fake-worker.ts"), DONE);
-    const next = Bun.spawnSync(
+    const next = Bun.spawn(
       [process.execPath, CLI, "run", stuck.ticket, "--cd", stuck.root],
       { cwd: process.cwd(), env: stuck.env, timeout: 10_000 },
     );
-    expect(next.exitCode).toBe(0);
+    expect(await next.exited).toBe(0);
     expect(readdirSync(stuck.tempRoot)).toEqual([]);
   }, 45_000);
 
@@ -300,11 +289,11 @@ describe("agx worker run owns its temp space", () => {
       `import { chmodSync, mkdirSync } from "node:fs";\nconst child = process.env.TMPDIR + "/readonly";\nmkdirSync(child);\nchmodSync(child, 0o555);\n${DONE}`,
       "true",
     );
-    const result = Bun.spawnSync(
+    const result = Bun.spawn(
       [process.execPath, CLI, "run", f.ticket, "--cd", f.root],
       { cwd: process.cwd(), env: f.env, timeout: 10_000, stdout: "pipe" },
     );
-    expect(result.exitCode).toBe(0);
+    expect(await result.exited).toBe(0);
     expect(readdirSync(f.tempRoot)).toEqual([]);
     const state = readFileSync(
       join(f.env.AGX_STATE_DIR, "records.jsonl"),
