@@ -2,6 +2,7 @@ import { typeFlag } from "type-flag";
 import { constants } from "node:fs";
 import { access, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import { constants as osConstants } from "node:os";
 
 /** Compiled suite installs prefer executable siblings; Bun source runs use PATH. */
 export async function resolveSuiteTool(
@@ -46,5 +47,14 @@ export async function forwardPath(
     stdout: "inherit",
     stderr: "inherit",
   });
-  return child.exited;
+  const onTerm = () => { child.kill("SIGTERM"); };
+  const onInt = () => { child.kill("SIGINT"); };
+  process.on("SIGTERM", onTerm);
+  process.on("SIGINT", onInt);
+  const code = await child.exited.finally(() => {
+    process.off("SIGTERM", onTerm);
+    process.off("SIGINT", onInt);
+  });
+  const signal = child.signalCode;
+  return signal === null ? code : 128 + osConstants.signals[signal];
 }

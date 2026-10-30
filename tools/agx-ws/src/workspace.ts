@@ -9,6 +9,7 @@ import {
   readdirSync,
   readlinkSync,
   realpathSync,
+  writeSync,
 } from "node:fs";
 import {
   readFile,
@@ -389,7 +390,7 @@ async function untrackMiseWorkspace(dir: string, cwd: string): Promise<void> {
   const trusted = join(state, "trusted-configs");
   const mise = Bun.which("mise");
   if (mise === null)
-    process.stderr.write(
+    writeSync(2,
       "ws: mise command cleanup skipped (mise not on PATH); removing matching state links directly\n",
     );
   for (const link of await symlinksWithin(trusted, root)) {
@@ -1820,6 +1821,7 @@ export type GcOptions = {
   abandoned?: boolean;
   /** Nested all-repository inventories retain their historical main-row omission. */
   includeMain?: boolean;
+  journal?: { signal?: "SIGTERM" | "SIGINT"; removed: number; remaining: number };
 };
 
 type Workspace = {
@@ -4042,7 +4044,7 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
     const tracing = process.env.AGX_WS_GC_TRACE === "1";
     const report = (step: string, ms: number, count?: number) => {
       if (tracing)
-        process.stderr.write(
+        writeSync(2,
           `gc trace: ${step}: ${ms.toFixed(3)} ms${count === undefined ? "" : ` count=${count}`}\n`,
         );
     };
@@ -4050,6 +4052,8 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
     const candidates = await workspaces(repo, options.includeMain ?? true);
     report("workspace list", performance.now() - stepStart);
     if (!candidates.ok) return candidates;
+    if (options.journal !== undefined)
+      options.journal.remaining += candidates.value.length;
     stepStart = performance.now();
     const recordsResult = await agxRecords(repo.backing);
     report("run records", performance.now() - stepStart);
@@ -4075,11 +4079,12 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
     let slowest: { workspace: string; ms: number; step: string } | undefined;
     const reportProgress = () => {
       if (!tracing) return;
-      process.stderr.write(
+      writeSync(2,
         `gc trace: cumulative: workspaces=${completed}/${candidates.value.length} classification=${Math.max(0, classificationMs - trace.inventoryMs - trace.comparisonMs).toFixed(3)} ms inventory=${trace.inventoryMs.toFixed(3)} ms count=${trace.inventoryCount} comparison=${trace.comparisonMs.toFixed(3)} ms slowest=${JSON.stringify(slowest?.workspace ?? null)} ms=${(slowest?.ms ?? 0).toFixed(3)} step=${slowest?.step ?? "none"}\n`,
       );
     };
     for (const ws of candidates.value) {
+      if (options.journal?.signal !== undefined) break;
       const inventoryBefore = trace.inventoryMs;
       const comparisonBefore = trace.comparisonMs;
       const classificationStart = performance.now();
@@ -4180,6 +4185,7 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
       if (
         missingDirectory &&
         !options.dryRun &&
+        options.journal?.signal === undefined &&
         missingCommit !== undefined &&
         landLock?.held !== true
       ) {
@@ -4252,7 +4258,7 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
         c = outcome.classification;
         reason = outcome.reason;
       }
-      if (c.collect && !options.dryRun) {
+      if (c.collect && !options.dryRun && options.journal?.signal === undefined) {
         const done = await withLock<GcRemovalResult>(
           repo,
           `agx ws gc ${ws.name}`,
@@ -4337,16 +4343,21 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
               budget,
             );
             if (!checked.collect) return good({ classification: checked });
+            if (options.journal?.signal !== undefined)
+              return good({ classification: checked });
             const removed = await collectWorkspace(
               repo,
               currentWs,
               checked.abandon === true,
             );
-            if (removed.ok)
+            if (removed.ok) {
+              writeSync(2, `gc removed ${ws.dir} reason=${checked.reason.replaceAll("\n", "\\n")}\n`);
+              if (options.journal !== undefined) options.journal.removed++;
               return good({
                 classification: checked,
                 tombstone: removed.value.tombstone,
               });
+            }
             const currentLand = landState(currentWs);
             if (
               currentLand !== undefined &&
@@ -4394,6 +4405,7 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
           .join("\t"),
       );
       completed++;
+      if (options.journal !== undefined) options.journal.remaining--;
       if (completed % 50 === 0) reportProgress();
     }
     if (completed % 50 !== 0 || completed === 0) reportProgress();
@@ -4413,9 +4425,10 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
         failed.length === 0 &&
         broken.length === 0 &&
         !budget.exhausted &&
+        options.journal?.signal === undefined &&
         !lines.some((line) => line.split("\t")[2] === "broken"),
     };
-    if (!options.dryRun && failed.length === 0)
+    if (!options.dryRun && failed.length === 0 && options.journal?.signal === undefined)
       await publishVerdicts(repo.backing, result);
     return good(result);
   };
@@ -4627,13 +4640,14 @@ export async function gcAll(
   for (const [path, sources] of [...roots].toSorted(([a], [b]) =>
     a.localeCompare(b),
   )) {
+    if (options.journal?.signal !== undefined) break;
     const started = performance.now();
     const repo = resolveRepo(path);
     if (repo.ok) requireJjTemplateVersion(["jj", "-T"]);
-    process.stderr.write(`gc --all start ${path}\n`);
+    writeSync(2, `gc --all start ${path}\n`);
     const report = (outcome: string) => {
       const seconds = ((performance.now() - started) / 1000).toFixed(3);
-      process.stderr.write(
+      writeSync(2,
         `gc --all end ${path} elapsed=${seconds}s ${outcome}\n`,
       );
     };
@@ -4710,12 +4724,13 @@ export async function gcAll(
       failed.length === 0 &&
       broken.length === 0 &&
       refused.length === 0 &&
+      options.journal?.signal === undefined &&
       repositories.every((repo) => repo.status === "complete") &&
       !lines.some((line) =>
         ["unknown", "broken"].includes(line.split("\t")[2] ?? ""),
       ),
   };
-  if (!options.dryRun && failed.length === 0 && refused.length === 0)
+  if (!options.dryRun && failed.length === 0 && refused.length === 0 && options.journal?.signal === undefined)
     await publishVerdicts(undefined, result, seen);
   return good(result);
 }
@@ -4799,7 +4814,7 @@ async function publishVerdicts(
   });
   release();
   if (!done.ok)
-    process.stderr.write("ws: cannot publish verdicts: " + msg(done) + "\n");
+    writeSync(2, "ws: cannot publish verdicts: " + msg(done) + "\n");
 }
 
 async function discoverRepos(): Promise<Attempt<Map<string, Set<string>>>> {

@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { writeSync } from "node:fs";
 import { doctorOutput } from "../../shared/src/doctor-record.ts";
 import { cli as cleyeCli, command } from "cleye";
 import { standardCli } from "../../shared/src/cli.ts";
@@ -40,7 +41,7 @@ const rejectPrototypeFlag = (type: string, flag: string): void => {
 };
 
 const fail = (error: unknown): void => {
-  process.stderr.write(`ws: ${errorMessage(error)}\n`);
+  writeSync(2, `ws: ${errorMessage(error)}\n`);
   process.exitCode = failureExitCode(error);
 };
 
@@ -319,6 +320,11 @@ const gcCommand = command(
       fail("--inventory-budget-seconds must be an integer from 1 to 86400");
       return;
     }
+    const journal: { signal?: "SIGTERM" | "SIGINT"; removed: number; remaining: number } = { removed: 0, remaining: 0 };
+    const onTerm = () => { journal.signal ??= "SIGTERM"; };
+    const onInt = () => { journal.signal ??= "SIGINT"; };
+    process.on("SIGTERM", onTerm);
+    process.on("SIGINT", onInt);
     const options = {
       dryRun: argv.flags.dryRun === true,
       includeUnrecorded: argv.flags.includeUnrecorded === true,
@@ -327,12 +333,20 @@ const gcCommand = command(
       graceMinutes: argv.flags.graceMinutes ?? 30,
       inventorySeconds: argv.flags.inventorySeconds ?? 10,
       inventoryBudgetSeconds: argv.flags.inventoryBudgetSeconds ?? 120,
+      journal,
     };
     const done = await (argv.flags.all === true
-      ? gcAll(options)
-      : gc({ ...options, repo: argv.flags.repo ?? process.cwd() }));
+        ? gcAll(options)
+        : gc({ ...options, repo: argv.flags.repo ?? process.cwd() })).finally(() => {
+      process.off("SIGTERM", onTerm);
+      process.off("SIGINT", onInt);
+    });
     if (!done.ok) {
       fail(done.error);
+      if (journal.signal === undefined) return;
+      writeSync(2, `gc interrupted removed=${journal.removed} remaining=${journal.remaining}\n`);
+      if (argv.flags.json === true) process.stdout.write(JSON.stringify({ rows: [], counts: {}, broken: [], complete: false }) + "\n");
+      process.exitCode = journal.signal === "SIGTERM" ? 143 : 130;
       return;
     }
     if (argv.flags.json === true) {
@@ -368,6 +382,10 @@ const gcCommand = command(
     if (done.value.broken.length > 0)
       fail(`broken workspaces: ${done.value.broken.join(", ")}`);
     if ((done.value.refused?.length ?? 0) > 0) process.exitCode = 2;
+    if (journal.signal !== undefined) {
+      writeSync(2, `gc interrupted removed=${journal.removed} remaining=${journal.remaining}\n`);
+      process.exitCode = journal.signal === "SIGTERM" ? 143 : 130;
+    }
   },
 );
 

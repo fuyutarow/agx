@@ -18,3 +18,22 @@ test("Bun source mode ignores executable siblings beside the runtime", async () 
     join(dir, target),
   );
 });
+
+test("dispatch contract: SIGTERM to agx reaches the forwarded child and agx exits with its status", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agx-signal-"));
+  await using _cleanup = {
+    [Symbol.asyncDispose]: () => rm(dir, { recursive: true, force: true }),
+  };
+  await writeFile(join(dir, "agx-ws"), `#!${process.execPath}\nprocess.on("SIGTERM", () => { process.stderr.write("child received SIGTERM\\n"); process.exit(37); });\nprocess.stdout.write("ready\\n");\nsetInterval(() => {}, 1000);\n`, { mode: 0o755 });
+  const child = Bun.spawn([process.execPath, join(import.meta.dir, "../../agx/src/agx.ts"), "ws"], {
+    env: { ...process.env, PATH: `${dir}:${process.env.PATH ?? ""}` },
+    stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 10000,
+  });
+  const reader = child.stdout.getReader();
+  const ready = await reader.read();
+  expect(new TextDecoder().decode(ready.value)).toContain("ready");
+  child.kill("SIGTERM");
+  const [stderr, code] = await Promise.all([child.stderr.text(), child.exited]);
+  expect(stderr).toContain("child received SIGTERM");
+  expect(code).toBe(37);
+});

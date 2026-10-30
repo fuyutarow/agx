@@ -138,6 +138,78 @@ async function fixture(
   return { repo, parent, workspaces, bin, baseEnv };
 }
 
+async function journalRun(interrupt: boolean) {
+  const f = await fixture(2);
+  const entered = join(f.parent, "rip-entered");
+  const release = join(f.parent, "rip-release");
+  const rip = join(f.bin, "rip");
+  writeFileSync(rip, `#!/usr/bin/env bun\nimport { existsSync, watch } from "node:fs";\nimport { dirname } from "node:path";\nconst release = ${JSON.stringify(release)};\nawait Bun.write(${JSON.stringify(entered)}, "entered");\nawait new Promise((resolve) => { const w = watch(dirname(release), () => { if (existsSync(release)) { w.close(); resolve(); } }); if (existsSync(release)) { w.close(); resolve(); } });\n`);
+  chmodSync(rip, 0o755);
+  const child = Bun.spawn(["bun", wsCli, "gc", "--include-unrecorded", "--grace-minutes", "0", "--json", "--repo", f.repo], { cwd: f.repo, env: f.baseEnv, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  const outPromise = new Response(child.stdout).text();
+  const reader = child.stderr.getReader();
+  const decoder = new TextDecoder();
+  let err = "";
+  while (!err.includes("gc removed ")) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    err += decoder.decode(chunk.value, { stream: true });
+  }
+  const beforeRelease = err;
+  if (interrupt) child.kill("SIGTERM");
+  await Bun.write(release, "release");
+  const errPromise = (async () => { for (;;) { const chunk = await reader.read(); if (chunk.done) break; err += decoder.decode(chunk.value, { stream: true }); } return err; })();
+  const [out, stderr, code] = await Promise.all([outPromise, errPromise, child.exited]);
+  return { f, beforeRelease, out, err: stderr, code };
+}
+
+test("ws contract: a real gc prints each removal as it happens", async () => {
+  const result = await journalRun(false);
+  expect(result.code, result.err).toBe(0);
+  expect(result.beforeRelease).toContain(`gc removed ${result.f.workspaces[0]} reason=`);
+  expect(result.err.match(/^gc removed /gmu)).toHaveLength(2);
+});
+
+test("ws contract: gc on SIGTERM prints what it removed and exits 143", async () => {
+  const result = await journalRun(true);
+  expect(result.code, result.err).toBe(143);
+  expect(result.err).toContain(`gc removed ${result.f.workspaces[0]} reason=`);
+  expect(result.err).toContain("gc interrupted removed=1 remaining=1");
+  expect(existsSync(result.f.workspaces[1] ?? "")).toBe(true);
+  expect(parseOutput(result.out)?.rows.some((row) => row[0] === result.f.workspaces[0])).toBe(true);
+});
+
+test("ws contract: progress lines reach a piped stderr before gc ends", async () => {
+  const f = await fixture(1);
+  const repos = join(f.baseEnv.XDG_CONFIG_HOME ?? "", "agx", "repos");
+  mkdirSync(repos, { recursive: true });
+  writeFileSync(join(repos, "test.toml"), `schema = 1\nroot = ${JSON.stringify(f.repo)}\n`);
+  const child = Bun.spawn(["bun", wsCli, "gc", "--all", "--json"], {
+    cwd: f.repo, env: f.baseEnv, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 15000,
+  });
+  const stdout = child.stdout.text();
+  const reader = child.stderr.getReader();
+  const decoder = new TextDecoder();
+  let stderr = "";
+  while (!stderr.includes(`gc --all start ${f.repo}\n`)) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    stderr += decoder.decode(chunk.value, { stream: true });
+  }
+  expect(stderr).toContain(`gc --all start ${f.repo}\n`);
+  expect(child.exitCode).toBeNull();
+  child.kill("SIGTERM");
+  for (;;) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    stderr += decoder.decode(chunk.value, { stream: true });
+  }
+  const [out, code] = await Promise.all([stdout, child.exited]);
+  expect(code, stderr).toBe(143);
+  expect(stderr).toContain("gc interrupted removed=");
+  expect(parseOutput(out)).toBeDefined();
+});
+
 async function addWorkspaces(f: Fixture, from: number, through: number) {
   const workspaceRoot = join(f.repo, "..", "project.ws");
   mkdirSync(workspaceRoot, { recursive: true });
