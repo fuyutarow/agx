@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.22.38 — 2026-10-30
+
+- Forward termination signals to dispatched commands and preserve their exit status.
+- Journal workspace removals and summarize interrupted garbage collection.
+
 ## 1.22.37 — 2026-10-30
 
 - Name workspace garbage collection reason counts and explain failure exits.
