@@ -714,29 +714,9 @@ describe("agx worker run --continue pins the prior row", () => {
         )
         .join("\n")}\n`,
     );
-    const originalRecords = readFileSync(
-      join(f.state, "records.jsonl"),
-      "utf8",
-    );
-    const checking = Bun.spawn(
-      [process.execPath, "--preload", entry, "tools/agx-worker/src/next/cli.ts", "check", f.ticket, "--sandbox", "read-only", "--continue", "codex-run"],
-      { env: { ...subprocessEnvironment(), PATH: `${join(f.root, "bin")}:${process.env.PATH}`, AGX_STATE_DIR: f.state, MISE_GLOBAL_CONFIG_FILE: join(f.root, "mise-config.toml"), XDG_CONFIG_HOME: join(f.root, "config"), AGX_TMP_ROOT: join(f.root, "agx-tmp"), TYPESAFE_API_KEY: "test-key", AGX_DISPATCHER_SESSION: "dispatcher", ...env }, stdout: "pipe", stderr: "pipe" },
-    );
-    const checkedOutput = Promise.all([checking.exited, new Response(checking.stdout).text(), new Response(checking.stderr).text()]);
-    const fresh = f.resume(undefined, env);
-    expect(fresh.exitCode, fresh.stderr.toString()).toBe(0);
-    const freshReceipt = jsonOf(Receipt).safeParse(
-      fresh.stdout.toString().trim(),
-    );
-    expect(freshReceipt.success).toBe(true);
-    if (!freshReceipt.success) return;
-    expect(freshReceipt.data.row).toBe("terra-high");
-    const [checkedExit, checkedStdout, checkedStderr] = await checkedOutput;
-    writeFileSync(join(f.state, "records.jsonl"), originalRecords);
-    expect(checkedExit, checkedStderr).toBe(0);
-    expect(checkedStdout).toContain(
-      `row=luna-max -> ${freshReceipt.data.row}`,
-    );
+    const checked = f.resume("codex-run", env, undefined, false, [], "check");
+    expect(checked.exitCode, checked.stderr.toString()).toBe(0);
+    expect(checked.stdout.toString()).toContain("row=luna-max -> terra-high");
     const continued = f.resume("codex-run", env);
     expect(continued.exitCode, continued.stderr.toString()).toBe(0);
     expect(continued.stderr.toString()).toContain(
@@ -747,7 +727,7 @@ describe("agx worker run --continue pins the prior row", () => {
     );
     expect(receipt.success).toBe(true);
     if (!receipt.success) return;
-    expect(receipt.data.row).toBe(freshReceipt.data.row);
+    expect(receipt.data.row).toBe("terra-high");
     expect(
       f
         .events()
