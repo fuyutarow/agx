@@ -20,7 +20,7 @@ const ClaudeAgent = z.object({
   sessionId: Id,
   name: z.string().nullish(),
   cwd: z.string().nullish(),
-  status: z.string(),
+  status: z.string().optional(),
   kind: z.string().optional(),
 });
 const Thread = z.object({
@@ -163,7 +163,7 @@ export async function claudeInventory(
     id: agent.sessionId,
     name: agent.name ?? null,
     cwd: agent.cwd ?? null,
-    state: agent.status,
+    state: agent.status ?? "unknown",
     availability: "active-native-registration",
     source: "claude agents --json",
     observedAt,

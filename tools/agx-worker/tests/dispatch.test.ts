@@ -242,6 +242,35 @@ test("dispatch passes the ticket ACK target to the run as a bound address", asyn
   );
 });
 
+test("dispatch contract: a claude uuid ACK target is bound to its session name at dispatch", async () => {
+  const f = fixture();
+  const uuid = "00000000-0000-4000-8000-000000000009";
+  const target = `claude:${uuid}`;
+  writeFileSync(f.ticket, readFileSync(f.ticket, "utf8").replace("schema = 2", `schema = 2\nack_target = "${target}"`));
+  const claude = join(f.root, "bin", "claude");
+  writeFileSync(claude, `#!/bin/sh\nprintf '%s\n' '[{"pid":12353,"cwd":"/example","kind":"interactive","startedAt":1761800000000,"sessionId":"${uuid}","name":"dx-agt_2hqv"}]'\n`);
+  chmodSync(claude, 0o755);
+  const result = await invoke(f);
+  expect(result.exitCode, result.stderr).toBe(0);
+  expect(readFileSync(f.unitArgs, "utf8")).toContain(`--setenv=${BOUND_CLAUDE_TARGET_ENV}=${encodeBoundClaudeTarget({ selector: target, address: "claude:dx-agt_2hqv" })}`);
+});
+
+test("dispatch contract: an unknown claude uuid ACK target is reported unbound", async () => {
+  const f = fixture();
+  const target = "claude:00000000-0000-4000-8000-000000000099";
+  writeFileSync(f.ticket, readFileSync(f.ticket, "utf8").replace("schema = 2", `schema = 2\nack_target = "${target}"`));
+  const claude = join(f.root, "bin", "claude");
+  writeFileSync(claude, "#!/bin/sh\nprintf '%s\\n' '[]'\n");
+  chmodSync(claude, 0o755);
+  const result = await invoke(f);
+  expect(result.exitCode, result.stderr).toBe(0);
+  expect(result.stderr).toContain("found 0 live registrations");
+  expect(result.stderr).toContain("ACK will not be delivered by agx msg");
+  const args = readFileSync(f.unitArgs, "utf8");
+  expect(args).toContain("--setenv=AGX_DISPATCH_ACK_UNBOUND=1");
+  expect(args).not.toContain(`--setenv=${BOUND_CLAUDE_TARGET_ENV}=`);
+});
+
 test("dispatch contract: an unresolvable ACK target never fails the dispatch", async () => {
   const f = fixture();
   const target = "claude:12345678-1234-4123-8123-123456789abc";

@@ -148,7 +148,7 @@ export async function resolveClaudeTarget(
   if (!inventory.evidence.available || !inventory.evidence.complete)
     return refuse(inventory.evidence.reason ?? "live inventory unavailable");
   const live = inventory.recipients.filter((recipient) =>
-    ["busy", "shell", "idle", "waiting"].includes(recipient.state),
+    ["busy", "shell", "idle", "waiting", "unknown"].includes(recipient.state),
   );
   const matches = live.filter(
     (recipient) => canonicalUuid(recipient.id) === uuid,
