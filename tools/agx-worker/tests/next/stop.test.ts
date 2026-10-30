@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { fromThrowable } from "neverthrow";
 import { mkdtemp, rm, mkdir, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -50,7 +50,7 @@ afterEach(async () => {
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
   );
 });
-const cli = resolve("tools/agx/src/agx.ts");
+const cli = resolve("tools/agx-worker/src/next/cli.ts");
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "agx-stop-"));
   roots.push(root);
@@ -73,7 +73,7 @@ async function fixture() {
   };
   Reflect.deleteProperty(env, "AGX_NEXT_STATE_DIR");
   const invoke = async (...args: string[]) => {
-    const child = Bun.spawn([process.execPath, cli, "worker", ...args], {
+    const child = Bun.spawn([process.execPath, resolve("tools/agx-worker/src/next/cli.ts"), ...args], {
       env,
       stdout: "pipe",
       stderr: "pipe",
@@ -219,6 +219,12 @@ test("unknown, ended, ownerless and reused PID records never signal an unrelated
   expect(unrelated.exitCode).toBeNull();
 });
 
+describe("real run stop", () => {
+const prepared: { current?: Awaited<ReturnType<typeof fixture>> } = {};
+beforeEach(async () => {
+  prepared.current = await fixture();
+  await prepareTicketRepo(prepared.current.root);
+});
 for (const { unit, session } of [
   { unit: null, session: "fake-session" },
   { unit: "agt_stop-fixture", session: "fake-session" },
@@ -226,8 +232,8 @@ for (const { unit, session } of [
   { unit: null, session: null },
 ]) {
   test(`real run stop under ${unit ?? "PID lease"} preserves session=${session !== null}`, async () => {
-    const f = await fixture();
-    await prepareTicketRepo(f.root);
+    const f = prepared.current;
+    if (f === undefined) expect.unreachable("fixture is missing");
     const ticket = join(f.root, "ticket.md");
     await Bun.write(
       ticket,
@@ -275,7 +281,6 @@ for (const { unit, session } of [
       );
     }
     const runArgs = [
-      "worker",
       "run",
       ticket,
       "--cd",
@@ -360,41 +365,32 @@ for (const { unit, session } of [
     if (!pids.success) return;
     for (const pid of pids.data)
       expect((await leaseFor(pid, null)).start).toBeNull();
-    const listed = await f.invoke("ls", start.id, "--json");
+    if (session !== null && unit === null) f.env.AGX_TEST_FINISH_RESUME = "1";
+    const [listed, alreadyStopped, continuation] = await Promise.all([
+      f.invoke("ls", start.id, "--json"),
+      f.invoke("stop", start.id),
+      session === null || unit === null
+        ? f.invoke("run", ticket, "--cd", f.root, "--continue", start.id)
+        : Promise.resolve(undefined),
+    ]);
     expect(listed.exit).toBe(0);
     expect(listed.out).toContain('"outcome":"stopped"');
     expect(listed.out).toContain('"stopped_by":"stop-fixture"');
     expect(listed.out).toContain(
       `"vendor_session":${session === null ? "null" : JSON.stringify(session)}`,
     );
-    expect((await f.invoke("stop", start.id)).err).toContain("already ended");
+    expect(alreadyStopped.err).toContain("already ended");
     if (session === null) {
       expect(stopped.out).toContain("not continuable");
-      const refused = await f.invoke(
-        "run",
-        ticket,
-        "--cd",
-        f.root,
-        "--continue",
-        start.id,
-      );
-      expect(refused.exit).toBe(2);
-      expect(refused.err).toContain("has no vendor session to continue");
+      expect(continuation?.exit).toBe(2);
+      expect(continuation?.err).toContain("has no vendor session to continue");
     } else if (unit === null) {
-      f.env.AGX_TEST_FINISH_RESUME = "1";
-      const continued = await f.invoke(
-        "run",
-        ticket,
-        "--cd",
-        f.root,
-        "--continue",
-        start.id,
-      );
-      expect(continued.exit, continued.err).toBe(0);
+      expect(continuation?.exit, continuation?.err).toBe(0);
       expect(await Bun.file(resumedSession).text()).toBe(session);
     }
   });
 }
+});
 
 test("systemd stop uses only a matching recorded unit and PID", async () => {
   const f = await fixture();
@@ -507,7 +503,6 @@ test("a direct systemctl stop retains a started vendor session for continuation"
     [
       process.execPath,
       cli,
-      "worker",
       "run",
       ticket,
       "--cd",

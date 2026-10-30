@@ -23,23 +23,30 @@ const fixture = () => {
   return { root, env };
 };
 
-test("all commands refuse the retired state variable, including empty values", () => {
+test("all commands refuse the retired state variable, including empty values", async () => {
   const { env } = fixture();
-  for (const value of ["", "/unused"]) {
-    for (const command of COMMAND_NAMES) {
-      const result = Bun.spawnSync(
+  await Promise.all(["", "/unused"].flatMap((value) =>
+    COMMAND_NAMES.map(async (command) => {
+      const child = Bun.spawn(
         [process.execPath, "tools/agx-worker/src/next/cli.ts", command],
         {
           env: { ...env, AGX_NEXT_STATE_DIR: value },
+          stdout: "pipe",
+          stderr: "pipe",
         },
       );
-      expect(result.exitCode).toBe(2);
-      expect(result.stdout.toString()).toBe("");
-      expect(result.stderr.toString()).toBe(
+      const [exit, stdout, stderr] = await Promise.all([
+        child.exited,
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+      ]);
+      expect(exit).toBe(2);
+      expect(stdout).toBe("");
+      expect(stderr).toBe(
         "agx: AGX_NEXT_STATE_DIR is retired; use AGX_STATE_DIR\n",
       );
-    }
-  }
+    }),
+  ));
 });
 
 test("all commands refuse an unmigrated directory without creating state", () => {
