@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.40 — 2026-10-30
+
+- Bound workspace GC with cooperative repository and run budgets and rotate repositories by last start.
+
 ## 1.22.39 — 2026-10-30
 
 - Accept Claude host inventory entries without status when binding ACK targets.

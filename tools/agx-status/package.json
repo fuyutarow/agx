@@ -1,6 +1,6 @@
 {
   "name": "@agx/agx-status",
-  "version": "1.22.39",
+  "version": "1.22.40",
   "private": true,
   "type": "module",
   "bin": {
