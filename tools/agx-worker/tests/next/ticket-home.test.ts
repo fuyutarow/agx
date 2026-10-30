@@ -269,10 +269,43 @@ test.each([
   30000,
 );
 
-async function fixture(home = "tickets") {
+async function fixture(home = "tickets", retired = false) {
   const root = await mkdtemp(join(tmpdir(), "agx-ticket-home-"));
   roots.push(root);
-  await prepareTicketRepo(root, home);
+  if (retired) {
+    await writeFile(
+      join(root, "agx.toml"),
+      `schema = 1\ntickets = ${JSON.stringify(home)}\n`,
+    );
+    await writeFile(join(root, ".agx.toml"), "");
+    for (const args of [
+      ["init", "--quiet"],
+      ["add", "--", "agx.toml", ".agx.toml"],
+      [
+        "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+        "-c", "commit.gpgsign=false", "commit", "--quiet", "-m",
+        "Retired policy",
+      ],
+    ]) {
+      const child = Bun.spawn(["git", ...args], {
+        cwd: root,
+        env: {
+          ...inheritedEnv(), GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null",
+          GIT_DIR: undefined, GIT_WORK_TREE: undefined, GIT_INDEX_FILE: undefined,
+        },
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 5000,
+      });
+      const [exit, , err] = await Promise.all([
+        child.exited,
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+      ]);
+      expect(exit, err).toBe(0);
+    }
+  } else await prepareTicketRepo(root, home);
   const directory = resolve(root, home);
   await mkdir(directory, { recursive: true });
   const ticket = join(directory, "home.md");
@@ -840,38 +873,7 @@ test.each([
 });
 
 test("worker CLI check and run exit 2 for retired configuration before artifacts", async () => {
-  const f = await fixture();
-  await writeFile(join(f.root, ".agx.toml"), "");
-  for (const args of [
-    ["add", "--", ".agx.toml"],
-    [
-      "-c",
-      "user.name=Fixture",
-      "-c",
-      "user.email=fixture@example.invalid",
-      "-c",
-      "commit.gpgsign=false",
-      "commit",
-      "--quiet",
-      "-m",
-      "Retired policy",
-    ],
-  ]) {
-    const child = Bun.spawn(["git", ...args], {
-      cwd: f.root,
-      env: f.env,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: 5000,
-    });
-    const [exit, , err] = await Promise.all([
-      child.exited,
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-    ]);
-    expect(exit, err).toBe(0);
-  }
+  const f = await fixture("tickets", true);
   for (const command of ["check", "run"]) {
     const result = await f.invoke([command, f.ticket]);
     expect(result.exit, result.err).toBe(2);
