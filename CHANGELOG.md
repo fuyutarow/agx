@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.37 — 2026-10-30
+
+- Name workspace garbage collection reason counts and explain failure exits.
+
 ## 1.22.36 — 2026-10-30
 
 - Reduce workspace inventory ignore filtering to one Git listing.
