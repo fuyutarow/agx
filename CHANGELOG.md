@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.46 — 2026-10-30
+
+- Allow ticket effort floors and show the selected dispatch row.
+
 ## 1.22.45 — 2026-10-30
 
 - Speed up the idle land workspace GC contract test.
