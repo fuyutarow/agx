@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.22.44 — 2026-10-30
+
+- Keep gc --all dry runs read-only while preserving repository ordering.
+- Report malformed workspace list records with their raw text.
+
 ## 1.22.43 — 2026-10-30
 
 - Remove foreground lock waiter records on SIGTERM and SIGINT.
