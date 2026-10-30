@@ -205,17 +205,17 @@ async function snapshot(root: string): Promise<unknown[]> {
   return rows;
 }
 
+function withoutAge(output: string) {
+  const parsed = jsonOf(z.looseObject({ rows: z.array(z.array(z.string())) })).safeParse(output);
+  expect(parsed.success).toBe(true);
+  if (!parsed.success) return null;
+  return { ...parsed.data, rows: parsed.data.rows.map((row) => row.map((value, i) => i === 4 ? "<age>" : value)) };
+}
+
 for (const existingState of [false, true])
   // measured 5277ms on the census of alpha under host load
   test(`AGX-GC-DRYRUN-READONLY-PARENT-1025: single and all with ${existingState ? "existing" : "missing"} state`, async () => {
     const f = await fixture(["readonly"]);
-    // Freeze only the human age column; real jj reads still determine every verdict.
-    await f.shim(
-      "jj",
-      `
-const args = process.argv.slice(2).map(arg => arg.replaceAll('self.target().committer().timestamp().ago()', '"fixture age"'));
-${delegateJj}`,
-    );
     const state = join(f.root, "state/agx");
     if (existingState) {
       await Bun.write(
@@ -252,8 +252,9 @@ ${delegateJj}`,
         const expected = writable[index];
         expect(expected).toBeDefined();
         if (expected === undefined) return;
+        // Commit age advances between invocations; compare all other JSON fields.
+        expect(withoutAge(result.out)).toEqual(withoutAge(expected.out));
         // 1.22.38 emits synchronous progress with measured elapsed time.
-        expect(result.out).toBe(expected.out);
         expect(result.err.replaceAll(/elapsed=\d+\.\d+s/gu, "elapsed=<time>"))
           .toBe(expected.err.replaceAll(/elapsed=\d+\.\d+s/gu, "elapsed=<time>"));
         expect(await snapshot(f.root)).toEqual(readonlyBefore);
