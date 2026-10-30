@@ -444,6 +444,7 @@ export async function run(flags: Flags): Promise<number> {
     capabilities: ticket.capabilities ?? [],
     timeoutS: ticket.timeout_s ?? 600,
     maskedRows: await earlyQuitRows(ticketName, cwd),
+    min_effort: ticket.min_effort,
   };
   const selectedContinuation =
     continuationId === undefined
@@ -478,6 +479,7 @@ export async function run(flags: Flags): Promise<number> {
           {
             path: resolve(path),
             launch: true,
+            min_effort: routing.min_effort,
             sha256: createHash("sha256").update(bytes).digest("hex"),
           },
           { capacityRetry: true, timeoutMs },
@@ -1037,7 +1039,7 @@ export async function run(flags: Flags): Promise<number> {
       routing.timeoutS,
       [...routing.maskedRows, ...attemptedRows],
       {},
-      { path: resolve(path), launch: true, sha256: ticket_sha256 },
+      { path: resolve(path), launch: true, sha256: ticket_sha256, min_effort: routing.min_effort },
       { capacityRetry: true, timeoutMs: remainingMs },
     );
     if (deadline.aborted) {

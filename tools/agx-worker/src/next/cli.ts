@@ -197,7 +197,8 @@ async function main(): Promise<void> {
     const parsed = cli(
       {
         name: "agx-worker check",
-        help: { description: premiseHelp() },
+        help: { description: `${premiseHelp()}
+Ticket min_effort = "low" | "medium" | "high" | "xhigh" | "max" sets a routing floor; xhigh/max requires a structured capability justification.` },
         parameters: ["<ticket>"],
         flags: {
           json: {

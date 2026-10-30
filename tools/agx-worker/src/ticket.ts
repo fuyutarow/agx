@@ -1,6 +1,9 @@
 // Shared capability parsing, verification text, and write-scope matching for current tickets.
 import { z } from "../../shared/src/zod.ts";
 
+export const EffortSchema = z.enum(["low", "medium", "high", "xhigh", "max"]);
+export type Effort = z.output<typeof EffortSchema>;
+
 export const CapabilitySchema = z.union([
   z.string().trim().min(1),
   z.strictObject({

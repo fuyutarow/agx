@@ -297,12 +297,13 @@ async function defaultRepositoryRoot(
 async function listedRuns(
   cwd: string,
   env: NodeJS.ProcessEnv,
+  timeoutMs = DISPATCH_LIST_TIMEOUT_MS,
 ): Promise<{ rows?: RunRow[]; error?: string; code?: number }> {
   const result = await invoke(
     [...selfCommand(), "ls", "--json", "--all"],
     cwd,
     env,
-    DISPATCH_LIST_TIMEOUT_MS,
+    timeoutMs,
     "DISPATCH_LIST_TIMEOUT_MS",
   );
   if (result.code !== 0)
@@ -971,7 +972,7 @@ export async function dispatch(options: {
     pid: process.pid,
     lease,
   });
-  const receipt = {
+  const receipt: { id: string; workspace: string; row: string | null; route: string | null; model: string | null; effort: string | null; sandbox: string; sandbox_source: string; sandbox_effective: null; sandbox_effective_source: null } = {
     id: binding.id,
     workspace,
     row: null,
@@ -1049,7 +1050,7 @@ export async function dispatch(options: {
   process.stdout.write(
     options.json === true
       ? JSON.stringify(receipt) + "\n"
-      : `${binding.id} workspace=${JSON.stringify(workspace)} row=unknown route=unknown model=unknown effort=unknown sandbox=${sandbox} sandbox_source=${JSON.stringify(sandbox_source)} sandbox_effective=unknown sandbox_effective_source=null\n`,
+      : `${binding.id} workspace=${JSON.stringify(workspace)} row=pending route=pending model=pending effort=pending sandbox=${sandbox} sandbox_source=${JSON.stringify(sandbox_source)} sandbox_effective=unknown sandbox_effective_source=null; read the picked row with agx worker ls\n`,
   );
   return 0;
 }

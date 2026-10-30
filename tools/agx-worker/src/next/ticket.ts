@@ -1,6 +1,6 @@
 import { fromThrowable } from "neverthrow";
 import { z } from "../../../shared/src/zod.ts";
-import { CapabilitySchema, capabilityTags } from "../ticket.ts";
+import { CapabilitySchema, EffortSchema, capabilityTags } from "../ticket.ts";
 import { PREMISE_KINDS } from "../premises.ts";
 
 const premisePrefix = new RegExp(`^(?:${PREMISE_KINDS.join("|")}):.+$`, "u");
@@ -63,10 +63,15 @@ const Ticket = z
       .optional(),
     capabilities: z
       .array(CapabilitySchema)
-      .default([])
-      .transform(capabilityTags),
+      .default([]),
+    min_effort: EffortSchema.optional(),
     proposition: Proposition,
   })
+  .refine(
+    (ticket) => !["xhigh", "max"].includes(ticket.min_effort ?? "") ||
+      ticket.capabilities.some((capability) => typeof capability !== "string"),
+    { path: ["min_effort"], message: "xhigh/max requires a structured capability with need and lower_effort_lacks justification" },
+  )
   .refine(
     (ticket) =>
       ticket.first_return_s === undefined ||
@@ -75,7 +80,7 @@ const Ticket = z
       path: ["first_return_s"],
       message: "must not exceed timeout_s (default 600)",
     },
-  );
+  ).transform((ticket) => ({ ...ticket, capabilities: capabilityTags(ticket.capabilities) }));
 
 export type NextTicket = z.output<typeof Ticket>;
 export type ParsedNextTicket =
@@ -187,6 +192,7 @@ export function parseNextTicket(
     "timeout_s",
     "premises",
     "capabilities",
+    "min_effort",
     "proposition",
     "base_rev",
     "supersedes",

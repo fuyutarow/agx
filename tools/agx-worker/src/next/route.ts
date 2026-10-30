@@ -1,3 +1,4 @@
+import { EffortSchema } from "../ticket.ts";
 import { createHash } from "node:crypto";
 import { jevEndpoint, postJev } from "../../../shared/src/jev-client.ts";
 import {
@@ -196,7 +197,7 @@ export function blindCriterion(text: string, rows: readonly Choice[]): string {
 const hash = (value: unknown) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
-type RouteTicket = { path: string; sha256: string; launch?: boolean } | null;
+type RouteTicket = { path: string; sha256: string; launch?: boolean; min_effort?: string | undefined } | null;
 export type CapacityRetryRouteResult =
   | { kind: "selected"; row: Choice }
   | { kind: "exhausted" }
@@ -245,6 +246,9 @@ export async function route(
       return { kind: "refused", message, exitCode: code };
     return exitWithError(message, code);
   };
+  const floor = ticket?.min_effort === undefined ? undefined : EffortSchema.safeParse(ticket.min_effort);
+  if (floor !== undefined && !floor.success)
+    return refuse("agx: min_effort must be one of low, medium, high, xhigh, max\n", 2);
   const loaded = await loadRoster(rosterOptions);
   if (!loaded.ok)
     return refuse(`agx: cannot read dispatch roster: ${loaded.error}\n`, 1);
@@ -299,6 +303,13 @@ export async function route(
       roster.auto.routes.includes(row.route),
   );
   eligible = filter(eligible, "masked", (row) => !maskedRows.includes(row.id));
+  if (floor?.success === true) {
+    eligible = filter(eligible, "ticket min_effort", (row) =>
+      EffortSchema.options.indexOf(row.effort) >= EffortSchema.options.indexOf(floor.data),
+      (row) => ({ effort: row.effort, min_effort: floor.data }));
+    if (eligible.length === 0)
+      return refuse(`agx: no roster row satisfies ticket min_effort (${floor.data})\n`, 2);
+  }
   const beforeSort = eligible.map((row) => row.id);
   eligible = eligible.toSorted(
     (a, b) =>
@@ -332,7 +343,7 @@ export async function route(
   if (candidates.length === 0 && eligible.length === 0 && options !== undefined)
     return { kind: "exhausted" };
   if (availableCandidates.length === 0)
-    return refuse(`agx: no roster row satisfies required capabilities (${routeFilterLabel(roster.auto)})\n`, 2);
+    return refuse(`agx: no roster row satisfies required capabilities (${routeFilterLabel(roster.auto)})${floor?.success === true ? ` and ticket min_effort (${floor.data})` : ""}\n`, 2);
   const anonymizationMap: Record<string, string> = {};
   const measuredEvidence: Record<string, {
     judged_runs: number;

@@ -1,3 +1,4 @@
+import { EffortSchema } from "../ticket.ts";
 import { createHash } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -58,6 +59,7 @@ export async function pinContinuation(
     capabilities: readonly string[];
     timeoutS: number;
     maskedRows: readonly string[];
+    min_effort?: string | undefined;
   },
   onFailure?: (reason: string) => void,
 ): Promise<PinnedContinuation | null> {
@@ -114,6 +116,7 @@ export async function pinContinuation(
       {
         path: resolve(ticketPath),
         launch: true,
+        min_effort: routing.min_effort,
         sha256: createHash("sha256")
           .update(new Uint8Array(await Bun.file(ticketPath).arrayBuffer()))
           .digest("hex"),
@@ -183,7 +186,9 @@ export async function pinContinuation(
     row !== undefined &&
     timeoutS !== undefined &&
     !fitsPublishedTimeBox(row, timeoutS);
-  if (row === undefined || outsideBox) {
+  const floor = EffortSchema.safeParse(routing?.min_effort ?? (parsedTicket?.success === true ? parsedTicket.ticket.min_effort : undefined));
+  const belowFloor = row !== undefined && floor.success && EffortSchema.options.indexOf(row.effort) < EffortSchema.options.indexOf(floor.data);
+  if (row === undefined || outsideBox || belowFloor) {
     if (routing === undefined && parsedTicket?.success !== true) return null;
     const inspected = parsedTicket?.success === true ? parsedTicket : undefined;
     const brief =
@@ -195,7 +200,7 @@ export async function pinContinuation(
       timeoutS ?? 600,
       routing?.maskedRows ?? [],
       {},
-      null,
+      { path: resolve(ticketPath), sha256: "", min_effort: routing?.min_effort ?? inspected?.ticket.min_effort },
       {
         capacityRetry: true,
         timeoutMs: loaded.value.auto.timeout_ms,

@@ -1301,3 +1301,33 @@ test("refusal and pre-start failure retain full audit fields without a started r
       expect(Object.hasOwn(event?.audit ?? {}, field)).toBe(true);
   }
 });
+
+test("route: ticket min_effort removes rows below it", async () => {
+  await isolateState();
+  startServer("localized");
+  const picked = await route("floor", [], 600, [], {}, { path: "/ticket", sha256: "hash", min_effort: "high" });
+  expect(["high", "xhigh", "max"]).toContain(picked.effort);
+  const filters = z.array(z.object({ reason: z.string(), removed: z.array(z.unknown()), after: z.array(z.string()) })).safeParse(routingEvents().events.at(-1)?.audit?.filters);
+  expect(filters.success).toBe(true);
+  if (!filters.success) return;
+  const filter = filters.data.find((entry) => entry.reason === "ticket min_effort");
+  expect(filter?.removed.length).toBeGreaterThan(0);
+  expect(filter?.after).toContain(picked.id);
+});
+
+test("route: unknown min_effort is rejected", async () => {
+  await isolateState();
+  const result = await route("floor", [], 600, [], {}, { path: "/ticket", sha256: "hash", min_effort: "ultra" }, { capacityRetry: true, timeoutMs: 1000 });
+  expect(result.kind).toBe("refused");
+  if (result.kind === "refused") expect(result.message).toContain("low, medium, high, xhigh, max");
+});
+
+test("route: no row at or above min_effort refuses", async () => {
+  await isolateState();
+  const roster = await loadRoster();
+  if (!roster.ok) expect.unreachable(roster.error);
+  const masked = roster.value.choice.filter((row) => row.effort === "max").map((row) => row.id);
+  const result = await route("floor", [], 600, masked, {}, { path: "/ticket", sha256: "hash", min_effort: "max" }, { capacityRetry: true, timeoutMs: 1000 });
+  expect(result.kind).toBe("refused");
+  if (result.kind === "refused") expect(result.message).toContain("min_effort");
+});

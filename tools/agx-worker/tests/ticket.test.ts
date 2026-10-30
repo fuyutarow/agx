@@ -76,3 +76,14 @@ test("verifyLine lists the commands and tells the worker to run them in the fore
   expect(line).toContain("do not background anything you need to see");
   expect(verifyLine([])).toBe("");
 });
+
+const floorTicket = (fields: string) => `+++\nschema = 2\noutcome = "work"\nwrites = []\n${fields}\n[proposition]\nid = "P"\nclaim = "works"\nrefuted_by = "failure"\n+++\n`;
+test("ticket min_effort validates the floor and justification", () => {
+  const parsed = parseNextTicket(floorTicket('min_effort = "high"'));
+  expect(parsed.success && parsed.ticket.min_effort).toBe("high");
+  const invalid = parseNextTicket(floorTicket('min_effort = "ultra"'));
+  expect(invalid.success).toBe(false);
+  if (!invalid.success) expect(invalid.reason).toContain("low");
+  expect(parseNextTicket(floorTicket('min_effort = "xhigh"')).success).toBe(false);
+  expect(parseNextTicket(floorTicket('min_effort = "max"\ncapabilities = [{ need = "reasoning", lower_effort_lacks = "depth" }]')).success).toBe(true);
+});

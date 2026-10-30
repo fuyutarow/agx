@@ -809,8 +809,10 @@ test("dispatch records its one ticket-derived binding", async () => {
   const [record] = recordResult.data;
   expect(result.stdout).toStartWith(`${bindingResult.data.id} workspace=`);
   expect(result.stdout).toContain(
-    `workspace=${JSON.stringify(workspace)} row=unknown route=unknown model=unknown effort=unknown sandbox=workspace-write sandbox_source="built-in default"`,
+    `workspace=${JSON.stringify(workspace)} row=pending route=pending model=pending effort=pending sandbox=workspace-write sandbox_source="built-in default"`,
   );
+  expect(result.stdout).toContain("read the picked row with agx worker ls");
+  expect(result.stdout).not.toContain("row=unknown");
   expect(bindingResult.data).toMatchObject({
     ticket: "foo-bar",
     workspace,
@@ -1622,8 +1624,12 @@ test("dispatch --json exposes the immediate dispatch receipt", async () => {
   ).safeParse(result.stdout);
   expect(receipt.success).toBe(true);
   if (!receipt.success) return;
+  const binding = jsonOf(DispatchBindingSchema).safeParse(await Bun.file(f.bindingFile).text());
+  expect(binding.success).toBe(true);
+  if (!binding.success) return;
   expect(receipt.data).toMatchObject({
     workspace: join(`${f.repo}.ws`, "ws_receipt"),
+    id: binding.data.id,
     row: null,
     route: null,
     model: null,
