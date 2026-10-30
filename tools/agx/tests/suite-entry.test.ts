@@ -101,7 +101,7 @@ test.each([
   expect(result.code).toBe(2);
   expect(result.stdout).toBe("");
   expect(result.stderr).toBe(
-    `agx: unknown tool '${verb}'; expected worker, ticket, ws, status, msg, doctor, change\n`,
+    `agx: unknown command ${JSON.stringify(verb)}; use agx --help to list valid commands\n`,
   );
 });
 test("suite owns its version and takes descriptions from PATH tools", async () => {
