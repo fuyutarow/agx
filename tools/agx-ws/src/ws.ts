@@ -243,7 +243,7 @@ const gcCommand = command(
     ignoreArgv: rejectPrototypeFlag,
     help: {
       description:
-        'Enumerate jj workspaces. Print TSV: path, kind, verdict, change id, age, reason. Unreadable workspaces are reported as broken; the command exits nonzero while preserving the other rows. Legacy workspaces are report-only until --legacy. Keep a workspace by setting `keep = ["ws_<name>"]` under `[ws]` in the main checkout root `agx.toml` (example: `keep = ["ws_reference"]`). Machine-local keep entries live under `[ws]` in `$XDG_CONFIG_HOME/agx/repos/<name>.toml`. agx ws add is the only creator.',
+        'Enumerate jj workspaces. Print TSV: path, kind, verdict, change id, age, reason. Exit 1 for failed collection or broken workspaces; refused repositories exit 2. Legacy workspaces are report-only until --legacy. Keep a workspace by setting `keep = ["ws_<name>"]` under `[ws]` in the main checkout root `agx.toml` (example: `keep = ["ws_reference"]`). Machine-local keep entries live under `[ws]` in `$XDG_CONFIG_HOME/agx/repos/<name>.toml`. agx ws add is the only creator.',
     },
     flags: {
       dryRun: { type: Boolean, description: "report only; remove nothing" },

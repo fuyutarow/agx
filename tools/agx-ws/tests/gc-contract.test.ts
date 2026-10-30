@@ -783,6 +783,22 @@ await import(${JSON.stringify(wsCli)});
 });
 
 
+test("ws contract: gc --json counts give every kept reason in the fixture its own key", () => {
+  const reasons = [
+    ["unrecorded", "unrecorded workspace; pass --include-unrecorded to collect"],
+    ["unsnapshotted", "unsnapshotted working-copy changes: yes: bytes differ at README.md"],
+    ["abandoned", "all runs ended without acceptance over 24h ago: abc; pass --abandoned to collect"],
+    ["active_processes", "processes are working inside /workspace (pid 1)"],
+    ["configured_keep", "declared in [ws].keep"],
+  ] as const;
+  const rows = reasons.map(([, reason]) => ["path", "ws", "keep", "", "", reason].join("\t"));
+  rows.push(["path", "ws", "removable", "", "", "nothing unlanded; no untracked content"].join("\t"));
+  const counts = gcCounts(rows).kept;
+  for (const [key] of reasons) expect(counts[key]).toBe(1);
+  expect(counts.removable).toBe(1);
+  expect(counts.other).toBe(0);
+});
+
 test("ws contract: gc summary counts removed and kept by reason", async () => {
   const rows = [
     ["a", "ws", "removable", "", "", "nothing unlanded; removed"],
@@ -797,23 +813,23 @@ test("ws contract: gc summary counts removed and kept by reason", async () => {
   const f = await fixture(1);
   const result = await gc(f);
   expect(result.code, result.err).toBe(0);
-  const parsed = jsonOf(z.object({ counts: z.object({ removed: z.number(), kept: z.object({ other: z.number() }) }) })).safeParse(result.out);
+  const parsed = jsonOf(z.object({ counts: z.object({ removed: z.number(), kept: z.object({ removable: z.number() }) }) })).safeParse(result.out);
   expect(result.err).toBe("");
   expect(parsed.success).toBe(true);
-  if (parsed.success) expect(parsed.data.counts.kept.other + parsed.data.counts.removed).toBe(1);
+  if (parsed.success) expect(parsed.data.counts.kept.removable + parsed.data.counts.removed).toBe(1);
   const repos = join(f.baseEnv.XDG_CONFIG_HOME ?? "", "agx", "repos");
   mkdirSync(repos, { recursive: true });
   writeFileSync(join(repos, "test.toml"), `schema = 1\nroot = ${JSON.stringify(f.repo)}\n`);
   const args = ["bun", wsCli, "gc", "--all", "--dry-run", "--include-unrecorded", "--grace-minutes", "0"];
   const all = await run([...args, "--json"], f.repo, f.baseEnv);
   expect(all.code, all.err).toBe(0);
-  const counts = z.object({ removed: z.number(), kept: z.object({ unlanded: z.number(), unjudged_run: z.number(), untracked_content: z.number(), inventory_budget_exhausted: z.number(), broken: z.number(), other: z.number() }) });
+  const counts = z.object({ removed: z.number(), kept: z.object({ unlanded: z.number(), unjudged_run: z.number(), untracked_content: z.number(), inventory_budget_exhausted: z.number(), broken: z.number(), removable: z.number(), other: z.number() }) });
   const allParsed = jsonOf(z.object({ counts, repositories: z.array(z.object({ root: z.string(), counts })) })).safeParse(all.out);
   expect(allParsed.success).toBe(true);
   if (allParsed.success) {
     const repo = allParsed.data.repositories.find((entry) => entry.root === f.repo);
     expect(repo?.counts).toEqual(allParsed.data.counts);
-    expect(repo?.counts.kept.other).toBe(1);
+    expect(repo?.counts.kept.removable).toBe(1);
   }
   const plain = await run(args, f.repo, f.baseEnv);
   expect(plain.code, plain.err).toBe(0);

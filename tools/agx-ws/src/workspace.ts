@@ -3610,7 +3610,7 @@ async function classify(
 
 export function gcCounts(lines: string[]) {
   const rows = lines.map((line) => line.split("\t")).filter((row) => row[1] !== "repo" && row[1] !== "main");
-  const kept = { unlanded: 0, unjudged_run: 0, untracked_content: 0, inventory_budget_exhausted: 0, broken: 0, other: 0 };
+  const kept = { unlanded: 0, unjudged_run: 0, untracked_content: 0, inventory_budget_exhausted: 0, broken: 0, removable: 0, unrecorded: 0, unsnapshotted: 0, abandoned: 0, active_processes: 0, configured_keep: 0, other: 0 };
   let removed = 0;
   for (const row of rows) {
     const reason = row[5] ?? "";
@@ -3620,6 +3620,12 @@ export function gcCounts(lines: string[]) {
     else if (reason.includes(" is unjudged; keep")) kept.unjudged_run++;
     else if (reason.includes("untracked content:")) kept.untracked_content++;
     else if (reason.includes("inventory budget exhausted")) kept.inventory_budget_exhausted++;
+    else if (row[2] === "removable") kept.removable++;
+    else if (reason.includes("unrecorded workspace;")) kept.unrecorded++;
+    else if (reason.includes("unsnapshotted working-copy changes:")) kept.unsnapshotted++;
+    else if (reason.includes("all runs ended without acceptance over 24h ago:")) kept.abandoned++;
+    else if (reason.includes("processes are working inside ")) kept.active_processes++;
+    else if (reason.includes("declared in [ws].keep")) kept.configured_keep++;
     else kept.other++;
   }
   const originalRows = lines.map((line) => line.split("\t")).filter((row) => row[1] !== "repo" && row[2] !== "collected");
