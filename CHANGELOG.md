@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.41 — 2026-10-30
+
+- Isolate subprocess test environments from inherited agent sessions.
+
 ## 1.22.40 — 2026-10-30
 
 - Bound workspace GC with cooperative repository and run budgets and rotate repositories by last start.
