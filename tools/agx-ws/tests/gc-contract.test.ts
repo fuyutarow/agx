@@ -173,7 +173,7 @@ test("ws contract: a real gc prints each removal as it happens", async () => {
 });
 
 test("ws contract: gc removed count equals its removal lines on every removal path", async () => {
-  const f = await fixture(2);
+  const [f, failed] = await Promise.all([fixture(2), fixture(1)]);
   const land = await addLandWorkspace(f);
   expect(land).toBeDefined();
   if (land === undefined) return;
@@ -183,7 +183,13 @@ test("ws contract: gc removed count equals its removal lines on every removal pa
   if (missing === undefined) return;
   rmSync(missing, { recursive: true, force: true });
   const args = ["bun", wsCli, "gc", "--include-unrecorded", "--grace-minutes", "0", "--json", "--repo", f.repo];
-  const result = await run(args, f.repo, f.baseEnv);
+  const rip = join(failed.bin, "rip");
+  writeFileSync(rip, "#!/bin/sh\nexit 1\n");
+  chmodSync(rip, 0o755);
+  const [result, cleanup] = await Promise.all([
+    run(args, f.repo, f.baseEnv),
+    run(["bun", wsCli, "gc", "--include-unrecorded", "--grace-minutes", "0", "--json", "--repo", failed.repo], failed.repo, failed.baseEnv),
+  ]);
   const schema = jsonOf(z.object({ counts: z.object({ removed: z.number() }) }));
   const parsed = schema.safeParse(result.out);
   expect(parsed.success, result.err).toBe(true);
@@ -194,11 +200,6 @@ test("ws contract: gc removed count equals its removal lines on every removal pa
   expect(removalLines.some((line) => line.startsWith(`gc removed ${missing} reason=`))).toBe(false);
   if (parsed.success) expect(parsed.data.counts.removed).toBe(removalLines.length);
 
-  const failed = await fixture(1);
-  const rip = join(failed.bin, "rip");
-  writeFileSync(rip, "#!/bin/sh\nexit 1\n");
-  chmodSync(rip, 0o755);
-  const cleanup = await run(["bun", wsCli, "gc", "--include-unrecorded", "--grace-minutes", "0", "--json", "--repo", failed.repo], failed.repo, failed.baseEnv);
   const cleanupParsed = schema.safeParse(cleanup.out);
   expect(cleanupParsed.success, cleanup.err).toBe(true);
   const cleanupLines = cleanup.err.split("\n").filter((line) => line.startsWith("gc removed "));
@@ -556,12 +557,14 @@ test("ws contract: untracked inventory ignores ignored and regenerable paths but
   writeFileSync(join(workspace, "node_modules", "ignored"), "ignored");
   writeFileSync(join(workspace, "generated", "rebuild"), "generated");
   writeFileSync(join(workspace, "real.txt"), "keep");
-  const inventory = await untrackedContent(workspace, ["generated/"]);
+  const [inventory, dry] = await Promise.all([
+    untrackedContent(workspace, ["generated/"]),
+    gc(f),
+  ]);
   expect(inventory.ok).toBe(true);
   if (!inventory.ok) return;
   expect(inventory.value.count).toBe(1);
   expect(inventory.value.paths).toEqual(["real.txt"]);
-  const dry = await gc(f);
   expect(
     parseOutput(dry.out)?.rows.find((row) => row[0] === workspace)?.[2],
   ).toBe("keep");
@@ -917,17 +920,20 @@ test("ws contract: gc summary counts removed and kept by reason", async () => {
   ].map((row) => row.join("\t"));
   expect(gcCounts(rows)).toMatchObject({ removed: 1, kept: { unlanded: 1, unjudged_run: 1, untracked_content: 1, inventory_budget_exhausted: 1, broken: 1, other: 1 } });
   const f = await fixture(1);
-  const result = await gc(f);
+  const repos = join(f.baseEnv.XDG_CONFIG_HOME ?? "", "agx", "repos");
+  mkdirSync(repos, { recursive: true });
+  writeFileSync(join(repos, "test.toml"), `schema = 1\nroot = ${JSON.stringify(f.repo)}\n`);
+  const args = ["bun", wsCli, "gc", "--all", "--dry-run", "--include-unrecorded", "--grace-minutes", "0"];
+  const [result, all, plain] = await Promise.all([
+    gc(f),
+    run([...args, "--json"], f.repo, f.baseEnv),
+    run(args, f.repo, f.baseEnv),
+  ]);
   expect(result.code, result.err).toBe(0);
   const parsed = jsonOf(z.object({ counts: z.object({ removed: z.number(), kept: z.object({ removable: z.number() }) }) })).safeParse(result.out);
   expect(result.err).toBe("");
   expect(parsed.success).toBe(true);
   if (parsed.success) expect(parsed.data.counts.kept.removable + parsed.data.counts.removed).toBe(1);
-  const repos = join(f.baseEnv.XDG_CONFIG_HOME ?? "", "agx", "repos");
-  mkdirSync(repos, { recursive: true });
-  writeFileSync(join(repos, "test.toml"), `schema = 1\nroot = ${JSON.stringify(f.repo)}\n`);
-  const args = ["bun", wsCli, "gc", "--all", "--dry-run", "--include-unrecorded", "--grace-minutes", "0"];
-  const all = await run([...args, "--json"], f.repo, f.baseEnv);
   expect(all.code, all.err).toBe(0);
   const counts = z.object({ removed: z.number(), kept: z.object({ unlanded: z.number(), unjudged_run: z.number(), untracked_content: z.number(), inventory_budget_exhausted: z.number(), broken: z.number(), removable: z.number(), other: z.number() }) });
   const allParsed = jsonOf(z.object({ counts, repositories: z.array(z.object({ root: z.string(), counts })) })).safeParse(all.out);
@@ -937,7 +943,6 @@ test("ws contract: gc summary counts removed and kept by reason", async () => {
     expect(repo?.counts).toEqual(allParsed.data.counts);
     expect(repo?.counts.kept.removable).toBe(1);
   }
-  const plain = await run(args, f.repo, f.baseEnv);
   expect(plain.code, plain.err).toBe(0);
   const repoLine = plain.out.split("\n").find((line) => line.startsWith(`${f.repo}\trepo\t`));
   expect(repoLine?.split("\t")[4]).toMatch(/^\{"total":\d+,"unlanded":\d+,"collectable":\d+,"legacy":\d+\}$/u);
@@ -979,8 +984,7 @@ test("ws contract: a repository time budget defers the remaining candidates with
 });
 
 test("ws contract: gc --all starts with the repository least recently started", async () => {
-  const first = await fixture(0);
-  const second = await fixture(0);
+  const [first, second] = await Promise.all([fixture(0), fixture(0)]);
   await jjRun(["workspace", "root"], second.repo, first.baseEnv);
   const repos = join(first.baseEnv.XDG_CONFIG_HOME ?? "", "agx", "repos");
   mkdirSync(repos, { recursive: true });
@@ -995,12 +999,15 @@ test("ws contract: gc --all starts with the repository least recently started", 
 });
 
 test("ws contract: gc --all stops starting repositories after its run budget", async () => {
-  const first = await fixture(1);
-  const second = await fixture(0);
+  const [first, second] = await Promise.all([fixture(1), fixture(0)]);
   await jjRun(["workspace", "root"], second.repo, first.baseEnv);
   const repos = join(first.baseEnv.XDG_CONFIG_HOME ?? "", "agx", "repos");
   mkdirSync(repos, { recursive: true });
   for (const [index, f] of [first, second].entries()) writeFileSync(join(repos, `${index}.toml`), `schema = 1\nroot = ${JSON.stringify(f.repo)}\n`);
+  const starts = join(first.baseEnv.AGX_STATE_DIR ?? "", "ws-gc-starts");
+  mkdirSync(starts, { recursive: true });
+  const hash = new Bun.CryptoHasher("sha256").update(second.repo).digest("hex");
+  writeFileSync(join(starts, hash), String(Temporal.Now.instant().epochMilliseconds));
   const rip = join(first.bin, "rip");
   writeFileSync(rip, "#!/bin/sh\nsleep 1.2\nexit 0\n");
   chmodSync(rip, 0o755);
