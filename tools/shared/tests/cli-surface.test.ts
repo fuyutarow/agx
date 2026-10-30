@@ -49,7 +49,7 @@ test("cli contract: an unknown command prints usage on stderr with exit 2", asyn
     ["tools/xmsg/src/xmsg.ts", []],
     ["tools/agx-status/src/status.ts", []],
   ] as const;
-  for (const [entry, prefix] of cases) {
+  await Promise.all(cases.map(async ([entry, prefix]) => {
     const result = await run(
       join(ROOT, entry),
       [...prefix, "not-a-command"],
@@ -62,7 +62,7 @@ test("cli contract: an unknown command prints usage on stderr with exit 2", asyn
     );
     expect(result.stdout).toBe("");
     expect(result.stderr).toMatch(/^[^\n]*not-a-command[^\n]*--help[^\n]*\n$/u);
-  }
+  }));
   const allowed = await run(
     join(ROOT, "tools/agx/src/agx.ts"),
     ["msg", "--help"],

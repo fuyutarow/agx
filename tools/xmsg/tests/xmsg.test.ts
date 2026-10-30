@@ -1016,7 +1016,7 @@ test("list covers both native inventories, deduplicates exact IDs and preserves 
   ]);
   expect(inventory.recipients[1]?.name).toBeNull();
   expect(inventory.recipients[2]?.state).toBe("active");
-  for (const recipient of inventory.recipients) {
+  await Promise.all(inventory.recipients.map(async (recipient) => {
     expect(recipient.source).not.toBe("");
     expect(recipient.observedAt).toMatch(/^\d{4}-/u);
     const kind = recipient.address.startsWith("claude:") ? "claude" : "codex";
@@ -1031,7 +1031,7 @@ test("list covers both native inventories, deduplicates exact IDs and preserves 
       expect(sent.argv.at(-1)).toContain(
         JSON.stringify(recipient.address.slice(7)),
       );
-  }
+  }));
 });
 
 test("empty native inventories are complete, not unavailable", async () => {
