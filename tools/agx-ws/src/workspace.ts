@@ -3982,7 +3982,7 @@ async function finishGcRemoval(
     ...classification,
     verdict: "broken",
     collect: false,
-    reason: "tombstone cleanup failed at " + tombstone + ": " + msg(deleted),
+    reason: "tombstone cleanup failed at " + tombstone + ": " + msg(deleted) + "; removed",
   };
 }
 
@@ -4032,6 +4032,15 @@ function reportRemoval(enabled: boolean, path: string, ms: number): void {
 
 function decrementGcRemaining(journal: GcOptions["journal"]): void {
   if (journal !== undefined) journal.remaining--;
+}
+
+function recordGcRemoval(path: string, reason: string, journal: GcOptions["journal"]): void {
+  writeSync(2, `gc removed ${path.replaceAll("\n", "\\n")} reason=${reason.replaceAll("\n", "\\n")}\n`);
+  if (journal !== undefined) journal.removed++;
+}
+
+function recordMissingGcRemoval(classification: Classification, path: string, journal: GcOptions["journal"]): void {
+  if (classification.verdict === "collected") recordGcRemoval(path, classification.reason, journal);
 }
 
 function deferredGcRow(ws: Workspace, repo: Repo): string {
@@ -4283,6 +4292,7 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
         );
         c = outcome.classification;
         reason = outcome.reason;
+        recordMissingGcRemoval(c, ws.dir, options.journal);
       }
       if (c.collect && !options.dryRun && options.journal?.signal === undefined) {
         const removalStart = performance.now();
@@ -4378,8 +4388,7 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
               checked.abandon === true,
             );
             if (removed.ok) {
-              writeSync(2, `gc removed ${ws.dir} reason=${checked.reason.replaceAll("\n", "\\n")}\n`);
-              if (options.journal !== undefined) options.journal.removed++;
+              recordGcRemoval(ws.dir, checked.reason, options.journal);
               return good({
                 classification: checked,
                 tombstone: removed.value.tombstone,

@@ -171,6 +171,41 @@ test("ws contract: a real gc prints each removal as it happens", async () => {
   expect(result.err.match(/^gc removed /gmu)).toHaveLength(2);
 });
 
+test("ws contract: gc removed count equals its removal lines on every removal path", async () => {
+  const f = await fixture(2);
+  const land = await addLandWorkspace(f);
+  expect(land).toBeDefined();
+  if (land === undefined) return;
+  rmSync(land.dir, { recursive: true, force: true });
+  const missing = f.workspaces[1];
+  expect(missing).toBeDefined();
+  if (missing === undefined) return;
+  rmSync(missing, { recursive: true, force: true });
+  const args = ["bun", wsCli, "gc", "--include-unrecorded", "--grace-minutes", "0", "--json", "--repo", f.repo];
+  const result = await run(args, f.repo, f.baseEnv);
+  const schema = jsonOf(z.object({ counts: z.object({ removed: z.number() }) }));
+  const parsed = schema.safeParse(result.out);
+  expect(parsed.success, result.err).toBe(true);
+  const removalLines = result.err.split("\n").filter((line) => line.startsWith("gc removed "));
+  expect(removalLines).toHaveLength(2);
+  expect(removalLines.some((line) => line.startsWith(`gc removed ${f.workspaces[0]} reason=`))).toBe(true);
+  expect(removalLines.some((line) => line.startsWith(`gc removed ${land.dir} reason=`))).toBe(true);
+  expect(removalLines.some((line) => line.startsWith(`gc removed ${missing} reason=`))).toBe(false);
+  if (parsed.success) expect(parsed.data.counts.removed).toBe(removalLines.length);
+
+  const failed = await fixture(1);
+  const rip = join(failed.bin, "rip");
+  writeFileSync(rip, "#!/bin/sh\nexit 1\n");
+  chmodSync(rip, 0o755);
+  const cleanup = await run(["bun", wsCli, "gc", "--include-unrecorded", "--grace-minutes", "0", "--json", "--repo", failed.repo], failed.repo, failed.baseEnv);
+  const cleanupParsed = schema.safeParse(cleanup.out);
+  expect(cleanupParsed.success, cleanup.err).toBe(true);
+  const cleanupLines = cleanup.err.split("\n").filter((line) => line.startsWith("gc removed "));
+  expect(cleanupLines).toHaveLength(1);
+  expect(cleanup.out).toContain("tombstone cleanup failed");
+  if (cleanupParsed.success) expect(cleanupParsed.data.counts.removed).toBe(cleanupLines.length);
+});
+
 test("ws contract: gc on SIGTERM prints what it removed and exits 143", async () => {
   const result = await journalRun(true);
   expect(result.code, result.err).toBe(143);
