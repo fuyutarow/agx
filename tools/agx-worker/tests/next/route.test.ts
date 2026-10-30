@@ -324,9 +324,10 @@ describe("capability constrained routing", () => {
     );
     const path = join(root, "roster.toml");
     const original = await readFile(path, "utf8");
-    for (const routes of [undefined, '["codex"]']) {
+    await Promise.all([undefined, '["codex"]'].map(async (routes, index) => {
+      const configPath = join(root, `roster-${index}.toml`);
       await writeFile(
-        path,
+        configPath,
         routes === undefined
           ? original
           : original.replace("[route]", `[route]\nallow = ${routes}`),
@@ -343,6 +344,7 @@ describe("capability constrained routing", () => {
         {
           env: {
             ...subprocessEnvironment(),
+            AGX_CONFIG: configPath,
             TYPESAFE_API_KEY: "routing-fixture-secret",
           },
           stdout: "pipe",
@@ -358,7 +360,7 @@ describe("capability constrained routing", () => {
       expect(stderr).toBe("");
       expect(exit).toBe(0);
       expect(stdout).toContain(`routes=${routes ?? "all (codex, claude)"}`);
-    }
+    }));
   });
 
   test("local accepted and rejected history cannot change the Jev request", async () => {
