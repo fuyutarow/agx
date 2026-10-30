@@ -1866,7 +1866,6 @@ const WorkspaceRowSchema = z.object({
   root: z.string().nullable(),
   target: z.string().min(1),
   change: z.string(),
-  age: z.string(),
 });
 const JjCommitSchema = z.object({
   id: z.string().min(1),
@@ -1943,6 +1942,22 @@ async function landLockStatus(
     : { held: false, reason: "land lock has no live owner" };
 }
 
+/** Format age outside jj's relative-date template, which can fail for fresh commits. */
+function workspaceAge(timestamp: string): string {
+  if (!/^-?\d+$/u.test(timestamp)) return "?";
+  const seconds = Number(timestamp);
+  if (!Number.isFinite(seconds)) return "?";
+  const elapsed = Math.max(0, Math.floor(Temporal.Now.instant().epochMilliseconds / 1000 - seconds));
+  if (elapsed < 1) return "now";
+  for (const [unit, size] of [["year", 31536000], ["month", 2592000], ["day", 86400], ["hour", 3600], ["minute", 60], ["second", 1]] as const) {
+    if (elapsed >= size) {
+      const count = Math.floor(elapsed / size);
+      return `${count} ${unit}${count === 1 ? "" : "s"} ago`;
+    }
+  }
+  return "now";
+}
+
 /** Enumerate workspace name, path and target in one jj call. */
 async function workspaces(
   repo: Repo,
@@ -1955,16 +1970,23 @@ async function workspaces(
       "workspace",
       "list",
       "-T",
-      'json({"name" => self.name(), "root" => self.root(), "target" => self.target().commit_id(), "change" => self.target().change_id().short(12), "age" => self.target().committer().timestamp().ago()}) ++ "\\n"',
+      'json({"name" => self.name(), "root" => self.root(), "target" => self.target().commit_id(), "change" => self.target().change_id().short(12)}) ++ "\\t" ++ self.target().committer().timestamp().format("%s") ++ "\\n"',
     ],
     repo.backing,
     true,
   );
   if (!listed.ok) return listed;
+  return good(parseWorkspaceList(repo, listed.value, includeMain));
+}
+
+export function parseWorkspaceList(repo: Repo, output: string, includeMain = false): Workspace[] {
   const found: Workspace[] = [];
-  const lines = listed.value.trim().split("\n").filter(Boolean);
+  const lines = output.trim().split("\n").filter(Boolean);
   for (const [index, line] of lines.entries()) {
-    const parsed = jsonOf(WorkspaceRowSchema).safeParse(line);
+    const separator = line.indexOf("\t");
+    const record = separator < 0 ? line : line.slice(0, separator);
+    const timestamp = separator < 0 ? "" : line.slice(separator + 1);
+    const parsed = jsonOf(WorkspaceRowSchema).safeParse(record);
     if (!parsed.success) {
       const name = "<invalid-workspace-" + String(index + 1) + ">";
       found.push({
@@ -1977,7 +1999,9 @@ async function workspaces(
           "invalid jj workspace list record " +
           String(index + 1) +
           ": " +
-          parsed.error.message,
+          parsed.error.message +
+          "; raw line: " +
+          line.slice(0, 300),
         main: false,
       });
       continue;
@@ -1994,14 +2018,12 @@ async function workspaces(
       target: row.target,
       commit: row.target,
       change: row.change,
-      age: row.age,
+      age: workspaceAge(timestamp),
       rootMissing: row.root === null,
       main,
     });
   }
-  return good(
-    includeMain ? found : found.filter((workspace) => !workspace.main),
-  );
+  return includeMain ? found : found.filter((workspace) => !workspace.main);
 }
 
 /** One aggregate revset supplies ancestry, reachability, and tracked paths for all workspaces. */
@@ -4146,7 +4168,9 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
           ? await landLockStatus(land)
           : undefined;
       let c: Classification;
-      if (missingDirectory && land !== undefined) {
+      if (ws.recordError !== undefined) {
+        c = { verdict: "broken", change: ws.change, age: ws.age, reason: ws.recordError, collect: false };
+      } else if (missingDirectory && land !== undefined) {
         c =
           landLock?.held === true
             ? {
@@ -4692,8 +4716,10 @@ export async function gcAll(
       lines.push(`${path}\trepo\tkeep\t?\t?\trun time budget exhausted`);
       continue;
     }
-    await mkdir(startsDir, { recursive: true });
-    await writeFile(startPath(path), String(Temporal.Now.instant().epochMilliseconds));
+    if (!options.dryRun) {
+      await mkdir(startsDir, { recursive: true });
+      await writeFile(startPath(path), String(Temporal.Now.instant().epochMilliseconds));
+    }
     const started = performance.now();
     const repo = resolveRepo(path);
     if (repo.ok) requireJjTemplateVersion(["jj", "-T"]);

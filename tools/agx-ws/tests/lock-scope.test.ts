@@ -252,7 +252,10 @@ ${delegateJj}`,
         const expected = writable[index];
         expect(expected).toBeDefined();
         if (expected === undefined) return;
-        expect(result).toEqual(expected);
+        // 1.22.38 emits synchronous progress with measured elapsed time.
+        expect(result.out).toBe(expected.out);
+        expect(result.err.replaceAll(/elapsed=\d+\.\d+s/gu, "elapsed=<time>"))
+          .toBe(expected.err.replaceAll(/elapsed=\d+\.\d+s/gu, "elapsed=<time>"));
         expect(await snapshot(f.root)).toEqual(readonlyBefore);
       }
     })().finally(() => {
@@ -285,7 +288,7 @@ test("WS-GC-LOCK-SCOPE: dry runs neither acquire a held lock nor snapshot dirty 
     "jj",
     `
 const args = process.argv.slice(2);
-if (!args.includes("--ignore-working-copy")) { process.stderr.write("unexpected write"); process.exit(9); }
+if (!args.includes("--ignore-working-copy") && !args.includes("--version")) { process.stderr.write("unexpected write"); process.exit(9); }
 ${delegateJj}`,
   );
   const dry = await f.command(["gc", "--dry-run", "--include-unrecorded"]);

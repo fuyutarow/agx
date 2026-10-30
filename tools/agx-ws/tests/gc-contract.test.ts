@@ -12,7 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { jsonOf, z } from "../../shared/src/zod.ts";
-import { gcCounts, untrackedContent } from "../src/workspace.ts";
+import { gcCounts, parseWorkspaceList, untrackedContent } from "../src/workspace.ts";
 import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 const scratch = mkdtempSync(join(tmpdir(), "agx-ws-gc-contract-"));
 const wsCli = process.env.GC_WS_CLI ?? join(import.meta.dir, "../src/ws.ts");
@@ -1010,4 +1010,33 @@ test("ws contract: gc --all stops starting repositories after its run budget", a
   expect(result.code, result.err).toBe(0);
   expect(result.err).not.toContain(`gc --all start ${second.repo}`);
   expect(result.out).toContain("run time budget exhausted");
+});
+
+test("ws contract: an unparseable workspace list line is reported with its raw text", () => {
+  const raw = `not a workspace record ${"x".repeat(320)}`;
+  const repo = { backing: "/repo", name: "repo", parent: "/", wsRoot: "/repo.ws" };
+  const row = parseWorkspaceList(repo, raw)[0];
+  expect(row?.name).toContain("<invalid-workspace-");
+  expect(row?.recordError).toContain(raw.slice(0, 300));
+  expect(row?.recordError).not.toContain(raw.slice(0, 301));
+});
+
+test("ws contract: a workspace list timestamp error preserves the workspace row", () => {
+  const repo = { backing: "/repo", name: "repo", parent: "/", wsRoot: "/repo.ws" };
+  const record = JSON.stringify({ name: "ws_1", root: "/repo.ws/ws_1", target: "abc", change: "def" });
+  const rows = parseWorkspaceList(repo, `${record}\t<Error: Out-of-range date>`);
+  expect(rows.some((row) => row.dir === "/repo.ws/ws_1" && row.age === "?")).toBe(true);
+  expect(rows.some((row) => row.name.includes("<invalid-workspace-"))).toBe(false);
+});
+
+test("ws contract: a future workspace commit still produces a valid list row", async () => {
+  const f = await fixture(0);
+  const future = Temporal.Now.instant().add({ seconds: 60 }).toString();
+  const created = await run([jj, "new"], f.repo, { ...f.baseEnv, JJ_TIMESTAMP: future });
+  expect(created.code, created.err).toBe(0);
+  const listed = await jjRun(["workspace", "list", "-T", 'json({"name" => self.name(), "root" => self.root(), "target" => self.target().commit_id(), "change" => self.target().change_id().short(12)}) ++ "\\t" ++ self.target().committer().timestamp().format("%s") ++ "\\n"'], f.repo, f.baseEnv);
+  const repo = { backing: f.repo, name: "project", parent: f.parent, wsRoot: join(f.parent, "project.ws") };
+  const rows = parseWorkspaceList(repo, listed.out, true);
+  expect(rows.some((row) => row.name.includes("<invalid-workspace-"))).toBe(false);
+  expect(rows.some((row) => row.dir === f.repo)).toBe(true);
 });

@@ -560,10 +560,11 @@ describe("AGX-GC-UNTRACKED-KEEP-1024", () => {
     expect((await untrackedContent(path, [], 0)).ok).toBe(false);
   });
 
+  // Since 1.22.32 ignored and declared regenerable paths do not retain a workspace.
   for (const [artifact, declaration, kept] of [
-    [".state/plan.json", "", true],
+    [".state/plan.json", "", false],
     ["loose.txt", "", true],
-    ["nested/node_modules/pkg/index.js", "", true],
+    ["nested/node_modules/pkg/index.js", "", false],
     ["cache/build.bin", 'regenerable = ["cache/"]\n', false],
     ["cache-other/live.json", 'regenerable = ["cache"]\n', true],
   ] as const) {
@@ -575,7 +576,7 @@ describe("AGX-GC-UNTRACKED-KEEP-1024", () => {
       // Ignore the artifact without creating a tracked diff in the workspace.
       await Bun.write(
         join(dir, ".gitignore"),
-        artifact === "loose.txt"
+        artifact === "loose.txt" || artifact === "cache-other/live.json"
           ? "# keep loose.txt untracked\n"
           : `${artifact.split("/")[0]}\n`,
       );
@@ -2524,9 +2525,8 @@ describe("agx ws gc", () => {
     expect(result.out).toContain('keep = ["ws_reference"]');
     expect(result.out).toContain("main checkout root `agx.toml`");
     expect(result.out).toContain("$XDG_CONFIG_HOME/agx/repos/<name>.toml");
-    expect(result.out).toContain(
-      "Unreadable workspaces are reported as broken",
-    );
+    // 1.22.27 reports the per-repository inventory budget in help.
+    expect(result.out).toContain("--inventory-budget-seconds");
     expect(result.out).toContain("--inventory-seconds");
     expect(result.out).toContain("default: 10");
   });
@@ -3052,12 +3052,7 @@ describe("gc integration branches", () => {
     const env = baseEnv({ AGX_STATE_DIR: join(scratch, "harvest-state") });
     const fixtureWs = (args: string[], cwd: string) => ws(args, cwd, env);
     const path = await repo('trunk = "main"\n');
-    await Bun.write(
-      join(path, ".gitignore"),
-      "*.result.md\n.agent-state/\nmetrics/\n",
-    );
-    await jj(["commit", "-m", "ignore results"], path);
-    await jj(["bookmark", "set", "main", "-r", "@-"], path);
+    // 1.22.32 excludes ignored files from untracked inventory.
     expect((await fixtureWs(["add", "harvest-reject"], path)).code).toBe(0);
     expect((await fixtureWs(["add", "harvest-running"], path)).code).toBe(0);
     const dir = wsDir(path, "harvest-reject");
@@ -3194,8 +3189,7 @@ describe("gc integration branches", () => {
   test("result preservation requires every file, equal bytes and no symlink escape", async () => {
     const path = await repo('trunk = "main"\n');
     const runDir = join(scratch, "preservation-run");
-    await Bun.write(join(path, ".gitignore"), "*.result.md\n");
-    await jj(["status"], path);
+    // 1.22.32 excludes ignored files; use real untracked results here.
     for (let i = 0; i < 7; i++) {
       await Bun.write(join(path, `${i}.result.md`), `result-${i}`);
       await Bun.write(join(runDir, "results", `${i}.result.md`), `result-${i}`);
