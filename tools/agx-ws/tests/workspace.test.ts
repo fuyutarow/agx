@@ -731,9 +731,12 @@ describe("ws contract: shared agx.toml [ws] policy", () => {
       expect(doctor.out).toContain('"verdict":"kept"');
       await unlink(safeGit);
 
-      const spare = await ws(["add", "spare"], path);
+      // The spare only supplies a removable GC fixture; safe already tests ws add and ready.
+      const spare = await jj(
+        ["workspace", "add", "--name", "ws_spare", wsDir(path, "spare")],
+        path,
+      );
       expect(spare.code, spare.err).toBe(0);
-      expect(spare.out).toContain("chosen-ready");
       const collected = await ws(["gc", "--include-unrecorded"], safe);
       expect(collected.code, collected.err + collected.out).toBe(0);
       expect(collected.out).toContain(`${safe}\tws\tkeep\t`);
