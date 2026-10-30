@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.39 — 2026-10-30
+
+- Accept Claude host inventory entries without status when binding ACK targets.
+
 ## 1.22.38 — 2026-10-30
 
 - Forward termination signals to dispatched commands and preserve their exit status.
