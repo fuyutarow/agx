@@ -175,7 +175,11 @@ test.each([127, 137])(
 );
 
 test("seeded random append batches equal a full fold after every batch", async () => {
-  fixture();
+  const root = fixture();
+  // Exercise the fold without asynchronous publication sealing synthetic dead PIDs.
+  const appendEvent = (event: Parameters<typeof append>[0]) => {
+    append(event, root, false);
+  };
   let seed = 42;
   const random = (n: number) => {
     seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
@@ -184,16 +188,16 @@ test("seeded random append batches equal a full fold after every batch", async (
   const appendRandom = (batch: number) => {
     const id = `run-${random(20)}`;
     const kind = random(4);
-    if (kind === 0) append(started(id));
+    if (kind === 0) appendEvent(started(id, process.pid));
     if (kind === 1)
-      append({
+      appendEvent({
         kind: "progress",
         id,
         at: "2026-10-15T00:00:01Z",
         path: `日本語-${batch}`,
       });
     if (kind === 2)
-      append({
+      appendEvent({
         kind: "ended",
         id,
         at: "2026-10-15T00:01:00Z",
@@ -212,7 +216,7 @@ test("seeded random append batches equal a full fold after every batch", async (
         changed_files: 0,
       });
     if (kind === 3)
-      append({
+      appendEvent({
         kind: "judged",
         id,
         at: "2026-10-15T00:02:00Z",
@@ -378,9 +382,13 @@ test("ls --running combines with JSON, all and selector; cached liveness is refr
   expect(human.exitCode).toBe(0);
   expect(human.stdout.toString()).toContain("live running");
   expect(human.stdout.toString()).not.toContain("orphan");
+  await foldedRuns();
   child.kill();
   await child.exited;
-  expect(ls(["--running", "--json"]).stdout.toString()).toBe("[]\n");
+  const output = spyOn(process.stdout, "write").mockImplementation(() => true);
+  using _restoreOutput = { [Symbol.dispose]: () => { output.mockRestore(); } };
+  expect(await list({ running: true, json: true })).toBe(0);
+  expect(output.mock.calls.at(-1)?.[0]).toBe("[]\n");
   expect(await foldedRuns()).toEqual(await fullFoldedRuns());
 });
 
