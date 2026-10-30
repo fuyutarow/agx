@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.45 — 2026-10-30
+
+- Speed up the idle land workspace GC contract test.
+
 ## 1.22.44 — 2026-10-30
 
 - Keep gc --all dry runs read-only while preserving repository ordering.
