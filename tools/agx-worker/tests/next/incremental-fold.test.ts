@@ -233,6 +233,65 @@ test("seeded random append batches equal a full fold after every batch", async (
   }
 }, 15_000);
 
+test("fold contract: the incremental fold equals a full fold while publication runs", async () => {
+  const root = fixture();
+  const appendEvent = (event: Parameters<typeof append>[0]) => {
+    append(event, root);
+  };
+  let seed = 42;
+  const random = (n: number) => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return (seed >>> 8) % n;
+  };
+  const appendRandom = (batch: number) => {
+    const id = `run-${random(20)}`;
+    const kind = random(4);
+    if (kind === 0) appendEvent(started(id));
+    if (kind === 1)
+      appendEvent({
+        kind: "progress",
+        id,
+        at: "2026-10-15T00:00:01Z",
+        path: `日本語-${batch}`,
+      });
+    if (kind === 2)
+      appendEvent({
+        kind: "ended",
+        id,
+        at: "2026-10-15T00:01:00Z",
+        exit: random(2),
+        report_path: null,
+        vendor_session: null,
+        verify: [
+          {
+            cmd: "check",
+            exit: 0,
+            log_path: "/tmp/check",
+            future_field: "preserved",
+          },
+        ],
+        returned: false,
+        changed_files: 0,
+      });
+    if (kind === 3)
+      appendEvent({
+        kind: "judged",
+        id,
+        at: "2026-10-15T00:02:00Z",
+        decision:
+          ["accept", "reject", "landed", "ignored"][random(4)] ?? "accept",
+        note: `batch-${batch}`,
+      });
+  };
+  for (let batch = 0; batch < 50; batch++) {
+    for (let i = 0, n = random(9) + 1; i < n; i++) {
+      appendRandom(batch);
+    }
+    await flushRunPublications();
+    expect(await foldedRuns()).toEqual(await fullFoldedRuns());
+  }
+});
+
 test("warm fold reads exactly appended record bytes and zero for unchanged history", async () => {
   fixture();
   append(started("run"));
