@@ -47,6 +47,11 @@ function fakeCodex(dir: string): { bin: string; log: string } {
     bin,
     `#!/bin/sh
 fixture_dir=$(dirname "$0")
+if [ "$(cat "$fixture_dir/fake-mode" 2>/dev/null)" = term-grace ]; then
+  trap 'sleep 0.25; : > "$fixture_dir/term.marker"; exit 0' TERM
+  : > "$fixture_dir/term.ready"
+  while :; do sleep 0.02; done
+fi
 FAKE_CODEX_MODE=$(cat "$fixture_dir/fake-mode" 2>/dev/null || true)
 FAKE_CODEX_SLEEP=$(cat "$fixture_dir/fake-sleep" 2>/dev/null || true)
 FAKE_CODEX_STDIN_LOG=$(cat "$fixture_dir/fake-stdin-log" 2>/dev/null || true)
@@ -60,10 +65,6 @@ case "$FAKE_CODEX_MODE" in
   stdin-wait)
     echo 'Reading additional input from stdin...' >&2
     sleep "\${FAKE_CODEX_SLEEP:-5}" ;;
-  term-grace)
-    trap 'sleep 0.25; : > "$fixture_dir/term.marker"; exit 0' TERM
-    : > "$fixture_dir/term.ready"
-    while :; do sleep 0.02; done ;;
   slow) sleep "\${FAKE_CODEX_SLEEP:-5}" ;;
   kill) kill -KILL "$$" ;;
   fail) echo 'ERROR: stream disconnected' >&2; exit 7 ;;
@@ -869,8 +870,7 @@ describe("agx", () => {
           killSignal: "SIGKILL",
         },
       );
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        if (existsSync(join(fixtureDir, "term.ready"))) break;
+      while (proc.exitCode === null && !existsSync(join(fixtureDir, "term.ready"))) {
         await Bun.sleep(10);
       }
       expect(existsSync(join(fixtureDir, "term.ready"))).toBe(true);

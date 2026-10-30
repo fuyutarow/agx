@@ -70,7 +70,9 @@ const execute = async (args: string[], env: NodeJS.ProcessEnv) => {
 };
 
 const capacityDispatch = async (mode: string) => {
-  const f = await fixture();
+  const root = await mkdtemp(join(tmpdir(), `agx-test-${process.pid}-capacity-`));
+  roots.push(root);
+  const f = { root };
   await prepareTicketRepo(f.root);
   const worker = join(f.root, "capacity-worker.ts");
   await writeFile(
