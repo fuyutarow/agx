@@ -49,11 +49,10 @@ test("all commands refuse the retired state variable, including empty values", a
   ));
 });
 
-test("all commands refuse an unmigrated directory without creating state", () => {
+test.each([...COMMAND_NAMES])("all commands refuse an unmigrated directory without creating state: %s", (command) => {
   const { env } = fixture();
   const base = env.XDG_STATE_HOME;
   mkdirSync(join(base, "agx-next"), { recursive: true });
-  for (const command of COMMAND_NAMES) {
     const result = Bun.spawnSync(
       [process.execPath, "tools/agx-worker/src/next/cli.ts", command],
       { env },
@@ -65,7 +64,6 @@ test("all commands refuse an unmigrated directory without creating state", () =>
     );
     expect(existsSync(join(base, "agx"))).toBe(false);
     expect(existsSync(join(base, "agx-next"))).toBe(true);
-  }
 });
 
 test("state resolution uses the explicit path, XDG, then home; empty values fall through", () => {

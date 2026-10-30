@@ -224,17 +224,20 @@ test("malformed complete records refuse JSON; incomplete tails and unknown dates
   expect(report(stats(env)).unknown.time).toBe(1);
 });
 
-test("usage invocation rejects incompatible flags and bad windows", () => {
+test.each([
+    { extra: ["--usage", "other"] },
+    { extra: ["--usage", "jev", "--routing"] },
+    { extra: ["--usage", "jev", "--host", "here"] },
+    { extra: ["--usage", "jev", "--import-legacy"] },
+    { extra: ["--usage", "jev", "--window", "0d"] },
+    { extra: ["--usage", "jev", "extra"] },
+])("usage invocation rejects incompatible flags and bad windows: $extra", ({ extra }) => {
   const { env } = fixture();
-  for (const extra of [
-    ["--usage", "other"],
-    ["--usage", "jev", "--routing"],
-    ["--usage", "jev", "--host", "here"],
-    ["--usage", "jev", "--import-legacy"],
-    ["--usage", "jev", "--window", "0d"],
-    ["--usage", "jev", "extra"],
-  ])
-    expect(stats(env, extra).exitCode).toBe(2);
+  expect(stats(env, [...extra]).exitCode).toBe(2);
+});
+
+test("usage invocation defaults and help", () => {
+  const { env } = fixture();
   expect(report(stats(env, ["--usage", "jev"])).window).toBe("7d");
   expect(stats(env, ["--help"]).stdout.toString()).toContain("--usage");
 });

@@ -23,7 +23,7 @@ function fixture(
   ended: {
     outcome: string;
     exit: number;
-    verify: { cmd: string; exit: number; log_path: string }[];
+    verify: readonly { cmd: string; exit: number; log_path: string }[];
     changed_files?: number;
   },
   writes: string[] = [],
@@ -237,8 +237,7 @@ test("a no-change run of a ticket with writes is still incomplete", () => {
   expect(readFileSync(join(run.state, "records.jsonl"), "utf8")).toBe(original);
 });
 
-test("completion contract: read-only no-change needs passing verify and a known empty diff", () => {
-  const cases = [
+test.each([
     { name: "missing-verify", verify: [], changed_files: 0 },
     {
       name: "failed-verify",
@@ -254,11 +253,9 @@ test("completion contract: read-only no-change needs passing verify and a known 
       verify: [{ cmd: "check", exit: 0, log_path: "unused" }],
       changed_files: 1,
     },
-  ];
-  for (const item of cases) {
-    const run = fixture(item.name, { outcome: "no-change", exit: 0, ...item });
-    const result = command(["judge", run.id, "accept"], run.state);
-    expect(result.exit).toBe(2);
-    expect(result.stderr).toContain("completion=incomplete");
-  }
+])("completion contract: read-only no-change needs passing verify and a known empty diff: $name", (item) => {
+  const run = fixture(item.name, { outcome: "no-change", exit: 0, ...item });
+  const result = command(["judge", run.id, "accept"], run.state);
+  expect(result.exit).toBe(2);
+  expect(result.stderr).toContain("completion=incomplete");
 });

@@ -298,9 +298,9 @@ await child.exited;
 
   test("refuses an unended run and records an override after an incomplete end", async () => {
     const { root, id, records } = await fixture(false);
-    const noticeAt = performance.now();
+    const holder = await holdPublicationLock(root);
+    await using _holder = { [Symbol.asyncDispose]: holder.release };
     const result = await launchJudge(root, id).result;
-    const judgedAt = performance.now();
     expect(result.exit).not.toBe(0);
     expect(result.stderr).toContain("before it ends");
     const prematureOverride = await launchJudge(root, id, [
@@ -310,7 +310,7 @@ await child.exited;
     expect(prematureOverride.exit).not.toBe(0);
     expect(prematureOverride.stderr).toContain("before it ends");
     expect(await readFile(records, "utf8")).not.toContain('"judged"');
-    expect(judgedAt - noticeAt).toBeLessThan(1000);
+    await holder.release();
     appendFileSync(
       records,
       `${JSON.stringify({ kind: "ended", id, at: "2026-10-27T00:01:00Z", exit: 0, report_path: null, vendor_session: null, verify: [] })}\n`,
