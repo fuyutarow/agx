@@ -223,7 +223,6 @@ describe("real run stop", () => {
 const prepared: { current?: Awaited<ReturnType<typeof fixture>> } = {};
 beforeEach(async () => {
   prepared.current = await fixture();
-  await prepareTicketRepo(prepared.current.root);
 });
 for (const { unit, session } of [
   { unit: null, session: "fake-session" },
@@ -234,7 +233,8 @@ for (const { unit, session } of [
   test(`real run stop under ${unit ?? "PID lease"} preserves session=${session !== null}`, async () => {
     const f = prepared.current;
     if (f === undefined) expect.unreachable("fixture is missing");
-    const ticket = join(f.root, "ticket.md");
+    const ticket = join(f.root, ".agents", "tickets", "ticket.md");
+    await mkdir(join(f.root, ".agents", "tickets"), { recursive: true });
     await Bun.write(
       ticket,
       '+++\nschema = 2\nname = "stop-fixture"\nwrites = []\noutcome = "stop fixture"\nverify = []\n[proposition]\nid = "STOP"\nclaim = "stops"\nrefuted_by = "vendor remains"\n+++\nWait.\n',
@@ -330,7 +330,7 @@ for (const { unit, session } of [
     const ownerError = new Response(owner.stderr).text();
     for (
       let i = 0;
-      i < 400 && !(await Bun.file(join(f.root, "pids")).exists());
+      i < 400 && owner.exitCode === null && !(await Bun.file(join(f.root, "pids")).exists());
       i += 1
     )
       await Bun.sleep(25);
