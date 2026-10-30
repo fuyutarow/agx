@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.42 — 2026-10-30
+
+- Keep GC removal counts aligned with synchronous removal lines.
+
 ## 1.22.41 — 2026-10-30
 
 - Isolate subprocess test environments from inherited agent sessions.
