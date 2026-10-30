@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.43 — 2026-10-30
+
+- Remove foreground lock waiter records on SIGTERM and SIGINT.
+
 ## 1.22.42 — 2026-10-30
 
 - Keep GC removal counts aligned with synchronous removal lines.
