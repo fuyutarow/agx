@@ -1,6 +1,7 @@
 // Store mutations share dir-lock with other tools. Foreground ws commands advertise intent
 // outside the lock so releasing it cannot let another gc removal jump ahead of a waiter.
-import { readdir, mkdir, rm, rmdir, stat } from "node:fs/promises";
+import { readdir, rm, stat } from "node:fs/promises";
+import { mkdirSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { acquire, pidAlive } from "../../shared/src/dir-lock.ts";
@@ -71,6 +72,18 @@ export async function withWorkspaceLock<T>(
   const started = performance.now();
   let nextNotice = 5_000;
   let lastHolder: z.output<typeof Owner> | undefined;
+  const cleanup = async (): Promise<void> => {
+    rmSync(marker, { force: true });
+    await attempt(() => { rmdirSync(waiters); });
+  };
+  const onTerm = (): void => { void cleanup().finally(() => process.exit(143)); };
+  const onInt = (): void => { void cleanup().finally(() => process.exit(130)); };
+  const finishWaiting = async (): Promise<void> => {
+    if (skipBusy !== undefined) return;
+    process.off("SIGTERM", onTerm);
+    process.off("SIGINT", onInt);
+    await cleanup();
+  };
   const notice = (holder: z.output<typeof Owner> | undefined): void => {
     const elapsed = performance.now() - started;
     if (skipBusy !== undefined || elapsed < nextNotice) return;
@@ -81,8 +94,10 @@ export async function withWorkspaceLock<T>(
   };
   const run = async (): Promise<Attempt<T>> => {
     if (skipBusy === undefined) {
-      await mkdir(waiters, { recursive: true });
-      await Bun.write(marker, JSON.stringify(me));
+      mkdirSync(waiters, { recursive: true });
+      writeFileSync(marker, JSON.stringify(me));
+      process.on("SIGTERM", onTerm);
+      process.on("SIGINT", onInt);
     }
     for (;;) {
       const waiting =
@@ -91,6 +106,7 @@ export async function withWorkspaceLock<T>(
         return skipBusy(`yielding to ${waiting}`);
       const got = await acquire(lock, me, { waitMs: 0 });
       if (typeof got === "function") {
+        await finishWaiting();
         // Acquisition itself can cross the reporting threshold after a delayed poll.
         notice(lastHolder);
         const result = await attempt(async () => {
@@ -122,11 +138,7 @@ export async function withWorkspaceLock<T>(
     }
   };
   const result = await attempt(run);
-  if (skipBusy === undefined) {
-    await rm(marker, { force: true });
-    // A concurrent waiter may still own an entry in this directory.
-    await rmdir(waiters).catch(() => {});
-  }
+  await finishWaiting();
   return result.ok
     ? result.value
     : { ok: false, error: errorMessage(result.error) };

@@ -137,7 +137,7 @@ async function fixture(slugs: string[]) {
     ).toBe(0);
   await shim("stat", 'process.stdout.write("ext4\\n");');
   await shim("agx", 'process.stdout.write("[]");');
-  return { root, repo, lock, run, jj, command, commandWithEnv, shim, dir };
+  return { root, repo, lock, env, run, jj, command, commandWithEnv, shim, dir };
 }
 
 async function waitFor(file: string) {
@@ -146,6 +146,40 @@ async function waitFor(file: string) {
     await Bun.sleep(20);
   expect(await Bun.file(file).exists(), `gate ${file}`).toBe(true);
 }
+
+async function waitForWaiter(dir: string, pid: number): Promise<string[]> {
+  const deadline = performance.now() + 30_000;
+  while (performance.now() < deadline) {
+    const entries = await readdir(dir).catch(() => []);
+    if (entries.some((entry) => entry.startsWith(`${pid}-`))) return entries;
+    await Bun.sleep(20);
+  }
+  return [];
+}
+
+test("ws contract: a lock waiter killed by SIGTERM or SIGINT leaves no waiter record", async () => {
+  for (const [signal, exitCode] of [["SIGTERM", 143], ["SIGINT", 130]] as const) {
+    const f = await fixture(["waiting"]);
+    await Bun.write(join(f.lock, "owner.json"), JSON.stringify({
+      pid: process.pid, host: hostname(), what: "fixture holder", since: Temporal.Now.instant().toString(),
+    }));
+    const child = Bun.spawn([process.execPath, ws, "rm", "waiting"], {
+      cwd: f.repo, env: f.env, stdout: "pipe", stderr: "pipe", signal: AbortSignal.timeout(45_000),
+    });
+    const output = Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+    await (async () => {
+      const dir = `${f.lock}.waiters`;
+      const entries = await waitForWaiter(dir, child.pid);
+      expect(entries.some((entry) => entry.startsWith(`${child.pid}-`))).toBe(true);
+      child.kill(signal);
+      const [, err, code] = await output;
+      expect(code, err).toBe(exitCode);
+      expect((await readdir(dir).catch(() => [])).some((entry) => entry.startsWith(`${child.pid}-`))).toBe(false);
+    })().finally(() => {
+      child.kill();
+    });
+  }
+});
 
 const delegateJj = `const child = Bun.spawn([${JSON.stringify(realJj)}, ...args], {stdout:"inherit",stderr:"inherit"}); process.exitCode = await child.exited;`;
 
