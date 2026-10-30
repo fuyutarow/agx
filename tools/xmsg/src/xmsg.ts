@@ -210,12 +210,24 @@ async function send(
     return 3;
   }
   const child = spawned.value;
-  const result = await attempt(() =>
-    Promise.all([child.exited, child.stdout.text()]),
-  );
+  const reader = child.stdout.getReader();
+  const cancel = () => { void reader.cancel().catch(() => {}); };
+  timeout.addEventListener("abort", cancel, { once: true });
+  const result = await attempt(async () => {
+    let output = "";
+    const decoder = new TextDecoder();
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      output += decoder.decode(chunk.value, { stream: true });
+    }
+    output += decoder.decode();
+    return { code: await child.exited, output };
+  });
+  timeout.removeEventListener("abort", cancel);
   if (!result.ok)
     return unknown(errorMessage(result.error), "", relaySessionId);
-  const [code, output] = result.value;
+  const { code, output } = result.value;
   const capturePath = process.env.XMSG_RELAY_CAPTURE;
   if (kind === "claude" && capturePath !== undefined) {
     const captured = await attempt(() => Bun.write(capturePath, output));
@@ -618,6 +630,8 @@ async function main(): Promise<number> {
     return 3;
   }
   if (kind !== "codex" && kind !== "claude") return 2;
+  if (kind === "claude" && remaining > 5_000 && args.flags.timing !== true)
+    process.stderr.write(`agx msg: waiting for Claude relay acceptance (deadline ${timeoutMs} ms)\n`);
   const transportStarted = performance.now();
   const outcome = await send(
     selectedRoute.vendor,

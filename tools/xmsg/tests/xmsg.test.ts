@@ -1548,6 +1548,37 @@ test("xmsg contract: a bound target is delivered without reading the session reg
   );
 });
 
+test("sandboxed send to a bound claude uuid uses the bound name", async () => {
+  const bound = encodeBoundClaudeTarget({
+    selector: `claude:${uuidB}`,
+    address: "claude:bound peer",
+  });
+  const r = await run({
+    output: completeStream(uuidUse(uuidB), accepted),
+    args: sendArgs(`claude:${uuidB}`),
+    env: { [BOUND_CLAUDE_TARGET_ENV]: bound },
+  });
+  expect(r.exit).toBe(0);
+  expect(r.calls).toHaveLength(1);
+  expect(r.argv.at(-1)).toContain('Target: "bound peer"');
+});
+
+test("claude uuid send returns by its deadline with a reason", async () => {
+  const bound = encodeBoundClaudeTarget({
+    selector: `claude:${uuidB}`,
+    address: "claude:bound peer",
+  });
+  const start = performance.now();
+  const r = await run({
+    args: sendArgs(`claude:${uuidB}`, "250"),
+    env: { [BOUND_CLAUDE_TARGET_ENV]: bound },
+    delay: 5000,
+  });
+  expect(r.exit).toBe(4);
+  expect(r.stderr).toContain("timed out");
+  expect(performance.now() - start).toBeLessThan(2000);
+});
+
 test("xmsg contract: an unbound claude target still resolves through the registry", async () => {
   const name = "unbound peer";
   const r = await run({
