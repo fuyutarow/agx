@@ -1817,6 +1817,8 @@ export type GcOptions = {
   graceMinutes?: number;
   inventorySeconds?: number;
   inventoryBudgetSeconds?: number;
+  repoBudgetSeconds?: number;
+  allBudgetSeconds?: number;
   legacy?: boolean;
   abandoned?: boolean;
   /** Nested all-repository inventories retain their historical main-row omission. */
@@ -4024,7 +4026,23 @@ async function accountForMissingWorkspaceForget(
 }
 
 /** TSV columns: path, kind, verdict, change id, age, reason. */
+function reportRemoval(enabled: boolean, path: string, ms: number): void {
+  if (enabled) writeSync(2, `gc trace: removal ${JSON.stringify(path)}: ${ms.toFixed(3)} ms\n`);
+}
+
+function decrementGcRemaining(journal: GcOptions["journal"]): void {
+  if (journal !== undefined) journal.remaining--;
+}
+
+function deferredGcRow(ws: Workspace, repo: Repo): string {
+  let kind = "legacy";
+  if (ws.main) kind = "main";
+  else if (dirname(resolve(ws.dir)) === resolve(repo.wsRoot) && basename(resolve(ws.dir)).startsWith("ws_")) kind = "ws";
+  return [ws.dir, kind, "keep", ws.change, ws.age, "repository time budget exhausted"].join("\t");
+}
+
 export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
+  const repoStarted = performance.now();
   const resolved = resolveRepo(options.repo);
   if (!resolved.ok) return resolved;
   const repo = resolved.value;
@@ -4074,17 +4092,25 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
       remainingMs: (options.inventoryBudgetSeconds ?? 120) * 1000,
       exhausted: false,
     };
+    let repoBudgetExhausted = false;
+    let removalMs = 0;
     let classificationMs = 0;
     let completed = 0;
     let slowest: { workspace: string; ms: number; step: string } | undefined;
     const reportProgress = () => {
       if (!tracing) return;
       writeSync(2,
-        `gc trace: cumulative: workspaces=${completed}/${candidates.value.length} classification=${Math.max(0, classificationMs - trace.inventoryMs - trace.comparisonMs).toFixed(3)} ms inventory=${trace.inventoryMs.toFixed(3)} ms count=${trace.inventoryCount} comparison=${trace.comparisonMs.toFixed(3)} ms slowest=${JSON.stringify(slowest?.workspace ?? null)} ms=${(slowest?.ms ?? 0).toFixed(3)} step=${slowest?.step ?? "none"}\n`,
+        `gc trace: cumulative: workspaces=${completed}/${candidates.value.length} classification=${Math.max(0, classificationMs - trace.inventoryMs - trace.comparisonMs).toFixed(3)} ms inventory=${trace.inventoryMs.toFixed(3)} ms count=${trace.inventoryCount} comparison=${trace.comparisonMs.toFixed(3)} ms removal=${removalMs.toFixed(3)} ms slowest=${JSON.stringify(slowest?.workspace ?? null)} ms=${(slowest?.ms ?? 0).toFixed(3)} step=${slowest?.step ?? "none"}\n`,
       );
     };
     for (const ws of candidates.value) {
       if (options.journal?.signal !== undefined) break;
+      if (performance.now() - repoStarted >= (options.repoBudgetSeconds ?? 180) * 1000) {
+        repoBudgetExhausted = true;
+        lines.push(deferredGcRow(ws, repo));
+        decrementGcRemaining(options.journal);
+        continue;
+      }
       const inventoryBefore = trace.inventoryMs;
       const comparisonBefore = trace.comparisonMs;
       const classificationStart = performance.now();
@@ -4259,6 +4285,7 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
         reason = outcome.reason;
       }
       if (c.collect && !options.dryRun && options.journal?.signal === undefined) {
+        const removalStart = performance.now();
         const done = await withLock<GcRemovalResult>(
           repo,
           `agx ws gc ${ws.name}`,
@@ -4393,6 +4420,9 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
             }),
         );
         c = await finishGcRemoval(done, graveyard.value, c);
+        const removalElapsed = performance.now() - removalStart;
+        removalMs += removalElapsed;
+        reportRemoval(tracing && c.collect, ws.dir, removalElapsed);
         broken.push(...(c.verdict === "broken" ? [ws.dir] : []));
         reason = c.reason;
         failed.push(...(c.verdict === "broken" ? [ws.dir] : []));
@@ -4425,6 +4455,7 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
         failed.length === 0 &&
         broken.length === 0 &&
         !budget.exhausted &&
+        !repoBudgetExhausted &&
         options.journal?.signal === undefined &&
         !lines.some((line) => line.split("\t")[2] === "broken"),
     };
@@ -4628,19 +4659,32 @@ export async function gcAll(
   options: Omit<GcOptions, "repo">,
   _root?: string,
 ): Promise<Attempt<GcResult>> {
+  const allStarted = performance.now();
   const discovered = await discoverRepos();
   if (!discovered.ok) return discovered;
   const roots = discovered.value;
+  const startsDir = join(stateDir(), "ws-gc-starts");
+  const startPath = (path: string) => join(startsDir, createHash("sha256").update(path).digest("hex"));
+  const ordered = await Promise.all([...roots].map(async ([path, sources]) => {
+    const recorded = await readFile(startPath(path), "utf8").catch(() => "0");
+    return { path, sources, started: Number(recorded) };
+  }));
+  ordered.sort((a, b) => a.started === b.started ? a.path.localeCompare(b.path) : a.started - b.started);
   const lines: string[] = [];
   const failed: string[] = [];
   const refused: string[] = [];
   const seen = new Set<string>();
   const repositories: NonNullable<GcResult["repositories"]> = [];
   const broken: string[] = [];
-  for (const [path, sources] of [...roots].toSorted(([a], [b]) =>
-    a.localeCompare(b),
-  )) {
+  for (const { path, sources } of ordered) {
     if (options.journal?.signal !== undefined) break;
+    if (performance.now() - allStarted >= (options.allBudgetSeconds ?? 1500) * 1000) {
+      repositories.push({ root: path, sources: [...sources].toSorted(), status: "skipped", counts: gcCounts([]) });
+      lines.push(`${path}\trepo\tkeep\t?\t?\trun time budget exhausted`);
+      continue;
+    }
+    await mkdir(startsDir, { recursive: true });
+    await writeFile(startPath(path), String(Temporal.Now.instant().epochMilliseconds));
     const started = performance.now();
     const repo = resolveRepo(path);
     if (repo.ok) requireJjTemplateVersion(["jj", "-T"]);

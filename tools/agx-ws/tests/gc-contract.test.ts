@@ -414,7 +414,7 @@ test("ws contract: gc trace reports each step on stderr only when asked", async 
   ];
   const progress = lines.splice(4, 1)[0];
   expect(progress).toMatch(
-    /^gc trace: cumulative: workspaces=\d+\/\d+ classification=\d+\.\d{3} ms inventory=\d+\.\d{3} ms count=\d+ comparison=\d+\.\d{3} ms slowest=".*" ms=\d+\.\d{3} step=(classification|inventory|comparison)$/u,
+    /^gc trace: cumulative: workspaces=\d+\/\d+ classification=\d+\.\d{3} ms inventory=\d+\.\d{3} ms count=\d+ comparison=\d+\.\d{3} ms removal=\d+\.\d{3} ms slowest=".*" ms=\d+\.\d{3} step=(classification|inventory|comparison)$/u,
   );
   expect(lines).toHaveLength(steps.length);
   for (const [index, step] of steps.entries()) {
@@ -929,4 +929,49 @@ test("ws doctor inventories returned runs and warns by age", async () => {
     expect(summary.data.unjudged_warn_hours).toBe(24);
   }
   expect(doctor.out).toContain('"finding":"unjudged-age"');
+});
+
+test("ws contract: a repository time budget defers the remaining candidates without removing them", async () => {
+  const f = await fixture(2);
+  const rip = join(f.bin, "rip");
+  writeFileSync(rip, "#!/bin/sh\nsleep 1.2\nexit 0\n");
+  chmodSync(rip, 0o755);
+  const result = await run(["bun", wsCli, "gc", "--include-unrecorded", "--grace-minutes", "0", "--repo-budget-seconds", "1", "--json", "--repo", f.repo], f.repo, f.baseEnv);
+  expect(result.code, result.err).toBe(0);
+  const parsed = parseOutput(result.out);
+  expect(parsed?.complete).toBe(false);
+  expect(parsed?.rows.some((row) => row[5] === "repository time budget exhausted")).toBe(true);
+  expect(existsSync(f.workspaces[1] ?? "")).toBe(true);
+});
+
+test("ws contract: gc --all starts with the repository least recently started", async () => {
+  const first = await fixture(0);
+  const second = await fixture(0);
+  await jjRun(["workspace", "root"], second.repo, first.baseEnv);
+  const repos = join(first.baseEnv.XDG_CONFIG_HOME ?? "", "agx", "repos");
+  mkdirSync(repos, { recursive: true });
+  for (const [index, f] of [first, second].entries()) writeFileSync(join(repos, `${index}.toml`), `schema = 1\nroot = ${JSON.stringify(f.repo)}\n`);
+  const starts = join(first.baseEnv.AGX_STATE_DIR ?? "", "ws-gc-starts");
+  mkdirSync(starts, { recursive: true });
+  const hash = new Bun.CryptoHasher("sha256").update(first.repo).digest("hex");
+  writeFileSync(join(starts, hash), String(Temporal.Now.instant().epochMilliseconds));
+  const result = await run(["bun", wsCli, "gc", "--all", "--dry-run", "--json"], first.repo, first.baseEnv);
+  expect(result.code, result.err).toBe(0);
+  expect(result.err.indexOf(`gc --all start ${second.repo}`)).toBeLessThan(result.err.indexOf(`gc --all start ${first.repo}`));
+});
+
+test("ws contract: gc --all stops starting repositories after its run budget", async () => {
+  const first = await fixture(1);
+  const second = await fixture(0);
+  await jjRun(["workspace", "root"], second.repo, first.baseEnv);
+  const repos = join(first.baseEnv.XDG_CONFIG_HOME ?? "", "agx", "repos");
+  mkdirSync(repos, { recursive: true });
+  for (const [index, f] of [first, second].entries()) writeFileSync(join(repos, `${index}.toml`), `schema = 1\nroot = ${JSON.stringify(f.repo)}\n`);
+  const rip = join(first.bin, "rip");
+  writeFileSync(rip, "#!/bin/sh\nsleep 1.2\nexit 0\n");
+  chmodSync(rip, 0o755);
+  const result = await run(["bun", wsCli, "gc", "--all", "--include-unrecorded", "--grace-minutes", "0", "--all-budget-seconds", "1", "--json"], first.repo, first.baseEnv);
+  expect(result.code, result.err).toBe(0);
+  expect(result.err).not.toContain(`gc --all start ${second.repo}`);
+  expect(result.out).toContain("run time budget exhausted");
 });

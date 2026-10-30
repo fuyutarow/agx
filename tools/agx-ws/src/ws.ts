@@ -286,6 +286,8 @@ const gcCommand = command(
         description:
           "limit total untracked-file inventory time per repository (default: 120 seconds)",
       },
+      repoBudgetSeconds: { type: Number, description: "soft per-repository budget in seconds (default: 180); prelude and one candidate may overrun" },
+      allBudgetSeconds: { type: Number, description: "soft --all run budget in seconds (default: 1500); the current repository may overrun" },
       repo: repoFlag,
     },
   },
@@ -320,6 +322,12 @@ const gcCommand = command(
       fail("--inventory-budget-seconds must be an integer from 1 to 86400");
       return;
     }
+    for (const [name, value] of [["repo-budget-seconds", argv.flags.repoBudgetSeconds], ["all-budget-seconds", argv.flags.allBudgetSeconds]] as const) {
+      if (value !== undefined && (!Number.isSafeInteger(value) || value < 1 || value > 86400)) {
+        fail(`--${name} must be an integer from 1 to 86400`);
+        return;
+      }
+    }
     const journal: { signal?: "SIGTERM" | "SIGINT"; removed: number; remaining: number } = { removed: 0, remaining: 0 };
     const onTerm = () => { journal.signal ??= "SIGTERM"; };
     const onInt = () => { journal.signal ??= "SIGINT"; };
@@ -333,6 +341,8 @@ const gcCommand = command(
       graceMinutes: argv.flags.graceMinutes ?? 30,
       inventorySeconds: argv.flags.inventorySeconds ?? 10,
       inventoryBudgetSeconds: argv.flags.inventoryBudgetSeconds ?? 120,
+      repoBudgetSeconds: argv.flags.repoBudgetSeconds ?? 180,
+      allBudgetSeconds: argv.flags.allBudgetSeconds ?? 1500,
       journal,
     };
     const done = await (argv.flags.all === true
