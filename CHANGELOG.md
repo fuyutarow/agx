@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.47 — 2026-10-30
+
+- Bound Claude relay waits and report progress while waiting.
+
 ## 1.22.46 — 2026-10-30
 
 - Allow ticket effort floors and show the selected dispatch row.
