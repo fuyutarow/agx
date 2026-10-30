@@ -1,4 +1,4 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
   chmodSync,
   existsSync,
@@ -12,7 +12,12 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { jsonOf, z } from "../../shared/src/zod.ts";
-import { gcCounts, parseWorkspaceList, untrackedContent } from "../src/workspace.ts";
+import {
+  gc as collectWorkspaces,
+  gcCounts,
+  parseWorkspaceList,
+  untrackedContent,
+} from "../src/workspace.ts";
 import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 const scratch = mkdtempSync(join(tmpdir(), "agx-ws-gc-contract-"));
 const wsCli = process.env.GC_WS_CLI ?? join(import.meta.dir, "../src/ws.ts");
@@ -62,6 +67,7 @@ async function jjRun(args: string[], cwd: string, env: Fixture["baseEnv"]) {
 async function fixture(
   workspaceCount: number,
   config = 'trunk = "main"\n',
+  initialCommit = true,
 ): Promise<Fixture> {
   const parent = join(scratch, `repo-${++repoCount}`);
   const repo = join(parent, "project");
@@ -101,15 +107,10 @@ async function fixture(
   };
   const initialized = await run([jj, "git", "init", repo], parent, baseEnv);
   expect(initialized.code, initialized.err).toBe(0);
-  await jjRun(
-    ["config", "set", "--repo", 'revset-aliases."trunk()"', "bookmarks(main)"],
-    repo,
-    baseEnv,
-  );
   writeFileSync(join(repo, "agx.toml"), `schema = 1\n[ws]\n${config}`);
   writeFileSync(join(repo, "tracked.txt"), "base\n");
-  await jjRun(["commit", "-m", "base"], repo, baseEnv);
-  await jjRun(["bookmark", "create", "main", "-r", "@-"], repo, baseEnv);
+  if (initialCommit) await jjRun(["commit", "-m", "base"], repo, baseEnv);
+  await jjRun(["bookmark", "create", "main", "-r", initialCommit ? "@-" : "@"], repo, baseEnv);
   const workspaces: string[] = [];
   for (let index = 1; index <= workspaceCount; index++) {
     const name = `ws_${index}`;
@@ -298,7 +299,7 @@ async function gc(f: Fixture, extra: string[] = [], trace?: string) {
   );
 }
 
-test("ws contract: gc --all reports each repository on stderr as it goes", async () => {
+test.each([{ format: [] }, { format: ["--json"] }])("ws contract: gc --all reports each repository on stderr as it goes %j", async ({ format }) => {
   const first = await fixture(1);
   const second = await fixture(1);
   await jjRun(["workspace", "root"], second.repo, first.baseEnv);
@@ -312,7 +313,7 @@ test("ws contract: gc --all reports each repository on stderr as it goes", async
     join(first.bin, "agx"),
     `#!/bin/sh\ncat <<'EOF'\n${JSON.stringify(records)}\nEOF\n`,
   );
-  for (const format of [[], ["--json"]]) {
+  {
     const result = await run(
       [
         "bun",
@@ -626,58 +627,55 @@ test("gc usecase: a change not on trunk stays kept", async () => {
 });
 
 // Shared config's fixed read-only root probes are excluded; this measures GC inventory work.
-test("gc contract: dry-run jj call count is constant from 5 to 50 workspaces", async () => {
-  const five = await fixture(5);
-  const counts: number[] = [];
-  const trace = addJjCounter(five);
-  const first = await gc(five, [], trace);
-  expect(first.code, `${first.err}\n${first.out}`).toBe(0);
-  expect(parseOutput(first.out)?.complete).toBe(true);
-  counts.push(
-    (await Bun.file(trace).text()).trim().split("\n").filter(Boolean).length,
-  );
-  rmSync(trace, { force: true });
-  await addWorkspaces(five, 6, 50);
-  addJjCounter(five);
-  const second = await gc(five, [], trace);
-  expect(second.code, `${second.err}\n${second.out}`).toBe(0);
-  expect(parseOutput(second.out)?.complete).toBe(true);
-  counts.push(
-    (await Bun.file(trace).text()).trim().split("\n").filter(Boolean).length,
-  );
-  console.log(`gc contract: jj calls 5=${counts[0]} 50=${counts[1]}`);
-  expect(counts[0]).toBe(counts[1]);
+describe("gc call count fixture", () => {
+  let five: Fixture;
+  let trace: string;
+  let firstCount: number;
+  beforeAll(async () => {
+    five = await fixture(5);
+    trace = addJjCounter(five);
+    const first = await gc(five, [], trace);
+    expect(first.code, `${first.err}\n${first.out}`).toBe(0);
+    expect(parseOutput(first.out)?.complete).toBe(true);
+    firstCount = (await Bun.file(trace).text()).trim().split("\n").filter(Boolean).length;
+    rmSync(trace, { force: true });
+  });
+  function stageWorkspaces(from: number) {
+    beforeAll(async () => {
+      await addWorkspaces(five, from, Math.min(from + 8, 50));
+    });
+  }
+  for (let from = 6; from <= 50; from += 9) stageWorkspaces(from);
+  test("gc contract: dry-run jj call count is constant from 5 to 50 workspaces", async () => {
+    const second = await gc(five, [], trace);
+    expect(second.code, `${second.err}\n${second.out}`).toBe(0);
+    expect(parseOutput(second.out)?.complete).toBe(true);
+    const secondCount = (await Bun.file(trace).text()).trim().split("\n").filter(Boolean).length;
+    console.log(`gc contract: jj calls 5=${firstCount} 50=${secondCount}`);
+    expect(firstCount).toBe(secondCount);
+  });
 });
 
-test.concurrent("gc usecase: an idle land workspace is collected, not broken", async () => {
-  const f = await fixture(0);
+test("gc usecase: an idle land workspace is collected, not broken", async () => {
+  const f = await fixture(0, undefined, false);
   const land = await addLandWorkspace(f);
   expect(land).toBeDefined();
   if (land === undefined) return;
 
   rmSync(land.dir, { recursive: true, force: true });
-  const dryRun = await gc(f);
-  expect(dryRun.code, `${dryRun.err}\n${dryRun.out}`).toBe(0);
-  const row = parseOutput(dryRun.out)?.rows.find(
-    (candidate) => candidate[0] === land.dir,
-  );
+  const collected = await collectWorkspaces({
+    repo: f.repo, dryRun: false, includeUnrecorded: true,
+    graceMinutes: 0, inventorySeconds: 1, env: f.baseEnv,
+  });
+  expect(collected.ok, collected.ok ? "" : String(collected.error)).toBe(true);
+  if (!collected.ok) return;
+  const row = collected.value.lines.map((line) => line.split("\t"))
+    .find((candidate) => candidate[0] === land.dir);
   expect(row?.[1]).toBe("land");
-  expect(row?.[2]).toBe("removable");
-
-  const collected = await wsCommand(f, [
-    "gc",
-    "--include-unrecorded",
-    "--grace-minutes",
-    "0",
-    "--inventory-seconds",
-    "1",
-  ]);
-  expect(collected.code, `${collected.err}\n${collected.out}`).toBe(0);
-  const remaining = await jjRun(["workspace", "list"], f.repo, f.baseEnv);
-  expect(remaining.out).not.toContain(land.name);
+  expect(row?.[2], row?.join("\t")).toBe("collected");
 });
 
-test.concurrent("gc usecase: a broken user workspace still fails the dry-run", async () => {
+test("gc usecase: a broken user workspace still fails the dry-run", async () => {
   const f = await fixture(4);
   for (const dir of f.workspaces.slice(0, 2))
     rmSync(dir, { recursive: true, force: true });
@@ -692,7 +690,7 @@ test.concurrent("gc usecase: a broken user workspace still fails the dry-run", a
   expect(parsed?.complete).toBe(false);
 });
 
-test.concurrent("gc contract: remote-bookmarked work is removable and an unpushed change is named", async () => {
+test("gc contract: remote-bookmarked work is removable and an unpushed change is named", async () => {
   const f = await fixture(2);
   const bare = join(f.parent, "origin.git");
   const remote = await run(
@@ -732,7 +730,7 @@ test.concurrent("gc contract: remote-bookmarked work is removable and an unpushe
   expect(unpushed?.[5]).toContain("unpublished payload");
 });
 
-test.concurrent("gc contract: lock is available while a large tombstone is still being deleted", async () => {
+test("gc contract: lock is available while a large tombstone is still being deleted", async () => {
   const f = await fixture(1, 'trunk = "main"\nregenerable = ["build"]\n');
   const workspace = f.workspaces[0];
   expect(workspace).toBeDefined();

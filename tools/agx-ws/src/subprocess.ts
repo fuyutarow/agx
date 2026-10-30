@@ -20,7 +20,7 @@ export async function runStep(
   cmd: string[],
   cwd: string,
   options: {
-    env?: Record<string, string> | undefined;
+    env?: NodeJS.ProcessEnv | undefined;
     output?: "capture" | "inherit" | "json";
     timeoutMs?: number;
     input?: string;

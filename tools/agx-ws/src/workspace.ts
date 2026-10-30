@@ -2,6 +2,7 @@
 // Explicit GC observations publish the owner-written verdict inventory for small-file readers.
 // Store locks and foreground waiter markers are transient and removed on completion.
 import { createHash, randomUUID } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import {
   accessSync,
   constants,
@@ -109,6 +110,7 @@ const LEGACY_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]*$/u;
 const TERMINAL_STATES = new Set(["ended", "orphaned"]);
 
 export type Ran = { code: number; out: string; err: string };
+const gcEnvironment = new AsyncLocalStorage<NodeJS.ProcessEnv>();
 
 async function exec(
   cmd: string[],
@@ -117,7 +119,7 @@ async function exec(
   timeoutMs?: number,
 ): Promise<Attempt<Ran>> {
   const ran = await runStep(cmd, cwd, {
-    env,
+    env: { ...gcEnvironment.getStore(), ...env },
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
   });
   return ran.ok ? good({ ...ran.value, out: ran.value.out.toString() }) : ran;
@@ -294,10 +296,11 @@ export type Graveyard = { path: string };
 
 /** rip's graveyard, refused when RAM-backed: a buried workspace there vanishes on reboot. */
 export async function checkGraveyard(): Promise<Attempt<Graveyard>> {
-  const data = process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share");
+  const env = gcEnvironment.getStore() ?? process.env;
+  const data = env.XDG_DATA_HOME ?? join(homedir(), ".local", "share");
   const path =
-    process.env.RIP_GRAVEYARD ??
-    process.env.GRAVEYARD ??
+    env.RIP_GRAVEYARD ??
+    env.GRAVEYARD ??
     join(data, "graveyard");
   const type = await fsType(path);
   if (!type.ok) return type;
@@ -1555,7 +1558,7 @@ async function buildBrokenPatch(
   if (diff.value.code !== 0 && diff.value.code !== 1)
     return bad(diff.value.err);
   return attempt(async () => {
-    const destination = join(stateDir(), "ws-rm");
+    const destination = join(stateDir(gcEnvironment.getStore()), "ws-rm");
     await mkdir(destination, { recursive: true });
     const path = join(
       destination,
@@ -1757,7 +1760,7 @@ async function removalGuard(
 
 async function agxRecords(cwd: string): Promise<Attempt<RunRecord[]>> {
   const agx = await resolveAgxBinary();
-  if (agx === "agx" && Bun.which("agx") === null)
+  if (agx === "agx" && Bun.which("agx", { PATH: gcEnvironment.getStore()?.PATH ?? process.env.PATH ?? "" }) === null)
     return bad("agx is not on PATH: mise run deps");
   const ran = await exec([agx, "worker", "ls", "--all", "--json"], cwd);
   if (!ran.ok) return bad(`agx worker ls --json: ${msg(ran)}`);
@@ -1812,6 +1815,7 @@ export function lineageOf(records: RunRecord[], dir: string): RunRecord[] {
 
 export type GcOptions = {
   repo: string;
+  env?: NodeJS.ProcessEnv;
   dryRun: boolean;
   includeUnrecorded: boolean;
   graceMinutes?: number;
@@ -1896,7 +1900,7 @@ const gcInventoryTimeoutMs = (options: GcOptions): number =>
 const MAX_PRESERVED_RESULT_BYTES = 16 * 1024 * 1024;
 
 function landState(ws: Workspace): string | undefined {
-  const root = realOr(join(stateDir(), "land"));
+  const root = realOr(join(stateDir(gcEnvironment.getStore()), "land"));
   const dir = realOr(ws.dir);
   const state = dirname(dir);
   return basename(dir) === "workspace" && dirname(state) === root
@@ -3346,7 +3350,7 @@ async function classifyGc(
   const resultDirs = allRejected
     ? lineage
         .filter((record) => /^[a-zA-Z0-9_-]+$/u.test(record.id))
-        .map((record) => join(stateDir(), "runs", record.id))
+        .map((record) => join(stateDir(gcEnvironment.getStore()), "runs", record.id))
     : [];
   if (budget !== undefined && budget.remainingMs <= 0) {
     budget.exhausted = true;
@@ -3452,7 +3456,7 @@ async function classify(
   const resultDirs = allRejected
     ? lineage
         .filter((r) => /^[a-zA-Z0-9_-]+$/u.test(r.id))
-        .map((r) => join(stateDir(), "runs", r.id))
+        .map((r) => join(stateDir(gcEnvironment.getStore()), "runs", r.id))
     : [];
   const inventory = await untrackedContent(
     ws.dir,
@@ -4073,6 +4077,8 @@ function deferredGcRow(ws: Workspace, repo: Repo): string {
 }
 
 export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
+  if (options.env !== undefined && gcEnvironment.getStore() === undefined)
+    return gcEnvironment.run({ ...process.env, ...options.env }, () => gc(options));
   const repoStarted = performance.now();
   const resolved = resolveRepo(options.repo);
   if (!resolved.ok) return resolved;
@@ -4837,7 +4843,7 @@ async function publishVerdicts(
   result: GcResult,
   retained?: Set<string>,
 ): Promise<void> {
-  const root = stateDir();
+  const root = stateDir(gcEnvironment.getStore());
   const path = join(root, "workspace-verdicts.json");
   await mkdir(root, { recursive: true });
   const release = await acquire(
