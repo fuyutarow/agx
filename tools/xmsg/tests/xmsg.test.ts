@@ -214,6 +214,9 @@ async function run(
     codexError?: boolean;
     codexDelivery?: "active" | "idle";
     noTurnListing?: boolean;
+    noPagedListing?: boolean;
+    newestTurn?: "completed" | "empty";
+    staleSteer?: boolean;
     oversizedTurns?: boolean;
     replyAfterReads?: number;
     inventory?: string;
@@ -331,6 +334,7 @@ async function run(
             "initialize",
             "thread/loaded/list",
             "thread/read",
+            "thread/turns/list",
             "turn/steer",
             "turn/start",
           ];
@@ -345,6 +349,40 @@ async function run(
             return;
           }
           let response: unknown = {};
+          if (request.method === "thread/turns/list") {
+            if (
+              options.noPagedListing === true ||
+              options.noTurnListing === true
+            ) {
+              ws.send(
+                JSON.stringify({
+                  id: request.id,
+                  error: { code: -32601, message: "unsupported" },
+                }),
+              );
+              return;
+            }
+            response = {
+              data:
+                options.newestTurn === "empty"
+                  ? []
+                  : [
+                      {
+                        id: "turn-active",
+                        status: options.newestTurn ?? "inProgress",
+                      },
+                    ],
+            };
+          }
+          if (request.method === "turn/steer" && options.staleSteer === true) {
+            ws.send(
+              JSON.stringify({
+                id: request.id,
+                error: { code: -32000, message: "stale expectedTurnId" },
+              }),
+            );
+            return;
+          }
           if (request.method === "thread/loaded/list") {
             sawLoadedList = true;
             response = {
@@ -390,7 +428,13 @@ async function run(
             if (activeTurnMissing)
               turns = [{ id: "turn-fixture", status: "inProgress" }];
             if (shouldLoadReadTurns && options.oversizedTurns === true)
-              turns = [{ id: "turn-active", status: "inProgress", padding: "x".repeat(4 * 1024 * 1024) }];
+              turns = [
+                {
+                  id: "turn-active",
+                  status: "inProgress",
+                  padding: "x".repeat(4 * 1024 * 1024),
+                },
+              ];
             let thread: unknown;
             if (selectedThread !== undefined) {
               thread = {
@@ -442,7 +486,9 @@ process.exit(0);
   const argsFile = join(root, "argv.json");
   const preload = join(root, "clock.ts");
   if (options.controlledDeadline !== undefined) {
-    await Bun.write(preload, `
+    await Bun.write(
+      preload,
+      `
 import { existsSync, watch } from "node:fs";
 const root = process.env.HOME;
 const shared = process.env.XMSG_TEST_DEADLINE === "shared";
@@ -458,7 +504,8 @@ AbortSignal.timeout = (ms) => {
   }
   return controller.signal;
 };
-`);
+`,
+    );
   }
   if (options.missing !== true) {
     const fake = join(root, kind);
@@ -502,7 +549,9 @@ process.exit(Number(process.env.XMSG_FAKE_EXIT ?? 0));
   const proc = Bun.spawn(
     [
       process.execPath,
-      ...(options.controlledDeadline === undefined ? [] : ["--preload", preload]),
+      ...(options.controlledDeadline === undefined
+        ? []
+        : ["--preload", preload]),
       cli,
       ...(options.args ?? [
         "send",
@@ -1047,22 +1096,25 @@ test("list covers both native inventories, deduplicates exact IDs and preserves 
   ]);
   expect(inventory.recipients[1]?.name).toBeNull();
   expect(inventory.recipients[2]?.state).toBe("active");
-  await Promise.all(inventory.recipients.map(async (recipient) => {
-    expect(recipient.source).not.toBe("");
-    expect(recipient.observedAt).toMatch(/^\d{4}-/u);
-    const kind = recipient.address.startsWith("claude:") ? "claude" : "codex";
-    const sent = await run({
-      kind,
-      output: kind === "claude" ? stream(use, accepted) : "",
-      args: ["send", "--to", recipient.address, "--message", message],
-    });
-    expect(sent.exit).toBe(0);
-    if (kind === "codex") expect(sent.argv[2]).toBe(recipient.address.slice(6));
-    else
-      expect(sent.argv.at(-1)).toContain(
-        JSON.stringify(recipient.address.slice(7)),
-      );
-  }));
+  await Promise.all(
+    inventory.recipients.map(async (recipient) => {
+      expect(recipient.source).not.toBe("");
+      expect(recipient.observedAt).toMatch(/^\d{4}-/u);
+      const kind = recipient.address.startsWith("claude:") ? "claude" : "codex";
+      const sent = await run({
+        kind,
+        output: kind === "claude" ? stream(use, accepted) : "",
+        args: ["send", "--to", recipient.address, "--message", message],
+      });
+      expect(sent.exit).toBe(0);
+      if (kind === "codex")
+        expect(sent.argv[2]).toBe(recipient.address.slice(6));
+      else
+        expect(sent.argv.at(-1)).toContain(
+          JSON.stringify(recipient.address.slice(7)),
+        );
+    }),
+  );
 });
 
 test("empty native inventories are complete, not unavailable", async () => {
@@ -1192,6 +1244,7 @@ test("Codex active turn is delivered with turn/steer", async () => {
   const r = await run({
     kind: "codex",
     codexDelivery: "active",
+    oversizedTurns: true,
     threads: [{ id: uuidA, status: { type: "active" } }],
     args: codexDeliveryArgs(uuidA),
   });
@@ -1200,9 +1253,21 @@ test("Codex active turn is delivered with turn/steer", async () => {
   expect(r.rpcCalls.map((call) => call.method)).toEqual([
     "initialize",
     "thread/read",
-    "thread/read",
+    "thread/turns/list",
     "turn/steer",
   ]);
+  expect(r.rpcCalls[2]?.params).toEqual({
+    threadId: uuidA,
+    limit: 1,
+    sortDirection: "desc",
+    itemsView: "notLoaded",
+  });
+  expect(
+    r.rpcCalls.some(
+      (call) =>
+        call.method === "thread/read" && call.params.includeTurns === true,
+    ),
+  ).toBe(false);
   expect(r.rpcCalls.at(-1)?.params).toEqual({
     threadId: uuidA,
     expectedTurnId: "turn-active",
@@ -1264,25 +1329,92 @@ test("Codex active thread without turn listing stops before sending", async () =
   expect(r.rpcCalls.map((call) => call.method)).toEqual([
     "initialize",
     "thread/read",
+    "thread/turns/list",
     "thread/read",
   ]);
 });
 
 test("Codex idle thread skips oversized turn history", async () => {
-  const r = await run({ kind: "codex", codexDelivery: "idle", oversizedTurns: true,
-    threads: [{ id: uuidA, status: { type: "idle" } }], args: codexDeliveryArgs(uuidA) });
+  const r = await run({
+    kind: "codex",
+    codexDelivery: "idle",
+    oversizedTurns: true,
+    threads: [{ id: uuidA, status: { type: "idle" } }],
+    args: codexDeliveryArgs(uuidA),
+  });
   expect(r.exit).toBe(0);
-  expect(r.rpcCalls.filter((call) => call.method === "thread/read").map((call) => call.params.includeTurns)).toEqual([false]);
+  expect(
+    r.rpcCalls
+      .filter((call) => call.method === "thread/read")
+      .map((call) => call.params.includeTurns),
+  ).toEqual([false]);
   expect(r.rpcCalls.at(-1)?.method).toBe("turn/start");
 });
 
-test("Codex active thread reports oversized turn listing", async () => {
-  const r = await run({ kind: "codex", codexDelivery: "active", oversizedTurns: true,
-    threads: [{ id: uuidA, status: { type: "active" } }], args: codexDeliveryArgs(uuidA) });
+test("Codex active thread reports oversized fallback turn listing", async () => {
+  const r = await run({
+    kind: "codex",
+    codexDelivery: "active",
+    oversizedTurns: true,
+    noPagedListing: true,
+    threads: [{ id: uuidA, status: { type: "active" } }],
+    args: codexDeliveryArgs(uuidA),
+  });
   expect(r.exit).toBe(1);
   expect(r.stderr).toMatch(/frame size \d+ bytes exceeds 4194304 bytes/u);
   expect(r.stderr).toContain("thread/read includeTurns: active turn listing");
   expect(r.rpcCalls.at(-1)?.params.includeTurns).toBe(true);
+});
+
+test("Codex falls back to full turn listing when pagination is unsupported", async () => {
+  const r = await run({
+    kind: "codex",
+    codexDelivery: "active",
+    noPagedListing: true,
+    threads: [{ id: uuidA, status: { type: "active" } }],
+    args: codexDeliveryArgs(uuidA),
+  });
+  expect(r.exit).toBe(0);
+  expect(r.stdout).toContain("path=steered");
+  expect(r.rpcCalls.map((call) => call.method)).toEqual([
+    "initialize",
+    "thread/read",
+    "thread/turns/list",
+    "thread/read",
+    "turn/steer",
+  ]);
+  expect(r.rpcCalls[3]?.params.includeTurns).toBe(true);
+});
+
+for (const newestTurn of ["completed", "empty"] as const) {
+  test(`Codex starts once when newest turn is ${newestTurn}`, async () => {
+    const r = await run({
+      kind: "codex",
+      codexDelivery: "active",
+      newestTurn,
+      threads: [{ id: uuidA, status: { type: "active" } }],
+      args: codexDeliveryArgs(uuidA),
+    });
+    expect(r.exit).toBe(0);
+    expect(r.stdout).toContain("path=started");
+    expect(
+      r.rpcCalls.filter((call) => call.method === "turn/start"),
+    ).toHaveLength(1);
+    expect(r.rpcCalls.some((call) => call.method === "turn/steer")).toBe(false);
+  });
+}
+
+test("Codex reports stale steer without starting a turn", async () => {
+  const r = await run({
+    kind: "codex",
+    codexDelivery: "active",
+    staleSteer: true,
+    threads: [{ id: uuidA, status: { type: "active" } }],
+    args: codexDeliveryArgs(uuidA),
+  });
+  expect(r.exit).toBe(1);
+  expect(r.stderr).toContain("stale expectedTurnId");
+  expect(r.rpcCalls.some((call) => call.method === "turn/start")).toBe(false);
 });
 
 test("Codex resolves an opaque thread ID before immediate turn start", async () => {
@@ -1691,23 +1823,35 @@ test("deferred UUID relay reports a SendMessage refusal", async () => {
   const r = await run({
     inventory: "[]",
     args: sendArgs(`claude:${uuidB}`),
-    output: completeStream(uuidUse(uuidB), result("recipient not found", "send-1", true)),
+    output: completeStream(
+      uuidUse(uuidB),
+      result("recipient not found", "send-1", true),
+    ),
   });
   expect(r.exit).toBe(3);
   expect(r.stderr).toContain("recipient not found");
 });
 
 test("msg contract: an unknown uuid with a visible inventory is refused with its reason", async () => {
-  const r = await run({ inventory: globalAgents(uuidA), args: sendArgs(`claude:${uuidB}`) });
+  const r = await run({
+    inventory: globalAgents(uuidA),
+    args: sendArgs(`claude:${uuidB}`),
+  });
   expect(r.exit).toBe(3);
   expect(r.calls).toEqual([["agents", "--json"]]);
   expect(r.stderr).toContain("found 0 live registrations");
 });
 
 test("msg contract: claude uuid target resolves against the current inventory shape", async () => {
-  const fixture = await Bun.file(resolve(import.meta.dir, "./host-inventory.sanitized.json")).text();
+  const fixture = await Bun.file(
+    resolve(import.meta.dir, "./host-inventory.sanitized.json"),
+  ).text();
   const inventory = fixture.replace('"uuid-5"', JSON.stringify(uuidB));
-  const r = await run({ inventory, args: sendArgs(`claude:${uuidB}`), output: completeStream(uuidUse(uuidB), accepted) });
+  const r = await run({
+    inventory,
+    args: sendArgs(`claude:${uuidB}`),
+    output: completeStream(uuidUse(uuidB), accepted),
+  });
   expect(r.exit).toBe(0);
   expect(r.argv.at(-1)).toContain('Target: "agx-agt_df65"');
   expect(r.stderr).not.toContain("inventory schema");
