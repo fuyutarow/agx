@@ -1,6 +1,6 @@
 {
   "name": "@agx/xmsg",
-  "version": "1.22.56",
+  "version": "1.22.57",
   "private": true,
   "type": "module",
   "bin": {
