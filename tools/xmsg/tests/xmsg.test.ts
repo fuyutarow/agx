@@ -234,6 +234,7 @@ async function run(
       status: string;
     }>;
     relayPeer?: string;
+    controlledDeadline?: "shared" | "frozen";
   } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), "xmsg-test-"));
@@ -439,6 +440,26 @@ process.exit(0);
     await chmod(codex, 0o755);
   }
   const argsFile = join(root, "argv.json");
+  const preload = join(root, "clock.ts");
+  if (options.controlledDeadline !== undefined) {
+    await Bun.write(preload, `
+import { existsSync, watch } from "node:fs";
+const root = process.env.HOME;
+const shared = process.env.XMSG_TEST_DEADLINE === "shared";
+performance.now = () => shared && existsSync(root + "/argv.json") ? 550 : 0;
+AbortSignal.timeout = (ms) => {
+  const controller = new AbortController();
+  if (shared && ms <= 350) {
+    const signal = root + "/send-reached";
+    const watcher = watch(root, () => {
+      if (existsSync(signal)) { watcher.close(); controller.abort(); }
+    });
+    if (existsSync(signal)) { watcher.close(); controller.abort(); }
+  }
+  return controller.signal;
+};
+`);
+  }
   if (options.missing !== true) {
     const fake = join(root, kind);
     await Bun.write(
@@ -448,6 +469,11 @@ const args = Bun.argv.slice(2);
 const previous = await Bun.file(process.env.XMSG_FAKE_ARGS).exists() ? await Bun.file(process.env.XMSG_FAKE_ARGS).text() : "";
 await Bun.write(process.env.XMSG_FAKE_ARGS, previous + JSON.stringify(args) + "\\n");
 const inventory = args[0] === "agents";
+if (!inventory && process.env.XMSG_TEST_DEADLINE === "shared") {
+  await Bun.write(process.env.HOME + "/send-reached", "reached");
+  setInterval(() => {}, 1000);
+  await new Promise(() => {});
+}
 let output = process.env.XMSG_FAKE_INVENTORY ?? process.env.XMSG_FAKE_OUTPUT ?? "";
 if (inventory && process.env.XMSG_FAKE_INVENTORY_SEQUENCE !== undefined) {
   const sequence = JSON.parse(process.env.XMSG_FAKE_INVENTORY_SEQUENCE);
@@ -476,6 +502,7 @@ process.exit(Number(process.env.XMSG_FAKE_EXIT ?? 0));
   const proc = Bun.spawn(
     [
       process.execPath,
+      ...(options.controlledDeadline === undefined ? [] : ["--preload", preload]),
       cli,
       ...(options.args ?? [
         "send",
@@ -503,6 +530,7 @@ process.exit(Number(process.env.XMSG_FAKE_EXIT ?? 0));
         AGX_RUN_ID: undefined,
         XMSG_RELAY_CAPTURE: undefined,
         ...options.env,
+        XMSG_TEST_DEADLINE: options.controlledDeadline,
         XMSG_FAKE_INVENTORY: options.inventory,
         XMSG_FAKE_INVENTORY_SEQUENCE:
           options.inventorySequence === undefined
@@ -1496,8 +1524,7 @@ test("prefix discovery and send share one timeout budget with no retry", async (
     inventory: JSON.stringify([
       { sessionId: uuidA, name: "peer", status: "idle" },
     ]),
-    inventoryDelay: 550,
-    delay: 550,
+    controlledDeadline: "shared",
     output: stream(use, accepted),
     args: sendArgs("claude:dead", "900"),
   });
@@ -1742,6 +1769,7 @@ test.each([
       threads: [firstUuidThread],
       inventory: globalAgents(uuidB, name),
       output: stream(uuidUse(uuidB), accepted),
+      controlledDeadline: "frozen",
       args: sendArgs(selector),
     });
     expect(r.exit).toBe(0);
