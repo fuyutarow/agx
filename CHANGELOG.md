@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.22.53 — 2026-10-31
+
+- Avoid loading full Codex thread history when steering an active turn.
+- Report timed-out workspace inventories as unknown instead of broken.
+
 ## 1.22.52 — 2026-10-31
 
 - Avoid assembling the mise environment twice per dispatch.
