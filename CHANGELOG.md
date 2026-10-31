@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.52 — 2026-10-31
+
+- Avoid assembling the mise environment twice per dispatch.
+
 ## 1.22.51 — 2026-10-31
 
 - Add atomic validation and batched judgment recording with judge --from.
