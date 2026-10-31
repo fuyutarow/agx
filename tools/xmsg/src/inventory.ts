@@ -580,7 +580,7 @@ export async function codexDeliver(
     let nextId = 1;
     let stage: "initialize" | "read" | "deliver" = "initialize";
     let activeTurnId: string | undefined;
-    let turnsUnavailable = false;
+    let readingTurns = false;
     const requestIds = new Map<number, string>();
     const req = request({
       socketPath,
@@ -671,12 +671,11 @@ export async function codexDeliver(
           const error = z.object({ code: z.number() }).safeParse(rpc.error);
           if (
             method === "thread/read" &&
-            !turnsUnavailable &&
+            readingTurns &&
             error.success &&
             error.data.code === -32601
           ) {
-            turnsUnavailable = true;
-            send("thread/read", { threadId, includeTurns: false });
+            finish({ kind: "unsupported", error: new Error("thread/read includeTurns is unsupported; use a server that supports turn listing to steer the active thread") });
             return;
           }
           fail(
@@ -688,7 +687,7 @@ export async function codexDeliver(
         }
         if (method === "initialize") {
           stage = "read";
-          send("thread/read", { threadId, includeTurns: true });
+          send("thread/read", { threadId, includeTurns: false });
           return;
         }
         if (method === "thread/read") {
@@ -711,20 +710,16 @@ export async function codexDeliver(
             return;
           }
           const thread = parsedThread.data.thread;
-          if (!turnsUnavailable && thread.turns === undefined) {
+          if (readingTurns && thread.turns === undefined) {
             fail(new Error("Invalid Codex delivery thread response"));
             return;
           }
           const active = thread.turns?.findLast(
             (turn) => turn.status === "inProgress",
           );
-          if (turnsUnavailable && thread.status.type === "active") {
-            finish({
-              kind: "unsupported",
-              error: new Error(
-                "thread/read includeTurns is unsupported; use a server that supports turn listing to steer the active thread",
-              ),
-            });
+          if (!readingTurns && thread.status.type === "active") {
+            readingTurns = true;
+            send("thread/read", { threadId, includeTurns: true });
             return;
           }
           if (thread.status.type === "active" && active === undefined) {
@@ -735,7 +730,7 @@ export async function codexDeliver(
             );
             return;
           }
-          activeTurnId = active?.id;
+          activeTurnId = thread.status.type === "active" ? active?.id : undefined;
           stage = "deliver";
           send(
             activeTurnId === undefined ? "turn/start" : "turn/steer",
@@ -771,7 +766,7 @@ export async function codexDeliver(
           const oversized =
             length === 127 && pending.readBigUInt64BE(2) > BigInt(MAX_BYTES);
           if (oversized) {
-            fail(new Error("Codex delivery frame exceeds 4 MiB limit"));
+            fail(new Error(`Codex delivery frame size ${pending.readBigUInt64BE(2)} bytes exceeds ${MAX_BYTES} bytes (4 MiB) limit for ${readingTurns && stage === "read" ? "thread/read includeTurns: active turn listing" : (Array.from(requestIds.values())[0] ?? "unknown request")}`));
             return;
           }
           if (length === 127) {

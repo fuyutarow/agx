@@ -214,6 +214,7 @@ async function run(
     codexError?: boolean;
     codexDelivery?: "active" | "idle";
     noTurnListing?: boolean;
+    oversizedTurns?: boolean;
     replyAfterReads?: number;
     inventory?: string;
     inventorySequence?: string[];
@@ -387,6 +388,8 @@ async function run(
               selectedThread?.status.type === "active";
             if (activeTurnMissing)
               turns = [{ id: "turn-fixture", status: "inProgress" }];
+            if (shouldLoadReadTurns && options.oversizedTurns === true)
+              turns = [{ id: "turn-active", status: "inProgress", padding: "x".repeat(4 * 1024 * 1024) }];
             let thread: unknown;
             if (selectedThread !== undefined) {
               thread = {
@@ -1169,6 +1172,7 @@ test("Codex active turn is delivered with turn/steer", async () => {
   expect(r.rpcCalls.map((call) => call.method)).toEqual([
     "initialize",
     "thread/read",
+    "thread/read",
     "turn/steer",
   ]);
   expect(r.rpcCalls.at(-1)?.params).toEqual({
@@ -1211,7 +1215,6 @@ test("msg contract: a Codex app-server without turn listing still receives the m
   expect(r.rpcCalls.map((call) => call.method)).toEqual([
     "initialize",
     "thread/read",
-    "thread/read",
     "turn/start",
   ]);
   expect(r.rpcCalls.at(-1)?.params).toEqual({
@@ -1235,6 +1238,23 @@ test("Codex active thread without turn listing stops before sending", async () =
     "thread/read",
     "thread/read",
   ]);
+});
+
+test("Codex idle thread skips oversized turn history", async () => {
+  const r = await run({ kind: "codex", codexDelivery: "idle", oversizedTurns: true,
+    threads: [{ id: uuidA, status: { type: "idle" } }], args: codexDeliveryArgs(uuidA) });
+  expect(r.exit).toBe(0);
+  expect(r.rpcCalls.filter((call) => call.method === "thread/read").map((call) => call.params.includeTurns)).toEqual([false]);
+  expect(r.rpcCalls.at(-1)?.method).toBe("turn/start");
+});
+
+test("Codex active thread reports oversized turn listing", async () => {
+  const r = await run({ kind: "codex", codexDelivery: "active", oversizedTurns: true,
+    threads: [{ id: uuidA, status: { type: "active" } }], args: codexDeliveryArgs(uuidA) });
+  expect(r.exit).toBe(1);
+  expect(r.stderr).toMatch(/frame size \d+ bytes exceeds 4194304 bytes/u);
+  expect(r.stderr).toContain("thread/read includeTurns: active turn listing");
+  expect(r.rpcCalls.at(-1)?.params.includeTurns).toBe(true);
 });
 
 test("Codex resolves an opaque thread ID before immediate turn start", async () => {
