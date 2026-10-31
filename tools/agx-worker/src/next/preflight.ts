@@ -516,6 +516,7 @@ export async function preflight(
   }
   return {
     temporary: undefined,
+    environment,
     failures,
     ticket,
     prose: parsed?.success === true ? parsed.prose : "",

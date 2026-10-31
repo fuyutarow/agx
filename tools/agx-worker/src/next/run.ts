@@ -6,7 +6,6 @@ import { hostname } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
-import { InspectionUnavailable } from "../../../shared/src/agx-config.ts";
 import { selfCommand } from "../self-command.ts";
 import { legacyLandStatus } from "../state.ts";
 import { verifyLine } from "../ticket.ts";
@@ -58,11 +57,7 @@ import {
   deriveOutcome,
   workspaceSnapshot,
 } from "./outcome.ts";
-import {
-  verificationEnvironment,
-  verifyKind,
-  type VerifyKind,
-} from "./verify.ts";
+import { verifyKind, type VerifyKind } from "./verify.ts";
 import { scheduleEndNotice } from "./end-notice.ts";
 import { completionFor } from "./completion.ts";
 import {
@@ -407,8 +402,14 @@ export async function run(flags: Flags): Promise<number> {
     binding,
     pinned: inspectedContinuation,
     premise_commits,
+    environment,
   } = inspected;
-  if (ticket === undefined || bytes === null || ctx === undefined)
+  if (
+    ticket === undefined ||
+    bytes === null ||
+    ctx === undefined ||
+    environment === undefined
+  )
     return fatal("preflight did not resolve ticket and context");
   const boundAckTarget = readBoundClaudeTarget();
   if (boundAckTarget.kind === "invalid")
@@ -845,9 +846,7 @@ export async function run(flags: Flags): Promise<number> {
     ];
   };
   const before = workspaceSnapshot(cwd);
-  const baseEnv = verificationEnvironment(cwd, process.env, temp.env);
-  if (baseEnv instanceof InspectionUnavailable)
-    return fatal(baseEnv.message, 75);
+  const baseEnv: NodeJS.ProcessEnv = { ...environment, ...temp.env };
   const workerCommand = Bun.which(workerPath, {
     PATH: baseEnv.PATH ?? "/usr/bin:/bin",
     cwd,
@@ -1039,7 +1038,12 @@ export async function run(flags: Flags): Promise<number> {
       routing.timeoutS,
       [...routing.maskedRows, ...attemptedRows],
       {},
-      { path: resolve(path), launch: true, sha256: ticket_sha256, min_effort: routing.min_effort },
+      {
+        path: resolve(path),
+        launch: true,
+        sha256: ticket_sha256,
+        min_effort: routing.min_effort,
+      },
       { capacityRetry: true, timeoutMs: remainingMs },
     );
     if (deadline.aborted) {
@@ -1233,20 +1237,27 @@ type JudgeRunRuntime = {
   onLockFailure?: (message: string, exitCode: number) => number;
 };
 
-const JudgeBatchLine = jsonOf(z.object({
-  run: z.string().min(1),
-  decision: z.enum(["accept", "reject"]),
-  note: z.string().optional(),
-  override: z.string().optional(),
-}).strict());
+const JudgeBatchLine = jsonOf(
+  z
+    .object({
+      run: z.string().min(1),
+      decision: z.enum(["accept", "reject"]),
+      note: z.string().optional(),
+      override: z.string().optional(),
+    })
+    .strict(),
+);
 
-export async function judgeBatch(path: string, runtime: {
-  root?: string;
-  load?: typeof recordedRuns;
-  lock?: typeof acquireWorkspaceLockUntilAvailable;
-  publish?: typeof publishCurrentRuns;
-  writeStdout?: (line: string) => void;
-} = {}): Promise<number> {
+export async function judgeBatch(
+  path: string,
+  runtime: {
+    root?: string;
+    load?: typeof recordedRuns;
+    lock?: typeof acquireWorkspaceLockUntilAvailable;
+    publish?: typeof publishCurrentRuns;
+    writeStdout?: (line: string) => void;
+  } = {},
+): Promise<number> {
   const content = await readFile(path, "utf8").catch(() =>
     fatal(`cannot read judgment batch: ${path}`, 2),
   );
@@ -1263,7 +1274,13 @@ export async function judgeBatch(path: string, runtime: {
   });
   const root = runtime.root ?? stateDir();
   const runs = await (runtime.load ?? recordedRuns)(root);
-  const pending: { id: string; decision: "accept" | "reject"; note: string; overrideReason?: string; status: "applied" | "unchanged" }[] = [];
+  const pending: {
+    id: string;
+    decision: "accept" | "reject";
+    note: string;
+    overrideReason?: string;
+    status: "applied" | "unchanged";
+  }[] = [];
   const latest = new Map(runs.map((row) => [row.id, row.judgment]));
   for (const entry of parsed) {
     const resolution = resolveRunId(runs, entry.run);
@@ -1274,36 +1291,79 @@ export async function judgeBatch(path: string, runtime: {
     const overrideReason = entry.override?.trim();
     const completion = completionFor(resolution.row);
     let error: string | undefined;
-    if (entry.override !== undefined && overrideReason === "") error = "judge override reason must not be empty";
-    else if (entry.decision === "accept" && completion.completion === null) error = `cannot accept run '${resolution.row.id}' before it ends`;
-    else if (entry.decision === "accept" && completion.completion === "incomplete" && overrideReason === undefined) error = `cannot accept incomplete run '${resolution.row.id}'; pass override to record an explicit override`;
+    if (entry.override !== undefined && overrideReason === "")
+      error = "judge override reason must not be empty";
+    else if (entry.decision === "accept" && completion.completion === null)
+      error = `cannot accept run '${resolution.row.id}' before it ends`;
+    else if (
+      entry.decision === "accept" &&
+      completion.completion === "incomplete" &&
+      overrideReason === undefined
+    )
+      error = `cannot accept incomplete run '${resolution.row.id}'; pass override to record an explicit override`;
     if (error !== undefined) {
       errors.push(`line ${entry.line}: ${error}`);
       continue;
     }
     const note = entry.note ?? "";
     const previous = latest.get(resolution.row.id);
-    const status = previous?.decision === entry.decision && previous.note === note ? "unchanged" : "applied";
-    if (pending.some((item) => item.id === resolution.row.id && (item.decision !== entry.decision || item.note !== note))) {
-      errors.push(`line ${entry.line}: conflicting judgments for run '${resolution.row.id}'`);
+    const status =
+      previous?.decision === entry.decision && previous.note === note
+        ? "unchanged"
+        : "applied";
+    if (
+      pending.some(
+        (item) =>
+          item.id === resolution.row.id &&
+          (item.decision !== entry.decision || item.note !== note),
+      )
+    ) {
+      errors.push(
+        `line ${entry.line}: conflicting judgments for run '${resolution.row.id}'`,
+      );
       continue;
     }
-    pending.push({ id: resolution.row.id, decision: entry.decision, note, ...(overrideReason === undefined ? {} : { overrideReason }), status });
+    pending.push({
+      id: resolution.row.id,
+      decision: entry.decision,
+      note,
+      ...(overrideReason === undefined ? {} : { overrideReason }),
+      status,
+    });
     latest.set(resolution.row.id, { decision: entry.decision, note, at: "" });
   }
   if (errors.length > 0) return fatal(errors.join("\n"), 2);
-  const lock = await (runtime.lock ?? acquireWorkspaceLockUntilAvailable)(join(root, "current-runs.json"), root, 30_000);
+  const lock = await (runtime.lock ?? acquireWorkspaceLockUntilAvailable)(
+    join(root, "current-runs.json"),
+    root,
+    30_000,
+  );
   if (!lock.ok) return fatal(`cannot publish current runs: ${lock.error}`, 2);
   await (async () => {
     await using resource = { [Symbol.asyncDispose]: () => lock.release() };
     void resource;
-    for (const entry of pending) if (entry.status === "applied") append({
-      kind: "judged", id: entry.id, at: now(), decision: entry.decision, note: entry.note,
-      ...(entry.overrideReason === undefined ? {} : { override_reason: entry.overrideReason }),
-    }, root, false);
+    for (const entry of pending)
+      if (entry.status === "applied")
+        append(
+          {
+            kind: "judged",
+            id: entry.id,
+            at: now(),
+            decision: entry.decision,
+            note: entry.note,
+            ...(entry.overrideReason === undefined
+              ? {}
+              : { override_reason: entry.overrideReason }),
+          },
+          root,
+          false,
+        );
     await (runtime.publish ?? publishCurrentRuns)(root, lock);
   })();
-  for (const [index, entry] of pending.entries()) (runtime.writeStdout ?? ((line) => process.stdout.write(line)))(`${JSON.stringify({ line: index + 1, id: entry.id, status: entry.status })}\n`);
+  for (const [index, entry] of pending.entries())
+    (runtime.writeStdout ?? ((line) => process.stdout.write(line)))(
+      `${JSON.stringify({ line: index + 1, id: entry.id, status: entry.status })}\n`,
+    );
   return 0;
 }
 
