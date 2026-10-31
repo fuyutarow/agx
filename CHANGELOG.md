@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.58 — 2026-10-31
+
+- Allow workspace-write workers to use Julia depot caches.
+
 ## 1.22.57 — 2026-10-31
 
 - Keep readonly configuration reads working after the running executable is removed.
