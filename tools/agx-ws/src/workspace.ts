@@ -3406,6 +3406,22 @@ async function classifyGc(
   };
 }
 
+
+async function classifyGcSafely(
+  ...args: Parameters<typeof classifyGc>
+): Promise<Classification> {
+  const result = await attempt(() => classifyGc(...args));
+  if (result.ok) return result.value;
+  const ws = args[2];
+  return {
+    verdict: "unknown",
+    change: ws.change.length > 0 ? ws.change : "?",
+    age: ws.age.length > 0 ? ws.age : "?",
+    reason: msg(result),
+    collect: false,
+  };
+}
+
 async function classify(
   repo: Repo,
   cfg: Config,
@@ -3875,19 +3891,22 @@ export async function untrackedContent(
     if (expected.object === "") return `cannot compare tracked file: ${path}`;
     const target = join(dir, path);
     const actual = await attempt(() => lstat(target));
-    if (!actual.ok) {
-      const missing = z
-        .object({ code: z.literal("ENOENT") })
-        .safeParse(actual.error);
+    const inspectionError = (failed: { error: unknown }): string => {
+      const missing = z.object({ code: z.literal("ENOENT") }).safeParse(failed.error);
       return missing.success
         ? `sparse or missing tracked file: ${path}`
-        : `cannot inspect tracked file ${path}: ${msg(actual)}`;
-    }
+        : `cannot inspect tracked file ${path}: ${msg(failed)}`;
+    };
+    if (!actual.ok) return inspectionError(actual);
     let content: Uint8Array;
     if (expected.type === "file" && actual.value.isFile()) {
-      content = await readFile(target);
+      const read = await attempt(() => readFile(target));
+      if (!read.ok) return inspectionError(read);
+      content = read.value;
     } else if (expected.type === "symlink" && actual.value.isSymbolicLink()) {
-      content = Buffer.from(await readlink(target));
+      const read = await attempt(() => readlink(target));
+      if (!read.ok) return inspectionError(read);
+      content = Buffer.from(read.value);
     } else if (
       expected.type === "git-submodule" &&
       actual.value.isDirectory()
@@ -4223,7 +4242,7 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
           collect: false,
         };
       } else {
-        c = await classifyGc(
+        c = await classifyGcSafely(
           repo,
           cfg.value,
           ws,
@@ -4400,7 +4419,7 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
                   reason: msg(currentGraph),
                 },
               });
-            const checked = await classifyGc(
+            const checked = await classifyGcSafely(
               repo,
               currentConfig.value,
               currentWs,
