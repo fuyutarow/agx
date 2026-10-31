@@ -11,6 +11,7 @@ import { jsonOf } from "../../../shared/src/zod.ts";
 import { completeEndNotice, EndNoticeRequest } from "./end-notice.ts";
 import packageJson from "../../package.json" with { type: "json" };
 import { premiseHelp } from "../premises.ts";
+import { CAPABILITIES_FORM } from "./ticket.ts";
 
 const cliArgv = () => process.argv.slice(2);
 const cli = standardCli(cleyeCli, packageJson, cliArgv);
@@ -198,7 +199,7 @@ async function main(): Promise<void> {
       {
         name: "agx-worker check",
         help: { description: `${premiseHelp()}
-Ticket min_effort = "low" | "medium" | "high" | "xhigh" | "max" sets a routing floor; xhigh/max requires a structured capability justification.` },
+Ticket min_effort = "low" | "medium" | "high" | "xhigh" | "max" sets a routing floor; xhigh/max requires a structured capability justification: ${CAPABILITIES_FORM}.` },
         parameters: ["<ticket>"],
         flags: {
           json: {

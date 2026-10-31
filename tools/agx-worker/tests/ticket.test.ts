@@ -87,3 +87,17 @@ test("ticket min_effort validates the floor and justification", () => {
   expect(parseNextTicket(floorTicket('min_effort = "xhigh"')).success).toBe(false);
   expect(parseNextTicket(floorTicket('min_effort = "max"\ncapabilities = [{ need = "reasoning", lower_effort_lacks = "depth" }]')).success).toBe(true);
 });
+
+test("refused effort floors explain the capabilities form and unsupported keys", () => {
+  const form = 'capabilities = [{ need = "...", lower_effort_lacks = "..." }]';
+  const missing = parseNextTicket(floorTicket('min_effort = "xhigh"'));
+  expect(missing.success).toBe(false);
+  if (!missing.success) expect(missing.reasons?.join(" ")).toContain(form);
+
+  const misspelled = parseNextTicket(floorTicket('min_effort = "xhigh"\n[capability]\nneed = "reasoning"\nlower_effort_lacks = "depth"'));
+  expect(misspelled.success).toBe(false);
+  if (!misspelled.success) {
+    expect(misspelled.reasons?.join(" ")).toContain(form);
+    expect(misspelled.reasons?.join(" ")).toContain("capability: unsupported key");
+  }
+});

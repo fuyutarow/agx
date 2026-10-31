@@ -3,6 +3,8 @@ import { z } from "../../../shared/src/zod.ts";
 import { CapabilitySchema, EffortSchema, capabilityTags } from "../ticket.ts";
 import { PREMISE_KINDS } from "../premises.ts";
 
+export const CAPABILITIES_FORM = `capabilities = [{ need = "...", lower_effort_lacks = "..." }]`;
+
 const premisePrefix = new RegExp(`^(?:${PREMISE_KINDS.join("|")}):.+$`, "u");
 const ancestorPremise = /^ancestor:[a-fA-F0-9]{8,64}@.+$/u;
 
@@ -70,7 +72,7 @@ const Ticket = z
   .refine(
     (ticket) => !["xhigh", "max"].includes(ticket.min_effort ?? "") ||
       ticket.capabilities.some((capability) => typeof capability !== "string"),
-    { path: ["min_effort"], message: "xhigh/max requires a structured capability with need and lower_effort_lacks justification" },
+    { path: ["min_effort"], message: `xhigh/max requires a structured capability: ${CAPABILITIES_FORM}` },
   )
   .refine(
     (ticket) =>
@@ -135,6 +137,27 @@ export function parseNextTicket(
     intake.push(
       'remand acceptance: "verify" and "proposition.refuted_by" declare no acceptance basis. Fix: add a verify command or declare a human review criterion, evidence or diff oracle in proposition.refuted_by, tied to outcome',
     );
+  const supported = new Set([
+    "schema",
+    "name",
+    "writes",
+    "outcome",
+    "verify",
+    "timeout_s",
+    "premises",
+    "capabilities",
+    "min_effort",
+    "proposition",
+    "base_rev",
+    "supersedes",
+    "first_return_s",
+    "external_reads",
+    "network",
+    "sandbox",
+    "ack_target",
+    "resources",
+  ]);
+  const unsupported = Object.keys(fields.data).filter((key) => !supported.has(key));
   const checked = Ticket.safeParse(fields.data);
   if (!checked.success) {
     const examples: Record<string, string> = {
@@ -159,6 +182,7 @@ export function parseNextTicket(
         ? issue.message
         : `${table} ${path}: ${issue.message}${suffix}`;
     });
+    reasons.push(...unsupported.map((key) => `ticket front matter ${key}: unsupported key`));
     const writes = z.array(z.string()).safeParse(fields.data.writes);
     reasons.push(
       ...(writes.success ? writes.data : []).flatMap((glob, index) =>
@@ -183,28 +207,7 @@ export function parseNextTicket(
       };
   }
   const warnings = new Set<string>();
-  const supported = new Set([
-    "schema",
-    "name",
-    "writes",
-    "outcome",
-    "verify",
-    "timeout_s",
-    "premises",
-    "capabilities",
-    "min_effort",
-    "proposition",
-    "base_rev",
-    "supersedes",
-    "first_return_s",
-    "external_reads",
-    "network",
-    "sandbox",
-    "ack_target",
-    "resources",
-  ]);
-  for (const key of Object.keys(fields.data))
-    if (!supported.has(key)) warnings.add(key);
+  for (const key of unsupported) warnings.add(key);
   const propositionFields = rowOf(fields.data.proposition);
   for (const key of Object.keys(propositionFields ?? {}))
     if (!["id", "claim", "refuted_by"].includes(key))
