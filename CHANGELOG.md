@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.49 — 2026-10-31
+
+- Deliver to idle Codex threads without loading their full turn history and diagnose oversized active turn listings.
+
 ## 1.22.48 — 2026-10-31
 
 - Explain the capabilities form and unsupported keys when ticket validation fails.
