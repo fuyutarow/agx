@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.48 — 2026-10-31
+
+- Explain the capabilities form and unsupported keys when ticket validation fails.
+
 ## 1.22.47 — 2026-10-30
 
 - Bound Claude relay waits and report progress while waiting.
