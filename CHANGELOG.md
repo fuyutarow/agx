@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.50 — 2026-10-31
+
+- Bound run ID diagnostics for unknown and ambiguous selectors.
+
 ## 1.22.49 — 2026-10-31
 
 - Deliver to idle Codex threads without loading their full turn history and diagnose oversized active turn listings.
