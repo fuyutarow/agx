@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.55 — 2026-10-31
+
+- Keep self-spawned commands running across Linux executable upgrades.
+
 ## 1.22.54 — 2026-10-31
 
 - Keep GC running when workspace inventory reads fail or classification throws.
