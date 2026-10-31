@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.54 — 2026-10-31
+
+- Keep GC running when workspace inventory reads fail or classification throws.
+
 ## 1.22.53 — 2026-10-31
 
 - Avoid loading full Codex thread history when steering an active turn.
