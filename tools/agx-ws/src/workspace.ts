@@ -3175,7 +3175,7 @@ async function classifyGc(
   const change = ws.change.length > 0 ? ws.change : "?";
   const age = ws.age.length > 0 ? ws.age : "?";
   const verdict = (
-    label: "removable" | "keep" | "broken",
+    label: "removable" | "keep" | "broken" | "unknown",
     reason: string,
     collect = false,
   ): Classification => ({ verdict: label, change, age, reason, collect });
@@ -3370,8 +3370,12 @@ async function classifyGc(
     trace.inventoryMs += inventoryElapsed;
     trace.inventoryCount++;
   }
-  if (!inventory.ok)
-    return verdict("broken", `untracked inventory failed: ${msg(inventory)}`);
+  if (!inventory.ok) {
+    const broken = brokenWorkspaceReason(inventory.error);
+    return broken === undefined
+      ? verdict("unknown", `untracked inventory failed: ${msg(inventory)}`)
+      : verdict("broken", `working-copy inventory is unavailable: ${broken}`);
+  }
   if (inventory.value.trackedDifference !== undefined)
     return verdict(
       "keep",
