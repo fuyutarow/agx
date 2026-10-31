@@ -18,16 +18,20 @@ export function resolveRunId<Row extends RunIdRow>(
     const row = candidates[0];
     if (row !== undefined) return { kind: "resolved", row };
   }
-  const ids = (candidates.length > 0 ? candidates : rows)
+  if (candidates.length === 0) {
+    return {
+      kind: "error",
+      error: `unknown run id '${selector}'; ${rows.length} recorded runs`,
+    };
+  }
+  const candidateText = candidates
+    .slice(0, 20)
     .map((row) => row.id)
-    .toSorted();
-  const candidateText = ids.length > 0 ? ids.join(", ") : "(none)";
-  const error =
-    candidates.length > 1
-      ? `run id '${selector}' is ambiguous; run id candidates: ${candidateText}`
-      : `unknown run id '${selector}'; candidates: ${candidateText}`;
+    .join(", ");
+  const remaining = candidates.length - 20;
+  const suffix = remaining > 0 ? `, ${remaining} more` : "";
   return {
     kind: "error",
-    error,
+    error: `run id '${selector}' is ambiguous; run id candidates: ${candidateText}${suffix}`,
   };
 }
