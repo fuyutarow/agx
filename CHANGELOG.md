@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.51 — 2026-10-31
+
+- Add atomic validation and batched judgment recording with judge --from.
+
 ## 1.22.50 — 2026-10-31
 
 - Bound run ID diagnostics for unknown and ambiguous selectors.
