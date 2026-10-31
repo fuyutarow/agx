@@ -93,7 +93,7 @@ async function runInstallCase(prune: boolean) {
   // Readiness proves the old executable is running before simulated pruning.
   const ready = await reader.read();
   expect(new TextDecoder().decode(ready.value)).toBe(
-    `${JSON.stringify(["/proc/self/exe"])}\n`,
+    `${JSON.stringify([binary])}\n`,
   );
   if (prune) await rm(join(root, "installs/agx/old"), { recursive: true });
   await worker.stdin.end();
@@ -102,14 +102,11 @@ async function runInstallCase(prune: boolean) {
     worker.stderr.text(),
     worker.exited,
   ]);
-  expect(code).toBe(0);
-  expect(out).toBe("old install child\n");
-  expect(err).toBe("");
+  expect(code).toBe(prune ? 2 : 0);
+  expect(out).toBe(prune ? "" : "old install child\n");
+  expect(err).toBe(prune ? "old executable unavailable\n" : "");
 }
 
-test.skipIf(process.platform !== "linux")(
-  "upgrade-install: compiled worker re-enters its old image after PATH changes and pruning",
-  async () => {
-    for (const prune of [false, true]) await runInstallCase(prune);
-  },
-);
+test("upgrade-install: compiled worker retains its old absolute command across PATH changes; pruning breaks re-entry", async () => {
+  for (const prune of [false, true]) await runInstallCase(prune);
+});

@@ -6,7 +6,6 @@ import { hostname } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
-import { selfExecutable } from "../../../shared/src/self-executable.ts";
 import { selfCommand } from "../self-command.ts";
 import { legacyLandStatus } from "../state.ts";
 import { verifyLine } from "../ticket.ts";
@@ -960,7 +959,7 @@ export async function run(flags: Flags): Promise<number> {
       process.env.AGX_WORKER_BIN === undefined
         ? [...defaultCommand, ...workerArgs().slice(1)]
         : [
-            selfExecutable(),
+            process.execPath,
             "--eval",
             "delete process.env.BUN_BE_BUN; await import(process.argv[1]);",
             "--",
