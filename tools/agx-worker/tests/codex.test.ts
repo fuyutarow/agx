@@ -420,6 +420,7 @@ describe("agx", () => {
           xdgCacheHome ?? join(home, ".cache"),
           "cocoindex-code",
         );
+        const depot = join(fixtureDir, "julia-depot");
         const r = run(
           [
             ...FULL,
@@ -430,6 +431,7 @@ describe("agx", () => {
           {
             AGX_CODEX_BIN: bin,
             HOME: home,
+            JULIA_DEPOT_PATH: `${depot}:/other-depot`,
             XDG_CACHE_HOME: xdgCacheHome,
             BUN_INSTALL_CACHE_DIR:
               customCache === undefined ? undefined : cache,
@@ -443,7 +445,15 @@ describe("agx", () => {
         expect(roots).toHaveLength(1);
         expect(launch[launch.indexOf(roots[0] ?? "") - 1]).toBe("-c");
         expect(Bun.TOML.parse(roots[0] ?? "")).toEqual({
-          sandbox_workspace_write: { writable_roots: [cache, indexCache] },
+          sandbox_workspace_write: {
+            writable_roots: [
+              cache,
+              indexCache,
+              ...["compiled", "logs", "scratchspaces"].map((dir) =>
+                join(depot, dir),
+              ),
+            ],
+          },
         });
         expect(r.receipt.sandbox_effective).toBe("workspace-write");
         expect(
@@ -461,6 +471,18 @@ describe("agx", () => {
       }
     },
   );
+
+  test("read-only does not grant Julia writable roots", () => {
+    const { bin, log } = fakeCodex(scratch());
+    const r = run(FULL, {
+      AGX_CODEX_BIN: bin,
+      JULIA_DEPOT_PATH: "/julia-depot:/other",
+    });
+    expect(r.code).toBe(0);
+    expect(readFileSync(log, "utf8")).not.toContain(
+      "sandbox_workspace_write.writable_roots=",
+    );
+  });
 
   test("omitting sandbox remains refused before Codex starts", () => {
     const { bin, log } = fakeCodex(scratch());
@@ -870,7 +892,10 @@ describe("agx", () => {
           killSignal: "SIGKILL",
         },
       );
-      while (proc.exitCode === null && !existsSync(join(fixtureDir, "term.ready"))) {
+      while (
+        proc.exitCode === null &&
+        !existsSync(join(fixtureDir, "term.ready"))
+      ) {
         await Bun.sleep(10);
       }
       expect(existsSync(join(fixtureDir, "term.ready"))).toBe(true);

@@ -22,6 +22,7 @@ const WORKER_ENV_KEYS = [
   "TEMP",
   // Shared package cache selected by the dispatcher, also used as a Codex writable root.
   "BUN_INSTALL_CACHE_DIR",
+  "JULIA_DEPOT_PATH",
   // mise's active shell and explicit roots keep declared tool config and data discoverable.
   "MISE_ACTIVATE_SHIMS",
   "MISE_SHELL",
@@ -56,6 +57,10 @@ const WORKER_ENV_KEYS = [
 export function workerSharedCaches(
   source: NodeJS.ProcessEnv = process.env,
 ): { key?: string; root: string }[] {
+  const depot = resolve(
+    source.JULIA_DEPOT_PATH?.split(":").find((entry) => entry !== "") ??
+      join(source.HOME ?? homedir(), ".julia"),
+  );
   return [
     {
       key: "BUN_INSTALL_CACHE_DIR",
@@ -70,6 +75,9 @@ export function workerSharedCaches(
         "cocoindex-code",
       ),
     },
+    ...["compiled", "logs", "scratchspaces"].map((directory) => ({
+      root: join(depot, directory),
+    })),
   ];
 }
 

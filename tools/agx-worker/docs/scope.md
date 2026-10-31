@@ -99,7 +99,7 @@ Codex and Claude workers receive a closed stdin stream. Their prompts remain exp
 (the final `codex exec` argument and `claude -p <prompt>`), so a vendor cannot wait for an interactive
 input stream. Their environment is rebuilt from the explicit allowlist in
 [`src/workers/environment.ts`](../src/workers/environment.ts): `PATH`, `HOME`, `LANG`, `TZ`,
-`USER`, `LOGNAME`, `SHELL`, `TERM`, `TMPDIR`, `TMP`, `TEMP`, `BUN_INSTALL_CACHE_DIR`,
+`USER`, `LOGNAME`, `SHELL`, `TERM`, `TMPDIR`, `TMP`, `TEMP`, `BUN_INSTALL_CACHE_DIR`, `JULIA_DEPOT_PATH`,
 `MISE_ACTIVATE_SHIMS`, `MISE_SHELL`, `MISE_CONFIG_DIR`, `MISE_DATA_DIR`, `MISE_CACHE_DIR`,
 `MISE_INSTALLS_DIR`, `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`, `XDG_CONFIG_HOME`,
 `XDG_STATE_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `GRAVEYARD`,
@@ -109,7 +109,9 @@ with `AGX_WORKER=1`. Coordinator
 continuation slots and vendor session IDs are omitted; each vendor creates its own session identity.
 The same module's `workerSharedCaches` is the single shared-cache list: the Bun install cache
 (`BUN_INSTALL_CACHE_DIR`, default `$HOME/.bun/install/cache`) and the code-search index cache
-(`$XDG_CACHE_HOME/cocoindex-code`, default `$HOME/.cache/cocoindex-code`). Both paths resolve
+(`$XDG_CACHE_HOME/cocoindex-code`, default `$HOME/.cache/cocoindex-code`), and the Julia depot's
+`compiled`, `logs`, and `scratchspaces` directories. The depot is the first non-empty
+`JULIA_DEPOT_PATH` entry, or `$HOME/.julia` if none is set. All paths resolve
 to absolute paths. Codex receives the resolved Bun path in its environment; `XDG_CACHE_HOME`
 keeps its original value. Only effective `workspace-write` receives these roots as
 `sandbox_workspace_write.writable_roots` on both fresh and resumed runs; read-only receives

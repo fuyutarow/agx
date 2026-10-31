@@ -20,6 +20,7 @@ const WORKER_ENV_KEYS = [
   "TMP",
   "TEMP",
   "BUN_INSTALL_CACHE_DIR",
+  "JULIA_DEPOT_PATH",
   "MISE_ACTIVATE_SHIMS",
   "MISE_SHELL",
   "MISE_CONFIG_DIR",
@@ -53,6 +54,9 @@ describe("worker environment", () => {
           root: join(home ?? homedir(), ".bun", "install", "cache"),
         },
         { root: join(home ?? homedir(), ".cache", "cocoindex-code") },
+        ...["compiled", "logs", "scratchspaces"].map((dir) => ({
+          root: join(home ?? homedir(), ".julia", dir),
+        })),
       ]);
     }
   });
@@ -66,8 +70,33 @@ describe("worker environment", () => {
     ).toEqual([
       { key: "BUN_INSTALL_CACHE_DIR", root: resolve("relative-bun-cache") },
       { root: resolve("relative-xdg-cache", "cocoindex-code") },
+      ...["compiled", "logs", "scratchspaces"].map((dir) => ({
+        root: join(homedir(), ".julia", dir),
+      })),
     ]);
   });
+
+  test.each(["/first:/second", ":/first:/second"])(
+    "selects the first non-empty Julia depot from %s",
+    (path) => {
+      const roots = workerSharedCaches({
+        HOME: "/home-fixture",
+        JULIA_DEPOT_PATH: path,
+      }).map((cache) => cache.root);
+      expect(roots.slice(2)).toEqual(
+        ["compiled", "logs", "scratchspaces"].map((dir) => join("/first", dir)),
+      );
+      for (const forbidden of [
+        "/first",
+        "/second",
+        "/home-fixture",
+        ...["packages", "registries", "artifacts"].map((dir) =>
+          join("/first", dir),
+        ),
+      ])
+        expect(roots).not.toContain(forbidden);
+    },
+  );
 
   test("forwards the complete declared allow-list and AGX namespace", () => {
     const source = Object.fromEntries(
