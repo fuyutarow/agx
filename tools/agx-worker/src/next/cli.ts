@@ -302,8 +302,9 @@ Ticket min_effort = "low" | "medium" | "high" | "xhigh" | "max" sets a routing f
     const parsed = cli(
       {
         name: "agx-worker judge",
-        parameters: ["<run>", "<decision>"],
+        parameters: ["[run]", "[decision]"],
         flags: {
+          from: { type: String, description: "read judgments as JSONL from file" },
           note: { type: String, description: "optional judgment note" },
           override: {
             type: String,
@@ -320,8 +321,13 @@ Ticket min_effort = "low" | "medium" | "high" | "xhigh" | "max" sets a routing f
       undefined,
       commandArgs,
     );
-    const { judgeRun } = await import("./run.ts");
-    exit = await judgeRun({
+    const { judgeRun, judgeBatch } = await import("./run.ts");
+    const batchConflict = parsed._[0] !== undefined || parsed._[1] !== undefined || parsed.flags.note !== undefined || parsed.flags.override !== undefined || (parsed.flags.evidence?.length ?? 0) > 0;
+    if (parsed.flags.from !== undefined && batchConflict) {
+        process.stderr.write("agx: --from cannot be combined with single-run arguments or flags\n");
+        exit = 2;
+    } else if (parsed.flags.from !== undefined) exit = await judgeBatch(parsed.flags.from);
+    else exit = await judgeRun({
       id: parsed._[0],
       decision: parsed._[1],
       note: parsed.flags.note,

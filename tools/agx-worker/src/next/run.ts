@@ -1233,6 +1233,80 @@ type JudgeRunRuntime = {
   onLockFailure?: (message: string, exitCode: number) => number;
 };
 
+const JudgeBatchLine = jsonOf(z.object({
+  run: z.string().min(1),
+  decision: z.enum(["accept", "reject"]),
+  note: z.string().optional(),
+  override: z.string().optional(),
+}).strict());
+
+export async function judgeBatch(path: string, runtime: {
+  root?: string;
+  load?: typeof recordedRuns;
+  lock?: typeof acquireWorkspaceLockUntilAvailable;
+  publish?: typeof publishCurrentRuns;
+  writeStdout?: (line: string) => void;
+} = {}): Promise<number> {
+  const content = await readFile(path, "utf8").catch(() =>
+    fatal(`cannot read judgment batch: ${path}`, 2),
+  );
+  const lines = content.split(/\r?\n/u);
+  if (lines.at(-1) === "") lines.pop();
+  const errors: string[] = [];
+  const parsed = lines.flatMap((line, index) => {
+    const result = JudgeBatchLine.safeParse(line);
+    if (!result.success) {
+      errors.push(`line ${index + 1}: invalid judgment JSON or fields`);
+      return [];
+    }
+    return [{ ...result.data, line: index + 1 }];
+  });
+  const root = runtime.root ?? stateDir();
+  const runs = await (runtime.load ?? recordedRuns)(root);
+  const pending: { id: string; decision: "accept" | "reject"; note: string; overrideReason?: string; status: "applied" | "unchanged" }[] = [];
+  const latest = new Map(runs.map((row) => [row.id, row.judgment]));
+  for (const entry of parsed) {
+    const resolution = resolveRunId(runs, entry.run);
+    if (resolution.kind === "error") {
+      errors.push(`line ${entry.line}: ${resolution.error}`);
+      continue;
+    }
+    const overrideReason = entry.override?.trim();
+    const completion = completionFor(resolution.row);
+    let error: string | undefined;
+    if (entry.override !== undefined && overrideReason === "") error = "judge override reason must not be empty";
+    else if (entry.decision === "accept" && completion.completion === null) error = `cannot accept run '${resolution.row.id}' before it ends`;
+    else if (entry.decision === "accept" && completion.completion === "incomplete" && overrideReason === undefined) error = `cannot accept incomplete run '${resolution.row.id}'; pass override to record an explicit override`;
+    if (error !== undefined) {
+      errors.push(`line ${entry.line}: ${error}`);
+      continue;
+    }
+    const note = entry.note ?? "";
+    const previous = latest.get(resolution.row.id);
+    const status = previous?.decision === entry.decision && previous.note === note ? "unchanged" : "applied";
+    if (pending.some((item) => item.id === resolution.row.id && (item.decision !== entry.decision || item.note !== note))) {
+      errors.push(`line ${entry.line}: conflicting judgments for run '${resolution.row.id}'`);
+      continue;
+    }
+    pending.push({ id: resolution.row.id, decision: entry.decision, note, ...(overrideReason === undefined ? {} : { overrideReason }), status });
+    latest.set(resolution.row.id, { decision: entry.decision, note, at: "" });
+  }
+  if (errors.length > 0) return fatal(errors.join("\n"), 2);
+  const lock = await (runtime.lock ?? acquireWorkspaceLockUntilAvailable)(join(root, "current-runs.json"), root, 30_000);
+  if (!lock.ok) return fatal(`cannot publish current runs: ${lock.error}`, 2);
+  await (async () => {
+    await using resource = { [Symbol.asyncDispose]: () => lock.release() };
+    void resource;
+    for (const entry of pending) if (entry.status === "applied") append({
+      kind: "judged", id: entry.id, at: now(), decision: entry.decision, note: entry.note,
+      ...(entry.overrideReason === undefined ? {} : { override_reason: entry.overrideReason }),
+    }, root, false);
+    await (runtime.publish ?? publishCurrentRuns)(root, lock);
+  })();
+  for (const [index, entry] of pending.entries()) (runtime.writeStdout ?? ((line) => process.stdout.write(line)))(`${JSON.stringify({ line: index + 1, id: entry.id, status: entry.status })}\n`);
+  return 0;
+}
+
 export async function judgeRun(
   flags: {
     id?: string | undefined;
