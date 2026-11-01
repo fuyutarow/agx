@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.59 — 2026-11-01
+
+- Preserve killed verify results after unit OOM and identify SIGKILL in verify logs.
+
 ## 1.22.58 — 2026-10-31
 
 - Allow workspace-write workers to use Julia depot caches.
