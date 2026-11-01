@@ -1,6 +1,12 @@
 import { newRoutingAudit, recordRoutingPick } from "./routing-events.ts";
 import { fromThrowable } from "neverthrow";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -237,12 +243,27 @@ const persistInterim = (id: string, path: string, message: string): boolean => {
 
 export { earlyQuitRows } from "./preflight.ts";
 
+export function appendVerifyKilledNote(
+  logPath: string,
+  exit: number,
+  signal: string | null,
+  unit: string,
+): void {
+  if (exit !== 137 && signal !== "SIGKILL") return;
+  const output = readFileSync(logPath, "utf8");
+  appendFileSync(
+    logPath,
+    `${output !== "" && !output.endsWith("\n") ? "\n" : ""}agx: verify killed by SIGKILL (exit 137); the kernel OOM killer is a common cause; see journalctl --user -u ${unit}\n`,
+  );
+}
+
 const runVerify = async (
   commands: string[],
   cwd: string,
   runDir: string,
   env: NodeJS.ProcessEnv,
   always: string[],
+  unit: string,
 ): Promise<
   {
     cmd: string;
@@ -283,6 +304,7 @@ const runVerify = async (
         : new Response(child.stdout).text();
     const exit = await child.exited;
     writeFileSync(logPath, await output);
+    appendVerifyKilledNote(logPath, exit, child.signalCode, unit);
     const kind = verifyKind(exit, child.signalCode);
     process.stderr.write(
       `VERIFY exit=${exit} ${cmd} kind=${kind}${source === undefined ? "" : ` source=${source}`}\n`,
@@ -1075,7 +1097,14 @@ export async function run(flags: Flags): Promise<number> {
   const skipVerification = endedOnCapacity;
   const verify = skipVerification
     ? []
-    : await runVerify(ticket.verify, cwd, runDir, runEnv, ctx.verifyAlways);
+    : await runVerify(
+        ticket.verify,
+        cwd,
+        runDir,
+        runEnv,
+        ctx.verifyAlways,
+        unit,
+      );
   const after = workspaceSnapshot(cwd);
   const changedPathsMeasured =
     before.isOk() && after.isOk()

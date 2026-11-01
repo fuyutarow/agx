@@ -247,19 +247,36 @@ test("dispatch contract: a claude uuid ACK target is bound to its session name a
   const f = fixture();
   const uuid = "00000000-0000-4000-8000-000000000009";
   const target = `claude:${uuid}`;
-  writeFileSync(f.ticket, readFileSync(f.ticket, "utf8").replace("schema = 2", `schema = 2\nack_target = "${target}"`));
+  writeFileSync(
+    f.ticket,
+    readFileSync(f.ticket, "utf8").replace(
+      "schema = 2",
+      `schema = 2\nack_target = "${target}"`,
+    ),
+  );
   const claude = join(f.root, "bin", "claude");
-  writeFileSync(claude, `#!/bin/sh\nprintf '%s\n' '[{"pid":12353,"cwd":"/example","kind":"interactive","startedAt":1761800000000,"sessionId":"${uuid}","name":"dx-agt_2hqv"}]'\n`);
+  writeFileSync(
+    claude,
+    `#!/bin/sh\nprintf '%s\n' '[{"pid":12353,"cwd":"/example","kind":"interactive","startedAt":1761800000000,"sessionId":"${uuid}","name":"dx-agt_2hqv"}]'\n`,
+  );
   chmodSync(claude, 0o755);
   const result = await invoke(f);
   expect(result.exitCode, result.stderr).toBe(0);
-  expect(readFileSync(f.unitArgs, "utf8")).toContain(`--setenv=${BOUND_CLAUDE_TARGET_ENV}=${encodeBoundClaudeTarget({ selector: target, address: "claude:dx-agt_2hqv" })}`);
+  expect(readFileSync(f.unitArgs, "utf8")).toContain(
+    `--setenv=${BOUND_CLAUDE_TARGET_ENV}=${encodeBoundClaudeTarget({ selector: target, address: "claude:dx-agt_2hqv" })}`,
+  );
 });
 
 test("dispatch contract: an unknown claude uuid ACK target is reported unbound", async () => {
   const f = fixture();
   const target = "claude:00000000-0000-4000-8000-000000000099";
-  writeFileSync(f.ticket, readFileSync(f.ticket, "utf8").replace("schema = 2", `schema = 2\nack_target = "${target}"`));
+  writeFileSync(
+    f.ticket,
+    readFileSync(f.ticket, "utf8").replace(
+      "schema = 2",
+      `schema = 2\nack_target = "${target}"`,
+    ),
+  );
   const claude = join(f.root, "bin", "claude");
   writeFileSync(claude, "#!/bin/sh\nprintf '%s\\n' '[]'\n");
   chmodSync(claude, 0o755);
@@ -282,8 +299,18 @@ test("dispatch contract: an unresolvable ACK target never fails the dispatch", a
   const args = readFileSync(f.unitArgs, "utf8");
   expect(args).toContain("--setenv=AGX_DISPATCH_ACK_UNBOUND=1");
   expect(args).not.toContain(`--setenv=${BOUND_CLAUDE_TARGET_ENV}=`);
-  const event = jsonOf(z.object({ ack: z.object({ status: z.literal("unbound"), target: z.string(), error: z.string().min(1) }) })).safeParse(
-    readFileSync(join(f.env.AGX_STATE_DIR!, "records.jsonl"), "utf8").trim().split("\n")[0]!,
+  const event = jsonOf(
+    z.object({
+      ack: z.object({
+        status: z.literal("unbound"),
+        target: z.string(),
+        error: z.string().min(1),
+      }),
+    }),
+  ).safeParse(
+    readFileSync(join(f.env.AGX_STATE_DIR!, "records.jsonl"), "utf8")
+      .trim()
+      .split("\n")[0]!,
   );
   expect(event.success).toBe(true);
   if (event.success) expect(event.data.ack.target).toBe(target);
@@ -311,7 +338,10 @@ test("dispatch contract: every flag the documentation names for dispatch is acce
   const eventSchema = z.looseObject({
     dispatcher_session: z.string().nullable().optional(),
   });
-  const events = readFileSync(join(f.env.AGX_STATE_DIR!, "records.jsonl"), "utf8")
+  const events = readFileSync(
+    join(f.env.AGX_STATE_DIR!, "records.jsonl"),
+    "utf8",
+  )
     .trim()
     .split("\n");
   const dispatchSessions = events.map((line) => {
@@ -822,7 +852,9 @@ test("dispatch records its one ticket-derived binding", async () => {
   const args = await Bun.file(f.unitArgs).text();
   expect(args).toContain("--unit=agt_foo-bar\n");
   expect(args).toContain(`${f.ticket}\n--cd\n${workspace}\n`);
-  expect(args).toContain("KillMode=mixed\n-p\nTimeoutStopSec=60\n");
+  expect(args).toContain(
+    "KillMode=mixed\n-p\nOOMPolicy=continue\n-p\nTimeoutStopSec=60\n",
+  );
   expect(await Bun.file(f.wsArgs).text()).toContain("--reuse");
 });
 
@@ -874,7 +906,9 @@ test("dispatch contract: launch failure is recorded before systemd-run and visib
   const result = await invoke(f);
   expect(result.exitCode).not.toBe(0);
   expect(result.stdout).toBe("");
-  const binding = jsonOf(DispatchBindingSchema).safeParse(readFileSync(f.bindingFile, "utf8"));
+  const binding = jsonOf(DispatchBindingSchema).safeParse(
+    readFileSync(f.bindingFile, "utf8"),
+  );
   expect(binding.success).toBe(true);
   if (!binding.success) return;
   const id = binding.data.id;
@@ -912,7 +946,10 @@ test("worker contract: a unit that fails to start makes dispatch exit non-zero w
   expect(result.exitCode).not.toBe(0);
   expect(result.stdout).toBe("");
   expect(result.stderr).toContain("fixture unit failure");
-  const events = readFileSync(join(f.env.AGX_STATE_DIR!, "records.jsonl"), "utf8");
+  const events = readFileSync(
+    join(f.env.AGX_STATE_DIR!, "records.jsonl"),
+    "utf8",
+  );
   expect(events).toContain('"outcome":"launch-failed"');
   expect(events).toContain("fixture unit failure");
 });
@@ -921,12 +958,26 @@ test("worker contract: dispatch returns its receipt only after the unit starts",
   const f = fixture();
   const runner = f.env.FAKE_SYSTEMD_RUN_SCRIPT!;
   const source = readFileSync(runner, "utf8");
-  writeFileSync(runner, `await Bun.write(${JSON.stringify(join(f.root, "entered"))}, "yes");\nwhile (!(await Bun.file(${JSON.stringify(join(f.root, "release"))}).exists())) await Bun.sleep(10);\n` + source);
-  const child = Bun.spawn([process.execPath, f.entry, "dispatch", f.ticket], { cwd: f.repo, env: f.env, stdout: "pipe", stderr: "pipe", timeout: 5000 });
+  writeFileSync(
+    runner,
+    `await Bun.write(${JSON.stringify(join(f.root, "entered"))}, "yes");\nwhile (!(await Bun.file(${JSON.stringify(join(f.root, "release"))}).exists())) await Bun.sleep(10);\n` +
+      source,
+  );
+  const child = Bun.spawn([process.execPath, f.entry, "dispatch", f.ticket], {
+    cwd: f.repo,
+    env: f.env,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 5000,
+  });
   const reader = child.stdout.getReader();
   const first = reader.read();
-  while (!(await Bun.file(join(f.root, "entered")).exists())) await Bun.sleep(10);
-  const early = await Promise.race([first.then(() => true), Bun.sleep(100).then(() => false)]);
+  while (!(await Bun.file(join(f.root, "entered")).exists()))
+    await Bun.sleep(10);
+  const early = await Promise.race([
+    first.then(() => true),
+    Bun.sleep(100).then(() => false),
+  ]);
   expect(early).toBe(false);
   await Bun.write(join(f.root, "release"), "yes");
   expect(new TextDecoder().decode((await first).value)).toContain("workspace=");
@@ -937,13 +988,28 @@ test("worker contract: the unit command uses the stable executable path", async 
   const f = fixture();
   const executable = join(f.root, "Cellar/agx/1.2.3/bin/agx-worker");
   mkdirSync(join(f.root, "Cellar/agx/1.2.3/bin"), { recursive: true });
-  const built = Bun.spawnSync([process.execPath, "build", "--compile", f.entry, "--outfile", executable], { stdout: "pipe", stderr: "pipe", timeout: 30000 });
+  const built = Bun.spawnSync(
+    [process.execPath, "build", "--compile", f.entry, "--outfile", executable],
+    { stdout: "pipe", stderr: "pipe", timeout: 30000 },
+  );
   expect(built.exitCode, built.stderr.toString()).toBe(0);
-  const child = Bun.spawn([executable, "dispatch", f.ticket], { cwd: f.repo, env: f.env, stdout: "pipe", stderr: "pipe", timeout: 5000 });
-  const [, err, exit] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+  const child = Bun.spawn([executable, "dispatch", f.ticket], {
+    cwd: f.repo,
+    env: f.env,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 5000,
+  });
+  const [, err, exit] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ]);
   expect(exit, err).toBe(0);
   const args = readFileSync(f.unitArgs, "utf8").split("\n");
-  expect(args[args.indexOf("--") + 1]).toBe(join(f.root, "opt/agx/bin/agx-worker"));
+  expect(args[args.indexOf("--") + 1]).toBe(
+    join(f.root, "opt/agx/bin/agx-worker"),
+  );
 });
 
 test("dispatch contract: --continue returns with its record before a child record", async () => {
@@ -1460,6 +1526,12 @@ test("source dispatch pins bun, absolute source entry and dispatcher PATH", asyn
   const result = await invoke(f);
   expect(result.exitCode, result.stderr).toBe(0);
   const args = (await Bun.file(f.unitArgs).text()).trimEnd().split("\n");
+  expect(
+    args.slice(
+      args.indexOf("OOMPolicy=continue") - 1,
+      args.indexOf("OOMPolicy=continue") + 1,
+    ),
+  ).toEqual(["-p", "OOMPolicy=continue"]);
   expect(args.slice(args.indexOf("--") + 1, args.indexOf("--") + 4)).toEqual([
     process.execPath,
     f.entry,
@@ -1624,7 +1696,9 @@ test("dispatch --json exposes the immediate dispatch receipt", async () => {
   ).safeParse(result.stdout);
   expect(receipt.success).toBe(true);
   if (!receipt.success) return;
-  const binding = jsonOf(DispatchBindingSchema).safeParse(await Bun.file(f.bindingFile).text());
+  const binding = jsonOf(DispatchBindingSchema).safeParse(
+    await Bun.file(f.bindingFile).text(),
+  );
   expect(binding.success).toBe(true);
   if (!binding.success) return;
   expect(receipt.data).toMatchObject({

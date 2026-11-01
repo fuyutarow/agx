@@ -963,7 +963,9 @@ export async function dispatch(options: {
     sandbox,
     sandbox_source,
     dispatcher_session: dispatcherSession,
-    ...(unboundAck === undefined ? {} : { ack: { status: "unbound", ...unboundAck } }),
+    ...(unboundAck === undefined
+      ? {}
+      : { ack: { status: "unbound", ...unboundAck } }),
     vendor_session: null,
     continues: previous?.id ?? null,
     supersedes: null,
@@ -972,7 +974,18 @@ export async function dispatch(options: {
     pid: process.pid,
     lease,
   });
-  const receipt: { id: string; workspace: string; row: string | null; route: string | null; model: string | null; effort: string | null; sandbox: string; sandbox_source: string; sandbox_effective: null; sandbox_effective_source: null } = {
+  const receipt: {
+    id: string;
+    workspace: string;
+    row: string | null;
+    route: string | null;
+    model: string | null;
+    effort: string | null;
+    sandbox: string;
+    sandbox_source: string;
+    sandbox_effective: null;
+    sandbox_effective_source: null;
+  } = {
     id: binding.id,
     workspace,
     row: null,
@@ -987,7 +1000,9 @@ export async function dispatch(options: {
   // Homebrew replaces Cellar versions during upgrades; the opt link survives them.
   const unitCommand = [...workerCommand];
   if (unitCommand.length === 1) {
-    const cellar = /^(.*)\/Cellar\/agx\/[^/]+\/bin\/agx-worker$/u.exec(unitCommand[0] ?? "");
+    const cellar = /^(.*)\/Cellar\/agx\/[^/]+\/bin\/agx-worker$/u.exec(
+      unitCommand[0] ?? "",
+    );
     if (cellar?.[1] !== undefined)
       unitCommand[0] = join(cellar[1], "opt", "agx", "bin", "agx-worker");
   }
@@ -999,6 +1014,8 @@ export async function dispatch(options: {
     "-p",
     "KillMode=mixed",
     "-p",
+    "OOMPolicy=continue",
+    "-p",
     "TimeoutStopSec=60",
     "-E",
     "CLAUDE_CODE_SESSION_ID",
@@ -1009,7 +1026,9 @@ export async function dispatch(options: {
     ...(boundAckTarget === undefined
       ? []
       : [`--setenv=${BOUND_CLAUDE_TARGET_ENV}=${boundAckTarget}`]),
-    ...(unboundAck === undefined ? [] : ["--setenv=AGX_DISPATCH_ACK_UNBOUND=1"]),
+    ...(unboundAck === undefined
+      ? []
+      : ["--setenv=AGX_DISPATCH_ACK_UNBOUND=1"]),
     "--",
     ...unitCommand,
     "run",
