@@ -68,12 +68,17 @@ describe("globsOverlap (segment-exact intersection)", () => {
   });
 });
 
-test("verifyLine lists the commands and tells the worker to run them in the foreground", () => {
+test("verifyLine respects sandbox and ticket restrictions", () => {
   const line = verifyLine(["bun test", "tsc"]);
   expect(line).toContain("bun test");
   expect(line).toContain("tsc");
   expect(line).toContain("in the foreground");
   expect(line).toContain("do not background anything you need to see");
+  expect(line).toContain("Run commands your sandbox can run and the ticket permits");
+  expect(line).not.toContain("Run them yourself");
+  expect(line).toContain("GPU, user systemd, agent-resource-run, or writable paths");
+  expect(line).toContain("the ticket says not to run it");
+  expect(line).toContain("do not stop or refuse: finish the change and the router will run it outside the sandbox");
   expect(verifyLine([])).toBe("");
 });
 
