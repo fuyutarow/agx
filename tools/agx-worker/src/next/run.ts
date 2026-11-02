@@ -264,6 +264,7 @@ const runVerify = async (
   env: NodeJS.ProcessEnv,
   always: string[],
   unit: string,
+  round: number,
 ): Promise<
   {
     cmd: string;
@@ -284,7 +285,7 @@ const runVerify = async (
     const source = index < always.length ? "[verify].always" : undefined;
     const logPath = join(
       runDir,
-      `verify-${String(index + 1).padStart(2, "0")}.log`,
+      `${round === 0 ? "verify" : `verify-round-${round + 1}`}-${String(index + 1).padStart(2, "0")}.log`,
     );
     const child = Bun.spawn(
       ["sh", "-c", 'exec 2>&1; sh -c "$1"', "agx-verify", cmd],
@@ -968,6 +969,52 @@ export async function run(flags: Flags): Promise<number> {
     }
   }, 100);
   let attemptNumber = 0;
+  let verify: Awaited<ReturnType<typeof runVerify>> = [];
+  const verifyRounds: (typeof verify)[] = [];
+  const verificationFeedback = async (
+    session: string | null,
+  ): Promise<boolean> => {
+    verify = await runVerify(
+      ticket.verify,
+      cwd,
+      runDir,
+      runEnv,
+      ctx.verifyAlways,
+      unit,
+      verifyRounds.length,
+    );
+    const failed = verify.filter(
+      (result) => result.exit !== 0 && result.kind !== "killed",
+    );
+    if (
+      timedOut ||
+      deadline.aborted ||
+      workerReceipt.timed_out === true ||
+      workerReceipt.outcome === "timeout" ||
+      exit !== 0 ||
+      workerReceipt.outcome === "refused" ||
+      (workerReceipt.exit_code !== undefined &&
+        workerReceipt.exit_code !== 0) ||
+      routeFailure !== undefined ||
+      failed.length === 0 ||
+      verifyRounds.length >= 2 ||
+      session === null ||
+      session.trim() === ""
+    )
+      return false;
+    verifyRounds.push(verify);
+    currentResumeSession = session;
+    const details = failed.map((result) => {
+      const lines = readFileSync(result.log_path, "utf8").split(/\r?\n/u);
+      if (lines.at(-1) === "") lines.pop();
+      return `Command: ${result.cmd}\nExit: ${result.exit}\nLog: ${result.log_path}\nLast 80 lines:\n${lines.slice(-80).join("\n")}`;
+    });
+    writeFileSync(
+      workerBrief,
+      `Verification failed. Fix the errors and finish.\n\n${details.join("\n\n")}\n`,
+    );
+    return true;
+  };
   while (true) {
     attemptNumber += 1;
     activeProgressPath = join(
@@ -1044,6 +1091,7 @@ export async function run(flags: Flags): Promise<number> {
       null;
     latestVendorSession = session;
     endedOnCapacity = workerReceipt.outcome === "capacity";
+    if (!endedOnCapacity && (await verificationFeedback(session))) continue;
     if (!endedOnCapacity || timedOut) break;
 
     const remainingMs = Math.floor(
@@ -1094,17 +1142,6 @@ export async function run(flags: Flags): Promise<number> {
   clearInterval(progressWatcher);
   // A capacity receipt is terminal only after the active run exhausted its eligible rows.
   const capacity = capacityExhausted && endedOnCapacity;
-  const skipVerification = endedOnCapacity;
-  const verify = skipVerification
-    ? []
-    : await runVerify(
-        ticket.verify,
-        cwd,
-        runDir,
-        runEnv,
-        ctx.verifyAlways,
-        unit,
-      );
   const after = workspaceSnapshot(cwd);
   const changedPathsMeasured =
     before.isOk() && after.isOk()
@@ -1174,6 +1211,7 @@ export async function run(flags: Flags): Promise<number> {
   report = {
     ...(typeof report === "object" && report !== null ? report : {}),
     ...(attemptedRows.length > 1 ? { rows: attemptedRows } : {}),
+    verify_rounds: verifyRounds,
     execution,
     sandbox,
     sandbox_source,

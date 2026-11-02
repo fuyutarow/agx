@@ -220,6 +220,14 @@ this directory and grants it sandbox write access. Write results, logs and
 measurements there; keep source changes in the workspace. Each continuation has
 its own run directory.
 
+Verification runs outside the worker sandbox. When a command fails, the runner
+can resume the same vendor session up to twice with the failed commands, exits,
+log paths and last 80 log lines if the run deadline has not expired. Verification
+itself runs to completion even if the deadline expires. The final verify
+results determine the outcome; `report.json` retains previous results in
+`verify_rounds`, with separate log files for each round. Killed verification or
+an unavailable vendor session or a worker refusal does not trigger feedback.
+
 Ticket intake requires an explicit `writes` key (`[]` for read-only work) and an
 acceptance basis: verify commands or a declared human review/evidence/diff oracle
 in `proposition.refuted_by`, tied to `outcome`. Missing declarations refuse before
