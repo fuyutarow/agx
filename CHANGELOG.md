@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.61 — 2026-11-02
+
+- Resume the worker with failed verification feedback within the same run.
+
 ## 1.22.60 — 2026-11-02
 
 - Respect ticket and sandbox restrictions in worker verification instructions.
