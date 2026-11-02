@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.60 — 2026-11-02
+
+- Respect ticket and sandbox restrictions in worker verification instructions.
+
 ## 1.22.59 — 2026-11-01
 
 - Preserve killed verify results after unit OOM and identify SIGKILL in verify logs.
