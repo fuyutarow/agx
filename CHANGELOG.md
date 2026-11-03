@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.70 — 2026-11-03
+
+- A claude-route run removes the empty read-only sandbox placeholder files it leaves in the workspace (protected names only, absent before the run) and records them as sandbox_stubs_removed
+
 ## 1.22.69 — 2026-11-03
 
 - The run end notice now carries the full run id, the exit code and the read command, and the manager sends it as an explicit agx-manager sender so it is relayed to claude: dispatchers instead of refused as Claude-to-Claude; tests cover ok, verify-failed, timeout, stopped, no-dispatcher and failed-send notices.
