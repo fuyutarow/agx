@@ -948,31 +948,39 @@ export async function dispatch(options: {
   }
   const recordBytes = intakeBytes ?? (await readFile(ticketPath));
   const lease = await leaseFor(process.pid, `${unit}.service`);
-  append({
-    kind: "dispatching",
-    id: binding.id,
-    at: now(),
-    ticket: slug,
-    writes: parsedTicket.ticket.writes,
-    cwd: workspace,
-    workspace,
-    worker_name: unit,
-    unit,
-    workspace_name: basename(workspace),
-    sandbox,
-    sandbox_source,
-    dispatcher_session: dispatcherSession,
-    ...(unboundAck === undefined
-      ? {}
-      : { ack: { status: "unbound", ...unboundAck } }),
-    vendor_session: null,
-    continues: previous?.id ?? null,
-    supersedes: null,
-    ticket_path: ticketPath,
-    ticket_sha256: createHash("sha256").update(recordBytes).digest("hex"),
-    pid: process.pid,
-    lease,
-  });
+  // No publication here. The run's own `started` record publishes the snapshot, whereas a
+  // publication scheduled by this process is awaited by next/cli.ts after the receipt (a full log
+  // replay under a lock other dispatches may hold for up to 30 s), which kept every dispatch alive
+  // for minutes. The launch-failed `ended` record below does publish: no run exists to do it.
+  append(
+    {
+      kind: "dispatching",
+      id: binding.id,
+      at: now(),
+      ticket: slug,
+      writes: parsedTicket.ticket.writes,
+      cwd: workspace,
+      workspace,
+      worker_name: unit,
+      unit,
+      workspace_name: basename(workspace),
+      sandbox,
+      sandbox_source,
+      dispatcher_session: dispatcherSession,
+      ...(unboundAck === undefined
+        ? {}
+        : { ack: { status: "unbound", ...unboundAck } }),
+      vendor_session: null,
+      continues: previous?.id ?? null,
+      supersedes: null,
+      ticket_path: ticketPath,
+      ticket_sha256: createHash("sha256").update(recordBytes).digest("hex"),
+      pid: process.pid,
+      lease,
+    },
+    stateDir(),
+    false,
+  );
   const receipt: {
     id: string;
     workspace: string;
