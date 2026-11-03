@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.75 — 2026-11-03
+
+- claude catalog rows carry AA's published time per task so fresh routing can select them
+
 ## 1.22.74 — 2026-11-03
 
 - claude-route briefs name the dispatch-bound session name for the completion ACK (or say it is unknown and ask for the final report), so SendMessage can resolve it
