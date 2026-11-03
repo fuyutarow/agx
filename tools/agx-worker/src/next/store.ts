@@ -1551,11 +1551,12 @@ export async function publishCurrentRuns(
     return;
   }
   const held = lock;
+  let captured: z.output<typeof RecordIdentity> | null | undefined;
   const result = await fromPromise(
     (async () => {
       const source = await recordIdentity(root);
       const runs = await readFoldedRuns(root, undefined, probes);
-      await publishWorkspaceRuns(root, source);
+      captured = source;
       const output = JSON.stringify({
         runs: listingRows(
           runs.filter(
@@ -1585,4 +1586,25 @@ export async function publishCurrentRuns(
     process.stderr.write(
       "agx: cannot publish current runs: " + result.error + "\n",
     );
+  // The per-workspace files are rewritten for every workspace in the log (thousands), so they
+  // never sit under the lock: readers compare each file's source with the log and rescan when stale.
+  if (ownership === undefined && captured !== undefined)
+    await publishWorkspaceRuns(root, captured).catch((error: unknown) =>
+      process.stderr.write(
+        `agx: cannot publish workspace runs: ${String(error)}\n`,
+      ),
+    );
+}
+
+/** Rewrite the per-workspace files for the current log; callers hold no lock. */
+export async function publishWorkspacePublications(
+  root = stateDir(),
+): Promise<void> {
+  const source = await recordIdentity(root);
+  await readFoldedRuns(root);
+  await publishWorkspaceRuns(root, source).catch((error: unknown) =>
+    process.stderr.write(
+      `agx: cannot publish workspace runs: ${String(error)}\n`,
+    ),
+  );
 }

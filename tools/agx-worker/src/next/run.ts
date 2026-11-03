@@ -38,6 +38,7 @@ import {
   now,
   overlapWarnings,
   publishCurrentRuns,
+  publishWorkspacePublications,
   recordedRuns,
   recordPath,
   runningWorkspaceRun,
@@ -1469,6 +1470,7 @@ export async function judgeBatch(
         );
     await (runtime.publish ?? publishCurrentRuns)(root, lock);
   })();
+  if (runtime.publish === undefined) await publishWorkspacePublications(root);
   for (const [index, entry] of pending.entries())
     (runtime.writeStdout ?? ((line) => process.stdout.write(line)))(
       `${JSON.stringify({ line: index + 1, id: entry.id, status: entry.status })}\n`,
@@ -1566,6 +1568,7 @@ export async function judgeRun(
   writeStdout(
     `${JSON.stringify({ id: judgment.id, verdict: judgment.decision, ...(judgment.note === "" ? {} : { note: judgment.note }), ...(judgment.override_reason === undefined ? {} : { override_reason: judgment.override_reason }), at: judgment.at })}\n`,
   );
+  await publishWorkspacePublications(root);
   return 0;
 }
 
