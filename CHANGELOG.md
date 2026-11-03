@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.72 — 2026-11-03
+
+- A live run's publication no longer holds the current-runs lock while it rewrites the per-workspace files, so judge and dispatch get the lock within moments instead of waiting out 30 s
+
 ## 1.22.71 — 2026-11-03
 
 - agx-worker の自己 spawn(終了通知・dispatch・実行中)をすべて stableSelfCommand 経由にし、Homebrew の versioned Cellar パスを使わない
