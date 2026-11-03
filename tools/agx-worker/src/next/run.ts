@@ -15,6 +15,7 @@ import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { stableCommand, stableSelfCommand } from "../self-command.ts";
 import { legacyLandStatus } from "../state.ts";
 import { claudeAckLine, verifyLine } from "../ticket.ts";
+import { claudeBashDenyLines } from "../claude-bash-denies.ts";
 import {
   EMPTY_FINAL_MESSAGE,
   managerReport,
@@ -207,7 +208,9 @@ export const renderPromise = (
       `outcome: ${ticket.outcome}`,
       `writes: ${JSON.stringify(ticket.writes.map((glob) => resolve(cwd, glob)))}`,
       ...(ticket.verify.length === 0 ? [] : [verifyLine(ticket.verify)]),
-      ...(routeName === "claude" ? [claudeAckLine(boundAckName())] : []),
+      ...(routeName === "claude"
+        ? [claudeAckLine(boundAckName()), ...claudeBashDenyLines(cwd)]
+        : []),
       `Sandbox mode: ${sandbox}${sandbox === "none" ? " (unsandboxed)" : ""}.`,
       ...(
         [
