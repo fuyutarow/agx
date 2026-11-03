@@ -1,6 +1,6 @@
 {
   "name": "@agx/jex",
-  "version": "1.22.61",
+  "version": "1.22.62",
   "private": true,
   "type": "module",
   "bin": {

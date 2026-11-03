@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.22.62 — 2026-11-03
+
+- A repository agx.toml [route] (allow, default) overrides the user policy routes for that repository; the user-global default is checked against the effective allow
+- A repository agx.toml [route] (allow, default) overrides the user policy routes for that repository; invalid keys in the repository agx.toml are rejected before any effect
+
 ## 1.22.61 — 2026-11-02
 
 - Resume the worker with failed verification feedback within the same run.
