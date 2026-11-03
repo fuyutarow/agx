@@ -36,7 +36,7 @@ import {
   resolveClaudeDeliveryTarget,
 } from "../../xmsg/src/claude-target.ts";
 
-import { selfCommand } from "./self-command.ts";
+import { selfCommand, stableCommand } from "./self-command.ts";
 import { parseNextTicket } from "./next/ticket.ts";
 import { recordedSandbox, resolveSandbox, Sandbox } from "./next/sandbox.ts";
 import { append, now } from "./next/store.ts";
@@ -997,15 +997,7 @@ export async function dispatch(options: {
     sandbox_effective: null,
     sandbox_effective_source: null,
   };
-  // Homebrew replaces Cellar versions during upgrades; the opt link survives them.
-  const unitCommand = [...workerCommand];
-  if (unitCommand.length === 1) {
-    const cellar = /^(.*)\/Cellar\/agx\/[^/]+\/bin\/agx-worker$/u.exec(
-      unitCommand[0] ?? "",
-    );
-    if (cellar?.[1] !== undefined)
-      unitCommand[0] = join(cellar[1], "opt", "agx", "bin", "agx-worker");
-  }
+  const unitCommand = stableCommand(workerCommand);
   const args = [
     "systemd-run",
     "--user",

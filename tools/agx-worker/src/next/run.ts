@@ -12,7 +12,7 @@ import { hostname } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
-import { selfCommand } from "../self-command.ts";
+import { selfCommand, stableCommand } from "../self-command.ts";
 import { legacyLandStatus } from "../state.ts";
 import { claudeAckLine, verifyLine } from "../ticket.ts";
 import { parseReport, parseReturn, withReportInstruction } from "../report.ts";
@@ -879,8 +879,8 @@ export async function run(flags: Flags): Promise<number> {
   if (stopTask !== undefined) await stopTask;
   const defaultCommand =
     process.env.AGX_WORKER_COMMAND === undefined
-      ? selfCommand()
-      : [workerCommand ?? workerPath];
+      ? stableCommand(selfCommand())
+      : stableCommand([workerCommand ?? workerPath]);
   const execution = {
     executable_path: ownExecutable,
     executable_argv: ownCommand,
@@ -1023,7 +1023,7 @@ export async function run(flags: Flags): Promise<number> {
         : `worker-progress-${String(attemptNumber).padStart(2, "0")}.jsonl`,
     );
     progressOffset = 0;
-    const child = Bun.spawn(
+    const spawnCommand =
       process.env.AGX_WORKER_BIN === undefined
         ? [...defaultCommand, ...workerArgs().slice(1)]
         : [
@@ -1033,24 +1033,27 @@ export async function run(flags: Flags): Promise<number> {
             "--",
             resolve(cwd, workerPath),
             ...workerArgs().slice(1),
-          ],
-      {
-        cwd,
-        detached: process.platform !== "win32",
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "inherit",
-        env: {
-          ...runEnv,
-          AGX_CODEX_PROGRESS_FILE: activeProgressPath,
-          ...(process.env.AGX_WORKER_BIN === undefined
-            ? {}
-            : { BUN_BE_BUN: "1" }),
-        },
-        signal: deadline,
-        killSignal: "SIGTERM",
-      },
+          ];
+    writeFileSync(
+      join(runDir, `spawn-${String(attemptNumber).padStart(2, "0")}.json`),
+      `${JSON.stringify({ attempt: attemptNumber, executable: spawnCommand[0], argv: spawnCommand })}\n`,
     );
+    const child = Bun.spawn(spawnCommand, {
+      cwd,
+      detached: process.platform !== "win32",
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "inherit",
+      env: {
+        ...runEnv,
+        AGX_CODEX_PROGRESS_FILE: activeProgressPath,
+        ...(process.env.AGX_WORKER_BIN === undefined
+          ? {}
+          : { BUN_BE_BUN: "1" }),
+      },
+      signal: deadline,
+      killSignal: "SIGTERM",
+    });
     activeChild = child;
     const outputPromise =
       child.stdout === null
