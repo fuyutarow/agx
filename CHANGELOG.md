@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.86 — 2026-11-03
+
+- Every verify round's logs are named verify-round-K-NN.log, and the end notice, the ended record (new verify_round field) and agx worker ls name the round of the reported verify exits and how earlier rounds ended, so a pass in a feedback round no longer reads like a first-round pass.
+
 ## 1.22.85 — 2026-11-03
 
 - A finished run process now exits once its ended record is written: it no longer waits for a log-replay publication under the current-runs lock (held by other writers and judges), so its workspace lock and unit end with the run; judge's lock failure names the publication lock file and its holder
