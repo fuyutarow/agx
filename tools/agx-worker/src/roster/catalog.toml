@@ -395,6 +395,7 @@ tb4 = 12.6 # AA (2026-10-08): https://artificialanalysis.ai/models/releases/comp
 tb4_source = "https://artificialanalysis.ai/models/releases/comparisons/claude-haiku-5-5-vs-deepseek-v4-pro"
 price_in = 0.10 # Anthropic (2026-10-08): https://platform.claude.com/docs/en/about-claude/pricing (prompts up to 100k)
 price_out = 0.50
+aa_time_per_task_s = 102.62 # AA (2026-11-03): https://artificialanalysis.ai/models/comparisons/claude-haiku-5-5-low-vs-claude-haiku-5-5-xhigh
 
 [[choice]]
 id = "haiku-medium"
@@ -409,6 +410,7 @@ scicode = 49.0 # AA (2026-10-08): https://artificialanalysis.ai/models/compariso
 scicode_source = "https://artificialanalysis.ai/models/comparisons/claude-haiku-5-5-medium-vs-claude-haiku-5-5-xhigh"
 price_in = 0.10 # Anthropic (2026-10-08): https://platform.claude.com/docs/en/about-claude/pricing (prompts up to 100k)
 price_out = 0.50
+aa_time_per_task_s = 192.63 # AA (2026-11-03): https://artificialanalysis.ai/models/comparisons/claude-haiku-5-5-medium-vs-claude-sonnet-5-5-medium
 
 [[choice]]
 id = "haiku-high"
@@ -423,6 +425,7 @@ scicode = 49.0 # AA (2026-10-08): https://artificialanalysis.ai/models/compariso
 scicode_source = "https://artificialanalysis.ai/models/comparisons/claude-haiku-5-5-high-vs-claude-haiku-5-5-medium"
 price_in = 0.10 # Anthropic (2026-10-08): https://platform.claude.com/docs/en/about-claude/pricing (prompts up to 100k)
 price_out = 0.50
+aa_time_per_task_s = 298.12 # AA (2026-11-03): https://artificialanalysis.ai/models/comparisons/claude-haiku-5-5-high-vs-claude-sonnet-5-5-medium
 
 [[choice]]
 id = "haiku-xhigh"
@@ -437,6 +440,7 @@ scicode = 52.0 # AA (2026-10-08): https://artificialanalysis.ai/models/compariso
 scicode_source = "https://artificialanalysis.ai/models/comparisons/claude-haiku-5-5-vs-claude-haiku-5-5-xhigh"
 price_in = 0.10 # Anthropic (2026-10-08): https://platform.claude.com/docs/en/about-claude/pricing (prompts up to 100k)
 price_out = 0.50
+aa_time_per_task_s = 433.75 # AA (2026-11-03): https://artificialanalysis.ai/models/comparisons/claude-haiku-5-5-low-vs-claude-haiku-5-5-xhigh
 
 [[choice]]
 id = "haiku-max"
@@ -451,6 +455,7 @@ scicode = 55.0 # AA (2026-10-08): https://artificialanalysis.ai/models/compariso
 scicode_source = "https://artificialanalysis.ai/models/comparisons/claude-haiku-5-5-vs-claude-haiku-5-5-xhigh"
 price_in = 0.10 # Anthropic (2026-10-08): https://platform.claude.com/docs/en/about-claude/pricing (prompts up to 100k)
 price_out = 0.50
+aa_time_per_task_s = 595.42 # AA (2026-11-03): https://artificialanalysis.ai/models/comparisons/claude-haiku-5-5-vs-claude-sonnet-5-5
 
 [[choice]]
 id = "sonnet-low"
@@ -461,6 +466,7 @@ score_as_of = "2026-10-08"
 aa_index = 36
 price_in = 2.00
 price_out = 10.00
+aa_time_per_task_s = 131.17 # AA (2026-11-03): https://artificialanalysis.ai/models/comparisons/claude-sonnet-5-5-low-vs-claude-sonnet-5-5-xhigh
 
 [[choice]]
 id = "sonnet-medium"
@@ -474,6 +480,7 @@ scicode = 52.9
 coding_agent = 45.9
 price_in = 2.00
 price_out = 10.00
+aa_time_per_task_s = 190.36 # AA (2026-11-03): https://artificialanalysis.ai/models/comparisons/claude-haiku-5-5-medium-vs-claude-sonnet-5-5-medium
 
 [[choice]]
 id = "sonnet-high"
@@ -487,6 +494,7 @@ scicode = 53.7
 coding_agent = 55.0
 price_in = 2.00
 price_out = 10.00
+aa_time_per_task_s = 346.14 # AA (2026-11-03): https://artificialanalysis.ai/models/comparisons/claude-haiku-5-5-medium-vs-claude-sonnet-5-5-high
 
 [[choice]]
 id = "sonnet-xhigh"
@@ -497,6 +505,7 @@ score_as_of = "2026-10-08"
 aa_index = 52
 price_in = 2.00
 price_out = 10.00
+aa_time_per_task_s = 725.6 # AA (2026-11-03): https://artificialanalysis.ai/models/comparisons/claude-sonnet-5-5-low-vs-claude-sonnet-5-5-xhigh
 
 [[choice]]
 id = "sonnet-max"
@@ -507,6 +516,7 @@ score_as_of = "2026-10-08"
 aa_index = 56
 price_in = 2.00
 price_out = 10.00
+aa_time_per_task_s = 1262.87 # AA (2026-11-03): https://artificialanalysis.ai/models/comparisons/claude-haiku-5-5-vs-claude-sonnet-5-5
 
 [[choice]]
 id = "opus-low"
