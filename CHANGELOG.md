@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.71 — 2026-11-03
+
+- agx-worker の自己 spawn(終了通知・dispatch・実行中)をすべて stableSelfCommand 経由にし、Homebrew の versioned Cellar パスを使わない
+
 ## 1.22.70 — 2026-11-03
 
 - A claude-route run removes the empty read-only sandbox placeholder files it leaves in the workspace (protected names only, absent before the run) and records them as sandbox_stubs_removed
