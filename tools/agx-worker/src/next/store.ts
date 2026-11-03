@@ -86,7 +86,7 @@ export function setPendingPickAudit(audit: PickAudit): void {
       recordRoutingPick(
         null,
         "pre-start-failure",
-        { ...audit.audit, outcome_kind: "held", exit },
+        { decision_id: audit.audit.decision_id, outcome_kind: "held", exit },
         "pre-start failure",
         root,
       );
@@ -139,6 +139,8 @@ const EventSchema = z.discriminatedUnion("kind", [
     pid: z.number(),
     lease: Lease.optional(),
     pick_audit: PickAuditSchema.optional(),
+    decision_id: z.string().optional(),
+    usage_id: z.string().optional(),
     legacy_key: z.string().optional(),
     legacy: LegacyIdentity.optional(),
   }),
@@ -175,6 +177,8 @@ const EventSchema = z.discriminatedUnion("kind", [
     pid: z.number(),
     lease: Lease.optional(),
     pick_audit: PickAuditSchema.optional(),
+    decision_id: z.string().optional(),
+    usage_id: z.string().optional(),
     legacy_key: z.string().optional(),
     legacy: LegacyIdentity.optional(),
   }),
@@ -253,7 +257,13 @@ const EventSchema = z.discriminatedUnion("kind", [
     override_reason: z.string().optional(),
     evidence: z
       .array(
-        z.object({ path: z.string(), sha256: z.string(), content: z.string() }),
+        z.object({
+          path: z.string(),
+          sha256: z.string(),
+          content: z.string(),
+          content_path: z.string().optional(),
+          content_truncated: z.boolean().optional(),
+        }),
       )
       .optional(),
     legacy_key: z.string().optional(),
@@ -261,6 +271,88 @@ const EventSchema = z.discriminatedUnion("kind", [
 ]);
 export type NextEvent = z.output<typeof EventSchema>;
 const EventTextSchema = jsonOf(EventSchema);
+
+/** Index just past the JSON value that begins at `start`, or -1 when it is not an object or array. */
+function jsonValueEnd(line: string, start: number): number {
+  const first = line.codePointAt(start);
+  if (first !== 0x7b && first !== 0x5b) return -1;
+  let depth = 0;
+  let index = start;
+  while (index < line.length) {
+    const code = line.codePointAt(index);
+    // Jump over string bodies: the long payloads are strings.
+    const next = code === 0x22 ? stringClose(line, index) + 1 : index + 1;
+    if (next <= 0) return -1;
+    depth += code === 0x22 ? 0 : nesting(code);
+    if (depth === 0) return index + 1;
+    index = next;
+  }
+  return -1;
+}
+
+/** Index of the quote that closes the string opened at `quote`, or -1. */
+function stringClose(line: string, quote: number): number {
+  let close = line.indexOf('"', quote + 1);
+  while (close > 0 && backslashesBefore(line, close) % 2 === 1)
+    close = line.indexOf('"', close + 1);
+  return close;
+}
+
+function backslashesBefore(line: string, at: number): number {
+  let count = 0;
+  while (line.codePointAt(at - 1 - count) === 0x5c) count += 1;
+  return count;
+}
+
+function nesting(code: number | undefined): number {
+  if (code === 0x7b || code === 0x5b) return 1;
+  if (code === 0x7d || code === 0x5d) return -1;
+  return 0;
+}
+
+/** Remove the top-level `"key":<object|array>` member (and its leading comma) without parsing it. */
+function dropMember(
+  line: string,
+  key: string,
+): { line: string; dropped: string } | undefined {
+  const marker = `,"${key}":`;
+  const at = line.indexOf(marker);
+  if (at < 0) return undefined;
+  const valueStart = at + marker.length;
+  const end = jsonValueEnd(line, valueStart);
+  if (end < 0) return undefined;
+  return {
+    line: line.slice(0, at) + line.slice(end),
+    dropped: line.slice(valueStart, end),
+  };
+}
+
+const DECISION_ID = /"decision_id":"([^"\\]+)"/u;
+
+/**
+ * Readers never print routing audits or judged evidence, so they are skipped before decoding.
+ * Old started lines keep their decision_id by lifting it out of the copied audit; the audit
+ * itself stays readable in routing.jsonl and the line on disk is untouched.
+ */
+function withoutAuditPayloads(line: string): string {
+  let slim = line;
+  if (slim.includes(',"pick_audit":')) {
+    const dropped = dropMember(slim, "pick_audit");
+    if (dropped !== undefined) {
+      const id = DECISION_ID.exec(dropped.dropped)?.[1];
+      slim =
+        id === undefined || slim.includes(',"decision_id":')
+          ? dropped.line
+          : dropped.line.replace(/\}$/u, `,"decision_id":"${id}"}`);
+    }
+  }
+  if (
+    slim.startsWith('{"kind":"judged"') &&
+    slim.includes(',"evidence":[{"path":"')
+  )
+    slim = dropMember(slim, "evidence")?.line ?? slim;
+  return slim;
+}
 
 function parseCompleteRecordLines(
   text: string,
@@ -273,7 +365,7 @@ function parseCompleteRecordLines(
   const parsedEvents: NextEvent[] = [];
   for (const [index, line] of lines.entries()) {
     if (line === "") continue;
-    const event = EventTextSchema.safeParse(line);
+    const event = EventTextSchema.safeParse(withoutAuditPayloads(line));
     if (event.success) {
       parsedEvents.push(event.data);
       continue;
@@ -493,6 +585,24 @@ export const runningWorkspaceRun = async (
       resolve(run.workspace) === resolve(workspace),
   );
 
+/** The routing audit is written once, to routing.jsonl; a started record carries only its decision_id. */
+function withDecisionReference(
+  event: z.input<typeof EventSchema>,
+  pickAudit: PickAudit | undefined,
+): z.input<typeof EventSchema> {
+  const decisionId = pickAudit?.audit?.decision_id;
+  if (
+    event.kind !== "started" ||
+    event.pick_audit !== undefined ||
+    event.decision_id !== undefined ||
+    typeof decisionId !== "string"
+  )
+    return event;
+  const usage =
+    pickAudit?.usage_id === undefined ? {} : { usage_id: pickAudit.usage_id };
+  return { ...event, decision_id: decisionId, ...usage };
+}
+
 export function append(
   event: z.input<typeof EventSchema>,
   root = stateDir(),
@@ -500,13 +610,7 @@ export function append(
 ): void {
   const path = recordPath(root);
   mkdirSync(dirname(path), { recursive: true });
-  const pickAudit = event.kind === "started" ? pendingPickAudit : undefined;
-  const recorded =
-    event.kind === "started" &&
-    event.pick_audit === undefined &&
-    pickAudit !== undefined
-      ? { ...event, pick_audit: pickAudit }
-      : event;
+  const recorded = withDecisionReference(event, pendingPickAudit);
   appendFileSync(path, `${JSON.stringify(recorded)}\n`, {
     encoding: "utf8",
     flag: "a",
@@ -516,12 +620,12 @@ export function append(
     const origin = events(root).find(
       (row) => row.kind === "started" && row.id === event.id,
     );
-    if (origin?.kind === "started" && origin.pick_audit?.audit !== undefined)
+    if (origin?.kind === "started" && origin.decision_id !== undefined)
       recordRoutingPick(
         null,
         "lifecycle",
         {
-          ...origin.pick_audit.audit,
+          decision_id: origin.decision_id,
           outcome_kind: event.returned === true ? "returned" : "held",
           run_id: event.id,
           worker_outcome: event.outcome ?? null,
@@ -533,12 +637,85 @@ export function append(
   if (publish) schedulePublication(root);
 }
 
+const RECORD_CHUNK_BYTES = 4 * 1024 * 1024;
+
+function readChunk(fd: number, position: number, size: number): Buffer {
+  const chunk = Buffer.alloc(size);
+  let length = 0;
+  while (length < size) {
+    const count = readSync(fd, chunk, {
+      offset: length,
+      length: size - length,
+      position: position + length,
+    });
+    if (count === 0) break;
+    length += count;
+  }
+  return chunk.subarray(0, length);
+}
+
+/**
+ * Decode the complete lines in bytes [from, to) of the record log, one bounded chunk at a time,
+ * so the log is never held whole as a buffer, a string and a line array. Chunks end on a newline
+ * byte, so a multi-byte character is never split; an incomplete tail is left unconsumed.
+ */
+function readRecordBatches(
+  fd: number,
+  from: number,
+  to: number,
+  path: string,
+  firstLine: number,
+  onEvents: (batch: NextEvent[]) => void,
+  malformed?: Record<string, unknown>[],
+): { consumed: number; lineCount: number } {
+  let position = from;
+  let pending = Buffer.alloc(0);
+  let consumed = 0;
+  let lineCount = 0;
+  while (position < to) {
+    const chunk = readChunk(
+      fd,
+      position,
+      Math.min(RECORD_CHUNK_BYTES, to - position),
+    );
+    if (chunk.length === 0) break;
+    position += chunk.length;
+    const joined =
+      pending.length === 0 ? chunk : Buffer.concat([pending, chunk]);
+    const complete = joined.lastIndexOf(10) + 1;
+    if (complete > 0) {
+      const decoded = parseCompleteRecordLines(
+        joined.subarray(0, complete).toString("utf8"),
+        path,
+        firstLine + lineCount,
+        malformed,
+      );
+      onEvents(decoded.events);
+      lineCount += decoded.lineCount;
+      consumed += complete;
+    }
+    pending = Buffer.from(joined.subarray(complete));
+  }
+  return { consumed, lineCount };
+}
+
 export function events(root = stateDir()): NextEvent[] {
   const path = recordPath(root);
   if (!existsSync(path)) return [];
-  const text = readFileSync(path, "utf8");
-  const complete = text.lastIndexOf("\n") + 1;
-  return parseCompleteRecordLines(text.slice(0, complete), path).events;
+  const fd = openSync(path, "r");
+  const all: NextEvent[] = [];
+  const read = fromThrowable(() =>
+    readRecordBatches(fd, 0, fstatSync(fd).size, path, 1, (batch) => {
+      for (const event of batch) all.push(event);
+    }),
+  )();
+  closeSync(fd);
+  if (read.isErr())
+    return exitWithError(
+      "agx: cannot read record log: " + String(read.error) + "\n",
+      1,
+    );
+  return all;
 }
 
 type LegacyImportResult = Readonly<{
@@ -1109,36 +1286,27 @@ async function readFoldedRuns(
     valid ? snapshot.runs.map((run) => [run.id, run]) : [],
   );
   const malformedRows = valid ? snapshot.malformed : [];
-  const read = fromThrowable(() => {
-    const bytes = Buffer.alloc(stat.size - offset);
-    let length = 0;
-    while (length < bytes.length) {
-      const count = readSync(fd, bytes, {
-        offset: length,
-        length: bytes.length - length,
-        position: offset + length,
-      });
-      if (count === 0) break;
-      length += count;
-    }
-    return bytes.subarray(0, length);
-  })();
+  const read = fromThrowable(() =>
+    readRecordBatches(
+      fd,
+      offset,
+      stat.size,
+      path,
+      lineCount + 1,
+      (batch) => {
+        foldInto(runs, batch);
+      },
+      malformedRows,
+    ),
+  )();
   closeSync(fd);
   if (read.isErr())
     return exitWithError(
       "agx: cannot read record log: " + String(read.error) + "\n",
       1,
     );
-  const bytes = read.value;
-  const complete = bytes.lastIndexOf(10) + 1;
-  const decoded = parseCompleteRecordLines(
-    bytes.subarray(0, complete).toString("utf8"),
-    path,
-    lineCount + 1,
-    malformedRows,
-  );
-  foldInto(runs, decoded.events);
-  lineCount += decoded.lineCount;
+  const { consumed: complete, lineCount: readLines } = read.value;
+  lineCount += readLines;
   malformed?.push(...malformedRows);
   foldCache.set(path, {
     version: 1,

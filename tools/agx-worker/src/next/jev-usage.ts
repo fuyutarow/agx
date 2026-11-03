@@ -115,6 +115,7 @@ const Started = z.object({
   id: z.string(),
   at: z.iso.datetime({ offset: true }),
   pick_audit: z.object({ usage_id: z.string().optional() }).optional(),
+  usage_id: z.string().optional(),
   legacy_key: z.string().optional(),
 });
 const Legacy = z.object({
@@ -197,11 +198,8 @@ export async function jevUsageStats(window: string): Promise<number> {
           legacy.has(run.legacy_key.slice("run:".length))
         )
           continue;
-        if (
-          run.pick_audit?.usage_id === undefined ||
-          !ids.has(run.pick_audit.usage_id)
-        )
-          historicalMissing += 1;
+        const usageId = run.usage_id ?? run.pick_audit?.usage_id;
+        if (usageId === undefined || !ids.has(usageId)) historicalMissing += 1;
       }
       const missing = selected.filter((row) => row.tokens === null).length;
       const unknown = missing + historicalMissing;

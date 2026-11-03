@@ -1595,6 +1595,9 @@ export async function judgeBatch(
   return 0;
 }
 
+/** A judged record carries at most this much of each evidence file inline. */
+export const JUDGED_EVIDENCE_INLINE_CHARS = 8192;
+
 export async function judgeRun(
   flags: {
     id?: string | undefined;
@@ -1640,10 +1643,26 @@ export async function judgeRun(
     const decoded = await Promise.try(() =>
       new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes),
     ).catch(() => fatal(`evidence must be UTF-8: ${path}`, 2));
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    if (decoded.length <= JUDGED_EVIDENCE_INLINE_CHARS) {
+      evidence.push({ path, sha256, content: decoded });
+      continue;
+    }
+    // The record keeps a bounded prefix; the full text lives in a file the record names.
+    const contentPath = join(
+      root,
+      "runs",
+      resolution.row.id,
+      `judged-evidence-${sha256}.txt`,
+    );
+    mkdirSync(dirname(contentPath), { recursive: true });
+    writeFileSync(contentPath, bytes);
     evidence.push({
       path,
-      sha256: createHash("sha256").update(bytes).digest("hex"),
-      content: decoded,
+      sha256,
+      content: decoded.slice(0, JUDGED_EVIDENCE_INLINE_CHARS),
+      content_path: contentPath,
+      content_truncated: true,
     });
   }
   const at = now();

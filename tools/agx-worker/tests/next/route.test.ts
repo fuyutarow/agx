@@ -233,6 +233,29 @@ function appendStarted(row: string) {
   return events().findLast((event) => event.kind === "started");
 }
 
+/**
+ * A started record carries only decision_id; the pick audit is read from
+ * routing.jsonl, where it is written once (the first row for that decision).
+ */
+function pickAuditOf(
+  started: { decision_id?: string | undefined } | undefined,
+) {
+  const id = started?.decision_id;
+  if (id === undefined) expect.unreachable("started record has no decision_id");
+  const row = routingEvents().events.find(
+    (event) => event.audit?.decision_id === id,
+  );
+  if (row === undefined) expect.unreachable(`no routing row for ${id}`);
+  const audit = row.audit ?? {};
+  return {
+    audit,
+    source: row.source,
+    probabilities: audit.choice_probabilities,
+    answer: audit.answer,
+    usage_snapshot: audit.usage_snapshot,
+  };
+}
+
 afterEach(async () => {
   await flushRunPublications();
   if (priorRoster === undefined) delete process.env.AGX_CONFIG;
@@ -594,10 +617,12 @@ describe("capability constrained routing", () => {
     startServer("luna-high", { "luna-high": 1 });
     const selected = await route("missing source audit");
     const started = appendStarted(selected.id);
-    if (started?.kind === "started")
-      expect(started.pick_audit?.usage_snapshot).toMatchObject({
+    if (started?.kind === "started") {
+      expect(started.pick_audit).toBeUndefined();
+      expect(pickAuditOf(started).usage_snapshot).toMatchObject({
         codex: { source_reason: "no fresh Codex rollout source" },
       });
+    }
   });
 
   test("th-purge ticket class retains the extended timeout and class-based score bar", async () => {
@@ -684,7 +709,7 @@ describe("capability constrained routing", () => {
     const started = appendStarted(selected.id);
     expect(started?.kind).toBe("started");
     if (started?.kind === "started")
-      expect(started.pick_audit).toMatchObject({
+      expect(pickAuditOf(started)).toMatchObject({
         source: "jev-classified",
         probabilities: { localized: 1 },
       });
@@ -736,11 +761,12 @@ describe("capability constrained routing", () => {
     const started = appendStarted(selected.id);
     expect(started?.kind).toBe("started");
     if (started?.kind === "started") {
-      expect(started.pick_audit?.source).toBe("fallback-invalid-class");
-      expect(started.pick_audit?.probabilities).toEqual({
+      const pick = pickAuditOf(started);
+      expect(pick.source).toBe("fallback-invalid-class");
+      expect(pick.probabilities).toEqual({
         "not-a-roster-row": 1,
       });
-      expect(started.pick_audit?.usage_snapshot).toMatchObject(
+      expect(pick.usage_snapshot).toMatchObject(
         server.request()?.state.routes ?? {},
       );
     }
@@ -904,7 +930,7 @@ test("route contract: an unnamed return never refuses a dispatch", async () => {
     expect(picked.id).toBe("luna-high");
     const started = appendStarted(picked.id);
     if (started?.kind === "started")
-      expect(started.pick_audit).toMatchObject({
+      expect(pickAuditOf(started)).toMatchObject({
         source: "fallback-unnamed-return",
         answer: { choice: "missing_input" },
       });
@@ -920,7 +946,7 @@ test("missing worker answer uses the default and records the missing-answer fall
   expect(picked.id).toBe("luna-high");
   const started = appendStarted(picked.id);
   if (started?.kind === "started")
-    expect(started.pick_audit).toMatchObject({
+    expect(pickAuditOf(started)).toMatchObject({
       source: "fallback-missing-answer",
       answer: null,
     });
@@ -1170,7 +1196,7 @@ test("audit retains class probabilities, the bar, qualifying rows, and determini
   expect(server.rawRequest()?.questions.worker.criteria.localized).toBeDefined();
   const started = appendStarted(selected.id);
   if (started?.kind === "started")
-    expect(started.pick_audit?.audit).toEqual(audit);
+    expect(pickAuditOf(started).audit).toEqual(audit ?? {});
 });
 
 test("route contract: the selected row depends on the ticket class, and the choice list Jev sees contains no model rows", async () => {
@@ -1299,8 +1325,20 @@ test("refusal and pre-start failure retain full audit fields without a started r
     expect(event?.outcome).toBe(
       masked.length === 0 ? "pre-start failure" : "refusal",
     );
+    // A pre-start failure row references its decision; the full audit is
+    // stored once, on the pick row carrying the same decision_id.
+    const decisionId = event?.audit?.decision_id;
+    const stored = routingEvents().events.find(
+      (row) => row.audit?.decision_id === decisionId && row.audit?.input !== undefined,
+    );
+    if (masked.length === 0)
+      expect(event?.audit).toEqual({
+        decision_id: decisionId,
+        outcome_kind: "held",
+        exit: 1,
+      });
     for (const field of auditFields)
-      expect(Object.hasOwn(event?.audit ?? {}, field)).toBe(true);
+      expect(Object.hasOwn(stored?.audit ?? {}, field)).toBe(true);
   }
 });
 
