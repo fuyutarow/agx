@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.68 — 2026-11-03
+
+- claude-route runs parse the receipt's result (or structured_output) as the worker's report instead of the receipt envelope, so a valid report no longer ends malformed
+
 ## 1.22.67 — 2026-11-03
 
 - A dispatched run that exits before it records started now ends launch-failed with its cause and stderr instead of being read later as lost / owner-gone
