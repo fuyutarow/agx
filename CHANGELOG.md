@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.76 — 2026-11-03
+
+- claude workspace-write workers get the same network egress as codex: sandbox network allowance and WebFetch/WebSearch
+
 ## 1.22.75 — 2026-11-03
 
 - claude catalog rows carry AA's published time per task so fresh routing can select them
