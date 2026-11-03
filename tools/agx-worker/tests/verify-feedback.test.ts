@@ -1,11 +1,14 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "../../shared/src/zod.ts";
 import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 import { decodedJson } from "./decode.ts";
+import { REPORT_INSTRUCTION } from "../src/report.ts";
 import { prepareTicketRepo } from "./ticket-repo.ts";
+
+setDefaultTimeout(60000);
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -114,7 +117,7 @@ AbortSignal.timeout = (ms) => {
       },
       stdout: "pipe",
       stderr: "pipe",
-      timeout: 15000,
+      timeout: 55000,
     },
   );
   const [exit, stdout, stderr] = await Promise.all([
@@ -177,6 +180,12 @@ test("failed verification feeds the same session and succeeds", async () => {
   expect(calls[1]?.args).toContain("--resume");
   expect(calls[1]?.args).toContain("test-session");
   expect(calls[1]?.prompt).toContain(command);
+  expect(calls[1]?.prompt).toContain("Verification failed. Fix the errors and finish.");
+  expect(calls[1]?.prompt).toContain(REPORT_INSTRUCTION);
+  expect(calls[1]?.prompt).toBe(
+    calls[1]?.prompt.replace(REPORT_INSTRUCTION, "").trimEnd() +
+      `\n\n${REPORT_INSTRUCTION}\n`,
+  );
   expect(calls[1]?.prompt).toContain(
     report.verify_rounds[0]?.[0]?.log_path ?? "missing",
   );

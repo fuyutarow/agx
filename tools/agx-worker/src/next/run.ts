@@ -389,10 +389,12 @@ export async function check(flags: Flags): Promise<number> {
 
 export async function run(flags: Flags): Promise<number> {
   const guard = guardPreLaunch(value(flags, "dispatchBinding"));
-  return runUnguarded(flags).catch((error: unknown) => {
+  const running = runUnguarded(flags);
+  // The side branch records the failure; the caller still sees the original rejection.
+  running.catch((error: unknown) => {
     guard.noteError(error);
-    return Promise.reject(error);
   });
+  return running;
 }
 
 async function runUnguarded(flags: Flags): Promise<number> {
@@ -1041,7 +1043,16 @@ async function runUnguarded(flags: Flags): Promise<number> {
     briefIsOriginal = false;
     writeFileSync(
       workerBrief,
-      `Verification failed. Fix the errors and finish.\n\n${details.join("\n\n")}\n`,
+      withReportInstruction(
+        [
+          "Verification failed. Fix the errors and finish.",
+          "",
+          details.join("\n\n"),
+          ...(activeRow.route === "claude"
+            ? ["", claudeAckLine(boundAckName())]
+            : []),
+        ].join("\n"),
+      ),
     );
     return true;
   };
