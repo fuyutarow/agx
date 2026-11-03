@@ -25,9 +25,18 @@ export function verifyLine(verify: string[]): string {
   return `The router runs these verify commands outside the sandbox after you exit and grades you on them: ${list}. Run commands your sandbox can run and the ticket permits in the foreground before you finish; do not background anything you need to see. If a command needs something the sandbox lacks (such as a GPU, user systemd, agent-resource-run, or writable paths), or the ticket says not to run it, do not stop or refuse: finish the change and the router will run it outside the sandbox.`;
 }
 
-/** Appended only to a claude-route brief: `agx msg` refuses claude-to-claude by contract. */
-export const claudeAckLine =
-  "On this route `agx msg send` cannot reach a claude: target; send the completion ACK the brief asks for with the SendMessage tool to the coordinator session instead, with the same content, once.";
+/**
+ * Appended only to a claude-route brief: `agx msg` refuses claude-to-claude by contract, and
+ * SendMessage resolves session names, not UUIDs. `name` is the dispatch-bound session name;
+ * undefined means dispatch could not resolve one.
+ */
+export function claudeAckLine(name: string | undefined): string {
+  const head =
+    "On this route `agx msg send` cannot reach a claude: target; send the completion ACK the brief asks for with the SendMessage tool";
+  return name === undefined
+    ? `${head} only if you know a session name it resolves; the coordinator's session name is unknown here (the target is unbound), so do not guess: put the ACK, with the same content, in your final report instead.`
+    : `${head} to ${name}, with the same content, once.`;
+}
 
 // --- overlap of write scopes ---------------------------------------------------------------------
 //

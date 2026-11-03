@@ -159,6 +159,14 @@ const contextFor = async (path: string, cwd: string, ticket: NextTicket) => {
     );
   return ctx;
 };
+/** The dispatch-bound session name for the ACK target, from the run environment; undefined when unbound. */
+const boundAckName = (): string | undefined => {
+  if (process.env.AGX_DISPATCH_ACK_UNBOUND === "1") return undefined;
+  const read = readBoundClaudeTarget();
+  return read.kind === "present"
+    ? read.binding.address.slice("claude:".length)
+    : undefined;
+};
 export const renderPromise = (
   ticket: NextTicket,
   cwd: string,
@@ -196,7 +204,7 @@ export const renderPromise = (
       `outcome: ${ticket.outcome}`,
       `writes: ${JSON.stringify(ticket.writes.map((glob) => resolve(cwd, glob)))}`,
       ...(ticket.verify.length === 0 ? [] : [verifyLine(ticket.verify)]),
-      ...(routeName === "claude" ? [claudeAckLine] : []),
+      ...(routeName === "claude" ? [claudeAckLine(boundAckName())] : []),
       `Sandbox mode: ${sandbox}${sandbox === "none" ? " (unsandboxed)" : ""}.`,
       ...(
         [
