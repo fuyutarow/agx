@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.74 — 2026-11-03
+
+- claude-route briefs name the dispatch-bound session name for the completion ACK (or say it is unknown and ask for the final report), so SendMessage can resolve it
+
 ## 1.22.73 — 2026-11-03
 
 - A refused dispatch prints the refusal reason on its first stderr line; WARN lines follow once each, store-path variants merged
