@@ -56,7 +56,7 @@ test("hermetic contract: spawned mise and agx ignore host user config", async ()
   const policy = await Bun.file(SAFE_POLICY).text();
   await Bun.write(
     join(hostAgxConfig, "agx.toml"),
-    policy.replace('default = "luna-high"', `default = "${HOST_AGX_MARKER}"`),
+    policy.replace("exclude = []", `exclude = ["${HOST_AGX_MARKER}"]`),
   );
   expect(await Bun.file(join(hostAgxConfig, "agx.toml")).text()).toContain(
     HOST_AGX_MARKER,
@@ -192,9 +192,9 @@ test("hermetic contract: spawned mise and agx ignore host user config", async ()
   expect(process.env.MISE_PARANOID).toBeUndefined();
   expect(process.env.MISE_NO_CONFIG).toBeUndefined();
 
-  const roster = jsonOf(z.looseObject({ default: z.string() })).safeParse(
+  const roster = jsonOf(z.looseObject({ as_of: z.string() })).safeParse(
     agxResult.stdout,
   );
   expect(roster.success).toBe(true);
-  if (roster.success) expect(roster.data.default).toBe("luna-high");
+  if (roster.success) expect("default" in roster.data).toBe(false);
 });

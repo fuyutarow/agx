@@ -394,7 +394,7 @@ test("real roster CLI selections are persisted before any worker starts", async 
     const data = report(stats(env));
     expect(data.jev.denominator).toBe(1);
     expect(data.jev.codex_share).toBe(1);
-    // A valid HTTP response without a choice produces a persisted fallback, not a Jev pick.
+    // A valid HTTP response without a choice is refused, never substituted by a fallback row.
     server.reload({ fetch: () => Response.json({ answers: {} }) });
     const fallback = Bun.spawn([...args, "roster", ticket], {
       env: { ...env, JEV_URL: `http://127.0.0.1:${server.port}` },
@@ -407,10 +407,11 @@ test("real roster CLI selections are persisted before any worker starts", async 
       new Response(fallback.stderr).text(),
       fallback.exited,
     ]);
-    expect(fallbackExit, fallbackErr).toBe(0);
+    expect(fallbackExit, fallbackErr).toBe(2);
+    expect(fallbackErr.split("\n")[0]).toStartWith("route refused: ");
     const after = report(stats(env));
     expect(after.jev.denominator).toBe(1);
-    expect(after.fallback_count).toBe(1);
+    expect(after.fallback_count).toBe(0);
   }
 });
 

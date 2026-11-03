@@ -149,7 +149,7 @@ window and collection timestamps, effective USD rates with their catalog source
 and date, estimates, completeness and unknown counters. Missing historical usage
 is explicit; no usage evidence produces `null` rather than zero tokens.
 Totals cover retained observations only, and are `null` when inspected records
-have missing usage. Routing attempts are captured even when selection falls back
+have missing usage. Routing attempts are captured even when routing is refused
 or no worker subsequently starts. Retained legacy usage is included without an
 import. Prices describe effective configuration, not a historical bill.
 See [Jev usage JSON, version 1](contract.md#jev-usage-json-version-1) for count,
@@ -210,7 +210,10 @@ for all values, precedence, compatibility and exit semantics.
 Routing audits are retained in the private routing journal before worker startup.
 `agx worker stats --routing --json` reports row pick counts, top-two probability
 margins, TB4 luna exclusions, refusals and pre-start failures. Counts describe
-routing selections, including fallbacks, rather than worker success or rejection.
+routing selections rather than worker success or rejection. There is no fallback:
+when Jev cannot route, the dispatch is refused before any effect with one
+`route refused: <failed step>` first line, and the refusal is recorded with that
+reason. A policy that sets `route.default` is rejected as removed.
 See [the routing audit contract](contract.md#routing-audit-journal) for retained
 request, filtering, replay and missing-evidence semantics.
 

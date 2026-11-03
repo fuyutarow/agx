@@ -61,7 +61,13 @@ const RepoRouteConfig = z.strictObject({
     .array(z.enum(["codex", "claude"]))
     .min(1)
     .optional(),
-  default: z.string().trim().min(1).optional(),
+  // Retired 2026-11-03: agx never substitutes a row when Jev cannot route.
+  default: z
+    .never({
+      error:
+        "route.default was removed: agx never substitutes a row when Jev cannot route; delete the key",
+    })
+    .optional(),
 });
 export type RepoRouteOverride = z.output<typeof RepoRouteConfig>;
 const Config = z.strictObject({

@@ -513,17 +513,11 @@ test.each([
     expect(String(result.error)).not.toContain("\n");
   }
 });
-test("repository [route] parses allow and default", async () => {
-  const f = await fixture(
-    'schema = 1\n[route]\nallow = ["claude"]\ndefault = "haiku-low"\n',
-  );
+test("repository [route] parses allow", async () => {
+  const f = await fixture('schema = 1\n[route]\nallow = ["claude"]\n');
   const result = await resolveAgxConfigWithProvenance(f.root);
   expect(result.ok).toBe(true);
-  if (result.ok)
-    expect(result.value.repoRoute).toEqual({
-      allow: ["claude"],
-      default: "haiku-low",
-    });
+  if (result.ok) expect(result.value.repoRoute).toEqual({ allow: ["claude"] });
 });
 test("repository [route] accepts an omitted default", async () => {
   const f = await fixture('schema = 1\n[route]\nallow = ["claude"]\n');
@@ -540,7 +534,8 @@ test("an absent repository [route] leaves repoRoute undefined", async () => {
 test.each([
   ['[route]\nallow = ["gemini"]\n', "route.allow"],
   ["[route]\nallow = []\n", "route.allow"],
-  ['[route]\ndefault = ""\n', "route.default"],
+  ['[route]\ndefault = "haiku-low"\n', "route.default was removed"],
+  ['[route]\ndefault = ""\n', "route.default was removed"],
   ['[route]\nexclude = ["luna-low"]\n', "route.exclude: unknown key"],
   ["[route]\njev = {}\n", "route.jev: unknown key"],
 ])("rejects invalid repository [route]: %s", async (route, message) => {

@@ -33,7 +33,7 @@ const ticketText = (prose: string): string =>
   `+++\nschema = 2\nname = "pin"\nwrites = []\noutcome = "continue pinned"\nverify = []\n[proposition]\nid = "PIN"\nclaim = "continue pins the row"\nrefuted_by = "continue routes"\n+++\n${prose}\n`;
 
 // Seeds one ended run per prior row; the Jev endpoint is a closed port, so a continue that
-// routed would fall back to the roster default (luna-high) instead of the pinned row.
+// routed would be refused (Jev unreachable) instead of keeping the pinned row.
 const fixture = async (ticketName = "pin") => {
   const root = tempDirs.register(
     mkdtempSync(join(tmpdir(), `agx-test-${process.pid}-continue-`)),
@@ -674,7 +674,7 @@ describe("agx worker run --continue pins the prior row", () => {
     const policy = join(f.root, "policy.toml");
     writeFileSync(
       policy,
-      `schema = 1\n[route]\nallow = ["codex"]\ndefault = "terra-high"\nexclude = []\nmax_task_chars = 6000\ntimeout_ms = 20000\nno_egress = []\npick_temperature = 0.5\n[route.jev]\napi = "typesafe"\nurl = "http://127.0.0.1:1/choice"\nmodel = "test"\n[claude_run]\nmax_budget_usd = 2\nmax_turns = 60\nreason = "A fixed test policy for a bounded worker run."\n`,
+      `schema = 1\n[route]\nallow = ["codex"]\nexclude = []\nmax_task_chars = 6000\ntimeout_ms = 20000\nno_egress = []\npick_temperature = 0.5\n[route.jev]\napi = "typesafe"\nurl = "http://127.0.0.1:1/choice"\nmodel = "test"\n[claude_run]\nmax_budget_usd = 2\nmax_turns = 60\nreason = "A fixed test policy for a bounded worker run."\n`,
     );
     const rosterModule = new URL("../../src/roster/index.ts", import.meta.url)
       .pathname;

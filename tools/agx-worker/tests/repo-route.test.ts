@@ -31,7 +31,7 @@ async function repoWith(repoToml: string | undefined): Promise<string> {
   return directory;
 }
 
-/** The user policy: the shipped example (codex-only routes and the shipped default). */
+/** The user policy: the shipped example (codex-only routes). */
 async function userPolicy(): Promise<string> {
   const example = await readFile(examplePath, "utf8");
   const directory = await mkdtemp(join(tmpdir(), "agx-user-policy-"));
@@ -42,26 +42,25 @@ async function userPolicy(): Promise<string> {
 }
 
 const CLAUDE_ROW = "haiku-low";
-const CODEX_ROW = "luna-high";
 
 describe("repository [route] override", () => {
-  test("repo A with [route] yields the repo routes and default", async () => {
+  test("repo A with [route] yields the repo routes", async () => {
     const policyPath = await userPolicy();
     const repoRoot = await repoWith(
-      `schema = 1\n[route]\nallow = ["claude"]\ndefault = "${CLAUDE_ROW}"\n`,
+      `schema = 1\n[route]\nallow = ["claude"]\n`,
     );
     const loaded = await loadRoster({ catalogPath, policyPath, repoRoot });
     expect(loaded.ok).toBe(true);
     if (!loaded.ok) return;
     expect(loaded.value.auto.routes).toEqual(["claude"]);
-    expect(loaded.value.default).toBe(CLAUDE_ROW);
+    expect("default" in loaded.value).toBe(false);
     expect(routeFilterLabel(loaded.value.auto)).toBe('routes=["claude"]');
   });
 
   test("keys the repo does not declare stay user-global", async () => {
     const policyPath = await userPolicy();
     const repoRoot = await repoWith(
-      `schema = 1\n[route]\nallow = ["claude"]\ndefault = "${CLAUDE_ROW}"\n`,
+      `schema = 1\n[route]\nallow = ["claude"]\n`,
     );
     const loaded = await loadRoster({ catalogPath, policyPath, repoRoot });
     const user = await loadRoster({
@@ -83,14 +82,12 @@ describe("repository [route] override", () => {
     expect(loaded.ok).toBe(true);
     if (!loaded.ok) return;
     expect(loaded.value.auto.routes).toEqual(["codex"]);
-    expect(loaded.value.default).toBe(CODEX_ROW);
+    expect("default" in loaded.value).toBe(false);
   });
 
   test("the override of one repo does not leak into another", async () => {
     const policyPath = await userPolicy();
-    const repoA = await repoWith(
-      `schema = 1\n[route]\nallow = ["claude"]\ndefault = "${CLAUDE_ROW}"\n`,
-    );
+    const repoA = await repoWith(`schema = 1\n[route]\nallow = ["claude"]\n`);
     const repoB = await repoWith("schema = 1\n");
     const a = await loadRoster({ catalogPath, policyPath, repoRoot: repoA });
     const b = await loadRoster({ catalogPath, policyPath, repoRoot: repoB });
@@ -98,18 +95,21 @@ describe("repository [route] override", () => {
     expect(b.ok && b.value.auto.routes).toEqual(["codex"]);
   });
 
-  test("a default on a route the effective allow excludes is rejected naming the repo agx.toml", async () => {
-    const policyPath = await userPolicy();
-    const repoRoot = await repoWith(
-      `schema = 1\n[route]\ndefault = "${CLAUDE_ROW}"\n`,
-    );
-    const loaded = await loadRoster({ catalogPath, policyPath, repoRoot });
-    expect(loaded.ok).toBe(false);
-    if (!loaded.ok) {
-      expect(loaded.error).toContain("non-excluded row on an allowed route");
-      expect(loaded.error).toContain(join(repoRoot, "agx.toml"));
-    }
-  });
+  test.each([`"${CLAUDE_ROW}"`, '""'])(
+    "a repo [route] that sets default = %s is rejected as removed, naming the repo agx.toml",
+    async (value) => {
+      const policyPath = await userPolicy();
+      const repoRoot = await repoWith(
+        `schema = 1\n[route]\ndefault = ${value}\n`,
+      );
+      const loaded = await loadRoster({ catalogPath, policyPath, repoRoot });
+      expect(loaded.ok).toBe(false);
+      if (!loaded.ok) {
+        expect(loaded.error).toContain("route.default was removed");
+        expect(loaded.error).toContain(join(repoRoot, "agx.toml"));
+      }
+    },
+  );
 
   test.each([
     ['schema = 1\n[route]\nallow = ["gemini"]\n', "route.allow"],

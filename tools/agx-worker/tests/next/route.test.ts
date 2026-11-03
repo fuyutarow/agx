@@ -1,9 +1,6 @@
 import { createHash } from "node:crypto";
 import { routingEvents } from "../../src/next/routing-events.ts";
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-
-// Routing tests spawn mise and agx children; the 5 s default fails on a loaded host.
-setDefaultTimeout(60_000);
 import { mkdirSync, rmSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -27,14 +24,20 @@ import { parseNextTicket } from "../../src/next/ticket.ts";
 import { prepareTicketRepo } from "../ticket-repo.ts";
 import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
+// Each route() reads the roster and usage state from disk; on a loaded host a
+// test with several picks exceeds the 5 s default.
+setDefaultTimeout(60_000);
+
 const RoutingRequest = z.looseObject({
   state: z.looseObject({
     task: z.string(),
     published_task_metrics: z.record(
       z.string(),
-      z.object({
-        aa_time_per_task_s: z.number().nullable(),
-      }).catchall(z.unknown()),
+      z
+        .object({
+          aa_time_per_task_s: z.number().nullable(),
+        })
+        .catchall(z.unknown()),
     ),
     routes: z.looseObject({
       claude: z.looseObject({
@@ -71,6 +74,11 @@ const RoutingRequest = z.looseObject({
     }),
   }),
 });
+
+function loadedRosterShape(loaded: Awaited<ReturnType<typeof loadRoster>>) {
+  if (!loaded.ok) return expect.unreachable(loaded.error);
+  return loaded.value;
+}
 
 const priorRoster = process.env.AGX_CONFIG;
 const priorUrl = process.env.JEV_URL;
@@ -189,7 +197,8 @@ function startServer(
       }
       const wireChoice = wireIds[choice] ?? choice;
       let reasonCode: string | undefined;
-      if (choice === "missing_input") reasonCode = "verify requires $AGX_RUN_DIR/parity.tsv";
+      if (choice === "missing_input")
+        reasonCode = "verify requires $AGX_RUN_DIR/parity.tsv";
       else if (["split", "uncheckable", "contradiction"].includes(choice))
         reasonCode = `specific ${choice} reason`;
       const wireProbabilities =
@@ -266,6 +275,25 @@ function pickAuditOf(
   };
 }
 
+/** A routing failure: the refusal result, its single-line reason and the recorded journal event. */
+async function expectRefusal(brief: string, timeoutS = 600) {
+  const result = await route(brief, [], timeoutS, [], {}, null, {
+    capacityRetry: true,
+    timeoutMs: 2000,
+  });
+  expect(result.kind).toBe("refused");
+  if (result.kind !== "refused") return expect.unreachable("not refused");
+  expect(result.exitCode).toBe(2);
+  expect(result.message.startsWith("route refused: ")).toBe(true);
+  expect(result.message.endsWith("\n")).toBe(true);
+  expect(result.message.slice(0, -1)).not.toContain("\n");
+  const event = routingEvents().events.at(-1);
+  expect(event?.row).toBeNull();
+  expect(event?.outcome).toBe("refusal");
+  expect(event?.audit?.reason).toBe(result.message);
+  return { message: result.message, event };
+}
+
 afterEach(async () => {
   await flushRunPublications();
   if (priorRoster === undefined) delete process.env.AGX_CONFIG;
@@ -288,7 +316,7 @@ describe("retired Jev endpoint overrides", () => {
     for (const value of ["", "https://retired.invalid"]) {
       test(`rejects ${name}=${JSON.stringify(value)} before sending`, async () => {
         await isolateState();
-        const server = startServer("sol-high");
+        const server = startServer("localized");
         const child = Bun.spawn(
           [
             process.execPath,
@@ -319,7 +347,7 @@ describe("retired Jev endpoint overrides", () => {
 
 describe("capability constrained routing", () => {
   for (const capabilities of [[], ["terminal-agentic", "long-tool-loop"]]) {
-    for (const probabilities of [undefined, { "sonnet-high": 1 }]) {
+    for (const probabilities of [undefined, { localized: 1 }]) {
       test(`codex allowlist excludes Claude offers and picks: ${JSON.stringify({ capabilities, probabilities })}`, async () => {
         const { root } = await isolateState();
         const path = join(root, "roster.toml");
@@ -330,7 +358,7 @@ describe("capability constrained routing", () => {
             '[route]\nallow = ["codex"]',
           ),
         );
-        const server = startServer("sonnet-high", probabilities);
+        const server = startServer("localized", probabilities);
         const selected = await route(
           "Claude hook edit requiring strong capability",
           capabilities,
@@ -340,7 +368,9 @@ describe("capability constrained routing", () => {
         expect(typeof criteria.mechanical).toBe("string");
         expect(typeof criteria.localized).toBe("string");
         expect(typeof criteria.cross_module).toBe("string");
-        expect(Object.keys(criteria).some((id) => id.startsWith("model_"))).toBe(false);
+        expect(
+          Object.keys(criteria).some((id) => id.startsWith("model_")),
+        ).toBe(false);
         expect(server.request()?.state.routes.claude.available).toBe(true);
       });
     }
@@ -359,45 +389,47 @@ describe("capability constrained routing", () => {
     );
     const path = join(root, "roster.toml");
     const original = await readFile(path, "utf8");
-    await Promise.all([undefined, '["codex"]'].map(async (routes, index) => {
-      const configPath = join(root, `roster-${index}.toml`);
-      await writeFile(
-        configPath,
-        routes === undefined
-          ? original
-          : original.replace("[route]", `[route]\nallow = ${routes}`),
-      );
-      const child = Bun.spawn(
-        [
-          process.execPath,
-          "tools/agx-worker/src/next/cli.ts",
-          "check",
-          ticket,
-          "--cd",
-          root,
-        ],
-        {
-          env: {
-            ...subprocessEnvironment(),
-            AGX_CONFIG: configPath,
-            TYPESAFE_API_KEY: "routing-fixture-secret",
-            // mise would otherwise read the user's ~/.config/mise/conf.d, which is outside MISE_CONFIG_DIR.
-            MISE_NO_CONFIG: "1",
+    await Promise.all(
+      [undefined, '["codex"]'].map(async (routes, index) => {
+        const configPath = join(root, `roster-${index}.toml`);
+        await writeFile(
+          configPath,
+          routes === undefined
+            ? original
+            : original.replace("[route]", `[route]\nallow = ${routes}`),
+        );
+        const child = Bun.spawn(
+          [
+            process.execPath,
+            "tools/agx-worker/src/next/cli.ts",
+            "check",
+            ticket,
+            "--cd",
+            root,
+          ],
+          {
+            env: {
+              ...subprocessEnvironment(),
+              AGX_CONFIG: configPath,
+              TYPESAFE_API_KEY: "routing-fixture-secret",
+              // Prevent mise from reading the user configuration outside the fixture.
+              MISE_NO_CONFIG: "1",
+            },
+            stdout: "pipe",
+            stderr: "pipe",
+            timeout: 5000,
           },
-          stdout: "pipe",
-          stderr: "pipe",
-          timeout: 5000,
-        },
-      );
-      const [exit, stdout, stderr] = await Promise.all([
-        child.exited,
-        new Response(child.stdout).text(),
-        new Response(child.stderr).text(),
-      ]);
-      expect(stderr).toBe("");
-      expect(exit).toBe(0);
-      expect(stdout).toContain(`routes=${routes ?? "all (codex, claude)"}`);
-    }));
+        );
+        const [exit, stdout, stderr] = await Promise.all([
+          child.exited,
+          new Response(child.stdout).text(),
+          new Response(child.stderr).text(),
+        ]);
+        expect(stderr).toBe("");
+        expect(exit).toBe(0);
+        expect(stdout).toContain(`routes=${routes ?? "all (codex, claude)"}`);
+      }),
+    );
   });
 
   test("local accepted and rejected history cannot change the Jev request", async () => {
@@ -428,7 +460,9 @@ describe("capability constrained routing", () => {
       expect((await route("same frozen ticket")).id).toBe(LOCALIZED_SELECTION);
       const request = server.request();
       expect(request).toBeDefined();
-      const classCriteria = Object.keys(request?.questions.worker.criteria ?? {});
+      const classCriteria = Object.keys(
+        request?.questions.worker.criteria ?? {},
+      );
       expect(classCriteria).toContain("mechanical");
       expect(classCriteria).toContain("localized");
       expect(classCriteria).toContain("cross_module");
@@ -465,8 +499,12 @@ describe("capability constrained routing", () => {
     });
     const server = startServer("localized");
     expect((await route("generation-isolation replay")).id).toBe(LOCALIZED_SELECTION);
-    expect(server.request()?.questions.worker.criteria["localized"]).toBeDefined();
-    expect(server.request()?.questions.worker.criteria["cross_module"]).toBeDefined();
+    expect(
+      server.request()?.questions.worker.criteria["localized"],
+    ).toBeDefined();
+    expect(
+      server.request()?.questions.worker.criteria["cross_module"],
+    ).toBeDefined();
   });
   test("ROUTER-PURPOSE: built request carries the exact purpose and subscription health", async () => {
     const { home } = await isolateState();
@@ -495,13 +533,15 @@ describe("capability constrained routing", () => {
         { HOME: home },
       ),
     ).toBe(true);
-    const server = startServer("luna-high", { "luna-high": 1 });
-    expect((await route("owner ruling replay")).route).toBe("codex");
+    const server = startServer("localized", { localized: 1 });
+    expect((await route("owner ruling replay")).id).toBe(LOCALIZED_SELECTION);
     const request = server.request();
     expect(request?.state.history).toBeUndefined();
     expect(request?.state.task.length).toBeLessThanOrEqual(2400);
     expect(request?.questions.worker.instructions).toContain(ROUTING_OBJECTIVE);
-    expect(request?.questions.worker.instructions).toContain("classify this ticket");
+    expect(request?.questions.worker.instructions).toContain(
+      "classify this ticket",
+    );
     expect(request?.questions.worker.instructions).not.toContain(
       "A. Capability sufficiency (hard)",
     );
@@ -549,7 +589,9 @@ describe("capability constrained routing", () => {
     if (request === undefined) expect.unreachable("missing Jev request");
     expect(request.state.task_size.timeout_s).toBe(600);
     expect(request.state.published_task_metrics).toEqual({});
-    expect(server.request()?.questions.worker.criteria.mechanical).toBeDefined();
+    expect(
+      server.request()?.questions.worker.criteria.mechanical,
+    ).toBeDefined();
     const filters = z
       .array(z.object({ reason: z.string(), removed: z.array(z.unknown()) }))
       .safeParse(routingEvents().events.at(-1)?.audit?.filters);
@@ -628,7 +670,7 @@ describe("capability constrained routing", () => {
 
   test("missing Codex source is explained in the pick audit", async () => {
     await isolateState();
-    startServer("luna-high", { "luna-high": 1 });
+    startServer("localized", { localized: 1 });
     const selected = await route("missing source audit");
     const started = appendStarted(selected.id);
     if (started?.kind === "started") {
@@ -660,14 +702,20 @@ describe("capability constrained routing", () => {
       timeout_s: 14_400,
       class: "multi-hour",
     });
-    expect(server.request()?.questions.worker.criteria.cross_module).toBeDefined();
-    expect(Object.keys(server.request()?.questions.worker.criteria ?? {}).some((id) => id.startsWith("model_"))).toBe(false);
+    expect(
+      server.request()?.questions.worker.criteria.cross_module,
+    ).toBeDefined();
+    expect(
+      Object.keys(server.request()?.questions.worker.criteria ?? {}).some(
+        (id) => id.startsWith("model_"),
+      ),
+    ).toBe(false);
     const criteria = Object.values(
       server.request()?.questions.worker.criteria ?? {},
     );
-    const routeBias = [
-      ["choose", "a", "model"],
-    ].map((words) => words.join(" "));
+    const routeBias = [["choose", "a", "model"]].map((words) =>
+      words.join(" "),
+    );
     expect(
       criteria.every((row) =>
         routeBias.every((phrase) => !row.includes(phrase)),
@@ -742,7 +790,11 @@ describe("capability constrained routing", () => {
       "unknown",
     );
     expect(server.request()?.questions.worker.criteria.localized).toBeDefined();
-    expect(Object.keys(server.request()?.questions.worker.criteria ?? {}).some((id) => id.startsWith("model_"))).toBe(false);
+    expect(
+      Object.keys(server.request()?.questions.worker.criteria ?? {}).some(
+        (id) => id.startsWith("model_"),
+      ),
+    ).toBe(false);
     appendStarted(selected.id);
   });
 
@@ -764,26 +816,22 @@ describe("capability constrained routing", () => {
     appendStarted(selected.id);
   });
 
-  test("an invalid Jev choice records the fallback reason and probabilities", async () => {
+  test("an invalid Jev choice is refused with its reason and keeps the probabilities", async () => {
     await isolateState();
     const server = startServer("not-a-roster-row", {
       "not-a-roster-row": 1,
     });
 
-    const selected = await route("fallback audit replay");
-    expect(selected.id).toBe("luna-high");
-    const started = appendStarted(selected.id);
-    expect(started?.kind).toBe("started");
-    if (started?.kind === "started") {
-      const pick = pickAuditOf(started);
-      expect(pick.source).toBe("fallback-invalid-class");
-      expect(pick.probabilities).toEqual({
-        "not-a-roster-row": 1,
-      });
-      expect(pick.usage_snapshot).toMatchObject(
-        server.request()?.state.routes ?? {},
-      );
-    }
+    const { message, event } = await expectRefusal("refusal audit replay");
+    expect(message).toContain('Jev choice "not-a-roster-row"');
+    expect(message).toContain("no row is substituted");
+    expect(event?.source).toBe("refused-invalid-class");
+    expect(event?.audit?.choice_probabilities).toEqual({
+      "not-a-roster-row": 1,
+    });
+    expect(event?.audit?.usage_snapshot).toMatchObject(
+      server.request()?.state.routes ?? {},
+    );
   });
 });
 
@@ -805,7 +853,7 @@ test("combined candidate rejects mixed Sol generations before Jev, even outside 
       'id = "sol-low"\nroute = "claude"\nmodel = "gpt-6.0-sol"',
     ),
   );
-  const server = startServer("sol-high");
+  const server = startServer("localized");
   const child = Bun.spawn(
     [
       process.execPath,
@@ -851,34 +899,54 @@ test("route contract: Jev payload hides roster rows while classifying the ticket
   expect(request.state.task).toBe(task);
   const rawBody = server.rawBody();
   if (rawBody === undefined) expect.unreachable("missing request body");
-  const injected = rawBody.replace(JSON.stringify(task), JSON.stringify("[ticket omitted]"));
+  const injected = rawBody.replace(
+    JSON.stringify(task),
+    JSON.stringify("[ticket omitted]"),
+  );
   expect(injected).not.toContain("anonymization_map");
   for (const row of loaded.value.choice) {
     expect(injected.toLowerCase()).not.toContain(row.id.toLowerCase());
     expect(injected.toLowerCase()).not.toContain(row.model.toLowerCase());
     const family = row.id.split("-")[0];
-    if (family === undefined) expect.unreachable("row " + row.id + " has no family");
+    if (family === undefined)
+      expect.unreachable("row " + row.id + " has no family");
     expect(injected).not.toMatch(new RegExp("\\b" + family + "\\b", "iu"));
     for (const version of row.model.match(/\d+(?:[.-]\d+)+/gu) ?? [])
       expect(injected).not.toMatch(
-        new RegExp("(?<![\\d.])" + version.replaceAll(".", "\\.") + "(?![\\d.])", "u"),
+        new RegExp(
+          "(?<![\\d.])" + version.replaceAll(".", "\\.") + "(?![\\d.])",
+          "u",
+        ),
       );
   }
   expect(injected).not.toMatch(/\b(low|medium|high|xhigh|max|effort)\b/iu);
   expect(Object.keys(request.questions)).toEqual(["worker"]);
   expect(Object.keys(request.questions.worker.criteria)).toEqual([
-    "mechanical", "localized", "cross_module", "split", "uncheckable", "contradiction", "missing_input",
+    "mechanical",
+    "localized",
+    "cross_module",
+    "split",
+    "uncheckable",
+    "contradiction",
+    "missing_input",
   ]);
   expect(request.state.published_task_metrics).toEqual({});
   expect(selected.id).toBe(LOCALIZED_SELECTION);
   expect(server.calls()).toBe(1);
 });
 
-for (const reason of ["split", "uncheckable", "contradiction", "missing_input"] as const) {
+for (const reason of [
+  "split",
+  "uncheckable",
+  "contradiction",
+  "missing_input",
+] as const) {
   test(
     reason === "missing_input"
       ? "dispatch contract: a Jev missing_input reply is recorded as refused with its reason"
-      : "return " + reason + " exits 2, records the answer and never reaches worker startup",
+      : "return " +
+          reason +
+          " exits 2, records the answer and never reaches worker startup",
     async () => {
       const { root } = await isolateState();
       const server = startServer(reason, { [reason]: 1, model_0: 0 });
@@ -886,10 +954,19 @@ for (const reason of ["split", "uncheckable", "contradiction", "missing_input"] 
         [
           process.execPath,
           "--eval",
-          "import {route} from " + JSON.stringify(new URL("../../src/next/route.ts", import.meta.url).pathname) + "; await route('return fixture'); await Bun.write(" + JSON.stringify(join(root, "worker-started")) + ", 'started');",
+          "import {route} from " +
+            JSON.stringify(
+              new URL("../../src/next/route.ts", import.meta.url).pathname,
+            ) +
+            "; await route('return fixture'); await Bun.write(" +
+            JSON.stringify(join(root, "worker-started")) +
+            ", 'started');",
         ],
         {
-          env: { ...subprocessEnvironment(), TYPESAFE_API_KEY: "routing-fixture-secret" },
+          env: {
+            ...subprocessEnvironment(),
+            TYPESAFE_API_KEY: "routing-fixture-secret",
+          },
           stdout: "pipe",
           stderr: "pipe",
           timeout: 5000,
@@ -920,50 +997,92 @@ for (const reason of ["split", "uncheckable", "contradiction", "missing_input"] 
             anonymization_map: z.record(z.string(), z.string()),
           }),
         }),
-      ).safeParse(await readFile(join(root, "state", "routing-refusals.jsonl"), "utf8"));
+      ).safeParse(
+        await readFile(join(root, "state", "routing-refusals.jsonl"), "utf8"),
+      );
       expect(parsedRecord.success).toBe(true);
       if (!parsedRecord.success) return;
       const record = parsedRecord.data;
       expect(record.reason).toBe(reason);
       if (reason === "missing_input")
-        expect(record.reason_detail).toBe("verify requires $AGX_RUN_DIR/parity.tsv");
+        expect(record.reason_detail).toBe(
+          "verify requires $AGX_RUN_DIR/parity.tsv",
+        );
       expect(record.pick_audit.answer.choice).toBe(reason);
       expect(record.pick_audit.probabilities[reason]).toBe(1);
     },
   );
 }
 
-test("route contract: an unnamed return never refuses a dispatch", async () => {
+test("route contract: a return without a reason_code is refused, never routed to a default row", async () => {
   const { root } = await isolateState();
   const server = startServer("unused");
   for (const reasonCode of [undefined, "", "   "]) {
-    server.server.reload({ fetch: () => Response.json({ answers: { worker: {
-      choice: "missing_input", reason_code: reasonCode,
-    } } }) });
-    const picked = await route("unnamed return fixture");
-    expect(picked.id).toBe("luna-high");
-    const started = appendStarted(picked.id);
-    if (started?.kind === "started")
-      expect(pickAuditOf(started)).toMatchObject({
-        source: "fallback-unnamed-return",
-        answer: { choice: "missing_input" },
-      });
+    server.server.reload({
+      fetch: () =>
+        Response.json({
+          answers: {
+            worker: {
+              choice: "missing_input",
+              reason_code: reasonCode,
+            },
+          },
+        }),
+    });
+    const { message, event } = await expectRefusal("unnamed return fixture");
+    expect(message).toContain(
+      "Jev returned missing_input without a reason_code",
+    );
+    expect(event?.source).toBe("refused-unnamed-return");
+    expect(event?.audit?.answer).toMatchObject({ choice: "missing_input" });
   }
-  expect(await Bun.file(join(root, "state", "routing-refusals.jsonl")).exists()).toBe(false);
+  expect(
+    await Bun.file(join(root, "state", "routing-refusals.jsonl")).exists(),
+  ).toBe(false);
 });
 
-test("missing worker answer uses the default and records the missing-answer fallback", async () => {
+test("a missing worker answer is refused and recorded, with no default row", async () => {
   await isolateState();
   const server = startServer("unused");
   server.server.reload({ fetch: () => Response.json({ answers: {} }) });
-  const picked = await route("missing answer fixture");
-  expect(picked.id).toBe("luna-high");
-  const started = appendStarted(picked.id);
-  if (started?.kind === "started")
-    expect(pickAuditOf(started)).toMatchObject({
-      source: "fallback-missing-answer",
-      answer: null,
-    });
+  const { message, event } = await expectRefusal("missing answer fixture");
+  expect(message).toContain('no answer for question "worker"');
+  expect(event?.source).toBe("refused-missing-answer");
+  expect(event?.audit?.answer).toBeNull();
+});
+
+test("an HTTP error from Jev is refused naming the status", async () => {
+  await isolateState();
+  const server = startServer("unused");
+  server.server.reload({
+    fetch: () => new Response("upstream down", { status: 503 }),
+  });
+  const { message, event } = await expectRefusal("http error fixture");
+  expect(message).toBe(
+    "route refused: Jev answered HTTP 503; no row is substituted\n",
+  );
+  expect(event?.source).toBe("refused-http-503");
+  expect(event?.audit?.http_status).toBe(503);
+});
+
+test("a 200 reply that is not a valid answer object is refused", async () => {
+  await isolateState();
+  const server = startServer("unused");
+  server.server.reload({ fetch: () => Response.json({ nothing: true }) });
+  const { message, event } = await expectRefusal("invalid response fixture");
+  expect(message).toContain("Jev reply is not a valid answer");
+  expect(event?.source).toBe("refused-invalid-response");
+});
+
+test("a time box no candidate fits is refused before Jev is asked", async () => {
+  await isolateState();
+  const server = startServer("localized");
+  const { message, event } = await expectRefusal("tiny time box fixture", 1);
+  expect(message).toStartWith(
+    "route refused: no candidate in the 1 s time box among allowed routes [codex, claude]; rows without a published duration: ",
+  );
+  expect(event?.source).toBe("refused-no-row-in-time-box");
+  expect(server.calls()).toBe(0);
 });
 
 test("blinding retains grammatical comparisons and compound meanings", async () => {
@@ -1097,7 +1216,7 @@ test("Jev request is byte-identical across opposite local run histories", async 
     decision: "accept",
     note: "accepted history fixture",
   });
-  const first = startServer("luna-high", { "luna-high": 1 });
+  const first = startServer("localized", { localized: 1 });
   await route("open-loop byte guard");
   expect(first.rawBody()).toBeDefined();
 
@@ -1121,7 +1240,7 @@ test("Jev request is byte-identical across opposite local run histories", async 
     decision: "reject",
     note: "rejected history fixture",
   });
-  const second = startServer("luna-high", { "luna-high": 1 });
+  const second = startServer("localized", { localized: 1 });
   await route("open-loop byte guard");
   expect(second.rawBody()).toBe(first.rawBody());
 });
@@ -1172,7 +1291,7 @@ test("local accepted and rejected history cannot change the Jev request", async 
         note: "opposite-mix fixture",
       });
     }
-    const server = startServer("sol-medium");
+    const server = startServer("localized");
     await route("same ticket for every history");
     const serialized = server.rawBody();
     if (serialized === undefined)
@@ -1207,7 +1326,9 @@ test("audit retains class probabilities, the bar, qualifying rows, and determini
   expect(audit?.selected_row).toBe(LOCALIZED_SELECTION);
   expect(audit?.choice_probabilities).toEqual({ localized: 1 });
   expect(selected.id).toBe(LOCALIZED_SELECTION);
-  expect(server.rawRequest()?.questions.worker.criteria.localized).toBeDefined();
+  expect(
+    server.rawRequest()?.questions.worker.criteria.localized,
+  ).toBeDefined();
   const started = appendStarted(selected.id);
   if (started?.kind === "started")
     expect(pickAuditOf(started).audit).toEqual(audit ?? {});
@@ -1223,7 +1344,9 @@ test("route contract: the selected row depends on the ticket class, and the choi
     expect(typeof criteria.mechanical).toBe("string");
     expect(typeof criteria.localized).toBe("string");
     expect(typeof criteria.cross_module).toBe("string");
-    expect(Object.keys(criteria).some((id) => id.startsWith("model_"))).toBe(false);
+    expect(Object.keys(criteria).some((id) => id.startsWith("model_"))).toBe(
+      false,
+    );
     expect(request?.state.published_task_metrics).toEqual({});
     return row.id;
   };
@@ -1248,7 +1371,9 @@ test("bar_unmet audits and selects the highest TB4 row inside the published time
       .replace(/(id = "terra-high"[\s\S]*?\ntb4 = )0/u, "$1 10"),
   );
   const server = startServer("cross_module", { cross_module: 1 }, catalogPath);
-  const selected = await route("unmet bar fixture", [], 600, [], { catalogPath });
+  const selected = await route("unmet bar fixture", [], 600, [], {
+    catalogPath,
+  });
   const audit = routingEvents().events.at(-1)?.audit;
   expect(selected.id).toBe("terra-high");
   expect(audit?.requirement_class).toBe("cross_module");
@@ -1259,16 +1384,29 @@ test("bar_unmet audits and selects the highest TB4 row inside the published time
   expect(server.calls()).toBe(1);
 });
 
-test("Jev transport failure falls back to route.default", async () => {
+test("Jev transport failure is refused naming the failed request, with no default row", async () => {
   await isolateState();
-  const loaded = await loadRoster();
-  if (!loaded.ok) expect.unreachable(loaded.error);
-  if (loaded.value.default === undefined)
-    expect.unreachable("fixture default missing");
   process.env.JEV_URL = "http://127.0.0.1:1/unreachable";
-  const selected = await route("unreachable Jev fixture");
-  expect(selected.id).toBe(loaded.value.default);
-  expect(routingEvents().events.at(-1)?.source).toBe("fallback-request-failed");
+  const { message, event } = await expectRefusal("unreachable Jev fixture");
+  expect(message).toStartWith("route refused: Jev request failed: ");
+  expect(message).toContain("no row is substituted");
+  expect(event?.source).toBe("refused-request-failed");
+  expect(event?.audit?.request_failure).not.toBeNull();
+  expect(Object.hasOwn(loadedRosterShape(await loadRoster()), "default")).toBe(
+    false,
+  );
+});
+
+test("a valid Jev pick is selected and recorded as before", async () => {
+  await isolateState();
+  startServer("localized", { localized: 0.8, mechanical: 0.2 });
+  const selected = await route("valid pick fixture");
+  const event = routingEvents().events.at(-1);
+  expect(event?.row).toBe(selected.id);
+  expect(event?.source).toBe("jev-classified");
+  expect(event?.outcome).toBe("selected");
+  expect(event?.audit?.selection_mode).toBe("class");
+  expect(event?.audit?.requirement_class).toBe("localized");
 });
 
 const auditFields = [
@@ -1302,6 +1440,7 @@ for (const choice of ["localized", "not-a-class"]) {
       [],
       {},
       { path: "/fixture/ticket.md", sha256: "fixture-hash" },
+      { capacityRetry: true, timeoutMs: 2000 },
     );
     const decision = routingEvents().events.at(-1);
     for (const field of auditFields)
@@ -1314,7 +1453,7 @@ for (const choice of ["localized", "not-a-class"]) {
 
 test("refusal and pre-start failure retain full audit fields without a started receipt", async () => {
   await isolateState();
-  startServer("sol-medium");
+  startServer("localized");
   const modulePath = new URL("../../src/next/route.ts", import.meta.url)
     .pathname;
   for (const masked of [[], ["all"]]) {
@@ -1325,7 +1464,13 @@ test("refusal and pre-start failure retain full audit fields without a started r
         `import {route} from ${JSON.stringify(modulePath)}; import {loadRoster} from ${JSON.stringify(new URL("../../src/roster/index.ts", import.meta.url).pathname)}; const loaded = await loadRoster(); const masked = ${JSON.stringify(masked)}.length && loaded.ok ? loaded.value.choice.map(row => row.id) : []; await route("fixture", [], 600, masked, {}, {path:"/fixture/ticket.md", sha256:"fixture-hash", launch:true}); process.exit(1);`,
       ],
       {
-        env: subprocessEnvironment(),
+        env: {
+          ...subprocessEnvironment(),
+          ...(process.env.JEV_URL === undefined
+            ? {}
+            : { JEV_URL: process.env.JEV_URL }),
+          TYPESAFE_API_KEY: "routing-fixture-secret",
+        },
         stdout: "pipe",
         stderr: "pipe",
         timeout: 5000,
@@ -1361,29 +1506,65 @@ test("refusal and pre-start failure retain full audit fields without a started r
 test("route: ticket min_effort removes rows below it", async () => {
   await isolateState();
   startServer("localized");
-  const picked = await route("floor", [], 600, [], {}, { path: "/ticket", sha256: "hash", min_effort: "high" });
+  const picked = await route(
+    "floor",
+    [],
+    600,
+    [],
+    {},
+    { path: "/ticket", sha256: "hash", min_effort: "high" },
+  );
   expect(["high", "xhigh", "max"]).toContain(picked.effort);
-  const filters = z.array(z.object({ reason: z.string(), removed: z.array(z.unknown()), after: z.array(z.string()) })).safeParse(routingEvents().events.at(-1)?.audit?.filters);
+  const filters = z
+    .array(
+      z.object({
+        reason: z.string(),
+        removed: z.array(z.unknown()),
+        after: z.array(z.string()),
+      }),
+    )
+    .safeParse(routingEvents().events.at(-1)?.audit?.filters);
   expect(filters.success).toBe(true);
   if (!filters.success) return;
-  const filter = filters.data.find((entry) => entry.reason === "ticket min_effort");
+  const filter = filters.data.find(
+    (entry) => entry.reason === "ticket min_effort",
+  );
   expect(filter?.removed.length).toBeGreaterThan(0);
   expect(filter?.after).toContain(picked.id);
 });
 
 test("route: unknown min_effort is rejected", async () => {
   await isolateState();
-  const result = await route("floor", [], 600, [], {}, { path: "/ticket", sha256: "hash", min_effort: "ultra" }, { capacityRetry: true, timeoutMs: 1000 });
+  const result = await route(
+    "floor",
+    [],
+    600,
+    [],
+    {},
+    { path: "/ticket", sha256: "hash", min_effort: "ultra" },
+    { capacityRetry: true, timeoutMs: 1000 },
+  );
   expect(result.kind).toBe("refused");
-  if (result.kind === "refused") expect(result.message).toContain("low, medium, high, xhigh, max");
+  if (result.kind === "refused")
+    expect(result.message).toContain("low, medium, high, xhigh, max");
 });
 
 test("route: no row at or above min_effort refuses", async () => {
   await isolateState();
   const roster = await loadRoster();
   if (!roster.ok) expect.unreachable(roster.error);
-  const masked = roster.value.choice.filter((row) => row.effort === "max").map((row) => row.id);
-  const result = await route("floor", [], 600, masked, {}, { path: "/ticket", sha256: "hash", min_effort: "max" }, { capacityRetry: true, timeoutMs: 1000 });
+  const masked = roster.value.choice
+    .filter((row) => row.effort === "max")
+    .map((row) => row.id);
+  const result = await route(
+    "floor",
+    [],
+    600,
+    masked,
+    {},
+    { path: "/ticket", sha256: "hash", min_effort: "max" },
+    { capacityRetry: true, timeoutMs: 1000 },
+  );
   expect(result.kind).toBe("refused");
   if (result.kind === "refused") expect(result.message).toContain("min_effort");
 });

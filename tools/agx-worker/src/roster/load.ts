@@ -74,7 +74,13 @@ const PolicySchema = z.strictObject({
         claude: z.enum(["continue", "stop"]).optional(),
       })
       .optional(),
-    default: z.string().optional(),
+    // Retired 2026-11-03: a default row would be silently substituted when Jev cannot route.
+    default: z
+      .never({
+        error:
+          "route.default was removed: agx never substitutes a row when Jev cannot route; delete the key",
+      })
+      .optional(),
     exclude: z.array(z.string()).default([]),
     max_task_chars: z.number().int().positive(),
     timeout_ms: z.number().int().positive(),
@@ -123,7 +129,6 @@ const RosterSchema = z.strictObject({
   schema: z.literal(1),
   as_of: z.iso.date(),
   as_of_cost: z.iso.date().optional(),
-  default: z.string().optional(),
   auto: AutoSchema,
   claude_run: PolicySchema.shape.claude_run,
   sources: z.record(z.string(), z.url()),
@@ -200,14 +205,7 @@ export async function loadRoster(
     const policy = policyResult.data;
     // A repository [route] replaces only the keys it declares; the rest stay user-global.
     const allow = repoRoute?.allow ?? policy.route.allow;
-    const defaultId = repoRoute?.default ?? policy.route.default;
     const ids = new Set(catalog.choice.map((row) => row.id));
-    if (defaultId !== undefined && !ids.has(defaultId)) {
-      return {
-        ok: false,
-        error: `default must name a catalog row: ${defaultId}`,
-      };
-    }
     const unknownExcluded = policy.route.exclude.find((id) => !ids.has(id));
     if (unknownExcluded !== undefined) {
       return {
@@ -219,28 +217,12 @@ export async function loadRoster(
     const choice = catalog.choice.filter(
       (row) => !policy.route.exclude.includes(row.id),
     );
-    const onAllowedRoute = (row: Choice) =>
-      allow === undefined || allow.includes(row.route);
-    const overridesRoute =
-      repoRoute?.default !== undefined || repoRoute?.allow !== undefined;
-    const defaultOk = choice.some(
-      (row) => row.id === defaultId && onAllowedRoute(row),
-    );
-    if (defaultId !== undefined && !defaultOk) {
-      return {
-        ok: false,
-        error: overridesRoute
-          ? `default must name a non-excluded row on an allowed route: ${defaultId}; see ${join(repoResult.value.root, "agx.toml")}`
-          : `default must name a non-excluded row on an allowed route: ${defaultId}`,
-      };
-    }
     const value = {
       schema: catalog.schema,
       as_of: catalog.as_of,
       ...(catalog.as_of_cost === undefined
         ? {}
         : { as_of_cost: catalog.as_of_cost }),
-      ...(defaultId === undefined ? {} : { default: defaultId }),
       auto: {
         ...(allow === undefined ? {} : { routes: allow }),
         ...(policy.route.on_window_exhausted === undefined

@@ -201,6 +201,9 @@ export function blindCriterion(text: string, rows: readonly Choice[]): string {
         `${prefix}${first.toUpperCase()}`,
     );
 }
+const listOrNone = (items: readonly string[]): string =>
+  items.length === 0 ? "none" : items.join(", ");
+const oneLine = (text: string): string => text.replaceAll(/[\r\n]+/gu, " ");
 const hash = (value: unknown) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
@@ -250,11 +253,12 @@ export async function route(
   const refuse = (
     message: string,
     code: number,
+    source = "refusal",
   ): CapacityRetryRouteResult | never => {
     audit.reason = message;
     audit.outcome_kind = "held";
     if (options?.inspect !== true)
-      recordRoutingPick(null, "refusal", audit, "refusal");
+      recordRoutingPick(null, source, audit, "refusal");
     if (options?.capacityRetry === true)
       return { kind: "refused", message, exitCode: code };
     return exitWithError(message, code);
@@ -356,7 +360,7 @@ export async function route(
     (row) => usage[row.route].available,
     (row) => usage[row.route],
   );
-  let candidates = filter(
+  const candidates = filter(
     availableCandidates,
     "published duration exceeds time box",
     (row) => fitsPublishedTimeBox(row, timeoutS),
@@ -374,6 +378,26 @@ export async function route(
       `agx: no roster row satisfies required capabilities (${routeFilterLabel(roster.auto)})${floor?.success === true ? ` and ticket min_effort (${floor.data})` : ""}\n`,
       2,
     );
+  if (candidates.length === 0) {
+    const allowed = roster.auto.routes ?? ["codex", "claude"];
+    const unpublished = availableCandidates
+      .filter(
+        (row) =>
+          row.aa_time_per_task_s === undefined ||
+          row.aa_time_per_task_s === null,
+      )
+      .map((row) => row.id);
+    const tooSlow = availableCandidates.flatMap((row) =>
+      row.aa_time_per_task_s === undefined || row.aa_time_per_task_s === null
+        ? []
+        : [`${row.id} (${row.aa_time_per_task_s} s)`],
+    );
+    return refuse(
+      `route refused: no candidate in the ${timeoutS} s time box among allowed routes [${allowed.join(", ")}]; rows without a published duration: ${listOrNone(unpublished)}; rows whose published duration exceeds ${PUBLISHED_TASK_DURATION_BUDGET_RATIO * 100}% of the box: ${listOrNone(tooSlow)}\n`,
+      2,
+      "refused-no-row-in-time-box",
+    );
+  }
   const anonymizationMap: Record<string, string> = {};
   const measuredEvidence: Record<
     string,
@@ -454,10 +478,6 @@ export async function route(
   audit.jev_model_version = post.ok ? (post.model ?? null) : null;
   audit.request_failure = post.ok ? null : post.reason;
   audit.http_status = post.ok ? post.status : null;
-  const fallback =
-    availableCandidates.find((row) => row.id === roster.default) ??
-    availableCandidates[0];
-  if (fallback === undefined) return refuse("no routing candidates", 2);
   let rawAnswer: unknown = null;
   const pickAudit = (
     source: string,
@@ -472,7 +492,6 @@ export async function route(
     usage_id: usageId,
     measured_evidence: measuredEvidence,
   });
-  let selectionMode = "fallback";
   const recordPick = (
     row: Choice,
     source: string,
@@ -482,7 +501,7 @@ export async function route(
     audit.anonymization_map = anonymizationMap;
     audit.measured_evidence = measuredEvidence;
     audit.answer = rawAnswer;
-    audit.selection_mode = selectionMode;
+    audit.selection_mode = "class";
     audit.choice_probabilities = probabilities ?? null;
     const ranked = Object.values(probabilities ?? {}).toSorted((a, b) => b - a);
     audit.top_margin =
@@ -493,21 +512,8 @@ export async function route(
         ? (ranked[0] ?? 0) - (ranked[1] ?? 0)
         : null;
     audit.outcome_kind = "selected";
-    if (selectionMode === "fallback") audit.outcome_kind = "fallback";
-    if (
-      source.includes("invalid") ||
-      source.includes("unnamed-return") ||
-      source.includes("ineligible") ||
-      source.includes("missing-answer")
-    )
-      audit.outcome_kind = "invalid reply";
     if (options?.inspect !== true)
-      recordRoutingPick(
-        row,
-        source,
-        audit,
-        selectionMode === "fallback" ? "fallback" : "selected",
-      );
+      recordRoutingPick(row, source, audit, "selected");
     if (options?.inspect !== true)
       setPendingPickAudit({
         ...pickAudit(source, probabilities),
@@ -518,18 +524,33 @@ export async function route(
   };
   const routeChoice = (row: Choice): Choice | CapacityRetryRouteResult =>
     options?.capacityRetry === true ? { kind: "selected", row } : row;
+  const refuseReply = (
+    message: string,
+    source: string,
+    probabilities?: Record<string, number>,
+  ) => {
+    audit.selection_mode = "refusal";
+    audit.anonymization_map = anonymizationMap;
+    audit.measured_evidence = measuredEvidence;
+    audit.answer = rawAnswer;
+    audit.choice_probabilities = probabilities ?? null;
+    return refuse(message, 2, source);
+  };
   if (!post.ok)
-    return routeChoice(
-      recordPick(fallback, "fallback-request-failed", undefined),
+    return refuseReply(
+      `route refused: Jev request failed: ${oneLine(post.reason)}; no row is substituted\n`,
+      "refused-request-failed",
     );
   const decoded = jsonOf(Reply).safeParse(post.text);
   if (post.status !== 200)
-    return routeChoice(
-      recordPick(fallback, `fallback-http-${post.status}`, undefined),
+    return refuseReply(
+      `route refused: Jev answered HTTP ${post.status}; no row is substituted\n`,
+      `refused-http-${post.status}`,
     );
   if (!decoded.success)
-    return routeChoice(
-      recordPick(fallback, "fallback-invalid-response", undefined),
+    return refuseReply(
+      `route refused: Jev reply is not a valid answer: ${oneLine(decoded.error.message)}; no row is substituted\n`,
+      "refused-invalid-response",
     );
   const answer = decoded.data.answers.worker;
   rawAnswer = answer ?? null;
@@ -537,8 +558,10 @@ export async function route(
   const probabilities = answer?.probabilities;
   const reason = ReturnReason.safeParse(selected);
   if (reason.success && (answer?.reason_code?.trim().length ?? 0) === 0)
-    return routeChoice(
-      recordPick(fallback, "fallback-unnamed-return", probabilities),
+    return refuseReply(
+      `route refused: Jev returned ${reason.data} without a reason_code; no row is substituted\n`,
+      "refused-unnamed-return",
+      probabilities,
     );
   if (reason.success) {
     audit.outcome_kind = "held";
@@ -565,23 +588,20 @@ export async function route(
     return refuse(`agx: ticket returned: ${reason.data}: ${detail}\n`, 2);
   }
   if (answer === undefined)
-    return routeChoice(
-      recordPick(fallback, "fallback-missing-answer", probabilities),
+    return refuseReply(
+      'route refused: Jev reply has no answer for question "worker"; no row is substituted\n',
+      "refused-missing-answer",
     );
   const parsedRequirementClass = RequirementClassSchema.safeParse(selected);
   if (!parsedRequirementClass.success)
-    return routeChoice(
-      recordPick(fallback, "fallback-invalid-class", probabilities),
+    return refuseReply(
+      `route refused: Jev choice ${JSON.stringify(selected)} is neither a requirement class (${RequirementClassSchema.options.join(", ")}) nor a return reason; no row is substituted\n`,
+      "refused-invalid-class",
+      probabilities,
     );
   const requirementClass = parsedRequirementClass.data;
   const bar = REQUIREMENT_BARS[requirementClass];
-  const inTimeBox = availableCandidates.filter((row) =>
-    fitsPublishedTimeBox(row, timeoutS),
-  );
-  if (inTimeBox.length === 0)
-    return routeChoice(
-      recordPick(fallback, "fallback-no-row-in-time-box", probabilities),
-    );
+  const inTimeBox = candidates;
   const qualifying = inTimeBox.filter(
     (row) => (row.tb4 ?? (bar === 0 ? 0 : Number.NEGATIVE_INFINITY)) >= bar,
   );
@@ -590,12 +610,16 @@ export async function route(
     qualifying.length > 0
       ? pool.toSorted(comparePriceThenDuration)
       : pool.toSorted(compareTb4Descending);
-  const chosen = ordered[0] ?? fallback;
+  const chosen = ordered[0];
+  if (chosen === undefined)
+    return refuseReply(
+      "route refused: no candidate remained after the requirement bar; no row is substituted\n",
+      "refused-no-candidate",
+    );
   audit.requirement_class = requirementClass;
   audit.tb4_bar = bar;
   audit.qualifying_rows = qualifying.map((row) => row.id);
   audit.bar_unmet = qualifying.length === 0;
   audit.choice_probabilities = probabilities ?? null;
-  selectionMode = "class";
   return routeChoice(recordPick(chosen, "jev-classified", probabilities));
 }

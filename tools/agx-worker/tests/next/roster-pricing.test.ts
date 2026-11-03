@@ -9,7 +9,6 @@ import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 const PricingProjection = z.looseObject({
   schema: z.literal(1),
   as_of: z.iso.date(),
-  default: z.string(),
   auto: z.looseObject({ routes: z.array(z.enum(["codex", "claude"])) }),
   claude_run: z.object({
     max_budget_usd: z.number(),
@@ -70,7 +69,6 @@ test("roster --json publishes pricing with missing prices omitted on a fixture",
   expect(parsed.success).toBe(true);
   if (!parsed.success) return;
   const roster = parsed.data;
-  expect(roster.default).toBe("luna-high");
   expect(roster.auto.routes).toEqual(["codex"]);
   expect(roster.choice.find((row) => row.id === "luna-high")).toMatchObject({
     route: "codex",

@@ -103,7 +103,6 @@ process.exitCode = capacity ? 75 : 0;
     .filter((row) => !keep.has(row.id))
     .map((row) => row.id);
   const policy = (await readFile(policyExample, "utf8"))
-    .replace('default = "luna-high"', 'default = "sol-medium"')
     .replace("exclude = []", `exclude = ${JSON.stringify(excluded)}`);
   const policyPath = join(f.root, "policy.toml");
   await writeFile(policyPath, policy);

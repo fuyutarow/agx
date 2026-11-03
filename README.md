@@ -50,11 +50,14 @@ A repository's committed `agx.toml` (`schema = 1`) may declare `tickets`, `[ws]`
 `[verify]`, and a `[route]` table. Any other key is rejected before any effect,
 and the error names the file.
 
-`[route]` accepts only `allow` (a nonempty array of `codex` or `claude`) and
-`default` (a catalog row id). For runs of this repository it replaces the user
-policy's `route.allow` and/or `route.default`; each key is independent, and every
-other route key stays user-global. `default` must name a non-excluded catalog row
-on an allowed route. `agx worker check` and `agx worker roster` run inside the
+`[route]` accepts only `allow` (a nonempty array of `codex` or `claude`). For
+runs of this repository it replaces the user policy's `route.allow`; every other
+route key stays user-global. `default` was removed: agx never dispatches a row
+Jev did not select, so a policy that still sets `route.default` is rejected with
+a message saying the key was removed. When Jev cannot route (request failure,
+HTTP error, invalid or missing answer, invalid class, no candidate in the time
+box) the dispatch is refused before any effect with the failed step on the first
+stderr line. `agx worker check` and `agx worker roster` run inside the
 repository show the effective routes. `~/.config/agx/repos/<name>.toml` rejects
 `[route]`. The full contract is in [contract/config.md](contract/config.md).
 

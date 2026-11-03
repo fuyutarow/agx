@@ -2,7 +2,6 @@ schema = 1
 
 [route]
 allow = ["codex"]
-default = "luna-high"
 exclude = ["luna-low"]
 max_task_chars = 6000
 timeout_ms = 20000

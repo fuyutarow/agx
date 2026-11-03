@@ -36,12 +36,12 @@ always = ["mise run check"]
 ```
 
 L1 accepts only `schema`, `tickets`, `[ws].ready`, `[verify].always` and `[route]`. Schema must equal 1.
-`[route]` accepts only `allow` and `default`, with the same meaning as the user policy keys
-of the same names (see [User policy and catalog](#user-policy-and-catalog)). When present, it
-replaces the user policy's `route.allow` and/or `route.default` for runs whose repository is
-this one; each key is independent, and every other route key stays user-global. `default`
-must name a non-excluded catalog row on an allowed route, and an invalid `[route]` rejects
-the repository file before any effect. L2 rejects `[route]`.
+`[route]` accepts only `allow`, with the same meaning as the user policy key of the same
+name (see [User policy and catalog](#user-policy-and-catalog)). When present, it replaces the
+user policy's `route.allow` for runs whose repository is this one; every other route key stays
+user-global. `default` was removed (routing never substitutes a row when Jev cannot route); a
+`[route]` that sets it is rejected with a message saying the key was removed, as is any other
+invalid `[route]`, before any effect. L2 rejects `[route]`.
 Declarations use TOML 1.0 syntax. Unknown keys, malformed TOML, duplicate TOML keys and unsupported or missing schema fail.
 Ticket paths must be nonempty relative strings; absolute POSIX and Windows paths and `~/`
 are rejected at L1. Relative ticket paths resolve from the main checkout. Paths are UTF-8
@@ -116,13 +116,14 @@ remain absent rather than being estimated. Policy must not replace catalog row v
 Policy contains `[route]` and `[claude_run]`. Route requires positive integer
 `max_task_chars` and `timeout_ms`, `no_egress` string array, `pick_temperature` in [0, 5], and
 `jev`. Optional `allow` is a nonempty array of `codex`/`claude`; optional `exclude` defaults to
-empty; optional `default` names a fallback row; optional `on_window_exhausted` maps each vendor to `continue` or `stop`.
+empty; optional `on_window_exhausted` maps each vendor to `continue` or `stop`. `default` was
+removed and is rejected: when Jev cannot route, the dispatch is refused with the failed step, never
+launched on a substituted row.
 `jev` requires `api = "typesafe"`, URL and nonempty model, or `api = "reseller"` and URL.
 Claude policy requires positive `max_budget_usd`, positive integer `max_turns`, and a `reason`
 of at least 20 characters. Numbers use JavaScript binary64 with the stated validator bounds.
 
-When supplied, default and excluded IDs must exist in the catalog. Excluded rows disappear; default must
-remain a non-excluded row on an allowed route. `allow` becomes the router's allowed routes, rather than
+Excluded IDs must exist in the catalog. Excluded rows disappear. `allow` becomes the router's allowed routes, rather than
 removing rows from the exported choice array. Catalog Jev prices join the endpoint policy.
 Catalog IDs must be unique; routes are codex or claude. Catalog-level `as_of`, `sources` URL
 map, `jev` price table and nonempty `choice` are required. Individual benchmark source fields
@@ -144,7 +145,7 @@ effective roster and pricing. It writes one JSON object to stdout and exits 0 on
 A policy or catalog load failure exits 1 with a diagnostic on stderr and no successful
 JSON; invoking roster without a ticket or `--json` exits 2. Do not interpret failed
 output as an empty roster. The response has `schema: 1`, catalog `as_of` (a date, not a
-live price timestamp), optional `default`, `auto`, `claude_run`, `sources`, `choice`, and `objective`.
+live price timestamp), `auto`, `claude_run`, `sources`, `choice`, and `objective`.
 `auto` is the effective projection, not the operator TOML shape. Omitted optional route
 settings remain omitted in JSON; Jev prices come from the shipped catalog. No worker or
 Jev request is launched by this inspection.
@@ -195,7 +196,6 @@ The following is the complete accepted operator key set, including nested keys
 | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `schema`                    | Integer `1` only.                                                                                                                                                                                                                            |
 | `route.allow`               | Optional nonempty array of `codex` or `claude`; duplicates are accepted.                                                                                                                                                                     |
-| `route.default`             | Optional string naming an existing, non-excluded catalog row on an allowed route. Routing fallback prefers it only when eligible; otherwise it uses the first eligible candidate.                                                            |
 | `route.exclude`             | Optional string array, default `[]`; every ID must exist.                                                                                                                                                                                    |
 | `route.on_window_exhausted` | Optional table with optional `codex` and `claude` keys, each `continue` or `stop`. Omitted vendors default to `continue`; `stop` makes an exhausted route unavailable. This is a subscription-window policy, not a worker concurrency limit. |
 | `route.max_task_chars`      | Positive integer; bounds the task excerpt sent for selection. Current routing additionally caps that excerpt at 2400 JavaScript string units. It does not limit the worker brief.                                                            |
@@ -232,7 +232,7 @@ The catalog is coupled to the installed agx version, so accepted policy IDs can 
 when that version changes.
 
 Unreadable or missing policy, malformed TOML, unknown keys, missing required keys,
-unsupported schema, unknown default/excluded IDs, an excluded or disallowed default,
+unsupported schema, unknown excluded IDs, a policy that sets the removed `route.default`,
 and invalid composed catalog/generation data refuse the read. The diagnostic is flattened
 to one line; its exact text is not a parsing interface. See
 `tools/agx-worker/src/roster/load.ts:158–257` and
@@ -294,7 +294,7 @@ exercise the shared ticket home. Workspace add, rm, gc and doctor use the same L
 `[ws]` policy. `tools/shared/tests/agx-config.test.ts` verifies the L1 fields and L2 merge;
 `tools/agx-ws/tests/workspace.test.ts` verifies legacy refusal and command behavior, while
 `tools/agx-ws/tests/gc-contract.test.ts` verifies GC inventory. Routing can be inspected with
-`agx worker roster --json`; unknown defaults/exclusions and invalid policy fail loading.
+`agx worker roster --json`; unknown exclusions, a policy that sets `route.default` and invalid policy fail loading.
 Repository verification is covered by `tools/agx-worker/tests/next/run.test.ts`.
 
 Migration status: shared L1/L2 and workspace-policy unification are implemented; legacy

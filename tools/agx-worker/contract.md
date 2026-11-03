@@ -207,7 +207,7 @@ is missing but `<base>/agx-next` exists, startup refuses with exit 2 and prints:
 Here `<base>` is non-empty `XDG_STATE_HOME` or `~/.local/state`. The CLI never moves data.
 
 Local judgments and graded run summaries remain audit data and do not enter the Jev request or
-deterministic fallback ranking. Selection uses the ticket, roster evidence, explicit route and
+the class ranking. Selection uses the ticket, roster evidence, explicit route and
 capability policy, live quota availability, and operational capacity guards.
 
 Use `agx worker ls --json` as the machine-readable view. Its rows include the run ID, ticket, state,
@@ -388,7 +388,7 @@ worker then has the ticket's normal timeout. Expiring the initial wait also yiel
 The selected row remains in the run record. A capacity outcome excludes that row, and every
 effort variant for its vendor model, for 300 seconds after completion. Five minutes prevents
 immediate relaunch loops while allowing automatic recovery. Existing capability, subscription,
-route-allowlist and Jev/fallback rules choose among the remaining rows; exhausting them refuses
+route-allowlist and Jev rules choose among the remaining rows; exhausting them refuses
 dispatch rather than waiting or retrying a cooled model. Capacity runs skip ticket verification,
 do not require a worker judgment, and never contribute to graded worker acceptance/failure counts.
 

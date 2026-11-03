@@ -28,9 +28,7 @@ afterEach(async () => {
 describe("roster loader", () => {
   test("default may be omitted and is omitted from JSON", async () => {
     const example = await readFile(examplePath, "utf8");
-    const result = await withPolicy(
-      example.replace('default = "luna-high"\n', ""),
-    );
+    const result = await withPolicy(example);
     expect(result.ok).toBe(true);
     if (result.ok)
       expect(JSON.parse(JSON.stringify(result.value))).not.toHaveProperty(
@@ -38,15 +36,6 @@ describe("roster loader", () => {
       );
   });
 
-  test("configured default remains in JSON", async () => {
-    const example = await readFile(examplePath, "utf8");
-    const result = await withPolicy(example);
-    expect(result.ok).toBe(true);
-    if (result.ok)
-      expect(JSON.parse(JSON.stringify(result.value)).default).toBe(
-        "luna-high",
-      );
-  });
   test("exclude removes a catalog row", async () => {
     const example = await readFile(examplePath, "utf8");
     const result = await withPolicy(
@@ -73,13 +62,26 @@ describe("roster loader", () => {
     expect(result.ok).toBe(false);
   });
 
-  test("unknown default is rejected", async () => {
+  test("the shipped policy example sets no route default", async () => {
     const example = await readFile(examplePath, "utf8");
-    const result = await withPolicy(
-      example.replace('default = "luna-high"', 'default = "missing-row"'),
-    );
-    expect(result.ok).toBe(false);
+    expect(example).not.toMatch(/^default\s*=/mu);
+    const result = await withPolicy(example);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect("default" in result.value).toBe(false);
   });
+
+  test.each(['"luna-high"', '"missing-row"', '""'])(
+    "a policy that still sets route.default = %s is rejected as removed",
+    async (value) => {
+      const example = await readFile(examplePath, "utf8");
+      const result = await withPolicy(
+        example.replace("[route]\n", `[route]\ndefault = ${value}\n`),
+      );
+      expect(result.ok).toBe(false);
+      if (!result.ok)
+        expect(result.error).toContain("route.default was removed");
+    },
+  );
 
   test("policy cannot change a catalog price", async () => {
     const example = await readFile(examplePath, "utf8");
@@ -89,45 +91,24 @@ describe("roster loader", () => {
     expect(result.ok).toBe(false);
   });
 
-  test("user default on a route the user allow excludes is rejected", async () => {
+  test("a user allow of claude loads without any default", async () => {
     const example = await readFile(examplePath, "utf8");
     const result = await withPolicy(
       example.replace('allow = ["codex"]', 'allow = ["claude"]'),
     );
-    expect(result.ok).toBe(false);
-    if (!result.ok)
-      expect(result.error).toContain("non-excluded row on an allowed route");
-  });
-
-  test("user default on an allowed claude route is accepted", async () => {
-    const example = await readFile(examplePath, "utf8");
-    const result = await withPolicy(
-      example
-        .replace('allow = ["codex"]', 'allow = ["claude"]')
-        .replace('default = "luna-high"', 'default = "haiku-low"'),
-    );
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.value.default).toBe("haiku-low");
+    if (result.ok) expect(result.value.auto.routes).toEqual(["claude"]);
   });
 
-  test("user default must be non-excluded", async () => {
+  test("excluding a row removes it without a default to repair", async () => {
     const example = await readFile(examplePath, "utf8");
     const result = await withPolicy(
       example.replace("exclude = []", 'exclude = ["luna-high"]'),
     );
-    expect(result.ok).toBe(false);
-    if (!result.ok)
-      expect(result.error).toContain("non-excluded row on an allowed route");
-  });
-
-  test("without a user allow, any route's catalog row may be the default", async () => {
-    const example = await readFile(examplePath, "utf8");
-    const result = await withPolicy(
-      example
-        .replace('allow = ["codex"]\n', "")
-        .replace('default = "luna-high"', 'default = "haiku-low"'),
-    );
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.value.default).toBe("haiku-low");
+    if (result.ok)
+      expect(result.value.choice.some((row) => row.id === "luna-high")).toBe(
+        false,
+      );
   });
 });
