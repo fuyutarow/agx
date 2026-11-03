@@ -868,16 +868,52 @@ async function commitId(repo: Repo, rev: string): Promise<Attempt<string>> {
 async function trunkBookmark(
   repo: Repo,
   trunk: string,
+  remotes: string[],
 ): Promise<Attempt<string>> {
   if (/^[A-Za-z0-9_./-]+$/u.test(trunk)) return good(trunk);
   const result = await jjOut(
-    ["log", "--no-graph", "-r", trunk, "-T", 'bookmarks.join("\\n")'],
+    [
+      "log",
+      "--no-graph",
+      "-r",
+      trunk,
+      "-T",
+      'bookmarks.map(|b| b.name()).join("\\n")',
+    ],
     repo.backing,
     true,
   );
   if (!result.ok) return result;
-  const displayed = result.value.trim().split("\n").find(Boolean) ?? "";
-  return good(displayed.replace(/[*?]+$/u, ""));
+  const name = result.value.trim().split("\n").find(Boolean) ?? "";
+  // A bookmark name never carries its remote: name@origin is the remote-tracking copy of name.
+  const remote = remotes.find((candidate) => name.endsWith(`@${candidate}`));
+  return good(
+    remote === undefined ? name : name.slice(0, -(remote.length + 1)),
+  );
+}
+
+const short = (commit: string): string => commit.slice(0, 12);
+
+/** Commit ids the local bookmark targets: none (absent), one, or several (conflicted). */
+async function localTrunkCommits(
+  repo: Repo,
+  bookmark: string,
+): Promise<Attempt<string[]>> {
+  const result = await jjOut(
+    [
+      "log",
+      "--no-graph",
+      "-r",
+      `bookmarks(exact:${JSON.stringify(bookmark)})`,
+      "-T",
+      'commit_id ++ "\\n"',
+    ],
+    repo.backing,
+    true,
+  );
+  return result.ok
+    ? good(result.value.split("\n").filter((line) => line !== ""))
+    : result;
 }
 
 async function remoteTrunk(
@@ -885,6 +921,11 @@ async function remoteTrunk(
   bookmark: string,
   remotes: string[],
 ): Promise<Attempt<{ ref: string; commit: string }>> {
+  const local = await localTrunkCommits(repo, bookmark);
+  if (local.ok && local.value.length > 1)
+    return bad(
+      `trunk bookmark ${JSON.stringify(bookmark)} is conflicted: it targets ${local.value.map(short).join(", ")}; resolve it with jj bookmark set ${bookmark} -r <commit> or pass --rev <commit> explicitly`,
+    );
   const orderedRemotes = [
     "origin",
     ...remotes.filter((remote) => remote !== "origin"),
@@ -895,29 +936,74 @@ async function remoteTrunk(
     if (commit.ok && commit.value !== "")
       return good({ ref, commit: commit.value });
   }
+  const only = local.ok ? local.value[0] : undefined;
+  const have =
+    only === undefined
+      ? "no local bookmark either"
+      : `local ${bookmark} is ${short(only)}, not on any remote`;
   return bad(
-    `no remote-tracking trunk bookmark found for ${JSON.stringify(bookmark)}; fetch the trunk bookmark or set [ws].trunk in agx.toml`,
+    `no remote-tracking trunk bookmark found for ${JSON.stringify(bookmark)} on ${orderedRemotes.join(", ")} (${have}); fetch the trunk bookmark, push ${bookmark} to a remote, pass --rev explicitly, or set [ws].trunk in agx.toml`,
   );
 }
+
+type TrunkRelation = {
+  kind: "same" | "ahead" | "behind" | "diverged" | "none";
+  local: string | undefined;
+};
+
+async function trunkRelation(
+  repo: Repo,
+  bookmark: string,
+  remote: { ref: string; commit: string },
+): Promise<TrunkRelation> {
+  const local = await localTrunkCommits(repo, bookmark);
+  const only = local.ok ? local.value[0] : undefined;
+  if (only === undefined) return { kind: "none", local: undefined };
+  if (only === remote.commit) return { kind: "same", local: only };
+  const nonEmpty = async (revset: string): Promise<boolean> => {
+    const found = await jjOut(
+      ["log", "--no-graph", "-r", revset, "-T", "commit_id"],
+      repo.backing,
+      true,
+    );
+    return found.ok && found.value.trim() !== "";
+  };
+  if (await nonEmpty(`${remote.commit} & ::${only}`))
+    return { kind: "ahead", local: only };
+  if (await nonEmpty(`${only} & ::${remote.commit}`))
+    return { kind: "behind", local: only };
+  return { kind: "diverged", local: only };
+}
+
+const write = (line: string) => process.stderr.write(`ws: ${line}\n`);
 
 async function warnTrunkCopyDifferences(
   repo: Repo,
   bookmark: string,
   remote: { ref: string; commit: string },
+  relation: TrunkRelation,
 ): Promise<void> {
-  const [local, gitCopy] = await Promise.all([
-    commitId(repo, bookmark),
-    commitId(repo, `${bookmark}@git`),
-  ]);
-  const differing: string[] = [];
-  if (local.ok && local.value !== "" && local.value !== remote.commit)
-    differing.push(`local ${bookmark}`);
-  if (gitCopy.ok && gitCopy.value !== "" && gitCopy.value !== remote.commit)
-    differing.push(`${bookmark}@git`);
-  if (differing.length === 0) return;
-  process.stderr.write(
-    `ws: warning: ${differing.join(" and ")} ${differing.length === 1 ? "differs" : "differ"} from ${remote.ref}; using ${remote.ref}\n`,
-  );
+  const { local } = relation;
+  const both =
+    local === undefined
+      ? ""
+      : `local ${bookmark} ${short(local)} and ${remote.ref} ${short(remote.commit)}`;
+  if (relation.kind === "ahead")
+    write(
+      `${both}: local is ahead; basing on local ${bookmark} (push ${bookmark} to publish it)`,
+    );
+  if (relation.kind === "behind")
+    write(`warning: ${both}: local is behind; using ${remote.ref}`);
+  const gitCopy = await commitId(repo, `${bookmark}@git`);
+  if (
+    gitCopy.ok &&
+    gitCopy.value !== "" &&
+    gitCopy.value !== remote.commit &&
+    gitCopy.value !== local
+  )
+    write(
+      `warning: ${bookmark}@git ${short(gitCopy.value)} differs from ${remote.ref} ${short(remote.commit)}; using ${remote.ref}`,
+    );
 }
 
 async function resolveAddBase(
@@ -967,7 +1053,7 @@ async function resolveAddBase(
     receiptRef = "jj default (@)";
   }
   if (remotes.length > 0) {
-    const bookmark = await trunkBookmark(repo, trunk);
+    const bookmark = await trunkBookmark(repo, trunk, remotes);
     if (!bookmark.ok) return bookmark;
     if (bookmark.value === "")
       return bad(
@@ -975,7 +1061,21 @@ async function resolveAddBase(
       );
     const remote = await remoteTrunk(repo, bookmark.value, remotes);
     if (!remote.ok) return remote;
-    await warnTrunkCopyDifferences(repo, bookmark.value, remote.value);
+    const relation = await trunkRelation(repo, bookmark.value, remote.value);
+    const name = bookmark.value;
+    if (relation.kind === "diverged" && relation.local !== undefined) {
+      const local = short(relation.local);
+      const remoteShort = short(remote.value.commit);
+      return bad(
+        `trunk bookmark ${JSON.stringify(name)} has diverged: local ${name} ${local} and ${remote.value.ref} ${remoteShort} are not ancestors of each other; pass --rev ${local} to base on the local commit, or --rev ${remoteShort} to base on the remote, or move the local bookmark with jj bookmark set ${name} -r ${remoteShort}`,
+      );
+    }
+    await warnTrunkCopyDifferences(
+      repo,
+      bookmark.value,
+      remote.value,
+      relation,
+    );
     baseRef = remote.value.ref;
     const ancestor = await jjOut(
       [
