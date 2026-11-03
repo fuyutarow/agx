@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.83 — 2026-11-03
+
+- end-notice process ends by its deadline (hard timer, sender process group killed, pipes drained with a bound) and runs in its own transient unit, so a pending notice no longer keeps the run's unit active or blocks --continue
+
 ## 1.22.82 — 2026-11-03
 
 - claude-route briefs name the Bash command patterns the workspace's Claude settings deny, read from the project and user settings files; no line when none deny Bash
