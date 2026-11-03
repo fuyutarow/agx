@@ -171,6 +171,14 @@ export function claudeWorkspaceWriteAllowedTools(): string {
 }
 
 /**
+ * The read scope of a claude workspace-write worker, matching codex workspace-write, which
+ * restricts writes and not reads: the Read tool (and the Glob and Grep tools, which follow Read
+ * rules) may open any absolute path. A permissions.allow rule grants read only; writes stay with
+ * the sandbox allowWrite roots and the run dir. Deny rules declared by the repository still win.
+ */
+export const CLAUDE_READ_ALLOW: readonly string[] = ["Read(//**)"];
+
+/**
  * Claude settings for a workspace-write worker. allowWrite is the run's temp directory, the system
  * temp directory, then the shared writable roots (the codex list), which already holds the run dir.
  * Codex gets its temp directory from its own sandbox defaults, so only the claude route lists it.
@@ -181,7 +189,7 @@ export function claudeWorkspaceWriteSettings(input: {
   runTemp: string;
   source?: NodeJS.ProcessEnv | undefined;
 }): {
-  permissions: { additionalDirectories: string[] };
+  permissions: { additionalDirectories: string[]; allow: string[] };
   sandbox: {
     enabled: true;
     autoAllowBashIfSandboxed: true;
@@ -196,7 +204,10 @@ export function claudeWorkspaceWriteSettings(input: {
     source: input.source,
   });
   return {
-    permissions: { additionalDirectories: [resolve(input.runDir)] },
+    permissions: {
+      additionalDirectories: [resolve(input.runDir)],
+      allow: [...CLAUDE_READ_ALLOW],
+    },
     sandbox: {
       enabled: true,
       autoAllowBashIfSandboxed: true,
