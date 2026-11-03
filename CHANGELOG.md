@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.67 — 2026-11-03
+
+- A dispatched run that exits before it records started now ends launch-failed with its cause and stderr instead of being read later as lost / owner-gone
+
 ## 1.22.66 — 2026-11-03
 
 - dispatch tests no longer fail on a loaded host: dispatch children get a 30 s budget instead of bun's 5 s default, the unresolvable-ACK test stubs claude instead of calling the host registry, and the unknown-run-prefix expectation matches resolveRunId's count-only message
