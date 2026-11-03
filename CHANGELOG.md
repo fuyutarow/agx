@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.80 — 2026-11-03
+
+- claude workspace-write workers may Read any path, like codex workspace-write workers, while the writable roots stay unchanged
+
 ## 1.22.79 — 2026-11-03
 
 - agx worker dispatch exits as soon as its receipt is written: it no longer schedules a run-publication for its dispatching record, so it no longer waits after the receipt on a full log replay and a publication lock held by other dispatches (the run's own started record publishes the snapshot)
