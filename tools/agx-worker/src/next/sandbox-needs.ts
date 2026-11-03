@@ -488,3 +488,52 @@ export async function sandboxNeeds(
   return (await inspectSandboxNeeds(cwd, sandbox, writes, verify, always))
     .warnings;
 }
+
+const STORE_PATH = /workspace VCS store=([^;"]+)/u;
+
+/** Each distinct WARN once; WARNs differing only in the VCS store path become one line naming every path. */
+export function mergeWarnings(warns: readonly string[]): string[] {
+  const merged: { line: string; paths: string[] }[] = [];
+  const byKey = new Map<string, { line: string; paths: string[] }>();
+  for (const line of warns) {
+    const path = STORE_PATH.exec(line)?.[1];
+    const key = path === undefined ? line : line.replace(STORE_PATH, "STORE");
+    const seen = byKey.get(key);
+    if (seen === undefined) {
+      const entry = { line, paths: path === undefined ? [] : [path] };
+      byKey.set(key, entry);
+      merged.push(entry);
+    } else if (path !== undefined && !seen.paths.includes(path))
+      seen.paths.push(path);
+  }
+  return merged.map(({ line, paths }) =>
+    paths.length < 2
+      ? line
+      : line.replace(STORE_PATH, `workspace VCS stores=${paths.join(", ")}`),
+  );
+}
+
+/**
+ * Compose a refused dispatch's stderr: line 1 is the refusal (every non-WARN
+ * line of the failures and of the check's stderr, in order); WARN lines follow,
+ * one per distinct warning. Undefined when nothing refuses.
+ */
+export function composePreflightRefusal(input: {
+  tree: string;
+  checkCode: number;
+  checkErr: string;
+  failures: readonly string[];
+}): string | undefined {
+  if (input.failures.length === 0 && input.checkCode === 0) return undefined;
+  const lines = input.checkErr
+    .split(/[\r\n]+/u)
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+  const reasons = [
+    ...input.failures,
+    ...lines.filter((line) => !line.startsWith("WARN ")),
+  ];
+  const warns = mergeWarnings(lines.filter((line) => line.startsWith("WARN ")));
+  const head = `${reasons.length === 0 ? "no stderr" : reasons.join("; ")}; preflight failed ${input.tree}; check=worker-check expected=0 observed=${input.checkCode}; check exit=${input.checkCode}`;
+  return `${[head, ...warns].join("\n")}\n`;
+}

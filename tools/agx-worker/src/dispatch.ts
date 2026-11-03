@@ -1,4 +1,5 @@
 import { recordRefusal, printPreflightFailures } from "./next/preflight.ts";
+import { composePreflightRefusal } from "./next/sandbox-needs.ts";
 import { randomUUID } from "node:crypto";
 import {
   lstat,
@@ -911,16 +912,14 @@ export async function dispatch(options: {
     process.stderr.write(`${checked.err}\n`);
     return 75;
   }
-  if (checked.code !== 0)
-    failures.push(
-      checked.err.trim() === ""
-        ? "no stderr"
-        : checked.err.trim().replaceAll(/[\r\n]+/gu, "; "),
-    );
-  if (failures.length > 0) {
-    process.stderr.write(
-      `agx worker dispatch: preflight failed ${tree}; check=worker-check expected=0 observed=${checked.code}; check exit=${checked.code}: ${failures.join("; ")}\n`,
-    );
+  const refusal = composePreflightRefusal({
+    tree,
+    checkCode: checked.code,
+    checkErr: checked.err,
+    failures,
+  });
+  if (refusal !== undefined) {
+    process.stderr.write(refusal);
     return 2;
   }
 

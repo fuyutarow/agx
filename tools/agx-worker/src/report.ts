@@ -250,7 +250,9 @@ export function parseReport(
       ? z.unknown().safeParse(structured)
       : jsonText.safeParse(candidateText);
   const parsed = candidate.success
-    ? WorkerReport.safeParse(normalizeReportCheckResults(normalizeReportCheckExits(candidate.data)))
+    ? WorkerReport.safeParse(
+        normalizeReportCheckResults(normalizeReportCheckExits(candidate.data)),
+      )
     : undefined;
   if (parsed?.success === true) return { ok: true, report: parsed.data };
   if (structured === undefined) {
