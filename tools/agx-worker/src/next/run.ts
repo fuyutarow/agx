@@ -61,7 +61,10 @@ import {
   recordRefusal,
 } from "./preflight.ts";
 import { createRunTemp } from "../temp.ts";
-import { claudeWorkspaceWriteSettings } from "../workers/environment.ts";
+import {
+  claudeWorkspaceWriteSettings,
+  removeClaudeSandboxStubs,
+} from "../workers/environment.ts";
 import { exitWithError } from "./exit.ts";
 import { guardPreLaunch } from "./launch-guard.ts";
 import {
@@ -551,6 +554,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
   const row = selectedRoute.row;
   let activeRow = row;
   const attemptedRows = [row.id];
+  let claudeRouteRan = false;
   const id = binding?.id ?? randomUUID();
   // The run owns its temp space: removed on any exit path (process.exit included); a SIGKILL
   // leaves it for the next run's sweep.
@@ -879,6 +883,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
     ];
   };
   const before = workspaceSnapshot(cwd);
+  if (activeRow.route === "claude") claudeRouteRan = true;
   const baseEnv: NodeJS.ProcessEnv = { ...environment, ...temp.env };
   const workerCommand = Bun.which(workerPath, {
     PATH: baseEnv.PATH ?? "/usr/bin:/bin",
@@ -1166,6 +1171,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
           ),
         ),
       );
+    if (activeRow.route === "claude") claudeRouteRan = true;
     currentResumeSession =
       previousRow.route === activeRow.route ? previousSession : undefined;
     if (currentResumeSession === undefined) latestVendorSession = null;
@@ -1173,6 +1179,11 @@ async function runUnguarded(flags: Flags): Promise<number> {
   clearInterval(progressWatcher);
   // A capacity receipt is terminal only after the active run exhausted its eligible rows.
   const capacity = capacityExhausted && endedOnCapacity;
+  // A killed claude sandbox leaves empty read-only placeholders; remove them before measuring.
+  const beforeSnapshot = before.isOk() ? before.value : undefined;
+  const sandboxStubsRemoved = claudeRouteRan
+    ? removeClaudeSandboxStubs(cwd, beforeSnapshot)
+    : [];
   const after = workspaceSnapshot(cwd);
   const changedPathsMeasured =
     before.isOk() && after.isOk()
@@ -1244,6 +1255,9 @@ async function runUnguarded(flags: Flags): Promise<number> {
     execution,
     sandbox,
     sandbox_source,
+    ...(sandboxStubsRemoved.length === 0
+      ? {}
+      : { sandbox_stubs_removed: sandboxStubsRemoved }),
     ...(changedPathsMeasured === undefined
       ? {}
       : {

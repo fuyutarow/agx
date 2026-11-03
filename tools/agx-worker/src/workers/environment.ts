@@ -1,5 +1,7 @@
+import { lstatSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { fromThrowable } from "neverthrow";
 import {
   AGX_WORKER_ENV,
   AGX_WORKER_VALUE,
@@ -97,6 +99,57 @@ export function workerWritableRoots(input: {
     ...(input.runDir === undefined ? [] : [resolve(input.runDir)]),
   ];
   return [...new Set(roots)];
+}
+
+/**
+ * The workspace-relative paths the Claude Code sandbox protects from writes. A sandbox that is
+ * killed leaves an empty read-only placeholder at each one it mounted; this is the one list of
+ * those names, read by the cleanup below.
+ */
+export const CLAUDE_SANDBOX_PROTECTED_PATHS: readonly string[] = [
+  ".bashrc",
+  ".bash_profile",
+  ".profile",
+  ".zshrc",
+  ".zprofile",
+  ".gitconfig",
+  ".gitmodules",
+  ".mcp.json",
+  ".ripgreprc",
+  ".idea",
+  ".vscode",
+  ".claude/commands",
+  ".claude/agents",
+  ".claude/skills",
+  ".claude/hooks",
+  ".claude/settings.json",
+  ".claude/settings.local.json",
+];
+
+/**
+ * Remove the placeholders a claude sandbox left in the workspace. Only a protected name that is
+ * absent from the pre-run snapshot and is now a regular empty file is removed; a path that existed
+ * before the run, a directory, a non-empty file and any other name stay. Returns the removed
+ * paths, sorted. An unreadable snapshot (undefined) removes nothing.
+ */
+export function removeClaudeSandboxStubs(
+  cwd: string,
+  before: ReadonlyMap<string, unknown> | undefined,
+): string[] {
+  if (before === undefined) return [];
+  const removed: string[] = [];
+  for (const path of CLAUDE_SANDBOX_PROTECTED_PATHS) {
+    if (before.has(path)) continue;
+    const absolute = join(resolve(cwd), path);
+    const done = fromThrowable(() => {
+      const stat = lstatSync(absolute);
+      if (!stat.isFile() || stat.size > 0) return false;
+      unlinkSync(absolute);
+      return true;
+    })();
+    if (done.isOk() && done.value) removed.push(path);
+  }
+  return removed.toSorted();
 }
 
 /**
