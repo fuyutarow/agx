@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import { routingEvents } from "../../src/next/routing-events.ts";
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
+
+// Routing tests spawn mise and agx children; the 5 s default fails on a loaded host.
+setDefaultTimeout(60_000);
 import { mkdirSync, rmSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -73,14 +76,21 @@ const priorRoster = process.env.AGX_CONFIG;
 const priorUrl = process.env.JEV_URL;
 const priorHome = process.env.HOME;
 const priorStateDir = process.env.AGX_STATE_DIR;
+const priorTypesafeKey = process.env.TYPESAFE_API_KEY;
 const servers: ReturnType<typeof Bun.serve>[] = [];
 const roots: string[] = [];
+// Claude rows carry AA durations since 1.22.75, so with both routes open the cheapest
+// row that clears the localized bar (TB4 15) is haiku-medium, not terra-low.
+const LOCALIZED_SELECTION = "haiku-medium";
 
 async function isolateState() {
   const root = await mkdtemp(join(tmpdir(), "agx-route-"));
   roots.push(root);
   const home = join(root, "home");
   await mkdir(home, { recursive: true });
+  // Jev is posted only when a key resolves; pin one so the local server always answers
+  // instead of the result depending on the live fnox or legacy key file.
+  process.env.TYPESAFE_API_KEY = "routing-fixture-secret";
   await writeFile(
     join(root, "catalog.toml"),
     await readFile(
@@ -269,6 +279,8 @@ afterEach(async () => {
   else process.env.HOME = priorHome;
   if (priorStateDir === undefined) delete process.env.AGX_STATE_DIR;
   else process.env.AGX_STATE_DIR = priorStateDir;
+  if (priorTypesafeKey === undefined) delete process.env.TYPESAFE_API_KEY;
+  else process.env.TYPESAFE_API_KEY = priorTypesafeKey;
 });
 
 describe("retired Jev endpoint overrides", () => {
@@ -369,6 +381,8 @@ describe("capability constrained routing", () => {
             ...subprocessEnvironment(),
             AGX_CONFIG: configPath,
             TYPESAFE_API_KEY: "routing-fixture-secret",
+            // mise would otherwise read the user's ~/.config/mise/conf.d, which is outside MISE_CONFIG_DIR.
+            MISE_NO_CONFIG: "1",
           },
           stdout: "pipe",
           stderr: "pipe",
@@ -411,7 +425,7 @@ describe("capability constrained routing", () => {
         });
       }
       const server = startServer("localized");
-      expect((await route("same frozen ticket")).id).toBe("terra-low");
+      expect((await route("same frozen ticket")).id).toBe(LOCALIZED_SELECTION);
       const request = server.request();
       expect(request).toBeDefined();
       const classCriteria = Object.keys(request?.questions.worker.criteria ?? {});
@@ -450,7 +464,7 @@ describe("capability constrained routing", () => {
       note: "historical Sol 6.1 acceptance",
     });
     const server = startServer("localized");
-    expect((await route("generation-isolation replay")).id).toBe("terra-low");
+    expect((await route("generation-isolation replay")).id).toBe(LOCALIZED_SELECTION);
     expect(server.request()?.questions.worker.criteria["localized"]).toBeDefined();
     expect(server.request()?.questions.worker.criteria["cross_module"]).toBeDefined();
   });
@@ -684,7 +698,7 @@ describe("capability constrained routing", () => {
     const server = startServer("localized", { localized: 1 });
 
     const selected = await route("comparable routing replay");
-    expect(selected.id).toBe("terra-low");
+    expect(selected.id).toBe(LOCALIZED_SELECTION);
     const request = server.request();
     const claudeWeek = request?.state.routes.claude.windows["7d"];
     const codexWeek = request?.state.routes.codex.windows["7d"];
@@ -856,7 +870,7 @@ test("route contract: Jev payload hides roster rows while classifying the ticket
     "mechanical", "localized", "cross_module", "split", "uncheckable", "contradiction", "missing_input",
   ]);
   expect(request.state.published_task_metrics).toEqual({});
-  expect(selected.id).toBe("terra-low");
+  expect(selected.id).toBe(LOCALIZED_SELECTION);
   expect(server.calls()).toBe(1);
 });
 
@@ -1190,9 +1204,9 @@ test("audit retains class probabilities, the bar, qualifying rows, and determini
   expect(audit?.requirement_class).toBe("localized");
   expect(audit?.tb4_bar).toBe(15);
   expect(audit?.qualifying_rows).toContain("terra-low");
-  expect(audit?.selected_row).toBe("terra-low");
+  expect(audit?.selected_row).toBe(LOCALIZED_SELECTION);
   expect(audit?.choice_probabilities).toEqual({ localized: 1 });
-  expect(selected.id).toBe("terra-low");
+  expect(selected.id).toBe(LOCALIZED_SELECTION);
   expect(server.rawRequest()?.questions.worker.criteria.localized).toBeDefined();
   const started = appendStarted(selected.id);
   if (started?.kind === "started")
@@ -1219,7 +1233,7 @@ test("route contract: the selected row depends on the ticket class, and the choi
   await isolateState();
   const crossModule = await selectClass("cross_module");
   expect(mechanical).toMatch(/^luna-/u);
-  expect(localized).toBe("terra-low");
+  expect(localized).toBe(LOCALIZED_SELECTION);
   expect(crossModule).toBe("terra-high");
   expect(new Set([mechanical, localized, crossModule]).size).toBe(3);
 });
