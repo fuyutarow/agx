@@ -635,6 +635,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
           exit: code,
           resultPath: null,
           verifyExits: [],
+          detachUnit: process.env.INVOCATION_ID !== undefined,
         });
         append({
           kind: "ended",
@@ -883,10 +884,9 @@ async function runUnguarded(flags: Flags): Promise<number> {
       activeRow.effort,
       "--permission-mode",
       permissionMode,
-      ...(sandbox === "workspace-write" ? [
-            "--allowed-tools",
-            claudeWorkspaceWriteAllowedTools(),
-          ] : []),
+      ...(sandbox === "workspace-write"
+        ? ["--allowed-tools", claudeWorkspaceWriteAllowedTools()]
+        : []),
       ...(claudeSettings === undefined ? [] : ["--settings", claudeSettings]),
       "--max-turns",
       "60",
@@ -1369,6 +1369,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
     resultPath: reportPath,
     verifyExits: verify.map((result) => result.exit),
     env: runEnv,
+    detachUnit: process.env.INVOCATION_ID !== undefined,
   });
   append({
     kind: "ended",

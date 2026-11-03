@@ -41,9 +41,14 @@ export const EndNoticeRequest = z.object({
 export type EndNoticeRequest = z.output<typeof EndNoticeRequest>;
 
 /** Kill the sender only after its own deadline has had time to report. */
-const noticeGuardSlackMs = 2_000;
+const noticeGuardSlackMs = 1_000;
+/** The whole notice process exits by deadline + this, whatever its transport does. */
+const hardExitSlackMs = 2_000;
+/** After the sender ended or was killed, wait this long for its pipes to drain. */
+const pipeDrainMs = 500;
 const parentWaitLimitMs = 3_000;
 const receiptLimit = 4_000;
+const environmentName = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 
 const pending: EndNotice = {
   status: "pending",
@@ -61,36 +66,43 @@ export function scheduleEndNotice(
   input: Omit<EndNoticeRequest, "parentPid" | "deadlineMs"> & {
     deadlineMs?: number;
     env?: NodeJS.ProcessEnv;
+    /** Run the notice in its own transient unit so the run's unit ends with the run. */
+    detachUnit?: boolean;
   },
   workerCommand: string[] = stableSelfCommand(),
 ): EndNotice {
-  const { env, deadlineMs = NOTICE_DEADLINE_MS, ...request } = input;
+  const {
+    env,
+    deadlineMs = NOTICE_DEADLINE_MS,
+    detachUnit = false,
+    ...request
+  } = input;
   if (targetFor(input) === null)
     return {
       status: "skipped",
       exit: null,
       receipt: "skipped: no dispatcher session",
     };
+  const noticeCommand = [
+    ...workerCommand,
+    "--internal-end-notice",
+    JSON.stringify({ ...request, deadlineMs, parentPid: process.pid }),
+  ];
+  const noticeEnv = { ...process.env, ...env, AGX_RUN_ID: input.id };
+  if (
+    detachUnit &&
+    startOutsideUnit(noticeCommand, noticeEnv, request.id, deadlineMs)
+  )
+    return pending;
   const spawned = fromThrowable(
     () =>
-      Bun.spawn(
-        [
-          ...workerCommand,
-          "--internal-end-notice",
-          JSON.stringify({ ...request, deadlineMs, parentPid: process.pid }),
-        ],
-        {
-          stdin: "ignore",
-          stdout: "ignore",
-          stderr: "ignore",
-          detached: true,
-          env: {
-            ...process.env,
-            ...env,
-            AGX_RUN_ID: input.id,
-          },
-        },
-      ),
+      Bun.spawn(noticeCommand, {
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "ignore",
+        detached: true,
+        env: noticeEnv,
+      }),
     (error) => error,
   )();
   if (spawned.isErr())
@@ -101,6 +113,54 @@ export function scheduleEndNotice(
     };
   spawned.value.unref();
   return pending;
+}
+
+/**
+ * Start the notice as its own transient user unit. A child left in the run's
+ * unit keeps that unit active after the run ends, and `agx worker dispatch`
+ * refuses the unit name until it is gone. `RuntimeMaxSec` is systemd's own
+ * hard stop for the notice. Returns false when the unit could not be created,
+ * so the caller falls back to a plain detached child.
+ */
+function startOutsideUnit(
+  command: string[],
+  env: NodeJS.ProcessEnv,
+  id: string,
+  deadlineMs: number,
+): boolean {
+  const systemdRun = Bun.which(
+    "systemd-run",
+    env.PATH === undefined ? {} : { PATH: env.PATH },
+  );
+  if (systemdRun === null) return false;
+  const runtimeMaxSec = Math.ceil(
+    (parentWaitLimitMs + deadlineMs + hardExitSlackMs) / 1_000,
+  );
+  const started = fromThrowable(
+    () =>
+      Bun.spawnSync(
+        [
+          systemdRun,
+          "--user",
+          "--quiet",
+          "--collect",
+          `--unit=agx-end-notice-${id}`,
+          "-p",
+          `RuntimeMaxSec=${runtimeMaxSec}`,
+          `--working-directory=${process.cwd()}`,
+          ...Object.entries(env).flatMap(([name, value]) =>
+            value === undefined || !environmentName.test(name)
+              ? []
+              : [`--setenv=${name}=${value}`],
+          ),
+          "--",
+          ...command,
+        ],
+        { stdin: "ignore", stdout: "ignore", stderr: "ignore", timeout: 5_000 },
+      ),
+    (error) => error,
+  )();
+  return started.isOk() && started.value.exitCode === 0;
 }
 
 async function waitForParentExit(parentPid: number): Promise<void> {
@@ -115,9 +175,24 @@ async function waitForParentExit(parentPid: number): Promise<void> {
   }
 }
 
+/** Resolve with `fallback` if `work` does not settle within `ms`. */
+function within<T>(work: Promise<T>, ms: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<T>((resolve) => {
+    timer = setTimeout(() => {
+      resolve(fallback);
+    }, ms);
+  });
+  return Promise.race([work, late]).finally(() => {
+    clearTimeout(timer);
+  });
+}
+
 async function sendEndNotice(
   input: EndNoticeRequest,
   env: NodeJS.ProcessEnv,
+  /** performance.now() value at which the sender's own deadline falls. */
+  deadlineAt: number,
 ): Promise<EndNotice> {
   const target = targetFor(input);
   if (target === null)
@@ -147,7 +222,7 @@ async function sendEndNotice(
       receipt: "agx executable not found on PATH",
     };
 
-  const signal = AbortSignal.timeout(input.deadlineMs + noticeGuardSlackMs);
+  const remainingMs = Math.max(1, Math.floor(deadlineAt - performance.now()));
   const spawned = fromThrowable(
     () =>
       Bun.spawn(
@@ -163,15 +238,16 @@ async function sendEndNotice(
           "--message",
           message,
           "--timeout-ms",
-          String(input.deadlineMs),
+          String(remainingMs),
         ],
         {
           stdin: "ignore",
           stdout: "pipe",
           stderr: "pipe",
+          // Own process group: the sender's helpers (a relay model turn, its
+          // tools) are killed with it instead of holding our pipes open.
+          detached: true,
           env: { ...process.env, ...env, AGX_RUN_ID: input.id },
-          signal,
-          killSignal: "SIGKILL",
         },
       ),
     (error) => error,
@@ -182,39 +258,61 @@ async function sendEndNotice(
       exit: 1,
       receipt: `agx msg send failed: ${String(spawned.error).slice(0, receiptLimit)}`,
     };
-  {
-    const child = spawned.value;
-    const [exit, stdout, stderr] = await Promise.all([
-      child.exited,
-      child.stdout === null
-        ? Promise.resolve("")
-        : new Response(child.stdout).text(),
-      child.stderr === null
-        ? Promise.resolve("")
-        : new Response(child.stderr).text(),
-    ]);
-    const output = `${stdout}${stderr}`.trim().slice(-receiptLimit);
-    if (signal.aborted || exit === 4)
-      return {
-        status: "deadline",
-        exit: exit === 4 ? exit : 4,
-        receipt:
-          output !== ""
-            ? output
-            : `notice deadline exceeded after ${input.deadlineMs} ms`,
-      };
-    if (exit === 0)
-      return {
-        status: "accepted",
-        exit,
-        receipt: output !== "" ? output : "agx msg send accepted",
-      };
+  const child = spawned.value;
+  const killGroup = () => {
+    fromThrowable(
+      () => process.kill(-child.pid, "SIGKILL"),
+      (error) => error,
+    )();
+    fromThrowable(
+      () => {
+        child.kill("SIGKILL");
+        return true;
+      },
+      (error) => error,
+    )();
+  };
+  let timedOut = false;
+  const guard = setTimeout(() => {
+    timedOut = true;
+    killGroup();
+  }, remainingMs + noticeGuardSlackMs);
+  const stdout =
+    child.stdout === null
+      ? Promise.resolve("")
+      : new Response(child.stdout).text();
+  const stderr =
+    child.stderr === null
+      ? Promise.resolve("")
+      : new Response(child.stderr).text();
+  const exit = await child.exited;
+  clearTimeout(guard);
+  killGroup();
+  const [out, err] = await Promise.all([
+    within(stdout, pipeDrainMs, ""),
+    within(stderr, pipeDrainMs, ""),
+  ]);
+  const output = `${out}${err}`.trim().slice(-receiptLimit);
+  if (timedOut || exit === 4)
     return {
-      status: "unreachable",
-      exit,
-      receipt: output !== "" ? output : `agx msg send exited ${exit}`,
+      status: "deadline",
+      exit: 4,
+      receipt:
+        output !== ""
+          ? output
+          : `notice deadline exceeded after ${input.deadlineMs} ms`,
     };
-  }
+  if (exit === 0)
+    return {
+      status: "accepted",
+      exit,
+      receipt: output !== "" ? output : "agx msg send accepted",
+    };
+  return {
+    status: "unreachable",
+    exit,
+    receipt: output !== "" ? output : `agx msg send exited ${exit}`,
+  };
 }
 
 /** Internal detached worker: deliver only after the run process has exited. */
@@ -222,9 +320,38 @@ export async function completeEndNotice(
   input: EndNoticeRequest,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<EndNotice> {
+  const deadlineAt = performance.now() + input.deadlineMs;
+  let recorded = false;
+  // Last resort: whatever the transport does, this process ends by its deadline.
+  const hard = setTimeout(() => {
+    if (!recorded) {
+      recorded = true;
+      fromThrowable(
+        () => {
+          append({
+            kind: "end-notice",
+            id: input.id,
+            at: now(),
+            notice: {
+              status: "deadline",
+              exit: 4,
+              receipt: `notice deadline exceeded after ${input.deadlineMs} ms`,
+            },
+          });
+          return true;
+        },
+        (error) => error,
+      )();
+    }
+    process.exit(4);
+  }, input.deadlineMs + hardExitSlackMs);
   await waitForParentExit(input.parentPid);
-  const notice = await sendEndNotice(input, env);
-  append({ kind: "end-notice", id: input.id, at: now(), notice });
+  const notice = await sendEndNotice(input, env, deadlineAt);
+  if (!recorded) {
+    recorded = true;
+    append({ kind: "end-notice", id: input.id, at: now(), notice });
+  }
   await flushRunPublications();
+  clearTimeout(hard);
   return notice;
 }

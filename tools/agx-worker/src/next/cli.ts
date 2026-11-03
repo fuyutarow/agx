@@ -40,7 +40,8 @@ async function main(): Promise<void> {
       return;
     }
     await completeEndNotice(request.data);
-    return;
+    // Nothing the sender left behind may keep the notice, or its unit, alive.
+    process.exit(0);
   }
   if (rawArgs[0] === "--internal-codex") {
     process.argv.splice(2, 1);
