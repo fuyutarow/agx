@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.78 — 2026-11-03
+
+- Verify-feedback resume prompts carry the same final JSON report instruction as the first brief
+
 ## 1.22.77 — 2026-11-03
 
 - The run-end notice waits up to 120 s for the relay to accept (was 1.2 s, which recorded every Claude-route notice as deadline); the notice stays detached from the run's end.
