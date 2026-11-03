@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.69 — 2026-11-03
+
+- The run end notice now carries the full run id, the exit code and the read command, and the manager sends it as an explicit agx-manager sender so it is relayed to claude: dispatchers instead of refused as Claude-to-Claude; tests cover ok, verify-failed, timeout, stopped, no-dispatcher and failed-send notices.
+
 ## 1.22.68 — 2026-11-03
 
 - claude-route runs parse the receipt's result (or structured_output) as the worker's report instead of the receipt envelope, so a valid report no longer ends malformed
