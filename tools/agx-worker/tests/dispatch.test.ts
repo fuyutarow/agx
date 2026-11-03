@@ -31,6 +31,19 @@ const RunRecord = z.looseObject({
   unit: z.string(),
 });
 const roots: string[] = [];
+/**
+ * Hard kill for one `dispatch` child. The old 5000 ms value sat at bun's per-test default,
+ * so a loaded host (load average ~20 on 12 cores) killed a healthy dispatch with SIGTERM (143).
+ * Unloaded, one invocation takes 0.6-1.1 s; under load 5.1-6.3 s (measured 2026-11-03).
+ */
+const INVOKE_TIMEOUT_MS = 30_000;
+/** Per-test budget for tests that run one or more `dispatch` children (bun's default is 5 s). */
+const DISPATCH_TEST_TIMEOUT_MS = 30_000;
+/**
+ * Two dispatch children (each capped at INVOKE_TIMEOUT_MS) plus five real jj calls (each capped
+ * at INVOKE_TIMEOUT_MS). Unloaded it takes ~3.6 s; under the 16-process CPU load it is measured below.
+ */
+const SIBLING_TEST_TIMEOUT_MS = 120_000;
 function inheritedEnv() {
   const env = { ...subprocessEnvironment() };
   Reflect.deleteProperty(env, "AGX_NEXT_STATE_DIR");
@@ -212,7 +225,7 @@ async function invoke(f: ReturnType<typeof fixture>, ...args: string[]) {
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
-      timeout: Number(f.env.FAKE_INVOKE_TIMEOUT_MS ?? 5000),
+      timeout: Number(f.env.FAKE_INVOKE_TIMEOUT_MS ?? INVOKE_TIMEOUT_MS),
     },
   );
   const [stdout, stderr, exitCode] = await Promise.all([
@@ -241,7 +254,7 @@ test("dispatch passes the ticket ACK target to the run as a bound address", asyn
   expect(readFileSync(f.unitArgs, "utf8")).toContain(
     `--setenv=${BOUND_CLAUDE_TARGET_ENV}=${bound}`,
   );
-});
+}, DISPATCH_TEST_TIMEOUT_MS);
 
 test("dispatch contract: a claude uuid ACK target is bound to its session name at dispatch", async () => {
   const f = fixture();
@@ -265,7 +278,7 @@ test("dispatch contract: a claude uuid ACK target is bound to its session name a
   expect(readFileSync(f.unitArgs, "utf8")).toContain(
     `--setenv=${BOUND_CLAUDE_TARGET_ENV}=${encodeBoundClaudeTarget({ selector: target, address: "claude:dx-agt_2hqv" })}`,
   );
-});
+}, DISPATCH_TEST_TIMEOUT_MS);
 
 test("dispatch contract: an unknown claude uuid ACK target is reported unbound", async () => {
   const f = fixture();
@@ -287,12 +300,17 @@ test("dispatch contract: an unknown claude uuid ACK target is reported unbound",
   const args = readFileSync(f.unitArgs, "utf8");
   expect(args).toContain("--setenv=AGX_DISPATCH_ACK_UNBOUND=1");
   expect(args).not.toContain(`--setenv=${BOUND_CLAUDE_TARGET_ENV}=`);
-});
+}, DISPATCH_TEST_TIMEOUT_MS);
 
 test("dispatch contract: an unresolvable ACK target never fails the dispatch", async () => {
   const f = fixture();
   const target = "claude:12345678-1234-4123-8123-123456789abc";
   f.env.CLAUDE_CODE_SESSION_ID = target.slice("claude:".length);
+  // A stub with no live registrations keeps this test off the host's real `claude agents`
+  // registry (a real call that varies with machine load); the target is unresolvable either way.
+  const claude = join(f.root, "bin", "claude");
+  writeFileSync(claude, "#!/bin/sh\nprintf '%s\\n' '[]'\n");
+  chmodSync(claude, 0o755);
   const result = await invoke(f);
   expect(result.exitCode, result.stderr).toBe(0);
   expect(result.stderr).toContain("ACK will not be delivered by agx msg");
@@ -314,7 +332,7 @@ test("dispatch contract: an unresolvable ACK target never fails the dispatch", a
   );
   expect(event.success).toBe(true);
   if (event.success) expect(event.data.ack.target).toBe(target);
-});
+}, DISPATCH_TEST_TIMEOUT_MS);
 
 test("dispatch binds its Claude session when the ticket omits an ACK target", async () => {
   const f = fixture();
@@ -328,7 +346,7 @@ test("dispatch binds its Claude session when the ticket omits an ACK target", as
   expect(readFileSync(f.unitArgs, "utf8")).toContain(
     `--setenv=${BOUND_CLAUDE_TARGET_ENV}=${bound}`,
   );
-});
+}, DISPATCH_TEST_TIMEOUT_MS);
 
 test("dispatch contract: every flag the documentation names for dispatch is accepted", async () => {
   const f = fixture();
@@ -500,7 +518,7 @@ test("continuation ignores a deleted registered sibling but refuses its own miss
     const result = Bun.spawnSync(["jj", ...args], {
       cwd: f.repo,
       env: f.env,
-      timeout: 5000,
+      timeout: INVOKE_TIMEOUT_MS,
     });
     expect(result.exitCode, result.stderr.toString()).toBe(0);
     return result.stdout.toString();
@@ -529,7 +547,7 @@ test("continuation ignores a deleted registered sibling but refuses its own miss
   expect(missing.stderr).toContain(workspace);
   expect(missing.stdout).toBe("");
   expect(await Bun.file(f.unitArgs).exists()).toBe(false);
-}, 11000);
+}, SIBLING_TEST_TIMEOUT_MS);
 
 test.each(["foo-bar", "foo-bar-2", "another-ticket"])(
   "continuation keeps recorded workspace %s without creating one",
@@ -544,6 +562,7 @@ test.each(["foo-bar", "foo-bar-2", "another-ticket"])(
     );
     expect(await Bun.file(f.wsArgs).exists()).toBe(false);
   },
+  DISPATCH_TEST_TIMEOUT_MS,
 );
 
 test("continuation resolves a unique run id prefix before reading its workspace", async () => {
@@ -721,19 +740,21 @@ test("continuation refuses ambiguous and unknown prefixes with run candidates", 
     workspace,
   }));
   writeFileSync(f.records, JSON.stringify(records));
-  for (const [selector, candidates] of [
+  // An ambiguous prefix lists its candidates; an unknown selector reports only the recorded
+  // count, as resolveRunId does (tools/agx-worker/tests/next/run-id.test.ts pins that rule).
+  for (const [selector, expected] of [
     ["aa94ee5d", records.map((row) => row.id)],
-    ["missing", records.map((row) => row.id)],
+    ["missing", ["unknown run id 'missing'; 2 recorded runs"]],
   ] as const) {
     const result = await invoke(f, "--continue", selector);
     expect(result.exitCode).toBe(2);
     expect(result.stdout).toBe("");
     const lines = result.stderr.trim().split("\n");
     expect(lines).toHaveLength(1);
-    for (const candidate of candidates) expect(lines[0]).toContain(candidate);
+    for (const fragment of expected) expect(lines[0]).toContain(fragment);
     expect(await Bun.file(f.unitArgs).exists()).toBe(false);
   }
-});
+}, DISPATCH_TEST_TIMEOUT_MS);
 
 test.each([undefined, ""])(
   "continuation of a run --cd falls back to recorded cwd (%s)",
