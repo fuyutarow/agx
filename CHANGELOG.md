@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.65 — 2026-11-03
+
+- In-run worker spawns (first launch, verify-feedback resume, reroute) resolve a Homebrew Cellar path to the opt link so a run survives an agx upgrade; each spawn's executable is recorded in spawn-NN.json
+
 ## 1.22.64 — 2026-11-03
 
 - claude-route briefs tell the worker to send the completion ACK with SendMessage, since agx msg refuses claude-to-claude; codex-route briefs are unchanged
