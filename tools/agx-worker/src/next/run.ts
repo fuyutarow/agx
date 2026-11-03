@@ -56,6 +56,7 @@ import {
   recordRefusal,
 } from "./preflight.ts";
 import { createRunTemp } from "../temp.ts";
+import { claudeWorkspaceWriteSettings } from "../workers/environment.ts";
 import { exitWithError } from "./exit.ts";
 import {
   Outcome,
@@ -828,16 +829,9 @@ export async function run(flags: Flags): Promise<number> {
     if (sandbox === "none") permissionMode = "bypassPermissions";
     const claudeSettings =
       sandbox === "workspace-write"
-        ? JSON.stringify({
-            permissions: { additionalDirectories: [runDir] },
-            sandbox: {
-              enabled: true,
-              autoAllowBashIfSandboxed: true,
-              allowUnsandboxedCommands: false,
-              failIfUnavailable: true,
-              filesystem: { allowWrite: [runDir] },
-            },
-          })
+        ? JSON.stringify(
+            claudeWorkspaceWriteSettings({ runDir, runTemp: temp.dir }),
+          )
         : undefined;
     return [
       workerPath,

@@ -69,7 +69,11 @@ import { costUsd } from "../../../shared/src/dispatch-pricing.ts";
 import { activityWriter } from "../lifecycle.ts";
 import { interimReturnWriter, parseReturn } from "../report.ts";
 import { progressIntervalMs, progressThrottle } from "../progress.ts";
-import { workerEnvironment, workerSharedCaches } from "./environment.ts";
+import {
+  workerEnvironment,
+  workerSharedCaches,
+  workerWritableRoots,
+} from "./environment.ts";
 import {
   CAPACITY_EXIT,
   CAPACITY_STOP_GRACE_MS,
@@ -424,9 +428,10 @@ mkdirSync(argv.flags.receiptDir, { recursive: true });
 // `codex exec resume` (codex-cli help read 2026-10-06) takes [SESSION_ID] [PROMPT] and -m, -c, -o,
 // --json, --skip-git-repo-check — but no --sandbox and no -C. The sandbox goes in as the config
 // override it is, and the directory is the process's own cwd, which a resumed session also expects.
-const writableRoots = sharedCaches.map((cache) => cache.root);
-if (process.env.AGX_RUN_DIR !== undefined)
-  writableRoots.push(resolve(process.env.AGX_RUN_DIR));
+const writableRoots = workerWritableRoots({
+  runDir: process.env.AGX_RUN_DIR,
+  source: environment,
+});
 const execFlags = [
   "--json",
   "--skip-git-repo-check",

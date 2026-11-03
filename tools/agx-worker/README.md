@@ -220,6 +220,13 @@ this directory and grants it sandbox write access. Write results, logs and
 measurements there; keep source changes in the workspace. Each continuation has
 its own run directory.
 
+Under `workspace-write`, both routes take their shared writable roots from one declaration,
+`workerWritableRoots` (the shared caches and the run directory). The codex route passes that
+list as `writable_roots`. The claude route's `allowWrite` is the run's temp directory, the
+system `/tmp`, then that same list, so a claude worker can run tests that create temporary
+directories. The main checkout, VCS stores, and other workspaces are not writable on either route.
+`read-only` and `none` sandboxes keep their existing settings.
+
 Verification runs outside the worker sandbox. When a command fails, the runner
 can resume the same vendor session up to twice with the failed commands, exits,
 log paths and last 80 log lines if the run deadline has not expired. Verification

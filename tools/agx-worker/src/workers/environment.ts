@@ -81,6 +81,62 @@ export function workerSharedCaches(
   ];
 }
 
+/**
+ * The writable roots for a workspace-write worker, from one declaration: the shared caches and the
+ * run dir. The codex route passes exactly this list; the claude route extends it with the temp
+ * roots in claudeWorkspaceWriteSettings, so both routes read the same source.
+ */
+export function workerWritableRoots(input: {
+  runDir?: string | undefined;
+  source?: NodeJS.ProcessEnv | undefined;
+}): string[] {
+  const roots = [
+    ...workerSharedCaches(input.source ?? process.env).map(
+      (cache) => cache.root,
+    ),
+    ...(input.runDir === undefined ? [] : [resolve(input.runDir)]),
+  ];
+  return [...new Set(roots)];
+}
+
+/**
+ * Claude settings for a workspace-write worker. allowWrite is the run's temp directory, the system
+ * temp directory, then the shared writable roots (the codex list), which already holds the run dir.
+ * Codex gets its temp directory from its own sandbox defaults, so only the claude route lists it.
+ * Read-only and none sandboxes do not use these settings.
+ */
+export function claudeWorkspaceWriteSettings(input: {
+  runDir: string;
+  runTemp: string;
+  source?: NodeJS.ProcessEnv | undefined;
+}): {
+  permissions: { additionalDirectories: string[] };
+  sandbox: {
+    enabled: true;
+    autoAllowBashIfSandboxed: true;
+    allowUnsandboxedCommands: false;
+    failIfUnavailable: true;
+    filesystem: { allowWrite: string[] };
+  };
+} {
+  const shared = workerWritableRoots({
+    runDir: input.runDir,
+    source: input.source,
+  });
+  return {
+    permissions: { additionalDirectories: [resolve(input.runDir)] },
+    sandbox: {
+      enabled: true,
+      autoAllowBashIfSandboxed: true,
+      allowUnsandboxedCommands: false,
+      failIfUnavailable: true,
+      filesystem: {
+        allowWrite: [...new Set([resolve(input.runTemp), "/tmp", ...shared])],
+      },
+    },
+  };
+}
+
 /** Build the complete child environment; coordinator and vendor session state never crosses. */
 export function workerEnvironment(
   source: NodeJS.ProcessEnv = process.env,
