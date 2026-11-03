@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.73 — 2026-11-03
+
+- A refused dispatch prints the refusal reason on its first stderr line; WARN lines follow once each, store-path variants merged
+
 ## 1.22.72 — 2026-11-03
 
 - A live run's publication no longer holds the current-runs lock while it rewrites the per-workspace files, so judge and dispatch get the lock within moments instead of waiting out 30 s
