@@ -50,7 +50,8 @@ export async function routingStats(
       });
       const selections = selected.filter((event) => event.row !== null);
       const picks = selections.filter(
-        (event) => event.audit?.selection_mode === "class" || event.source === "jev",
+        (event) =>
+          event.audit?.selection_mode === "class" || event.source === "jev",
       );
       const refusals = selected.filter((event) => event.outcome === "refusal");
       const modeCounts: Record<string, number> = {};
@@ -108,7 +109,9 @@ export async function routingStats(
         },
         selection_count: selections.length + refusals.length,
         selection_mode_counts: modeCounts,
-        fallback_count: selections.filter((event) => event.source.startsWith("fallback-")).length,
+        fallback_count: selections.filter((event) =>
+          event.source.startsWith("fallback-"),
+        ).length,
         per_row_pick_counts: perRow,
         top1_minus_top2_margins: {
           count: margins.length,

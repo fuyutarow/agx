@@ -215,6 +215,7 @@ const EventSchema = z.discriminatedUnion("kind", [
     exit: z.number(),
     outcome: Outcome.optional(),
     launch_stderr: z.string().optional(),
+    cause: z.string().optional(),
     evidence: Evidence.optional(),
     signal: StopSignal.optional(),
     stopped_by: z.string().optional(),
@@ -925,6 +926,8 @@ function foldInto(runs: Map<string, FoldedRun>, input: NextEvent[]): void {
     if (event.kind === "session") run.vendor_session = event.vendor_session;
     if (event.kind === "ended" && event.launch_stderr !== undefined)
       run.launch_stderr = event.launch_stderr;
+    if (event.kind === "ended" && event.cause !== undefined)
+      run.cause = event.cause;
     if (event.kind === "ended") {
       run.state = "ended";
       run.signal = event.signal;

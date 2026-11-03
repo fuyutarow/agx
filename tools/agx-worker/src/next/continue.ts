@@ -186,8 +186,17 @@ export async function pinContinuation(
     row !== undefined &&
     timeoutS !== undefined &&
     !fitsPublishedTimeBox(row, timeoutS);
-  const floor = EffortSchema.safeParse(routing?.min_effort ?? (parsedTicket?.success === true ? parsedTicket.ticket.min_effort : undefined));
-  const belowFloor = row !== undefined && floor.success && EffortSchema.options.indexOf(row.effort) < EffortSchema.options.indexOf(floor.data);
+  const floor = EffortSchema.safeParse(
+    routing?.min_effort ??
+      (parsedTicket?.success === true
+        ? parsedTicket.ticket.min_effort
+        : undefined),
+  );
+  const belowFloor =
+    row !== undefined &&
+    floor.success &&
+    EffortSchema.options.indexOf(row.effort) <
+      EffortSchema.options.indexOf(floor.data);
   if (row === undefined || outsideBox || belowFloor) {
     if (routing === undefined && parsedTicket?.success !== true) return null;
     const inspected = parsedTicket?.success === true ? parsedTicket : undefined;
@@ -200,7 +209,11 @@ export async function pinContinuation(
       timeoutS ?? 600,
       routing?.maskedRows ?? [],
       {},
-      { path: resolve(ticketPath), sha256: "", min_effort: routing?.min_effort ?? inspected?.ticket.min_effort },
+      {
+        path: resolve(ticketPath),
+        sha256: "",
+        min_effort: routing?.min_effort ?? inspected?.ticket.min_effort,
+      },
       {
         capacityRetry: true,
         timeoutMs: loaded.value.auto.timeout_ms,

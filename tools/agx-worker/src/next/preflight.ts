@@ -1,3 +1,4 @@
+import { fatalMessages } from "./exit.ts";
 import { fromPromise, fromThrowable } from "neverthrow";
 import { createHash, randomUUID } from "node:crypto";
 import { inspectSandboxNeeds } from "./sandbox-needs.ts";
@@ -537,10 +538,11 @@ export function printPreflightFailures(
   const lines = failures.map((failure) =>
     failure instanceof AgxConfigError ? failure.message : `agx: ${failure}`,
   );
-  for (const line of new Set(lines))
-    process.stderr.write(
-      `${line.replaceAll(/[\r\n]+/gu, "; ")}; check=launch-premises expected=satisfied observed=refused\n`,
-    );
+  for (const line of new Set(lines)) {
+    const text = `${line.replaceAll(/[\r\n]+/gu, "; ")}; check=launch-premises expected=satisfied observed=refused\n`;
+    fatalMessages.push(text);
+    process.stderr.write(text);
+  }
   return 2;
 }
 

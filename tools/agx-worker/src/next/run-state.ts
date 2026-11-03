@@ -65,6 +65,7 @@ export const RunSchema = z.object({
   exit: z.number().nullable(),
   outcome: Outcome.nullable(),
   launch_stderr: z.string().optional(),
+  cause: z.string().optional(),
   row: z.string(),
   rows: z.array(z.string()).optional(),
   route: z.string().optional(),

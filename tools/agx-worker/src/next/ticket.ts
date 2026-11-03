@@ -63,16 +63,18 @@ const Ticket = z
         vram_gb: z.number().nonnegative().optional(),
       })
       .optional(),
-    capabilities: z
-      .array(CapabilitySchema)
-      .default([]),
+    capabilities: z.array(CapabilitySchema).default([]),
     min_effort: EffortSchema.optional(),
     proposition: Proposition,
   })
   .refine(
-    (ticket) => !["xhigh", "max"].includes(ticket.min_effort ?? "") ||
+    (ticket) =>
+      !["xhigh", "max"].includes(ticket.min_effort ?? "") ||
       ticket.capabilities.some((capability) => typeof capability !== "string"),
-    { path: ["min_effort"], message: `xhigh/max requires a structured capability: ${CAPABILITIES_FORM}` },
+    {
+      path: ["min_effort"],
+      message: `xhigh/max requires a structured capability: ${CAPABILITIES_FORM}`,
+    },
   )
   .refine(
     (ticket) =>
@@ -82,7 +84,11 @@ const Ticket = z
       path: ["first_return_s"],
       message: "must not exceed timeout_s (default 600)",
     },
-  ).transform((ticket) => ({ ...ticket, capabilities: capabilityTags(ticket.capabilities) }));
+  )
+  .transform((ticket) => ({
+    ...ticket,
+    capabilities: capabilityTags(ticket.capabilities),
+  }));
 
 export type NextTicket = z.output<typeof Ticket>;
 export type ParsedNextTicket =
@@ -157,7 +163,9 @@ export function parseNextTicket(
     "ack_target",
     "resources",
   ]);
-  const unsupported = Object.keys(fields.data).filter((key) => !supported.has(key));
+  const unsupported = Object.keys(fields.data).filter(
+    (key) => !supported.has(key),
+  );
   const checked = Ticket.safeParse(fields.data);
   if (!checked.success) {
     const examples: Record<string, string> = {
@@ -182,7 +190,11 @@ export function parseNextTicket(
         ? issue.message
         : `${table} ${path}: ${issue.message}${suffix}`;
     });
-    reasons.push(...unsupported.map((key) => `ticket front matter ${key}: unsupported key`));
+    reasons.push(
+      ...unsupported.map(
+        (key) => `ticket front matter ${key}: unsupported key`,
+      ),
+    );
     const writes = z.array(z.string()).safeParse(fields.data.writes);
     reasons.push(
       ...(writes.success ? writes.data : []).flatMap((glob, index) =>

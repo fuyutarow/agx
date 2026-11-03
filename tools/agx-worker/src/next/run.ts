@@ -58,6 +58,7 @@ import {
 import { createRunTemp } from "../temp.ts";
 import { claudeWorkspaceWriteSettings } from "../workers/environment.ts";
 import { exitWithError } from "./exit.ts";
+import { guardPreLaunch } from "./launch-guard.ts";
 import {
   Outcome,
   changedPaths,
@@ -369,6 +370,14 @@ export async function check(flags: Flags): Promise<number> {
 }
 
 export async function run(flags: Flags): Promise<number> {
+  const guard = guardPreLaunch(value(flags, "dispatchBinding"));
+  return runUnguarded(flags).catch((error: unknown) => {
+    guard.noteError(error);
+    return Promise.reject(error);
+  });
+}
+
+async function runUnguarded(flags: Flags): Promise<number> {
   if (process.env.AGX_NEXT_WORKER !== undefined)
     return fatal(
       "AGX_NEXT_WORKER is no longer supported; use AGX_WORKER_BIN",
@@ -541,10 +550,7 @@ export async function run(flags: Flags): Promise<number> {
   // The run owns its temp space: removed on any exit path (process.exit included); a SIGKILL
   // leaves it for the next run's sweep.
   const made = createRunTemp(id);
-  if (made.isErr()) {
-    console.error(made.error);
-    process.exit(1);
-  }
+  if (made.isErr()) return exitWithError(`${made.error}\n`, 1);
   const temp = made.value;
   Object.assign(process.env, temp.env);
   process.on("exit", temp.remove);

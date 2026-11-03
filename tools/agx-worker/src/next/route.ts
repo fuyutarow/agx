@@ -27,7 +27,8 @@ import {
 const PUBLISHED_TASK_DURATION_BUDGET_RATIO = 0.6;
 
 export const fitsPublishedTimeBox = (row: Choice, timeoutS: number): boolean =>
-  row.aa_time_per_task_s !== undefined && row.aa_time_per_task_s !== null &&
+  row.aa_time_per_task_s !== undefined &&
+  row.aa_time_per_task_s !== null &&
   row.aa_time_per_task_s <= timeoutS * PUBLISHED_TASK_DURATION_BUDGET_RATIO;
 
 const comparePriceThenDuration = (a: Choice, b: Choice): number => {
@@ -35,7 +36,9 @@ const comparePriceThenDuration = (a: Choice, b: Choice): number => {
   const bPrice = (b.price_in ?? Infinity) + (b.price_out ?? Infinity);
   const priceDifference = aPrice - bPrice;
   if (priceDifference !== 0) return priceDifference;
-  return (a.aa_time_per_task_s ?? Infinity) - (b.aa_time_per_task_s ?? Infinity);
+  return (
+    (a.aa_time_per_task_s ?? Infinity) - (b.aa_time_per_task_s ?? Infinity)
+  );
 };
 
 const compareTb4Descending = (a: Choice, b: Choice): number =>
@@ -59,7 +62,11 @@ const ReturnReason = z.enum([
   "contradiction",
   "missing_input",
 ]);
-const RequirementClassSchema = z.enum(["mechanical", "localized", "cross_module"]);
+const RequirementClassSchema = z.enum([
+  "mechanical",
+  "localized",
+  "cross_module",
+]);
 const returns = {
   split: {
     criterion:
@@ -197,7 +204,12 @@ export function blindCriterion(text: string, rows: readonly Choice[]): string {
 const hash = (value: unknown) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
-type RouteTicket = { path: string; sha256: string; launch?: boolean; min_effort?: string | undefined } | null;
+type RouteTicket = {
+  path: string;
+  sha256: string;
+  launch?: boolean;
+  min_effort?: string | undefined;
+} | null;
 export type CapacityRetryRouteResult =
   | { kind: "selected"; row: Choice }
   | { kind: "exhausted" }
@@ -241,14 +253,21 @@ export async function route(
   ): CapacityRetryRouteResult | never => {
     audit.reason = message;
     audit.outcome_kind = "held";
-    if (options?.inspect !== true) recordRoutingPick(null, "refusal", audit, "refusal");
+    if (options?.inspect !== true)
+      recordRoutingPick(null, "refusal", audit, "refusal");
     if (options?.capacityRetry === true)
       return { kind: "refused", message, exitCode: code };
     return exitWithError(message, code);
   };
-  const floor = ticket?.min_effort === undefined ? undefined : EffortSchema.safeParse(ticket.min_effort);
+  const floor =
+    ticket?.min_effort === undefined
+      ? undefined
+      : EffortSchema.safeParse(ticket.min_effort);
   if (floor !== undefined && !floor.success)
-    return refuse("agx: min_effort must be one of low, medium, high, xhigh, max\n", 2);
+    return refuse(
+      "agx: min_effort must be one of low, medium, high, xhigh, max\n",
+      2,
+    );
   const loaded = await loadRoster(rosterOptions);
   if (!loaded.ok)
     return refuse(`agx: cannot read dispatch roster: ${loaded.error}\n`, 1);
@@ -304,11 +323,19 @@ export async function route(
   );
   eligible = filter(eligible, "masked", (row) => !maskedRows.includes(row.id));
   if (floor?.success === true) {
-    eligible = filter(eligible, "ticket min_effort", (row) =>
-      EffortSchema.options.indexOf(row.effort) >= EffortSchema.options.indexOf(floor.data),
-      (row) => ({ effort: row.effort, min_effort: floor.data }));
+    eligible = filter(
+      eligible,
+      "ticket min_effort",
+      (row) =>
+        EffortSchema.options.indexOf(row.effort) >=
+        EffortSchema.options.indexOf(floor.data),
+      (row) => ({ effort: row.effort, min_effort: floor.data }),
+    );
     if (eligible.length === 0)
-      return refuse(`agx: no roster row satisfies ticket min_effort (${floor.data})\n`, 2);
+      return refuse(
+        `agx: no roster row satisfies ticket min_effort (${floor.data})\n`,
+        2,
+      );
   }
   const beforeSort = eligible.map((row) => row.id);
   eligible = eligible.toSorted(
@@ -343,19 +370,26 @@ export async function route(
   if (candidates.length === 0 && eligible.length === 0 && options !== undefined)
     return { kind: "exhausted" };
   if (availableCandidates.length === 0)
-    return refuse(`agx: no roster row satisfies required capabilities (${routeFilterLabel(roster.auto)})${floor?.success === true ? ` and ticket min_effort (${floor.data})` : ""}\n`, 2);
+    return refuse(
+      `agx: no roster row satisfies required capabilities (${routeFilterLabel(roster.auto)})${floor?.success === true ? ` and ticket min_effort (${floor.data})` : ""}\n`,
+      2,
+    );
   const anonymizationMap: Record<string, string> = {};
-  const measuredEvidence: Record<string, {
-    judged_runs: number;
-    accepted_runs: number;
-    accepted_percent: number | null;
-    ended_runs: number;
-    median_wall_minutes: number | null;
-    text: string;
-  }> = {};
+  const measuredEvidence: Record<
+    string,
+    {
+      judged_runs: number;
+      accepted_runs: number;
+      accepted_percent: number | null;
+      ended_runs: number;
+      median_wall_minutes: number | null;
+      text: string;
+    }
+  > = {};
   const criteria: Record<string, string> = {};
   for (const requirementClass of RequirementClassSchema.options)
-    criteria[requirementClass] = `Ticket class: ${requirementClass}. Classify only the ticket. mechanical: an edit whose check is already stated. localized: a behavior fix inside one module. cross_module: an invariant, a public API, or behavior across modules must change.`;
+    criteria[requirementClass] =
+      `Ticket class: ${requirementClass}. Classify only the ticket. mechanical: an edit whose check is already stated. localized: a behavior fix inside one module. cross_module: an invariant, a public API, or behavior across modules must change.`;
   for (const [reason, value] of Object.entries(returns))
     criteria[reason] = value.criterion;
   const request: Record<string, unknown> = {
@@ -413,13 +447,16 @@ export async function route(
       ? roster.auto.timeout_ms
       : Math.min(roster.auto.timeout_ms, Math.max(1, options.timeoutMs)),
   );
-  const usageId = options?.inspect === true ? undefined : recordJevUsage(post, roster);
+  const usageId =
+    options?.inspect === true ? undefined : recordJevUsage(post, roster);
   audit.usage_id = usageId;
   audit.raw_reply = post.ok ? post.text : null;
   audit.jev_model_version = post.ok ? (post.model ?? null) : null;
   audit.request_failure = post.ok ? null : post.reason;
   audit.http_status = post.ok ? post.status : null;
-  const fallback = availableCandidates.find((row) => row.id === roster.default) ?? availableCandidates[0];
+  const fallback =
+    availableCandidates.find((row) => row.id === roster.default) ??
+    availableCandidates[0];
   if (fallback === undefined) return refuse("no routing candidates", 2);
   let rawAnswer: unknown = null;
   const pickAudit = (
@@ -464,17 +501,19 @@ export async function route(
       source.includes("missing-answer")
     )
       audit.outcome_kind = "invalid reply";
-    if (options?.inspect !== true) recordRoutingPick(
-      row,
-      source,
-      audit,
-      selectionMode === "fallback" ? "fallback" : "selected",
-    );
-    if (options?.inspect !== true) setPendingPickAudit({
-      ...pickAudit(source, probabilities),
-      audit,
-      chosen_row: row.id,
-    });
+    if (options?.inspect !== true)
+      recordRoutingPick(
+        row,
+        source,
+        audit,
+        selectionMode === "fallback" ? "fallback" : "selected",
+      );
+    if (options?.inspect !== true)
+      setPendingPickAudit({
+        ...pickAudit(source, probabilities),
+        audit,
+        chosen_row: row.id,
+      });
     return row;
   };
   const routeChoice = (row: Choice): Choice | CapacityRetryRouteResult =>
@@ -498,7 +537,9 @@ export async function route(
   const probabilities = answer?.probabilities;
   const reason = ReturnReason.safeParse(selected);
   if (reason.success && (answer?.reason_code?.trim().length ?? 0) === 0)
-    return routeChoice(recordPick(fallback, "fallback-unnamed-return", probabilities));
+    return routeChoice(
+      recordPick(fallback, "fallback-unnamed-return", probabilities),
+    );
   if (reason.success) {
     audit.outcome_kind = "held";
     audit.selection_mode = "return";
@@ -506,36 +547,49 @@ export async function route(
     audit.measured_evidence = measuredEvidence;
     audit.answer = rawAnswer;
     audit.choice_probabilities = probabilities ?? null;
-    if (options?.inspect !== true) recordRoutingPick(null, "jev-return", audit, "refusal");
-    if (options?.inspect !== true) recordRoutingRefusal({
-      ticket: brief,
-      reason: reason.data,
-      ...(answer?.reason_code === undefined
-        ? {}
-        : { reason_detail: answer.reason_code }),
-      ...(probabilities?.[reason.data] === undefined
-        ? {}
-        : { probability: probabilities[reason.data] }),
-      pick_audit: pickAudit("jev-return", probabilities),
-    });
+    if (options?.inspect !== true)
+      recordRoutingPick(null, "jev-return", audit, "refusal");
+    if (options?.inspect !== true)
+      recordRoutingRefusal({
+        ticket: brief,
+        reason: reason.data,
+        ...(answer?.reason_code === undefined
+          ? {}
+          : { reason_detail: answer.reason_code }),
+        ...(probabilities?.[reason.data] === undefined
+          ? {}
+          : { probability: probabilities[reason.data] }),
+        pick_audit: pickAudit("jev-return", probabilities),
+      });
     const detail = answer?.reason_code;
     return refuse(`agx: ticket returned: ${reason.data}: ${detail}\n`, 2);
   }
   if (answer === undefined)
-    return routeChoice(recordPick(fallback, "fallback-missing-answer", probabilities));
+    return routeChoice(
+      recordPick(fallback, "fallback-missing-answer", probabilities),
+    );
   const parsedRequirementClass = RequirementClassSchema.safeParse(selected);
   if (!parsedRequirementClass.success)
-    return routeChoice(recordPick(fallback, "fallback-invalid-class", probabilities));
+    return routeChoice(
+      recordPick(fallback, "fallback-invalid-class", probabilities),
+    );
   const requirementClass = parsedRequirementClass.data;
   const bar = REQUIREMENT_BARS[requirementClass];
-  const inTimeBox = availableCandidates.filter((row) => fitsPublishedTimeBox(row, timeoutS));
+  const inTimeBox = availableCandidates.filter((row) =>
+    fitsPublishedTimeBox(row, timeoutS),
+  );
   if (inTimeBox.length === 0)
-    return routeChoice(recordPick(fallback, "fallback-no-row-in-time-box", probabilities));
-  const qualifying = inTimeBox.filter((row) => (row.tb4 ?? (bar === 0 ? 0 : Number.NEGATIVE_INFINITY)) >= bar);
+    return routeChoice(
+      recordPick(fallback, "fallback-no-row-in-time-box", probabilities),
+    );
+  const qualifying = inTimeBox.filter(
+    (row) => (row.tb4 ?? (bar === 0 ? 0 : Number.NEGATIVE_INFINITY)) >= bar,
+  );
   const pool = qualifying.length > 0 ? qualifying : inTimeBox;
-  const ordered = qualifying.length > 0
-    ? pool.toSorted(comparePriceThenDuration)
-    : pool.toSorted(compareTb4Descending);
+  const ordered =
+    qualifying.length > 0
+      ? pool.toSorted(comparePriceThenDuration)
+      : pool.toSorted(compareTb4Descending);
   const chosen = ordered[0] ?? fallback;
   audit.requirement_class = requirementClass;
   audit.tb4_bar = bar;
