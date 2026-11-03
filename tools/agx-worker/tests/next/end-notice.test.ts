@@ -220,7 +220,7 @@ const dispatcher = process.env.AGX_DISPATCHER_SESSION ?? null;
 const startedAt = now();
 append({ kind: "started", id, at: startedAt, ticket: "end-notice-fixture", writes: [], cwd: process.cwd(), workspace: process.cwd(), row: "fixture", dispatcher_session: dispatcher, dispatcher_address: dispatcher, vendor_session: null, pid: process.pid });
 const endedAt = now();
-const end_notice = scheduleEndNotice({ id, ticket: "end-notice-fixture", dispatcher, address: dispatcher, startedAt, endedAt, outcome: "timeout", resultPath: null, verifyExits: [], env: subprocessEnvironment() }, [process.execPath, ${JSON.stringify(workerCli)}]);
+const end_notice = scheduleEndNotice({ id, ticket: "end-notice-fixture", dispatcher, address: dispatcher, startedAt, endedAt, outcome: "timeout", resultPath: null, verifyExits: [], deadlineMs: 1500, env: subprocessEnvironment() }, [process.execPath, ${JSON.stringify(workerCli)}]);
 append({ kind: "ended", id, at: endedAt, exit: 3, outcome: "timeout", end_notice, report_path: null, vendor_session: null, verify: [] });
 await flushRunPublications();
 process.exitCode = 3;

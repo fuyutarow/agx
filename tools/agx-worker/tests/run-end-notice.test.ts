@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { jsonOf, z } from "../../shared/src/zod.ts";
 import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
+import { EndNoticeRequest } from "../src/next/end-notice.ts";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -29,6 +30,9 @@ type Case = {
   senderExit?: number;
   resultPath?: string | null;
   verifyExits?: number[];
+  /** Fake sender answers after this many ms; "never" blocks forever. */
+  senderDelayMs?: number | "never";
+  deadlineMs?: number;
 };
 
 /** Run the real notice worker once with a fake `agx msg send` on PATH. */
@@ -44,6 +48,8 @@ async function deliver(input: Case) {
 import { appendFileSync } from "node:fs";
 appendFileSync(process.env.SENT_PATH, JSON.stringify(process.argv.slice(2)) + "\\n");
 const code = Number(process.env.SENDER_EXIT);
+if (process.env.SENDER_DELAY_MS === "never") await new Promise(() => {});
+await Bun.sleep(Number(process.env.SENDER_DELAY_MS ?? "0"));
 process.stdout.write(code === 0 ? "enqueued receipt-1\\n" : "relay unavailable\\n");
 process.exitCode = code;
 `,
@@ -62,6 +68,7 @@ process.exitCode = code;
     resultPath: input.resultPath ?? null,
     verifyExits: input.verifyExits ?? [],
     parentPid: dead.pid,
+    ...(input.deadlineMs === undefined ? {} : { deadlineMs: input.deadlineMs }),
   };
   const result = Bun.spawnSync(
     [
@@ -77,8 +84,9 @@ process.exitCode = code;
         AGX_STATE_DIR: state,
         SENT_PATH: sent,
         SENDER_EXIT: String(input.senderExit ?? 0),
+        SENDER_DELAY_MS: String(input.senderDelayMs ?? 0),
       },
-      timeout: 10_000,
+      timeout: 15_000,
     },
   );
   const records = await Bun.file(join(state, "records.jsonl"))
@@ -192,4 +200,52 @@ test("run end notice: a failed send is recorded and does not touch the outcome",
     exit: 7,
     receipt: "relay unavailable",
   });
+});
+
+test("run end notice: the default budget leaves tens of seconds over a relay turn", () => {
+  const parsed = EndNoticeRequest.parse({
+    id: "x",
+    ticket: "t",
+    dispatcher: "claude:d5fd4690-9c34-4937-ab24-54a8f96a8b9d",
+    address: null,
+    startedAt: "2026-11-03T00:00:00Z",
+    endedAt: "2026-11-03T00:03:00Z",
+    outcome: "ok",
+    resultPath: null,
+    verifyExits: [],
+    parentPid: 1,
+  });
+  expect(parsed.deadlineMs).toBeGreaterThanOrEqual(60_000);
+});
+
+test("run end notice: a sender that accepts after 3 s is recorded accepted", async () => {
+  const { notices } = await deliver({
+    outcome: "ok",
+    exit: 0,
+    dispatcher: "claude:d5fd4690-9c34-4937-ab24-54a8f96a8b9d",
+    senderDelayMs: 3_000,
+    deadlineMs: 10_000,
+  });
+  expect(notices).toHaveLength(1);
+  expect(notices[0]?.notice).toMatchObject({
+    status: "accepted",
+    exit: 0,
+    receipt: "enqueued receipt-1",
+  });
+});
+
+test("run end notice: a sender that never answers records deadline after the budget", async () => {
+  const started = performance.now();
+  const { notices } = await deliver({
+    outcome: "ok",
+    exit: 0,
+    dispatcher: "claude:d5fd4690-9c34-4937-ab24-54a8f96a8b9d",
+    senderDelayMs: "never",
+    deadlineMs: 1_000,
+  });
+  const elapsed = performance.now() - started;
+  expect(notices).toHaveLength(1);
+  expect(notices[0]?.notice).toMatchObject({ status: "deadline", exit: 4 });
+  expect(elapsed).toBeGreaterThanOrEqual(1_000);
+  expect(elapsed).toBeLessThan(10_000);
 });

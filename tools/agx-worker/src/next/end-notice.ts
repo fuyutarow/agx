@@ -6,6 +6,23 @@ import { EndNoticeResult } from "./run-state.ts";
 
 export type EndNotice = z.output<typeof EndNoticeResult>;
 
+/**
+ * Budget for one `agx msg send` relay to a live Claude dispatcher.
+ *
+ * The relay is a one-shot `claude --print` model turn (inventory lookup, one
+ * SendMessage tool call, receipt check), so acceptance takes seconds to tens of
+ * seconds, never ~1 s. The old 1_200 ms budget ended every claude-route notice
+ * as `deadline` (1363 recorded `deadline` end-notices, 0 accepted; dotfiles run
+ * ffa7ab52: "acceptance unknown (timed out after 1195 ms)").
+ *
+ * Measurement: this sandbox cannot send to a live Claude session (Claude to
+ * Claude is refused, only the completion ACK is authorized), so no acceptance
+ * time was measured here; see result.md. 120 s is twice the `agx msg send`
+ * default (60 s) and leaves a wide margin over a model turn. The notice worker
+ * is detached from the run, so waiting costs the run nothing.
+ */
+const NOTICE_DEADLINE_MS = 120_000;
+
 export const EndNoticeRequest = z.object({
   id: z.string(),
   ticket: z.string(),
@@ -18,12 +35,13 @@ export const EndNoticeRequest = z.object({
   resultPath: z.string().nullable(),
   verifyExits: z.array(z.number()),
   parentPid: z.number().int().positive(),
+  deadlineMs: z.number().int().positive().default(NOTICE_DEADLINE_MS),
 });
 
 export type EndNoticeRequest = z.output<typeof EndNoticeRequest>;
 
-const noticeDeadlineMs = 1_200;
-const noticeGuardMs = 1_600;
+/** Kill the sender only after its own deadline has had time to report. */
+const noticeGuardSlackMs = 2_000;
 const parentWaitLimitMs = 3_000;
 const receiptLimit = 4_000;
 
@@ -40,10 +58,13 @@ function targetFor(input: Pick<EndNoticeRequest, "dispatcher" | "address">) {
 
 /** Queue the notice worker without keeping this run alive. */
 export function scheduleEndNotice(
-  input: Omit<EndNoticeRequest, "parentPid"> & { env?: NodeJS.ProcessEnv },
+  input: Omit<EndNoticeRequest, "parentPid" | "deadlineMs"> & {
+    deadlineMs?: number;
+    env?: NodeJS.ProcessEnv;
+  },
   workerCommand: string[] = stableSelfCommand(),
 ): EndNotice {
-  const { env, ...request } = input;
+  const { env, deadlineMs = NOTICE_DEADLINE_MS, ...request } = input;
   if (targetFor(input) === null)
     return {
       status: "skipped",
@@ -56,7 +77,7 @@ export function scheduleEndNotice(
         [
           ...workerCommand,
           "--internal-end-notice",
-          JSON.stringify({ ...request, parentPid: process.pid }),
+          JSON.stringify({ ...request, deadlineMs, parentPid: process.pid }),
         ],
         {
           stdin: "ignore",
@@ -126,7 +147,7 @@ async function sendEndNotice(
       receipt: "agx executable not found on PATH",
     };
 
-  const signal = AbortSignal.timeout(noticeGuardMs);
+  const signal = AbortSignal.timeout(input.deadlineMs + noticeGuardSlackMs);
   const spawned = fromThrowable(
     () =>
       Bun.spawn(
@@ -142,7 +163,7 @@ async function sendEndNotice(
           "--message",
           message,
           "--timeout-ms",
-          String(noticeDeadlineMs),
+          String(input.deadlineMs),
         ],
         {
           stdin: "ignore",
@@ -180,7 +201,7 @@ async function sendEndNotice(
         receipt:
           output !== ""
             ? output
-            : `notice deadline exceeded after ${noticeDeadlineMs} ms`,
+            : `notice deadline exceeded after ${input.deadlineMs} ms`,
       };
     if (exit === 0)
       return {
