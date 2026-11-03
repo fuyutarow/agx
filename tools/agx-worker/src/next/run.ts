@@ -63,6 +63,7 @@ import {
 } from "./preflight.ts";
 import { createRunTemp } from "../temp.ts";
 import {
+  claudeWorkspaceWriteAllowedTools,
   claudeWorkspaceWriteSettings,
   removeClaudeSandboxStubs,
 } from "../workers/environment.ts";
@@ -875,7 +876,10 @@ async function runUnguarded(flags: Flags): Promise<number> {
       activeRow.effort,
       "--permission-mode",
       permissionMode,
-      ...(sandbox === "workspace-write" ? ["--allowed-tools", "Bash"] : []),
+      ...(sandbox === "workspace-write" ? [
+            "--allowed-tools",
+            claudeWorkspaceWriteAllowedTools(),
+          ] : []),
       ...(claudeSettings === undefined ? [] : ["--settings", claudeSettings]),
       "--max-turns",
       "60",

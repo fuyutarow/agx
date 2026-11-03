@@ -153,6 +153,24 @@ export function removeClaudeSandboxStubs(
 }
 
 /**
+ * Network egress of a workspace-write worker, one declaration for both routes. The codex route
+ * passes it as sandbox_workspace_write.network_access (codex.ts); the claude route grants all
+ * domains plus the web tools when it is true. `[route] no_egress` is not applied on either route.
+ */
+export const WORKSPACE_WRITE_NETWORK_ACCESS = true;
+
+/** The web tools a claude workspace-write worker is allowed exactly when network egress is granted. */
+export const CLAUDE_WEB_TOOLS: readonly string[] = ["WebFetch", "WebSearch"];
+
+/** The --allowed-tools value (one comma-separated string) of a claude workspace-write worker. */
+export function claudeWorkspaceWriteAllowedTools(): string {
+  return [
+    "Bash",
+    ...(WORKSPACE_WRITE_NETWORK_ACCESS ? CLAUDE_WEB_TOOLS : []),
+  ].join(",");
+}
+
+/**
  * Claude settings for a workspace-write worker. allowWrite is the run's temp directory, the system
  * temp directory, then the shared writable roots (the codex list), which already holds the run dir.
  * Codex gets its temp directory from its own sandbox defaults, so only the claude route lists it.
@@ -170,6 +188,7 @@ export function claudeWorkspaceWriteSettings(input: {
     allowUnsandboxedCommands: false;
     failIfUnavailable: true;
     filesystem: { allowWrite: string[] };
+    network?: { allowedDomains: string[] };
   };
 } {
   const shared = workerWritableRoots({
@@ -186,6 +205,9 @@ export function claudeWorkspaceWriteSettings(input: {
       filesystem: {
         allowWrite: [...new Set([resolve(input.runTemp), "/tmp", ...shared])],
       },
+      ...(WORKSPACE_WRITE_NETWORK_ACCESS
+        ? { network: { allowedDomains: ["*"] } }
+        : {}),
     },
   };
 }

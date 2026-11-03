@@ -72,6 +72,7 @@ import { progressIntervalMs, progressThrottle } from "../progress.ts";
 import {
   workerEnvironment,
   workerSharedCaches,
+  WORKSPACE_WRITE_NETWORK_ACCESS,
   workerWritableRoots,
 } from "./environment.ts";
 import {
@@ -446,6 +447,8 @@ const execFlags = [
     ? [
         "-c",
         `sandbox_workspace_write.writable_roots=${JSON.stringify(writableRoots)}`,
+        "-c",
+        `sandbox_workspace_write.network_access=${WORKSPACE_WRITE_NETWORK_ACCESS}`,
       ]
     : []),
   "-o",
