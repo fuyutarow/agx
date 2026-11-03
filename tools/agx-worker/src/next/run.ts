@@ -16,6 +16,8 @@ import { stableCommand, stableSelfCommand } from "../self-command.ts";
 import { legacyLandStatus } from "../state.ts";
 import { claudeAckLine, verifyLine } from "../ticket.ts";
 import {
+  EMPTY_FINAL_MESSAGE,
+  managerReport,
   parseReport,
   parseReturn,
   receiptReportInput,
@@ -1267,6 +1269,44 @@ async function runUnguarded(flags: Flags): Promise<number> {
       for_coordinator: [],
       open: ["The vendor did not complete this ticket."],
     };
+  else if (!parsedReport.ok && parsedReport.error === EMPTY_FINAL_MESSAGE) {
+    const lastLine = (path: string): string | undefined =>
+      existsSync(path)
+        ? readFileSync(path, "utf8").trim().split("\n").at(-1)
+        : undefined;
+    const progressLine = lastLine(activeProgressPath);
+    const progress =
+      progressLine === undefined
+        ? undefined
+        : jsonOf(z.looseObject({})).safeParse(progressLine);
+    const interimLine = lastLine(interimPath);
+    const interim =
+      interimLine === undefined
+        ? undefined
+        : jsonOf(z.looseObject({ last_message: z.string() })).safeParse(
+            interimLine,
+          );
+    report = {
+      ...managerReport(
+        {
+          outcome,
+          timedOut:
+            timedOut ||
+            workerReceipt.timed_out === true ||
+            workerReceipt.outcome === "timeout",
+          exit,
+          changedPaths: changedPathsMeasured,
+          progress: progress?.success === true ? progress.data : undefined,
+          interim:
+            interim?.success === true ? interim.data.last_message : undefined,
+          verify,
+        },
+        parsedReport.error,
+      ),
+      raw: output.trim(),
+      error: parsedReport.error,
+    };
+  }
   if (ctx.verifyAlways.length > 0)
     report = {
       ...(typeof report === "object" && report !== null ? report : {}),

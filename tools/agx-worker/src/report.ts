@@ -235,13 +235,15 @@ export function receiptReportInput(
   };
 }
 
+export const EMPTY_FINAL_MESSAGE = "the worker's final message is empty";
+
 export function parseReport(
   structured: unknown,
   lastMessage: string,
 ): ParsedReport {
   const text = lastMessage.trim();
   if (structured === undefined && text === "")
-    return { ok: false, error: "the worker's final message is empty" };
+    return { ok: false, error: EMPTY_FINAL_MESSAGE };
   const candidateText = (FENCE.exec(text)?.[1] ?? text)
     .replace(RETURN_FENCE, "")
     .trim();
@@ -319,4 +321,77 @@ export function renderReport(r: WorkerReport): string {
     `## For the coordinator\n${bullets(r.for_coordinator)}`,
     `## Open\n${bullets(r.open)}`,
   ].join("\n\n");
+}
+
+/** What the manager observed about a run whose worker left no final message. */
+export type ObservedRun = {
+  outcome: string;
+  timedOut: boolean;
+  exit: number;
+  changedPaths: string[] | undefined;
+  /** the last record of the worker's progress file, parsed (undefined when none was written) */
+  progress: Record<string, unknown> | undefined;
+  /** the last persisted interim RETURN message, if any */
+  interim: string | undefined;
+  verify: { cmd: string; exit: number }[];
+};
+
+/**
+ * A report the manager writes when the worker ended without a final message (timeout, kill, empty
+ * output), from what the manager itself observed. `source: "manager"` marks it as not the worker's
+ * own report; a worker's own report is never replaced by this. Owner 2026-11-03: coordinators
+ * rebuilt timed-out runs by hand from the workspace diff and the progress file.
+ */
+export function managerReport(
+  observed: ObservedRun,
+  workerError: string,
+): WorkerReport & { source: "manager"; observed: Record<string, unknown> } {
+  const paths = observed.changedPaths;
+  const progress = observed.progress;
+  const last = typeof progress?.last === "string" ? progress.last : undefined;
+  const count = (key: string): string =>
+    typeof progress?.[key] === "number" ? `${progress[key]} ${key}` : "";
+  const countList = ["commands", "turns", "files"]
+    .map((key) => count(key))
+    .filter((c) => c !== "")
+    .join(", ");
+  const countSuffix = countList === "" ? "" : ` (${countList})`;
+  const how = observed.timedOut
+    ? "hit the ticket time box"
+    : `ended with exit ${observed.exit}`;
+  const stopped =
+    progress === undefined
+      ? "no progress record was written"
+      : `last progress: ${last ?? "(none)"}${countSuffix}`;
+  return {
+    summary: `[manager-written, not the worker's report] The worker ${how} without a final message (outcome ${observed.outcome}). ${paths === undefined ? "Workspace changes could not be measured" : `${paths.length} changed path(s)`}; ${stopped}.`,
+    changes: (paths ?? []).map((path) => ({
+      path,
+      what: "changed in the workspace (observed by the manager)",
+    })),
+    checks: observed.verify.map((v) => ({
+      cmd: v.cmd,
+      exit: v.exit,
+      result: "verify result recorded by the manager",
+    })),
+    for_coordinator: [
+      "Review the changed paths and the last progress record before continuing or re-dispatching.",
+    ],
+    open: [
+      "The worker left no final report; everything here is what the manager observed.",
+      ...(observed.interim === undefined
+        ? []
+        : [`Last interim result: ${observed.interim}`]),
+    ],
+    source: "manager",
+    observed: {
+      worker_error: workerError,
+      timed_out: observed.timedOut,
+      exit: observed.exit,
+      ...(progress === undefined ? {} : { last_progress: progress }),
+      ...(observed.interim === undefined
+        ? {}
+        : { interim_result: observed.interim }),
+    },
+  };
 }
