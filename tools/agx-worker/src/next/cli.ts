@@ -193,8 +193,15 @@ async function main(): Promise<void> {
       session: parsed.flags.session,
       dispatchBinding: parsed.flags.dispatchBinding,
     } satisfies Flags;
-    const { run } = await import("./run.ts");
+    const { run, settleRunPublications } = await import("./run.ts");
     exit = await run(flags);
+    // A run process ends with its run: publications still in flight get a short grace, then the
+    // process exits (a pending one would hold the event loop, the workspace lock and the unit open).
+    await settleRunPublications();
+    await new Promise<void>((resolve) =>
+      process.stdout.write("", () => resolve()),
+    );
+    process.exit(exit);
   } else if (commandName === "check") {
     const parsed = cli(
       {

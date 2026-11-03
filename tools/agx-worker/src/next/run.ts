@@ -392,6 +392,29 @@ export async function check(flags: Flags): Promise<number> {
   return 0;
 }
 
+const lastLine = (file: string): string | undefined =>
+  existsSync(file)
+    ? readFileSync(file, "utf8").trim().split("\n").at(-1)
+    : undefined;
+
+/** Publications already scheduled by earlier records get this long to finish before a run process exits. */
+const PUBLICATION_SETTLE_MS = 2_000;
+
+/**
+ * Wait briefly for in-flight publications, never for a contended one: a publication replays the
+ * whole log under the current-runs lock, which other writers and judges may hold for minutes.
+ */
+export async function settleRunPublications(
+  limitMs = PUBLICATION_SETTLE_MS,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const limit = new Promise<void>((done) => {
+    timer = setTimeout(done, limitMs);
+  });
+  await Promise.race([flushRunPublications(), limit]);
+  clearTimeout(timer);
+}
+
 export async function run(flags: Flags): Promise<number> {
   const guard = guardPreLaunch(value(flags, "dispatchBinding"));
   const running = runUnguarded(flags);
@@ -637,38 +660,42 @@ async function runUnguarded(flags: Flags): Promise<number> {
           verifyExits: [],
           detachUnit: process.env.INVOCATION_ID !== undefined,
         });
-        append({
-          kind: "ended",
-          id,
-          at: endedAt,
-          exit: code,
-          outcome: "stopped",
-          end_notice: endNotice,
-          signal,
-          stopped_by: request?.stopped_by ?? `signal:${signal}`,
-          report_path: null,
-          vendor_session: vendorSession,
-          ...(attemptedRows.length > 1 ? { rows: attemptedRows } : {}),
-          ...(attemptedRows.length > 1
-            ? {
-                final_row: {
-                  id: activeRow.id,
-                  route: activeRow.route,
-                  model: activeRow.model,
-                  effort: activeRow.effort,
-                },
-              }
-            : {}),
-          verify: [],
-        });
-        await flushRunPublications();
+        append(
+          {
+            kind: "ended",
+            id,
+            at: endedAt,
+            exit: code,
+            outcome: "stopped",
+            end_notice: endNotice,
+            signal,
+            stopped_by: request?.stopped_by ?? `signal:${signal}`,
+            report_path: null,
+            vendor_session: vendorSession,
+            ...(attemptedRows.length > 1 ? { rows: attemptedRows } : {}),
+            ...(attemptedRows.length > 1
+              ? {
+                  final_row: {
+                    id: activeRow.id,
+                    route: activeRow.route,
+                    model: activeRow.model,
+                    effort: activeRow.effort,
+                  },
+                }
+              : {}),
+            verify: [],
+          },
+          stateDir(),
+          false,
+        );
+        await settleRunPublications();
         process.exit(code);
       })();
       return;
     }
     if (started && ended) return;
     stopTask = (async () => {
-      await flushRunPublications();
+      await settleRunPublications();
       process.exit(code);
     })();
   };
@@ -1273,10 +1300,6 @@ async function runUnguarded(flags: Flags): Promise<number> {
       open: ["The vendor did not complete this ticket."],
     };
   else if (!parsedReport.ok && parsedReport.error === EMPTY_FINAL_MESSAGE) {
-    const lastLine = (path: string): string | undefined =>
-      existsSync(path)
-        ? readFileSync(path, "utf8").trim().split("\n").at(-1)
-        : undefined;
     const progressLine = lastLine(activeProgressPath);
     const progress =
       progressLine === undefined
@@ -1371,31 +1394,38 @@ async function runUnguarded(flags: Flags): Promise<number> {
     env: runEnv,
     detachUnit: process.env.INVOCATION_ID !== undefined,
   });
-  append({
-    kind: "ended",
-    id,
-    at: endedAt,
-    exit,
-    outcome,
-    end_notice: endNotice,
-    report_path: reportPath,
-    vendor_session: vendorSession,
-    ...(attemptedRows.length > 1 ? { rows: attemptedRows } : {}),
-    ...(attemptedRows.length > 1
-      ? {
-          final_row: {
-            id: activeRow.id,
-            route: activeRow.route,
-            model: activeRow.model,
-            effort: activeRow.effort,
-          },
-        }
-      : {}),
-    verify,
-    returned: /```agx-return\s*\n/u.test(reportInput.message),
-    changed_files: changed,
-  });
-  await flushRunPublications();
+  append(
+    {
+      kind: "ended",
+      id,
+      at: endedAt,
+      exit,
+      outcome,
+      end_notice: endNotice,
+      report_path: reportPath,
+      vendor_session: vendorSession,
+      ...(attemptedRows.length > 1 ? { rows: attemptedRows } : {}),
+      ...(attemptedRows.length > 1
+        ? {
+            final_row: {
+              id: activeRow.id,
+              route: activeRow.route,
+              model: activeRow.model,
+              effort: activeRow.effort,
+            },
+          }
+        : {}),
+      verify,
+      returned: /```agx-return\s*\n/u.test(reportInput.message),
+      changed_files: changed,
+    },
+    stateDir(),
+    false,
+  );
+  // The ended record is durable; no publication is scheduled or awaited for it. A publication
+  // replays the whole log under the current-runs lock other writers and judges may hold, and this
+  // process held its workspace lock and unit open for all of it. The next writer or reader
+  // publishes; workspace readers rescan a stale publication themselves.
   temp.remove();
   await workspaceLock.release();
   process.stdout.write(
@@ -1407,8 +1437,16 @@ async function runUnguarded(flags: Flags): Promise<number> {
 export { list } from "./list-command.ts";
 export { runningSummary } from "./listing.ts";
 
+/** How long judge waits for the publication lock before it fails naming the holder. */
+const PUBLICATION_LOCK_WAIT_MS = 30_000;
+
+/** Judge's lock failure names the lock (the publication lock, `current-runs.json`) and its holder. */
+const publicationLockFailure = (root: string, reason: string): string =>
+  `cannot publish current runs: publication lock ${join(root, "current-runs.json")} (the lock every run, judge and publication takes to rewrite the snapshot): ${reason}; nothing was recorded, retry`;
+
 type JudgeRunRuntime = {
   root?: string;
+  lockWaitMs?: number;
   lockWaitClock?: WorkspaceLockWaitClock;
   writeStdout?: (line: string) => void;
   onLockFailure?: (message: string, exitCode: number) => number;
@@ -1429,6 +1467,7 @@ export async function judgeBatch(
   path: string,
   runtime: {
     root?: string;
+    lockWaitMs?: number;
     load?: typeof recordedRuns;
     lock?: typeof acquireWorkspaceLockUntilAvailable;
     publish?: typeof publishCurrentRuns;
@@ -1513,9 +1552,9 @@ export async function judgeBatch(
   const lock = await (runtime.lock ?? acquireWorkspaceLockUntilAvailable)(
     join(root, "current-runs.json"),
     root,
-    30_000,
+    runtime.lockWaitMs ?? PUBLICATION_LOCK_WAIT_MS,
   );
-  if (!lock.ok) return fatal(`cannot publish current runs: ${lock.error}`, 2);
+  if (!lock.ok) return fatal(publicationLockFailure(root, lock.error), 2);
   await (async () => {
     await using resource = { [Symbol.asyncDispose]: () => lock.release() };
     void resource;
@@ -1611,11 +1650,11 @@ export async function judgeRun(
   const lock = await acquireWorkspaceLockUntilAvailable(
     join(root, "current-runs.json"),
     root,
-    30_000,
+    runtime.lockWaitMs ?? PUBLICATION_LOCK_WAIT_MS,
     runtime.lockWaitClock,
   );
   if (!lock.ok) {
-    const message = `cannot publish current runs: ${lock.error}`;
+    const message = publicationLockFailure(root, lock.error);
     if (runtime.onLockFailure !== undefined)
       return runtime.onLockFailure(message, 2);
     return fatal(message);
