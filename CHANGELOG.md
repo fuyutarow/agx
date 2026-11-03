@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.63 — 2026-11-03
+
+- Claude workspace-write workers can write the run temp directory, /tmp, and the same shared cache roots as codex, so tests that create temporary directories run under the claude route.
+
 ## 1.22.62 — 2026-11-03
 
 - A repository agx.toml [route] (allow, default) overrides the user policy routes for that repository; the user-global default is checked against the effective allow
