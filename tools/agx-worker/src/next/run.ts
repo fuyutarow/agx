@@ -15,7 +15,12 @@ import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { selfCommand, stableCommand } from "../self-command.ts";
 import { legacyLandStatus } from "../state.ts";
 import { claudeAckLine, verifyLine } from "../ticket.ts";
-import { parseReport, parseReturn, withReportInstruction } from "../report.ts";
+import {
+  parseReport,
+  parseReturn,
+  receiptReportInput,
+  withReportInstruction,
+} from "../report.ts";
 import { type NextTicket } from "./ticket.ts";
 import {
   resolveTicketReference,
@@ -929,6 +934,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
       report: z.unknown().optional(),
       structured_output: z.unknown().optional(),
       last_message: z.string().optional(),
+      result: z.string().optional(),
       vendor_session: z.string().optional(),
       session: z.string().optional(),
       session_id: z.string().optional(),
@@ -1172,10 +1178,8 @@ async function runUnguarded(flags: Flags): Promise<number> {
       ? changedPaths(before.value, after.value)
       : undefined;
   const changed = changedPathsMeasured?.length;
-  const parsedReport = parseReport(
-    workerReceipt.structured_output ?? workerReceipt.report,
-    workerReceipt.last_message ?? receiptLine,
-  );
+  const reportInput = receiptReportInput(workerReceipt, receiptLine);
+  const parsedReport = parseReport(reportInput.structured, reportInput.message);
   for (const warning of parsedReport.ok ? (parsedReport.warnings ?? []) : [])
     process.stderr.write(`WARN ${warning}\n`);
   const outcome = deriveOutcome({
@@ -1304,9 +1308,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
         }
       : {}),
     verify,
-    returned: /```agx-return\s*\n/u.test(
-      workerReceipt.last_message ?? receiptLine,
-    ),
+    returned: /```agx-return\s*\n/u.test(reportInput.message),
     changed_files: changed,
   });
   await flushRunPublications();

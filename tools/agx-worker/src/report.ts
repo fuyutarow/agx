@@ -217,6 +217,24 @@ const normalizeReportCheckResults = (value: unknown): unknown => {
 };
 
 /** The report in a worker's final message (a structured value from the vendor, else its text). */
+/** The worker's final message and structured report inside a worker receipt.
+ * The codex receipt carries `last_message`; the claude receipt carries the
+ * worker's final message in `result`. */
+export function receiptReportInput(
+  receipt: {
+    report?: unknown;
+    structured_output?: unknown;
+    last_message?: string | undefined;
+    result?: string | undefined;
+  },
+  receiptLine: string,
+): { structured: unknown; message: string } {
+  return {
+    structured: receipt.structured_output ?? receipt.report,
+    message: receipt.last_message ?? receipt.result ?? receiptLine,
+  };
+}
+
 export function parseReport(
   structured: unknown,
   lastMessage: string,
