@@ -35,7 +35,13 @@ ready = ["mise trust -q", "bun install --frozen-lockfile"]
 always = ["mise run check"]
 ```
 
-L1 accepts only `schema`, `tickets`, `[ws].ready` and `[verify].always`. Schema must equal 1.
+L1 accepts only `schema`, `tickets`, `[ws].ready`, `[verify].always` and `[route]`. Schema must equal 1.
+`[route]` accepts only `allow` and `default`, with the same meaning as the user policy keys
+of the same names (see [User policy and catalog](#user-policy-and-catalog)). When present, it
+replaces the user policy's `route.allow` and/or `route.default` for runs whose repository is
+this one; each key is independent, and every other route key stays user-global. `default`
+must name a non-excluded catalog row on an allowed route, and an invalid `[route]` rejects
+the repository file before any effect. L2 rejects `[route]`.
 Declarations use TOML 1.0 syntax. Unknown keys, malformed TOML, duplicate TOML keys and unsupported or missing schema fail.
 Ticket paths must be nonempty relative strings; absolute POSIX and Windows paths and `~/`
 are rejected at L1. Relative ticket paths resolve from the main checkout. Paths are UTF-8

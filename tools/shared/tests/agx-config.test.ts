@@ -16,6 +16,7 @@ import {
   listAgxRepos,
   normalizeTomlIntegers,
   resolveAgxConfig,
+  resolveAgxConfigWithProvenance,
 } from "../src/agx-config.ts";
 import { subprocessEnvironment } from "../src/subprocess-env.ts";
 
@@ -512,11 +513,46 @@ test.each([
     expect(String(result.error)).not.toContain("\n");
   }
 });
+test("repository [route] parses allow and default", async () => {
+  const f = await fixture(
+    'schema = 1\n[route]\nallow = ["claude"]\ndefault = "haiku-low"\n',
+  );
+  const result = await resolveAgxConfigWithProvenance(f.root);
+  expect(result.ok).toBe(true);
+  if (result.ok)
+    expect(result.value.repoRoute).toEqual({
+      allow: ["claude"],
+      default: "haiku-low",
+    });
+});
+test("an absent repository [route] leaves repoRoute undefined", async () => {
+  const f = await fixture("schema = 1\n");
+  const result = await resolveAgxConfigWithProvenance(f.root);
+  expect(result.ok).toBe(true);
+  if (result.ok) expect(result.value.repoRoute).toBeUndefined();
+});
+test.each([
+  ['[route]\nallow = ["gemini"]\n', "route.allow"],
+  ["[route]\nallow = []\n", "route.allow"],
+  ['[route]\ndefault = ""\n', "route.default"],
+  ['[route]\nexclude = ["luna-low"]\n', "route.exclude: unknown key"],
+  ["[route]\njev = {}\n", "route.jev: unknown key"],
+])("rejects invalid repository [route]: %s", async (route, message) => {
+  const f = await fixture(`schema = 1\n${route}`);
+  const result = await resolveAgxConfigWithProvenance(f.root);
+  expect(result.ok).toBe(false);
+  if (!result.ok) {
+    expect(String(result.error)).toContain(message);
+    expect(String(result.error)).toContain("agx.toml at main ");
+  }
+});
+
 test.each([
   ['tickets = "local"\n', "repo.toml"],
   ["schema = 1\nunknown = true\n", "repo.toml"],
   ["schema = 1\n[ws]\nunknown = true\n", "unknown"],
   ['schema = 1\n[ws]\nkeep = [""]\n', "keep"],
+  ['schema = 1\n[route]\nallow = ["claude"]\n', "route"],
 ])("rejects invalid L2: %s", async (local, message) => {
   const f = await fixture();
   await f.writeLocal(local);

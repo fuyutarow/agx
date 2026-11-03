@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "../../../shared/src/zod.ts";
 import { attempt, errorMessage } from "../../../shared/src/attempt.ts";
+import { resolveAgxConfigWithProvenance } from "../../../shared/src/agx-config.ts";
 
 import { generationExclusivityError } from "./generation.ts";
 import shippedCatalog from "./catalog.toml" with { type: "toml" };
@@ -118,26 +119,16 @@ const AutoSchema = z.strictObject({
   ]),
 });
 
-const RosterSchema = z
-  .strictObject({
-    schema: z.literal(1),
-    as_of: z.iso.date(),
-    as_of_cost: z.iso.date().optional(),
-    default: z.string(),
-    auto: AutoSchema,
-    claude_run: PolicySchema.shape.claude_run,
-    sources: z.record(z.string(), z.url()),
-    choice: z.array(ChoiceSchema).min(1),
-  })
-  .refine(
-    (roster) =>
-      roster.choice.some(
-        (row) => row.id === roster.default && row.route === "codex",
-      ),
-    {
-      message: "default must name a codex-route choice id",
-    },
-  );
+const RosterSchema = z.strictObject({
+  schema: z.literal(1),
+  as_of: z.iso.date(),
+  as_of_cost: z.iso.date().optional(),
+  default: z.string(),
+  auto: AutoSchema,
+  claude_run: PolicySchema.shape.claude_run,
+  sources: z.record(z.string(), z.url()),
+  choice: z.array(ChoiceSchema).min(1),
+});
 
 export type Roster = z.output<typeof RosterSchema>;
 
@@ -158,6 +149,8 @@ export type RosterLoad =
 export type LoadRosterOptions = Readonly<{
   catalogPath?: string;
   policyPath?: string;
+  /** Repository whose agx.toml [route] overrides the user policy; defaults to the working directory. */
+  repoRoot?: string;
 }>;
 
 function policyPathFromEnvironment(): string {
@@ -196,13 +189,23 @@ export async function loadRoster(
     if (!policyResult.success)
       return { ok: false, error: policyResult.error.message };
 
+    const repoResult = await resolveAgxConfigWithProvenance(
+      options.repoRoot ?? process.cwd(),
+    );
+    if (!repoResult.ok)
+      return { ok: false, error: errorMessage(repoResult.error) };
+    const repoRoute = repoResult.value.repoRoute;
+
     const catalog = catalogResult.data;
     const policy = policyResult.data;
+    // A repository [route] replaces only the keys it declares; the rest stay user-global.
+    const allow = repoRoute?.allow ?? policy.route.allow;
+    const defaultId = repoRoute?.default ?? policy.route.default;
     const ids = new Set(catalog.choice.map((row) => row.id));
-    if (!ids.has(policy.route.default)) {
+    if (!ids.has(defaultId)) {
       return {
         ok: false,
-        error: `default must name a catalog row: ${policy.route.default}`,
+        error: `default must name a catalog row: ${defaultId}`,
       };
     }
     const unknownExcluded = policy.route.exclude.find((id) => !ids.has(id));
@@ -216,14 +219,19 @@ export async function loadRoster(
     const choice = catalog.choice.filter(
       (row) => !policy.route.exclude.includes(row.id),
     );
-    if (
-      !choice.some(
-        (row) => row.id === policy.route.default && row.route === "codex",
-      )
-    ) {
+    const onAllowedRoute = (row: Choice) =>
+      allow === undefined || allow.includes(row.route);
+    const overridesRoute =
+      repoRoute?.default !== undefined || repoRoute?.allow !== undefined;
+    const defaultOk = choice.some(
+      (row) => row.id === defaultId && onAllowedRoute(row),
+    );
+    if (!defaultOk) {
       return {
         ok: false,
-        error: "default must name a non-excluded codex-route catalog row",
+        error: overridesRoute
+          ? `default must name a non-excluded row on an allowed route: ${defaultId}; see ${join(repoResult.value.root, "agx.toml")}`
+          : `default must name a non-excluded row on an allowed route: ${defaultId}`,
       };
     }
     const value = {
@@ -232,11 +240,9 @@ export async function loadRoster(
       ...(catalog.as_of_cost === undefined
         ? {}
         : { as_of_cost: catalog.as_of_cost }),
-      default: policy.route.default,
+      default: defaultId,
       auto: {
-        ...(policy.route.allow === undefined
-          ? {}
-          : { routes: policy.route.allow }),
+        ...(allow === undefined ? {} : { routes: allow }),
         ...(policy.route.on_window_exhausted === undefined
           ? {}
           : { on_window_exhausted: policy.route.on_window_exhausted }),
@@ -262,7 +268,7 @@ export async function loadRoster(
       catalogRows: catalog.choice,
       provenance: {
         policy_version: createHash("sha256")
-          .update(JSON.stringify(policy))
+          .update(JSON.stringify({ policy, repoRoute: repoRoute ?? null }))
           .digest("hex"),
         catalog_version: createHash("sha256")
           .update(JSON.stringify(catalog))

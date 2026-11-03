@@ -44,6 +44,20 @@ Release completion waits for the tap formula to name the new version, upgrades
 this machine through Homebrew, and verifies that Homebrew's `agx` is selected
 through `PATH` in the home directory and each requested consumer.
 
+## agx.toml
+
+A repository's committed `agx.toml` (`schema = 1`) may declare `tickets`, `[ws]`,
+`[verify]`, and a `[route]` table. Any other key is rejected before any effect,
+and the error names the file.
+
+`[route]` accepts only `allow` (a nonempty array of `codex` or `claude`) and
+`default` (a catalog row id). For runs of this repository it replaces the user
+policy's `route.allow` and/or `route.default`; each key is independent, and every
+other route key stays user-global. `default` must name a non-excluded catalog row
+on an allowed route. `agx worker check` and `agx worker roster` run inside the
+repository show the effective routes. `~/.config/agx/repos/<name>.toml` rejects
+`[route]`. The full contract is in [contract/config.md](contract/config.md).
+
 ## Agent skill
 
 Install the suite-wide skill with the open skills CLI:

@@ -67,4 +67,46 @@ describe("roster loader", () => {
     );
     expect(result.ok).toBe(false);
   });
+
+  test("user default on a route the user allow excludes is rejected", async () => {
+    const example = await readFile(examplePath, "utf8");
+    const result = await withPolicy(
+      example.replace('allow = ["codex"]', 'allow = ["claude"]'),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.error).toContain("non-excluded row on an allowed route");
+  });
+
+  test("user default on an allowed claude route is accepted", async () => {
+    const example = await readFile(examplePath, "utf8");
+    const result = await withPolicy(
+      example
+        .replace('allow = ["codex"]', 'allow = ["claude"]')
+        .replace('default = "luna-high"', 'default = "haiku-low"'),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.default).toBe("haiku-low");
+  });
+
+  test("user default must be non-excluded", async () => {
+    const example = await readFile(examplePath, "utf8");
+    const result = await withPolicy(
+      example.replace("exclude = []", 'exclude = ["luna-high"]'),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.error).toContain("non-excluded row on an allowed route");
+  });
+
+  test("without a user allow, any route's catalog row may be the default", async () => {
+    const example = await readFile(examplePath, "utf8");
+    const result = await withPolicy(
+      example
+        .replace('allow = ["codex"]\n', "")
+        .replace('default = "luna-high"', 'default = "haiku-low"'),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.default).toBe("haiku-low");
+  });
 });

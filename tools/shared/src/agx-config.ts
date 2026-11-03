@@ -55,11 +55,21 @@ const LocalWorkspaceConfig = z.strictObject({
   ready: NonEmptyStrings.optional(),
   keep: NonEmptyStrings.optional(),
 });
+/** Repository route override; the worker merges it over the user policy per key. */
+const RepoRouteConfig = z.strictObject({
+  allow: z
+    .array(z.enum(["codex", "claude"]))
+    .min(1)
+    .optional(),
+  default: z.string().trim().min(1).optional(),
+});
+export type RepoRouteOverride = z.output<typeof RepoRouteConfig>;
 const Config = z.strictObject({
   schema: z.literal(1),
   tickets: z.string().trim().min(1).optional(),
   ws: WorkspaceConfig.optional(),
   verify: VerifyConfig.optional(),
+  route: RepoRouteConfig.optional(),
 });
 const ConfigEnvelope = z.record(z.string(), z.unknown());
 const TomlDate = z.date();
@@ -185,6 +195,8 @@ type ResolvedAgxConfig = {
 export type ResolvedAgxConfigWithProvenance = ResolvedAgxConfig & {
   policyRevision: string | undefined;
   workingCopyPolicyDiffers: boolean | undefined;
+  /** The repository agx.toml [route] table, when it declares one. */
+  repoRoute: RepoRouteOverride | undefined;
 };
 type CommittedRepositoryPolicy = ConfiguredPolicy & {
   kind: "committed";
@@ -269,8 +281,7 @@ async function committedPolicy(
       root,
     );
     if (!head.ok && head.error instanceof InspectionUnavailable) return head;
-    if (!head.ok)
-      return good({ revision: undefined, text: undefined, vcs });
+    if (!head.ok) return good({ revision: undefined, text: undefined, vcs });
     revision = head.value;
   } else {
     const selected = await readCommand(
@@ -292,8 +303,7 @@ async function committedPolicy(
       return failure("trunk() must resolve to exactly one policy revision");
     revision = revisions[0];
   }
-  if (revision === undefined)
-    return good({ revision, text: undefined, vcs });
+  if (revision === undefined) return good({ revision, text: undefined, vcs });
   const names = (rev: string) =>
     readCommand(
       vcs === "jj"
@@ -354,7 +364,14 @@ async function untrackedPolicy(
           "-T",
           'path ++ "\\n"',
         ]
-      : ["git", "--no-optional-locks", "ls-files", "--cached", "--", "agx.toml"],
+      : [
+          "git",
+          "--no-optional-locks",
+          "ls-files",
+          "--cached",
+          "--",
+          "agx.toml",
+        ],
     root,
   );
   if (!tracked.ok) return tracked;
@@ -492,6 +509,7 @@ async function resolveConfig(
   let regenerable: string[] = [];
   let unjudgedWarnHours = 24;
   let verifyAlways: string[] = [];
+  let repoRoute: RepoRouteOverride | undefined;
   if (policy !== undefined) {
     const text = policy.text;
     const refuse = async (reason: string): Promise<Attempt<never>> =>
@@ -502,8 +520,7 @@ async function resolveConfig(
     if (!decoded.ok)
       return refuse(`invalid TOML: ${errorMessage(decoded.error)}`);
     const envelope = ConfigEnvelope.safeParse(decoded.value);
-    if (!envelope.success)
-      return refuse(configIssueMessage(envelope.error));
+    if (!envelope.success) return refuse(configIssueMessage(envelope.error));
     if (!Object.hasOwn(envelope.data, "schema"))
       return refuse("missing required schema; expected schema = 1");
     const schema = z.literal(1).safeParse(envelope.data.schema);
@@ -512,8 +529,7 @@ async function resolveConfig(
         `unsupported schema ${configValue(envelope.data.schema)}; expected schema = 1`,
       );
     const parsed = Config.safeParse(envelope.data);
-    if (!parsed.success)
-      return refuse(configIssueMessage(parsed.error));
+    if (!parsed.success) return refuse(configIssueMessage(parsed.error));
     const declared = parsed.data.tickets;
     if (
       declared !== undefined &&
@@ -530,8 +546,10 @@ async function resolveConfig(
     trunkConfigured = parsed.data.ws?.trunk !== undefined;
     keep = parsed.data.ws?.keep ?? keep;
     regenerable = parsed.data.ws?.regenerable ?? regenerable;
-    unjudgedWarnHours = parsed.data.ws?.unjudged_warn_hours ?? unjudgedWarnHours;
+    unjudgedWarnHours =
+      parsed.data.ws?.unjudged_warn_hours ?? unjudgedWarnHours;
     verifyAlways = parsed.data.verify?.always ?? verifyAlways;
+    repoRoute = parsed.data.route;
   }
   const local = await localConfig(root);
   if (!local.ok) return local;
@@ -555,6 +573,7 @@ async function resolveConfig(
     verifyAlways,
     policyRevision: committed.value.revision,
     workingCopyPolicyDiffers,
+    repoRoute,
   });
 }
 
