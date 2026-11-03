@@ -33,6 +33,68 @@ export const VerifyResult = z
     kind: result.kind ?? verifyKind(result.exit),
   }));
 
+/**
+ * Which verify round the reported `verify` exits belong to, and how the rounds before it ended.
+ * The recorded `verify` field keeps its shape; this is a separate, optional field.
+ */
+export const VerifyRound = z.object({
+  round: z.number().int().positive(),
+  of: z.number().int().positive(),
+  earlier: z.array(
+    z.object({
+      round: z.number().int().positive(),
+      exits: z.array(z.number()),
+    }),
+  ),
+});
+export type VerifyRound = z.output<typeof VerifyRound>;
+
+/** Round numbers are 1-based; every round's logs are verify-round-K-NN.log. */
+export function verifyLogName(round: number, index: number): string {
+  return `verify-round-${round}-${String(index + 1).padStart(2, "0")}.log`;
+}
+
+/** Build the round summary from the rounds that ended before the reported one. */
+export function verifyRoundOf(
+  round: number,
+  earlier: readonly (readonly { exit: number }[])[],
+): VerifyRound {
+  return {
+    round,
+    of: round,
+    earlier: earlier.slice(0, round - 1).map((results, index) => ({
+      round: index + 1,
+      exits: results.map((result) => result.exit),
+    })),
+  };
+}
+
+/** `round 2 of 2: 0,0 (round 1: 0,1)`; without a round record, the bare exits. */
+export function verifyText(
+  exits: readonly number[],
+  round: VerifyRound | undefined,
+): string {
+  if (exits.length === 0) return "not run";
+  const list = exits.join(",");
+  if (round === undefined) return list;
+  const earlier =
+    round.earlier.length === 0
+      ? ""
+      : ` (${round.earlier.map((entry) => `round ${entry.round}: ${entry.exits.join(",")}`).join("; ")})`;
+  return `round ${round.round} of ${round.of}: ${list}${earlier}`;
+}
+
+/** Space-separated key=value form for `agx worker ls` lines; empty without a round record. */
+export function verifyRoundFields(round: VerifyRound | undefined): string {
+  if (round === undefined) return "";
+  return [
+    ` verify_round=${round.round}/${round.of}`,
+    ...round.earlier.map(
+      (entry) => ` verify_round_${entry.round}_exits=${entry.exits.join(",")}`,
+    ),
+  ].join("");
+}
+
 /** Assemble once at the entry point, including services with only /usr/bin:/bin. */
 export function verificationEnvironment(
   cwd: string,

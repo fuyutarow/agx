@@ -78,7 +78,12 @@ import {
   deriveOutcome,
   workspaceSnapshot,
 } from "./outcome.ts";
-import { verifyKind, type VerifyKind } from "./verify.ts";
+import {
+  verifyKind,
+  verifyLogName,
+  verifyRoundOf,
+  type VerifyKind,
+} from "./verify.ts";
 import { scheduleEndNotice } from "./end-notice.ts";
 import { completionFor } from "./completion.ts";
 import {
@@ -310,10 +315,7 @@ const runVerify = async (
   }[] = [];
   for (const [index, cmd] of [...always, ...commands].entries()) {
     const source = index < always.length ? "[verify].always" : undefined;
-    const logPath = join(
-      runDir,
-      `${round === 0 ? "verify" : `verify-round-${round + 1}`}-${String(index + 1).padStart(2, "0")}.log`,
-    );
+    const logPath = join(runDir, verifyLogName(round + 1, index));
     const child = Bun.spawn(
       ["sh", "-c", 'exec 2>&1; sh -c "$1"', "agx-verify", cmd],
       {
@@ -1034,9 +1036,12 @@ async function runUnguarded(flags: Flags): Promise<number> {
   let attemptNumber = 0;
   let verify: Awaited<ReturnType<typeof runVerify>> = [];
   const verifyRounds: (typeof verify)[] = [];
+  // 1-based round that produced `verify`; 0 until verification has run.
+  let verifyRoundNumber = 0;
   const verificationFeedback = async (
     session: string | null,
   ): Promise<boolean> => {
+    verifyRoundNumber = verifyRounds.length + 1;
     verify = await runVerify(
       ticket.verify,
       cwd,
@@ -1380,6 +1385,10 @@ async function runUnguarded(flags: Flags): Promise<number> {
   if (stopTask !== undefined) await stopTask;
   ended = true;
   const endedAt = now();
+  const verifyRound =
+    verifyRoundNumber === 0
+      ? undefined
+      : verifyRoundOf(verifyRoundNumber, verifyRounds);
   const endNotice = scheduleEndNotice({
     id,
     ticket: ticketName,
@@ -1391,6 +1400,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
     exit,
     resultPath: reportPath,
     verifyExits: verify.map((result) => result.exit),
+    ...(verifyRound === undefined ? {} : { verifyRound }),
     env: runEnv,
     detachUnit: process.env.INVOCATION_ID !== undefined,
   });
@@ -1416,6 +1426,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
           }
         : {}),
       verify,
+      ...(verifyRound === undefined ? {} : { verify_round: verifyRound }),
       returned: /```agx-return\s*\n/u.test(reportInput.message),
       changed_files: changed,
     },

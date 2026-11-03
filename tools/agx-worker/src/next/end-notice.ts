@@ -3,6 +3,7 @@ import { fromThrowable } from "neverthrow";
 import { stableSelfCommand } from "../self-command.ts";
 import { append, flushRunPublications, now } from "./store.ts";
 import { EndNoticeResult } from "./run-state.ts";
+import { VerifyRound, verifyText } from "./verify.ts";
 
 export type EndNotice = z.output<typeof EndNoticeResult>;
 
@@ -34,6 +35,7 @@ export const EndNoticeRequest = z.object({
   exit: z.number().int().nullable().default(null),
   resultPath: z.string().nullable(),
   verifyExits: z.array(z.number()),
+  verifyRound: VerifyRound.optional(),
   parentPid: z.number().int().positive(),
   deadlineMs: z.number().int().positive().default(NOTICE_DEADLINE_MS),
 });
@@ -210,7 +212,7 @@ async function sendEndNotice(
   const message =
     `agx run ${input.id} ${input.ticket} ended ${input.outcome} ` +
     `exit ${input.exit ?? "none"} after ${(elapsedMs / 60_000).toFixed(1)} min; result: ${input.resultPath ?? "none"}; ` +
-    `verify: ${input.verifyExits.length === 0 ? "not run" : input.verifyExits.join(",")}; ` +
+    `verify: ${verifyText(input.verifyExits, input.verifyRound)}; ` +
     "read: agx worker ls --json";
   const path = env.PATH;
   const executable =

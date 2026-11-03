@@ -38,7 +38,7 @@ import {
   type ListedRun,
 } from "./run-state.ts";
 export type { ListedRun } from "./run-state.ts";
-import { VerifyResult } from "./verify.ts";
+import { VerifyResult, VerifyRound } from "./verify.ts";
 import { runningSummary, listingRows } from "./listing.ts";
 import { runHealth } from "./health.ts";
 import { ticketContext } from "./ticket-home.ts";
@@ -231,6 +231,7 @@ const EventSchema = z.discriminatedUnion("kind", [
       })
       .optional(),
     verify: z.array(VerifyResult).default([]),
+    verify_round: VerifyRound.optional(),
     returned: z.boolean().optional(),
     changed_files: z.number().int().nonnegative().optional(),
     end_notice: EndNoticeResult.optional(),
@@ -947,6 +948,7 @@ function foldInto(runs: Map<string, FoldedRun>, input: NextEvent[]): void {
         });
       run.report_path = event.report_path;
       run.verify = event.verify;
+      run.verify_round = event.verify_round;
       Object.assign(run, {
         ...(event.rows === undefined
           ? {}

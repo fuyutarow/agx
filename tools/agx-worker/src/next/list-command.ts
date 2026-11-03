@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { foldedRuns, listingHistory } from "./store.ts";
 import { resolveRunId } from "./run-id.ts";
 import type { Flags } from "./run.ts";
+import { verifyRoundFields } from "./verify.ts";
 const value = (flags: Flags, key: string): string | undefined =>
   typeof flags[key] === "string" ? flags[key] : undefined;
 const selectedRuns = (
@@ -120,12 +121,13 @@ export async function list(flags: Flags): Promise<number> {
           state: latestRun.state,
           outcome: latestRun.outcome,
           verify_exits: verifyExits,
+          verify_round: latestRun.verify_round,
           report_path: latestRun.report_path,
         })}\n`,
       );
     } else {
       process.stdout.write(
-        `${latestRun.id} state=${latestRun.state} outcome=${latestRun.outcome ?? "-"} verify_exits=${verifyExits.length === 0 ? "-" : verifyExits.join(",")} report_path=${latestRun.report_path ?? "-"}\n`,
+        `${latestRun.id} state=${latestRun.state} outcome=${latestRun.outcome ?? "-"} verify_exits=${verifyExits.length === 0 ? "-" : verifyExits.join(",")}${verifyRoundFields(latestRun.verify_round)} report_path=${latestRun.report_path ?? "-"}\n`,
       );
     }
     return 0;
@@ -154,7 +156,7 @@ export async function list(flags: Flags): Promise<number> {
   let output = visible
     .map(
       (entry) =>
-        `${entry.id} ${entry.state} tkt_${entry.ticket} row=${entry.row} exit=${entry.exit ?? "-"} outcome=${entry.outcome ?? "-"}`,
+        `${entry.id} ${entry.state} tkt_${entry.ticket} row=${entry.row} exit=${entry.exit ?? "-"} outcome=${entry.outcome ?? "-"}${verifyRoundFields(entry.verify_round)}`,
     )
     .join("\n");
   if (asJson) {

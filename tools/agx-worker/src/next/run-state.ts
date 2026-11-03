@@ -1,7 +1,7 @@
 import { z } from "../../../shared/src/zod.ts";
 import { Outcome } from "./outcome.ts";
 import { Lease, Evidence, StopSignal } from "./lease.ts";
-import { VerifyResult } from "./verify.ts";
+import { VerifyResult, VerifyRound } from "./verify.ts";
 import { Sandbox, SandboxSource } from "./sandbox.ts";
 
 export const LegacyIdentity = z.object({
@@ -93,6 +93,7 @@ export const RunSchema = z.object({
     .nullable(),
   report_path: z.string().nullable(),
   verify: z.array(VerifyResult),
+  verify_round: VerifyRound.optional(),
   last_progress_path: z.string().nullable(),
   continues: z.string().nullable(),
   continued_from_row: z.string().optional(),

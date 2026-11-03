@@ -232,8 +232,14 @@ can resume the same vendor session up to twice with the failed commands, exits,
 log paths and last 80 log lines if the run deadline has not expired. Verification
 itself runs to completion even if the deadline expires. The final verify
 results determine the outcome; `report.json` retains previous results in
-`verify_rounds`, with separate log files for each round. Killed verification or
-an unavailable vendor session or a worker refusal does not trigger feedback.
+`verify_rounds`. Every round's logs are named `verify-round-K-NN.log` (K is the
+1-based round, NN the command). The ended record keeps `verify` in its shape and
+adds `verify_round` (`{round, of, earlier: [{round, exits}]}`) naming the round
+the `verify` exits belong to and how earlier rounds ended. The end notice reads
+`verify: round 2 of 2: 0,0 (round 1: 0,1)`, and `agx worker ls --json` carries
+`verify_round`; `ls` lines add `verify_round=2/2 verify_round_1_exits=0,1`.
+Killed verification or an unavailable vendor session or a worker refusal does
+not trigger feedback.
 
 Ticket intake requires an explicit `writes` key (`[]` for read-only work) and an
 acceptance basis: verify commands or a declared human review/evidence/diff oracle
