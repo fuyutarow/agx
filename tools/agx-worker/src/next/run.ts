@@ -611,6 +611,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
           startedAt,
           endedAt,
           outcome: "stopped",
+          exit: code,
           resultPath: null,
           verifyExits: [],
         });
@@ -1283,6 +1284,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
     startedAt,
     endedAt,
     outcome,
+    exit,
     resultPath: reportPath,
     verifyExits: verify.map((result) => result.exit),
     env: runEnv,

@@ -36,6 +36,13 @@ function explicitSender(value: string): string | undefined {
   return match === null || id === undefined ? undefined : `${match[1]}:${id}`;
 }
 
+/** The manager's own send identity (`agx-manager:<run id>`): not a vendor session, so it relays to Claude. */
+function managerSender(value: string): string | undefined {
+  const match = /^agx-manager:(.+)$/u.exec(value);
+  const id = canonicalUuid(match?.[1] ?? "");
+  return id === undefined ? undefined : `agx-manager:${id}`;
+}
+
 type Vendor = "codex" | "claude";
 type Route =
   | { kind: "native"; target: string }
@@ -454,7 +461,7 @@ async function main(): Promise<number> {
             missing: ["no sender declaration or recorded run session"],
           },
         ))
-      : explicitSender(declaration);
+      : (explicitSender(declaration) ?? managerSender(declaration));
   if (sender === undefined) {
     process.stderr.write(
       `agx msg: invalid ${args.flags.from === undefined ? "AGX_MSG_FROM" : "--from"}; use codex:<full-session-UUID> or claude:<full-session-UUID> (no prefixes or names)\n`,

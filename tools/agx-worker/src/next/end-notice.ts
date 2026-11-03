@@ -14,6 +14,7 @@ export const EndNoticeRequest = z.object({
   startedAt: z.string(),
   endedAt: z.string(),
   outcome: z.string(),
+  exit: z.number().int().nullable().default(null),
   resultPath: z.string().nullable(),
   verifyExits: z.array(z.number()),
   parentPid: z.number().int().positive(),
@@ -111,9 +112,10 @@ async function sendEndNotice(
       .total("milliseconds"),
   );
   const message =
-    `agx run ${input.id.slice(0, 8)} ${input.ticket} ended ${input.outcome} ` +
-    `after ${(elapsedMs / 60_000).toFixed(1)} min; result: ${input.resultPath ?? "none"}; ` +
-    `verify: ${input.verifyExits.length === 0 ? "not run" : input.verifyExits.join(",")}`;
+    `agx run ${input.id} ${input.ticket} ended ${input.outcome} ` +
+    `exit ${input.exit ?? "none"} after ${(elapsedMs / 60_000).toFixed(1)} min; result: ${input.resultPath ?? "none"}; ` +
+    `verify: ${input.verifyExits.length === 0 ? "not run" : input.verifyExits.join(",")}; ` +
+    "read: agx worker ls --json";
   const path = env.PATH;
   const executable =
     path === undefined ? Bun.which("agx") : Bun.which("agx", { PATH: path });
@@ -135,6 +137,8 @@ async function sendEndNotice(
           "--to",
           target,
           ...(input.address === null ? [] : ["--exact"]),
+          "--from",
+          `agx-manager:${input.id}`,
           "--message",
           message,
           "--timeout-ms",

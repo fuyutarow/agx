@@ -673,6 +673,31 @@ test("msg contract: claude to claude is refused before any delivery and names th
   expect(recorded.called).toBe(false);
 });
 
+test("msg contract: an agx manager notice to a claude target is relayed, not refused", async () => {
+  const sender = `agx-manager:${uuidA}`;
+  const sentUse = {
+    ...use,
+    message: {
+      ...use.message,
+      content: [
+        {
+          ...use.message.content[0],
+          input: { to: "peer", message: envelope(message, sender) },
+        },
+      ],
+    },
+  };
+  const r = await run({
+    args: [...sendArgs("claude:peer"), "--from", sender],
+    output: completeStream(sentUse, accepted),
+    runRecord: { route: "claude", session: uuidB },
+    env: { AGX_RUN_ID: "worker-run" },
+  });
+  expect(r.exit).toBe(0);
+  expect(r.stderr).not.toContain("Claude-to-Claude");
+  expect(r.calls).toHaveLength(1);
+});
+
 test("msg contract: a codex or unknown sender still reaches a claude target", async () => {
   for (const sender of [`codex:${uuidA}`, undefined]) {
     const effective = sender ?? callerSender;
