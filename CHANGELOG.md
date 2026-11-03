@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.85 — 2026-11-03
+
+- A finished run process now exits once its ended record is written: it no longer waits for a log-replay publication under the current-runs lock (held by other writers and judges), so its workspace lock and unit end with the run; judge's lock failure names the publication lock file and its holder
+
 ## 1.22.84 — 2026-11-03
 
 - agx ws add creates a workspace when the local trunk is ahead of its remote-tracking bookmark; diverged trunk refuses with both commits and the repair, absent and conflicted keep their own messages
