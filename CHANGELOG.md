@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.77 — 2026-11-03
+
+- The run-end notice waits up to 120 s for the relay to accept (was 1.2 s, which recorded every Claude-route notice as deadline); the notice stays detached from the run's end.
+
 ## 1.22.76 — 2026-11-03
 
 - claude workspace-write workers get the same network egress as codex: sandbox network allowance and WebFetch/WebSearch
