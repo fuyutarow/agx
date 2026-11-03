@@ -12,7 +12,7 @@ import { hostname } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
-import { selfCommand, stableCommand } from "../self-command.ts";
+import { stableCommand, stableSelfCommand } from "../self-command.ts";
 import { legacyLandStatus } from "../state.ts";
 import { claudeAckLine, verifyLine } from "../ticket.ts";
 import {
@@ -800,7 +800,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
 
   started = true;
 
-  const ownCommand = selfCommand();
+  const ownCommand = stableSelfCommand();
   const ownExecutable = ownCommand[0];
   if (ownExecutable === undefined)
     return fatal("worker executable unavailable: current command is empty");
@@ -896,7 +896,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
   if (stopTask !== undefined) await stopTask;
   const defaultCommand =
     process.env.AGX_WORKER_COMMAND === undefined
-      ? stableCommand(selfCommand())
+      ? stableSelfCommand()
       : stableCommand([workerCommand ?? workerPath]);
   const execution = {
     executable_path: ownExecutable,

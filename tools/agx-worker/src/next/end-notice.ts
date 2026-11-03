@@ -1,6 +1,6 @@
 import { z } from "../../../shared/src/zod.ts";
 import { fromThrowable } from "neverthrow";
-import { selfCommand } from "../self-command.ts";
+import { stableSelfCommand } from "../self-command.ts";
 import { append, flushRunPublications, now } from "./store.ts";
 import { EndNoticeResult } from "./run-state.ts";
 
@@ -41,7 +41,7 @@ function targetFor(input: Pick<EndNoticeRequest, "dispatcher" | "address">) {
 /** Queue the notice worker without keeping this run alive. */
 export function scheduleEndNotice(
   input: Omit<EndNoticeRequest, "parentPid"> & { env?: NodeJS.ProcessEnv },
-  workerCommand: string[] = selfCommand(),
+  workerCommand: string[] = stableSelfCommand(),
 ): EndNotice {
   const { env, ...request } = input;
   if (targetFor(input) === null)

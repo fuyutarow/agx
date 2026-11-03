@@ -215,7 +215,7 @@ await new Promise(() => {});
       `import { append, flushRunPublications, now } from ${JSON.stringify(storePath)};
 import { scheduleEndNotice } from ${JSON.stringify(noticePath)};
 import { subprocessEnvironment } from ${JSON.stringify(new URL("../../../shared/src/subprocess-env.ts", import.meta.url).pathname)};
-const id = "fake-end-notice-run";
+const id = "3f1d2c4e-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
 const dispatcher = process.env.AGX_DISPATCHER_SESSION ?? null;
 const startedAt = now();
 append({ kind: "started", id, at: startedAt, ticket: "end-notice-fixture", writes: [], cwd: process.cwd(), workspace: process.cwd(), row: "fixture", dispatcher_session: dispatcher, dispatcher_address: dispatcher, vendor_session: null, pid: process.pid });

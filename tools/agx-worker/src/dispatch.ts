@@ -36,7 +36,7 @@ import {
   resolveClaudeDeliveryTarget,
 } from "../../xmsg/src/claude-target.ts";
 
-import { selfCommand, stableCommand } from "./self-command.ts";
+import { stableCommand, stableSelfCommand } from "./self-command.ts";
 import { parseNextTicket } from "./next/ticket.ts";
 import { recordedSandbox, resolveSandbox, Sandbox } from "./next/sandbox.ts";
 import { append, now } from "./next/store.ts";
@@ -300,7 +300,7 @@ async function listedRuns(
   timeoutMs = DISPATCH_LIST_TIMEOUT_MS,
 ): Promise<{ rows?: RunRow[]; error?: string; code?: number }> {
   const result = await invoke(
-    [...selfCommand(), "ls", "--json", "--all"],
+    [...stableSelfCommand(), "ls", "--json", "--all"],
     cwd,
     env,
     timeoutMs,
@@ -515,7 +515,7 @@ export async function dispatch(options: {
     );
     return 2;
   }
-  const workerCommand = selfCommand();
+  const workerCommand = stableSelfCommand();
   const env: NodeJS.ProcessEnv = { ...callerEnv };
   const reference = await resolveTicketReference(options.ticketPath, cwd);
   if (reference.contextError !== undefined) {

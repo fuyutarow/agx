@@ -1,11 +1,16 @@
 import { resolve } from "node:path";
 
 /** Re-enter this executable, never another installation found on PATH. */
-export function selfCommand(): string[] {
+export function selfCommand(runtime?: {
+  execPath: string;
+  main: string;
+}): string[] {
+  const execPath = runtime?.execPath ?? process.execPath;
+  const main = runtime?.main ?? Bun.main;
   // Bun embeds the entry under $bunfs in a single-file executable.
   // process.execPath is the absolute runtime executable in both modes.
-  if (Bun.main.startsWith("/$bunfs/")) return [process.execPath];
-  return [process.execPath, resolve(Bun.main)];
+  if (main.startsWith("/$bunfs/")) return [execPath];
+  return [execPath, resolve(main)];
 }
 
 /**
@@ -21,4 +26,11 @@ export function stableCommand(command: readonly string[]): string[] {
   );
   if (cellar?.[1] !== undefined) out[0] = `${cellar[1]}/opt/agx/bin/agx-worker`;
   return out;
+}
+
+/** The only command other code may use to re-enter agx-worker or record one for later spawning. */
+export function stableSelfCommand(
+  runtime?: Parameters<typeof selfCommand>[0],
+): string[] {
+  return stableCommand(selfCommand(runtime));
 }
