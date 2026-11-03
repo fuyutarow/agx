@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.66 — 2026-11-03
+
+- dispatch tests no longer fail on a loaded host: dispatch children get a 30 s budget instead of bun's 5 s default, the unresolvable-ACK test stubs claude instead of calling the host registry, and the unknown-run-prefix expectation matches resolveRunId's count-only message
+
 ## 1.22.65 — 2026-11-03
 
 - In-run worker spawns (first launch, verify-feedback resume, reroute) resolve a Homebrew Cellar path to the opt link so a run survives an agx upgrade; each spawn's executable is recorded in spawn-NN.json
