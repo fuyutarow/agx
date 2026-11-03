@@ -14,7 +14,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { selfCommand } from "../self-command.ts";
 import { legacyLandStatus } from "../state.ts";
-import { verifyLine } from "../ticket.ts";
+import { claudeAckLine, verifyLine } from "../ticket.ts";
 import { parseReport, parseReturn, withReportInstruction } from "../report.ts";
 import { type NextTicket } from "./ticket.ts";
 import {
@@ -149,7 +149,7 @@ const contextFor = async (path: string, cwd: string, ticket: NextTicket) => {
     );
   return ctx;
 };
-const renderPromise = (
+export const renderPromise = (
   ticket: NextTicket,
   cwd: string,
   sandbox: string,
@@ -160,6 +160,7 @@ const renderPromise = (
     ticketDiff: string;
   },
   ackTarget?: string,
+  routeName?: string,
 ): string =>
   withReportInstruction(
     [
@@ -185,6 +186,7 @@ const renderPromise = (
       `outcome: ${ticket.outcome}`,
       `writes: ${JSON.stringify(ticket.writes.map((glob) => resolve(cwd, glob)))}`,
       ...(ticket.verify.length === 0 ? [] : [verifyLine(ticket.verify)]),
+      ...(routeName === "claude" ? [claudeAckLine] : []),
       `Sandbox mode: ${sandbox}${sandbox === "none" ? " (unsandboxed)" : ""}.`,
       ...(
         [
@@ -685,9 +687,11 @@ export async function run(flags: Flags): Promise<number> {
         runDir,
         continuation,
         ackTarget,
+        row.route,
       ),
     ),
   );
+  let briefIsOriginal = true;
   let sandbox_effective: string = sandbox;
   let sandbox_effective_source: string = sandbox_source;
   if (row.route === "codex") {
@@ -1003,6 +1007,7 @@ export async function run(flags: Flags): Promise<number> {
       if (lines.at(-1) === "") lines.pop();
       return `Command: ${result.cmd}\nExit: ${result.exit}\nLog: ${result.log_path}\nLast 80 lines:\n${lines.slice(-80).join("\n")}`;
     });
+    briefIsOriginal = false;
     writeFileSync(
       workerBrief,
       `Verification failed. Fix the errors and finish.\n\n${details.join("\n\n")}\n`,
@@ -1129,6 +1134,22 @@ export async function run(flags: Flags): Promise<number> {
       latestVendorSession ?? vendorSessionFromProgress() ?? undefined;
     activeRow = next.row;
     attemptedRows.push(activeRow.id);
+    if (briefIsOriginal && previousRow.route !== activeRow.route)
+      writeFileSync(
+        workerBrief,
+        withReportInstruction(
+          renderPromise(
+            ticket,
+            cwd,
+            sandbox,
+            prose,
+            runDir,
+            continuation,
+            ackTarget,
+            activeRow.route,
+          ),
+        ),
+      );
     currentResumeSession =
       previousRow.route === activeRow.route ? previousSession : undefined;
     if (currentResumeSession === undefined) latestVendorSession = null;

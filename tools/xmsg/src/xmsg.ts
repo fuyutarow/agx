@@ -53,7 +53,7 @@ function route(
 
 function refuseNative(target: string): number {
   process.stderr.write(
-    `agx msg: Claude-to-Claude messaging requires Claude Code's native messenger (SendMessage); use it for ${target}\n`,
+    `agx msg: Claude-to-Claude messaging requires Claude Code's native messenger (SendMessage); send the same message with SendMessage to ${target}\n`,
   );
   return 2;
 }

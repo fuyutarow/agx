@@ -659,6 +659,7 @@ test("msg contract: claude to claude is refused before any delivery and names th
     expect(r.stdout).toBe("");
     expect(r.stderr.trim().split("\n")).toHaveLength(1);
     expect(r.stderr).toContain("SendMessage");
+    expect(r.stderr).toContain("send the same message with SendMessage");
     expect(r.called).toBe(false);
     expect(r.rpcCalls).toHaveLength(0);
   }
