@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.87 — 2026-11-03
+
+- ls, check and every record-log reader skip routing audits and judged evidence and read the log in bounded chunks; started records carry decision_id instead of a copied pick_audit, lifecycle rows reference the decision, and judged evidence is capped inline with the full text in a file
+
 ## 1.22.86 — 2026-11-03
 
 - Every verify round's logs are named verify-round-K-NN.log, and the end notice, the ended record (new verify_round field) and agx worker ls name the round of the reported verify exits and how earlier rounds ended, so a pass in a feedback round no longer reads like a first-round pass.
