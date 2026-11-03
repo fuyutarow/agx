@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.84 — 2026-11-03
+
+- agx ws add creates a workspace when the local trunk is ahead of its remote-tracking bookmark; diverged trunk refuses with both commits and the repair, absent and conflicted keep their own messages
+
 ## 1.22.83 — 2026-11-03
 
 - end-notice process ends by its deadline (hard timer, sender process group killed, pipes drained with a bound) and runs in its own transient unit, so a pending notice no longer keeps the run's unit active or blocks --continue
