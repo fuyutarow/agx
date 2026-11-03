@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.22.64 — 2026-11-03
+
+- claude-route briefs tell the worker to send the completion ACK with SendMessage, since agx msg refuses claude-to-claude; codex-route briefs are unchanged
+- the claude-to-claude refusal tells the sender to send the same message with SendMessage
+
 ## 1.22.63 — 2026-11-03
 
 - Claude workspace-write workers can write the run temp directory, /tmp, and the same shared cache roots as codex, so tests that create temporary directories run under the claude route.
