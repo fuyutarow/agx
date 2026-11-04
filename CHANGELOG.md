@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.100 — 2026-11-05
+
+- Require verification for read-only tickets.
+
 ## 1.22.99 — 2026-11-05
 
 - Refuse missing absolute external read paths during preflight.
