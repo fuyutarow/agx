@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.97 — 2026-11-04
+
+- Make route refusals visible in run reports and dispatcher output.
+
 ## 1.22.96 — 2026-11-04
 
 - Stop offering missing_input as a routing return.
