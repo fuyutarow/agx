@@ -60,7 +60,6 @@ const ReturnReason = z.enum([
   "split",
   "uncheckable",
   "contradiction",
-  "missing_input",
 ]);
 const RequirementClassSchema = z.enum([
   "mechanical",
@@ -82,11 +81,6 @@ const returns = {
     criterion:
       "Two explicit requirements cannot both be satisfied. Do not use for ambiguity or a difficult trade-off.",
     fix: "Resolve the conflicting requirements in the ticket.",
-  },
-  missing_input: {
-    criterion:
-      "A required input, access, or decision is absent and cannot be obtained within the authorized scope. Do not use when the worker can retrieve it within scope.",
-    fix: "Provide the missing input, access, or decision, or authorize its retrieval.",
   },
 };
 

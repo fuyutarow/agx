@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { routingEvents } from "../../src/next/routing-events.ts";
+import { recordRoutingRefusal, routingEvents } from "../../src/next/routing-events.ts";
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
@@ -928,7 +928,6 @@ test("route contract: Jev payload hides roster rows while classifying the ticket
     "split",
     "uncheckable",
     "contradiction",
-    "missing_input",
   ]);
   expect(request.state.published_task_metrics).toEqual({});
   expect(selected.id).toBe(LOCALIZED_SELECTION);
@@ -939,14 +938,9 @@ for (const reason of [
   "split",
   "uncheckable",
   "contradiction",
-  "missing_input",
 ] as const) {
   test(
-    reason === "missing_input"
-      ? "dispatch contract: a Jev missing_input reply is recorded as refused with its reason"
-      : "return " +
-          reason +
-          " exits 2, records the answer and never reaches worker startup",
+    "return " + reason + " exits 2, records the answer and never reaches worker startup",
     async () => {
       const { root } = await isolateState();
       const server = startServer(reason, { [reason]: 1, model_0: 0 });
@@ -980,11 +974,7 @@ for (const reason of [
       expect(exit).toBe(2);
       expect(stdout).toBe("");
       expect(stderr).toContain("ticket returned: " + reason);
-      if (reason === "missing_input")
-        expect(stderr).toContain(
-          "ticket returned: missing_input: verify requires $AGX_RUN_DIR/parity.tsv",
-        );
-      else expect(stderr).toContain(`specific ${reason} reason`);
+      expect(stderr).toContain(`specific ${reason} reason`);
       expect(await Bun.file(join(root, "worker-started")).exists()).toBe(false);
       expect(server.calls()).toBe(1);
       const parsedRecord = jsonOf(
@@ -1004,10 +994,6 @@ for (const reason of [
       if (!parsedRecord.success) return;
       const record = parsedRecord.data;
       expect(record.reason).toBe(reason);
-      if (reason === "missing_input")
-        expect(record.reason_detail).toBe(
-          "verify requires $AGX_RUN_DIR/parity.tsv",
-        );
       expect(record.pick_audit.answer.choice).toBe(reason);
       expect(record.pick_audit.probabilities[reason]).toBe(1);
     },
@@ -1023,7 +1009,7 @@ test("route contract: a return without a reason_code is refused, never routed to
         Response.json({
           answers: {
             worker: {
-              choice: "missing_input",
+              choice: "split",
               reason_code: reasonCode,
             },
           },
@@ -1031,14 +1017,27 @@ test("route contract: a return without a reason_code is refused, never routed to
     });
     const { message, event } = await expectRefusal("unnamed return fixture");
     expect(message).toContain(
-      "Jev returned missing_input without a reason_code",
+      "Jev returned split without a reason_code",
     );
     expect(event?.source).toBe("refused-unnamed-return");
-    expect(event?.audit?.answer).toMatchObject({ choice: "missing_input" });
+    expect(event?.audit?.answer).toMatchObject({ choice: "split" });
   }
   expect(
     await Bun.file(join(root, "state", "routing-refusals.jsonl")).exists(),
   ).toBe(false);
+});
+
+test("missing_input is invalid and historical refusals remain accepted", async () => {
+  const { root } = await isolateState();
+  const server = startServer("missing_input");
+  const { message, event } = await expectRefusal("obsolete return fixture");
+  expect(server.rawRequest()?.questions.worker.criteria).not.toHaveProperty("missing_input");
+  expect(message).toContain('Jev choice "missing_input"');
+  expect(event?.source).toBe("refused-invalid-class");
+  const path = join(root, "state", "routing-refusals.jsonl");
+  expect(await Bun.file(path).exists()).toBe(false);
+  recordRoutingRefusal({ ticket: "historical fixture", reason: "missing_input" });
+  expect(JSON.parse(await readFile(path, "utf8")).reason).toBe("missing_input");
 });
 
 test("a missing worker answer is refused and recorded, with no default row", async () => {

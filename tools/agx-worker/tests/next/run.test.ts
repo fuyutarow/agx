@@ -44,7 +44,7 @@ const scratch = async (prefix: string): Promise<string> => {
 };
 
 describe("agx-worker run", () => {
-  test("dispatch contract: a Jev missing_input reply is recorded as refused with its reason", async () => {
+  test("dispatch contract: a Jev split reply is recorded as refused with its reason", async () => {
     const root = await scratch("missing-input-");
     const state = join(root, "state");
     const ticket = join(root, "ticket.md");
@@ -83,7 +83,7 @@ describe("agx-worker run", () => {
     await probe.stop(true);
     writeFileSync(
       jevFile,
-      `Bun.serve({ hostname: "127.0.0.1", port: ${jevPort}, fetch: () => Response.json({ answers: { worker: { choice: "missing_input", reason_code: ${JSON.stringify(reason)} } } }) });\n`,
+      `Bun.serve({ hostname: "127.0.0.1", port: ${jevPort}, fetch: () => Response.json({ answers: { worker: { choice: "split", reason_code: ${JSON.stringify(reason)} } } }) });\n`,
     );
     const jev = Bun.spawn([process.execPath, jevFile], {
       stdout: "ignore",
