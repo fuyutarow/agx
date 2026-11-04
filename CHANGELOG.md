@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.88 — 2026-11-04
+
+- route tests pin the Jev fixture key, isolate mise config, and expect the claude-priced localized selection; the 60 s default timeout covers loaded hosts
+
 ## 1.22.87 — 2026-11-03
 
 - ls, check and every record-log reader skip routing audits and judged evidence and read the log in bounded chunks; started records carry decision_id instead of a copied pick_audit, lifecycle rows reference the decision, and judged evidence is capped inline with the full text in a file
