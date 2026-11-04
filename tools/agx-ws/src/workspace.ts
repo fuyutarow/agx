@@ -1459,6 +1459,7 @@ export async function remove(options: {
           includeUnrecorded: true,
           legacy: true,
           graceMinutes: 0,
+          inventorySeconds: 60,
         },
       );
       if (!decision.collect && decision.reason.startsWith("unlanded change ")) {
@@ -1467,6 +1468,8 @@ export async function remove(options: {
           `${dir} has unlanded changes; land or abandon them first:\n${pending.changes.map((change) => `  ${change.change} ${change.description}`).join("\n")}`,
         );
       }
+      if (!decision.collect && decision.reason.includes("inventory timed out:"))
+        return bad(`${dir}: nothing found unlanded; untracked-content check did not finish (${decision.reason}); retry ws rm`);
       if (!decision.collect)
         return bad(`${dir}: unlanded or protected content: ${decision.reason}`);
       const done = await forgetAndTombstone(repo.value, name.value, dir);
