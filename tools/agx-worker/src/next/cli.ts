@@ -230,6 +230,11 @@ Ticket min_effort = "low" | "medium" | "high" | "xhigh" | "max" sets a routing f
             description: "previous run to validate for continuation",
           },
           supersedes: { type: String, description: "previous run to replace" },
+          skipRouting: {
+            type: Boolean,
+            description:
+              "internal dispatch preflight; routing occurs in the run",
+          },
         },
         strictFlags: true,
         ignoreArgv: rejectPrototypeFlag,
@@ -245,6 +250,7 @@ Ticket min_effort = "low" | "medium" | "high" | "xhigh" | "max" sets a routing f
       sandbox: parsed.flags.sandbox,
       continue: parsed.flags.continue,
       supersedes: parsed.flags.supersedes,
+      skipRouting: parsed.flags.skipRouting,
     });
   } else if (commandName === "ls") {
     const parsed = cli(

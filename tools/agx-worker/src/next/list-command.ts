@@ -123,11 +123,12 @@ export async function list(flags: Flags): Promise<number> {
           verify_exits: verifyExits,
           verify_round: latestRun.verify_round,
           report_path: latestRun.report_path,
+          cause: latestRun.cause,
         })}\n`,
       );
     } else {
       process.stdout.write(
-        `${latestRun.id} state=${latestRun.state} outcome=${latestRun.outcome ?? "-"} verify_exits=${verifyExits.length === 0 ? "-" : verifyExits.join(",")}${verifyRoundFields(latestRun.verify_round)} report_path=${latestRun.report_path ?? "-"}\n`,
+        `${latestRun.id} state=${latestRun.state} outcome=${latestRun.outcome ?? "-"} verify_exits=${verifyExits.length === 0 ? "-" : verifyExits.join(",")}${verifyRoundFields(latestRun.verify_round)} report_path=${latestRun.report_path ?? "-"}${latestRun.cause === undefined ? "" : ` cause=${JSON.stringify(latestRun.cause)}`}\n`,
       );
     }
     return 0;

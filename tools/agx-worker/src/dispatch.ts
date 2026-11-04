@@ -901,6 +901,7 @@ export async function dispatch(options: {
       workspace,
       "--sandbox",
       sandbox,
+      "--skip-routing",
       ...(previous === undefined ? [] : ["--continue", previous.id]),
     ],
     cwd,

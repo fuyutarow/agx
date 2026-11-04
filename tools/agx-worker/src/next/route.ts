@@ -528,7 +528,15 @@ export async function route(
     audit.measured_evidence = measuredEvidence;
     audit.answer = rawAnswer;
     audit.choice_probabilities = probabilities ?? null;
-    return refuse(message, 2, source);
+    const reply = post.ok ? post.text : null;
+    const bounded = reply === null ? "unavailable" : reply.slice(0, 8192);
+    const truncated =
+      reply !== null && reply.length > 8192 ? " [truncated]" : "";
+    return refuse(
+      `${message.trimEnd()}; Jev reply: ${JSON.stringify(bounded)}${truncated}\n`,
+      2,
+      source,
+    );
   };
   if (!post.ok)
     return refuseReply(
@@ -553,7 +561,7 @@ export async function route(
   const reason = ReturnReason.safeParse(selected);
   if (reason.success && (answer?.reason_code?.trim().length ?? 0) === 0)
     return refuseReply(
-      `route refused: Jev returned ${reason.data} without a reason_code; no row is substituted\n`,
+      `route refused: Jev returned ${reason.data} without a reason_code naming the missing input; ticket fields sent: task${capabilities.length === 0 ? "" : ", required_capabilities"}, task_size; no row is substituted\n`,
       "refused-unnamed-return",
       probabilities,
     );
@@ -579,7 +587,11 @@ export async function route(
         pick_audit: pickAudit("jev-return", probabilities),
       });
     const detail = answer?.reason_code;
-    return refuse(`agx: ticket returned: ${reason.data}: ${detail}\n`, 2);
+    return refuseReply(
+      `agx: ticket returned: ${reason.data}: ${detail}\n`,
+      "jev-return",
+      probabilities,
+    );
   }
   if (answer === undefined)
     return refuseReply(

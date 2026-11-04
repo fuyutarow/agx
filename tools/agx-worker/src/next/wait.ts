@@ -93,7 +93,7 @@ const select = (
 };
 
 const line = (entry: Row): string =>
-  `${entry.id} ${entry.state} tkt_${entry.ticket} row=${entry.row} exit=${entry.exit ?? "-"} outcome=${entry.outcome ?? "-"}`;
+  `${entry.id} ${entry.state} tkt_${entry.ticket} row=${entry.row} exit=${entry.exit ?? "-"} outcome=${entry.outcome ?? "-"}${entry.cause === undefined ? "" : ` cause=${JSON.stringify(entry.cause)}`}`;
 
 /**
  * `agx worker ls --wait SELECTOR`: a read-only incremental fold over the record log, woken by

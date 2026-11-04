@@ -381,6 +381,7 @@ describe("capability constrained routing", () => {
 
   test("check reports the active route filter including omission", async () => {
     const { root } = await isolateState();
+    startServer("localized");
     await prepareTicketRepo(root);
     const ticket = join(root, "ticket.md");
     await writeFile(
@@ -498,7 +499,9 @@ describe("capability constrained routing", () => {
       note: "historical Sol 6.1 acceptance",
     });
     const server = startServer("localized");
-    expect((await route("generation-isolation replay")).id).toBe(LOCALIZED_SELECTION);
+    expect((await route("generation-isolation replay")).id).toBe(
+      LOCALIZED_SELECTION,
+    );
     expect(
       server.request()?.questions.worker.criteria["localized"],
     ).toBeDefined();
@@ -1057,9 +1060,10 @@ test("an HTTP error from Jev is refused naming the status", async () => {
     fetch: () => new Response("upstream down", { status: 503 }),
   });
   const { message, event } = await expectRefusal("http error fixture");
-  expect(message).toBe(
-    "route refused: Jev answered HTTP 503; no row is substituted\n",
+  expect(message).toContain(
+    "route refused: Jev answered HTTP 503; no row is substituted",
   );
+  expect(message).toContain("upstream down");
   expect(event?.source).toBe("refused-http-503");
   expect(event?.audit?.http_status).toBe(503);
 });
@@ -1489,7 +1493,8 @@ test("refusal and pre-start failure retain full audit fields without a started r
     // stored once, on the pick row carrying the same decision_id.
     const decisionId = event?.audit?.decision_id;
     const stored = routingEvents().events.find(
-      (row) => row.audit?.decision_id === decisionId && row.audit?.input !== undefined,
+      (row) =>
+        row.audit?.decision_id === decisionId && row.audit?.input !== undefined,
     );
     if (masked.length === 0)
       expect(event?.audit).toEqual({

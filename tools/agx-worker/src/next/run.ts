@@ -382,8 +382,49 @@ export async function check(flags: Flags): Promise<number> {
   if (ticket === undefined || !loaded.ok)
     return fatal("preflight did not resolve ticket and roster");
   await overlapWarnings(ticket.writes, inspected.ctx?.root ?? cwd);
+  if (flags.skipRouting === true) {
+    process.stdout.write(
+      flags.json === true
+        ? `${JSON.stringify({ ok: true, routing_checked: false, violations: [] })}\n`
+        : "preflight passed; routing not checked\n",
+    );
+    return 0;
+  }
+  const routing = await route(
+    `Proposition ${ticket.proposition.id}: ${ticket.proposition.claim}\n${inspected.prose}`,
+    ticket.capabilities,
+    ticket.timeout_s ?? 600,
+    await earlyQuitRows(ticket.name ?? basename(path, ".md"), cwd),
+    {},
+    {
+      path: resolve(path),
+      sha256: createHash("sha256")
+        .update(inspected.bytes ?? "")
+        .digest("hex"),
+      min_effort: ticket.min_effort,
+    },
+    {
+      capacityRetry: true,
+      timeoutMs: (ticket.timeout_s ?? 600) * 1000,
+      inspect: true,
+    },
+  );
+  if (routing.kind !== "selected") {
+    const message =
+      routing.kind === "refused"
+        ? routing.message
+        : "route refused: no eligible row\n";
+    if (flags.json === true)
+      process.stdout.write(
+        `${JSON.stringify({ ok: false, routing_checked: true, violations: [message.trim()] })}\n`,
+      );
+    process.stderr.write(message);
+    return routing.kind === "refused" ? routing.exitCode : 2;
+  }
   if (flags.json === true) {
-    process.stdout.write(`${JSON.stringify({ ok: true, violations: [] })}\n`);
+    process.stdout.write(
+      `${JSON.stringify({ ok: true, routing_checked: true, violations: [] })}\n`,
+    );
     return 0;
   }
   process.stdout.write(
@@ -586,6 +627,14 @@ async function runUnguarded(flags: Flags): Promise<number> {
     return fatal("no roster row satisfies the ticket's requirements", 2);
   if (selectedRoute.kind === "refused") {
     recordRefusal(path, cwd, bytes, [selectedRoute.message.trimEnd()]);
+    const id = binding?.id ?? randomUUID();
+    const runDir = resolve(stateDir(), "runs", id);
+    const reportPath = join(runDir, "report.json");
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      reportPath,
+      `${JSON.stringify({ outcome: "route-refused", summary: selectedRoute.message, changes: [], checks: [], for_coordinator: [], open: [selectedRoute.message] })}\n`,
+    );
     if (binding !== undefined)
       append({
         kind: "ended",
@@ -593,10 +642,14 @@ async function runUnguarded(flags: Flags): Promise<number> {
         at: now(),
         exit: selectedRoute.exitCode,
         outcome: "refused",
-        report_path: null,
+        cause: selectedRoute.message.trimEnd(),
+        report_path: reportPath,
         vendor_session: resumeSession ?? null,
         verify: [],
       });
+    process.stdout.write(
+      `${JSON.stringify({ id, outcome: "route-refused", report_path: reportPath, refusal: selectedRoute.message })}\n`,
+    );
     return fatal(selectedRoute.message, selectedRoute.exitCode);
   }
   const row = selectedRoute.row;
