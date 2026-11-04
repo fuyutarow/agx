@@ -16,6 +16,12 @@
 
 The top-level `objective` field in `roster --json` is the routing objective text used to select workers; the per-ticket `roster TICKET` output remains one selected row.
 
+Preflight requires the parent directory of each `writes` entry's literal prefix
+(before the first glob character) to exist in the `--cd` tree. This applies to
+bare paths as well as globs. To allow a new directory, anchor the glob at an
+existing parent, for example `tools/new/**` instead of `tools/new/src/a.ts`.
+Check and dispatch refuse an entry with a missing parent and identify its repair.
+
 ## Sandbox capability preflight
 
 `check TICKET --cd TREE [--sandbox MODE]`, `run`, and dispatch's check inspect
@@ -609,19 +615,19 @@ same owner journal; it does not query another machine or combine state stores.
 
 Schema 1 fields:
 
-| Field                               | Meaning                                                                                       |
-| ----------------------------------- | --------------------------------------------------------------------------------------------- |
-| `schema`                            | Public response version, currently 1.                                                         |
-| `observation`                       | `start`, `end`, `window`, `duration_ms`, and `interval`.                                      |
-| `host`                              | Selected routing host name.                                                                   |
-| `jev.pick_count`, `jev.denominator` | Equal counts of class-mode selections and legacy source Jev selections, matching host and bounds.                |
-| `jev.codex_pick_count`              | Subset of those selections whose selected route was Codex.                                    |
-| `jev.codex_share`                   | Codex count divided by denominator, a fraction in [0,1]; null when denominator is zero.       |
-| `selection_count`                   | Row selections plus refusal events in the host and interval.                                |
+| Field                               | Meaning                                                                                                                              |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `schema`                            | Public response version, currently 1.                                                                                                |
+| `observation`                       | `start`, `end`, `window`, `duration_ms`, and `interval`.                                                                             |
+| `host`                              | Selected routing host name.                                                                                                          |
+| `jev.pick_count`, `jev.denominator` | Equal counts of class-mode selections and legacy source Jev selections, matching host and bounds.                                    |
+| `jev.codex_pick_count`              | Subset of those selections whose selected route was Codex.                                                                           |
+| `jev.codex_share`                   | Codex count divided by denominator, a fraction in [0,1]; null when denominator is zero.                                              |
+| `selection_count`                   | Row selections plus refusal events in the host and interval.                                                                         |
 | `selection_mode_counts`             | Counts by recorded source, except class-mode selections use `class` and refusals use `refusal`; the counts sum to `selection_count`. |
-| `fallback_count`                    | Recorded selections whose source starts with `fallback-`, excluded from the Jev denominator. |
-| `routes.codex`, `routes.claude`     | Current local route assessment described below; unrelated to historical pick success.         |
-| `coverage`                          | Explicit limits on the observed counts, described below.                                      |
+| `fallback_count`                    | Recorded selections whose source starts with `fallback-`, excluded from the Jev denominator.                                         |
+| `routes.codex`, `routes.claude`     | Current local route assessment described below; unrelated to historical pick success.                                                |
+| `coverage`                          | Explicit limits on the observed counts, described below.                                                                             |
 
 A row selection counts once; a recorded refusal also counts once in `selection_count` and `selection_mode_counts`. Refusals are journal events and may include multiple events from one routing attempt. The owner captures every
 Jev or fallback selection at selection time, with host, timestamp, row, route and

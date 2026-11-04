@@ -52,7 +52,7 @@ test("check validates absolute external reads, not descriptions or ticket body",
     const check = async (entry: string) => {
       await writeFile(
         ticket,
-        `+++\nschema = 2\nname = "external"\noutcome = "fixture"\nwrites = []\nexternal_reads = [${JSON.stringify(entry)}, "a reference description"]\n[proposition]\nid = "P"\nclaim = "exists"\nrefuted_by = "missing"\n+++\nBody mentions ${missing}\n`,
+        `+++\nschema = 2\nname = "external"\noutcome = "fixture"\nwrites = []\nverify = ["test -s result.md"]\nexternal_reads = [${JSON.stringify(entry)}, "a reference description"]\n[proposition]\nid = "P"\nclaim = "exists"\nrefuted_by = "missing"\n+++\nBody mentions ${missing}\n`,
       );
       const env = {
         ...subprocessEnvironment(),

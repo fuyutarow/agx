@@ -3,7 +3,7 @@ import { fromPromise, fromThrowable } from "neverthrow";
 import { createHash, randomUUID } from "node:crypto";
 import { inspectSandboxNeeds } from "./sandbox-needs.ts";
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { validateSlug } from "../../../shared/src/slug.ts";
 import { ownerlessRefLocks } from "../../../shared/src/ref-locks.ts";
@@ -273,12 +273,23 @@ export async function preflight(
     resolve(binding.data.workspace) === cwd
       ? binding.data.id
       : undefined;
-  for (const [index, glob] of (ticket?.writes ?? []).entries())
-    if (!writeGlob.safeParse(glob).success)
+  for (const [index, glob] of (ticket?.writes ?? []).entries()) {
+    if (!writeGlob.safeParse(glob).success) {
       add(
         `invalid ticket writes.${index}: ${glob}`,
         "use a relative glob without .., relative to --cd",
       );
+      continue;
+    }
+    const prefix = glob.split(/[*?[\]{}()!]/u, 1)[0] ?? "";
+    const parent = dirname(prefix);
+    const directory = await stat(resolve(cwd, parent)).catch(() => null);
+    if (directory === null || !directory.isDirectory())
+      add(
+        `ticket writes.${index}: ${glob} has a missing parent directory: ${parent}`,
+        "write the glob from the deepest existing directory, e.g. tools/new/** instead of tools/new/src/a.ts",
+      );
+  }
   if (ticket !== undefined && continuationId === undefined) {
     const slug = validateSlug(
       ticket.name ?? basename(path, ".md"),
