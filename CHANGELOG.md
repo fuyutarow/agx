@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.96 — 2026-11-04
+
+- Stop offering missing_input as a routing return.
+
 ## 1.22.95 — 2026-11-04
 
 - Keep workspaces until their changes land on the remote trunk.
