@@ -52,6 +52,7 @@ export async function run(
 ) {
   const started = performance.now();
   let timeout = 120_000;
+  if (basename(cmd[0] ?? "") === "brew") timeout = 900_000;
   if (cmd[0] === "gh" && cmd[1] === "release" && cmd[2] === "upload")
     timeout = 600_000;
   if (options.deadline !== undefined)
@@ -592,6 +593,37 @@ async function uploadAsset(
   return err(failures.join("\n"));
 }
 
+async function canResume(
+  tags: string[],
+  head: string,
+  root: string,
+  runner: CommandRunner,
+) {
+  for (const tag of tags) {
+    const local = await runner(["git", "rev-parse", `${tag}^{commit}`], root);
+    if (local.exit !== 0 || local.stdout.trim() !== head) return false;
+  }
+  const remote = await runner(
+    [
+      "git",
+      "ls-remote",
+      "--refs",
+      "origin",
+      ...tags.map((tag) => `refs/tags/${tag}`),
+    ],
+    root,
+  );
+  const lines = new Set(remote.stdout.trim().split("\n"));
+  return (
+    remote.exit === 0 &&
+    tags.every((tag) => lines.has(`${head}\trefs/tags/${tag}`))
+  );
+}
+
+function resumeInstallCommand(machine: MachineOptions) {
+  return `mise run release:publish -- suite --yes${(machine.verifyIn ?? []).map((dir) => ` --verify-in ${shellCommand([dir])}`).join("")}`;
+}
+
 export async function publish(
   pkg: string,
   yes = false,
@@ -619,13 +651,14 @@ export async function publish(
     return err(
       "Working copy is dirty; record or remove changes before publishing",
     );
+  const existingTags: string[] = [];
   for (const checkedTag of [tag, libraryTag]) {
     const existing = await runner(
       ["git", "show-ref", "--verify", "--quiet", `refs/tags/${checkedTag}`],
       root,
     );
-    if (existing.exit === 0) return err(`Tag already exists: ${checkedTag}`);
-    if (existing.exit !== 1)
+    if (existing.exit === 0) existingTags.push(checkedTag);
+    else if (existing.exit !== 1)
       return err(`Cannot inspect tag ${checkedTag}: ${existing.stderr}`);
   }
   const head = await runner(["git", "rev-parse", "HEAD"], root);
@@ -642,6 +675,16 @@ export async function publish(
     return err(
       `Publish requires HEAD ${headCommit} to match refs/heads/alpha ${alphaCommit}`,
     );
+  let resume = false;
+  if (existingTags.length > 0) {
+    if (existingTags.length !== 2)
+      return err(`Tag already exists: ${existingTags[0]}`);
+    if (!(await canResume(existingTags, headCommit, root, runner)))
+      return err(
+        `Tag already exists: ${existingTags[0]}; cannot confirm both remote tags at HEAD`,
+      );
+    resume = true;
+  }
   const section = await suiteNotes(root);
   if (section.isErr()) return section;
   const commands = [
@@ -659,8 +702,16 @@ export async function publish(
   ];
   let workflowUrl = `https://github.com/fuyutarow/agx/actions/workflows/release.yml?query=branch%3A${tag}`;
   const recovery: string[] = [];
-  for (const command of yes ? commands : []) {
+  for (const command of yes && !resume ? commands : []) {
     const result = await runner(command, root);
+    if (
+      result.exit !== 0 &&
+      command[1] === "push" &&
+      (await canResume([tag, libraryTag], headCommit, root, runner))
+    )
+      return err(
+        `Release stopped at ${commandFailure(command, result)}\nPublished ${tag} and ${libraryTag} at ${headCommit}. Resume installation: ${resumeInstallCommand(machine)}`,
+      );
     if (result.exit !== 0)
       return err(`Release stopped at ${commandFailure(command, result)}`);
   }
@@ -708,10 +759,14 @@ export async function publish(
       root,
       runner,
     );
-    if (installed.isErr()) return installed;
+    if (installed.isErr()) {
+      return err(
+        `${installed.error}\nPublished ${tag} and ${libraryTag} at ${headCommit}. Resume installation: ${resumeInstallCommand(machine)}`,
+      );
+    }
   }
   return ok({
-    commands: commands.map((command) => shellCommand(command)),
+    commands: (resume ? [] : commands).map((command) => shellCommand(command)),
     workflowUrl,
     dryRun: !yes,
   });

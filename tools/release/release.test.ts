@@ -1,6 +1,7 @@
-import { afterEach, expect, spyOn, test } from "bun:test";
+import { afterEach, expect, setDefaultTimeout, spyOn, test } from "bun:test";
 import {
   cp,
+  chmod,
   mkdir,
   mkdtemp,
   readdir,
@@ -34,6 +35,8 @@ import {
 import { subprocessEnvironment } from "../shared/src/subprocess-env.ts";
 
 import { fixtureRun, fixtureRun as run } from "./fixture-runner.ts";
+
+setDefaultTimeout(120_000);
 
 const build = (pkg: string, target: string | undefined, root: string) =>
   productionBuild(pkg, target, root, run);
@@ -390,6 +393,71 @@ test("publish and machine survive a three-minute fake brew update", async () => 
     else process.env.RELEASE_TEST_GH_MODE = oldMode;
   });
 }, 200_000);
+
+test("brew update exceeding the old limit completes under the new limit", async () => {
+  const f = await suiteFixture();
+  const brew = join(f.root, "brew");
+  await Bun.write(brew, `#!${process.execPath}\nawait Bun.sleep(250);\n`);
+  await chmod(brew, 0o755);
+  const original = AbortSignal.timeout.bind(AbortSignal);
+  const limits: number[] = [];
+  const clock = spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+    limits.push(ms);
+    return original(Math.ceil(ms / 1000));
+  });
+  try {
+    const result = await productionRun([brew, "update"], f.root);
+    expect(limits).toEqual([900_000]);
+    expect(result.exit, result.stderr).toBe(0);
+  } finally {
+    clock.mockRestore();
+  }
+});
+
+test("post-push failure reports recovery and rerun does not republish", async () => {
+  const f = await suiteFixture();
+  let pushed = false;
+  let fail = true;
+  const calls: string[][] = [];
+  const commit = "0123456789012345678901234567890123456789";
+  const runner: typeof productionRun = async (cmd, cwd, options) => {
+    calls.push(cmd);
+    if (cmd[0] === "git" && cmd[1] === "show-ref" && pushed)
+      return { exit: 0, stdout: "", stderr: "" };
+    if (cmd[0] === "git" && cmd[1] === "ls-remote")
+      return {
+        exit: 0,
+        stdout: `${commit}\trefs/tags/v2.3.4\n${commit}\trefs/tags/usehooks-v2.3.4\n`,
+        stderr: "",
+      };
+    if (cmd[0] === "git" && cmd[1] === "push") pushed = true;
+    if (cmd[0]?.endsWith("/brew") && cmd[1] === "update" && fail)
+      return { exit: 1, stdout: "", stderr: "fixture failure" };
+    return installProductionRun(cmd, cwd, options);
+  };
+  const oldMode = process.env.RELEASE_TEST_GH_MODE;
+  process.env.RELEASE_TEST_GH_MODE = "success";
+  try {
+    const first = await publish("suite", true, undefined, f.root, runner);
+    expect(first.isErr()).toBe(true);
+    if (first.isErr()) {
+      expect(first.error).toContain("Published v2.3.4 and usehooks-v2.3.4");
+      expect(first.error).toContain("mise run release:publish -- suite --yes");
+    }
+    fail = false;
+    const second = await publish("suite", true, undefined, f.root, runner);
+    expect(second.isOk(), second.isErr() ? second.error : "").toBe(true);
+    expect(
+      calls.filter((cmd) => cmd[0] === "git" && cmd[1] === "push"),
+    ).toHaveLength(1);
+    expect(
+      calls.filter((cmd) => cmd[0] === "git" && cmd[1] === "tag"),
+    ).toHaveLength(2);
+  } finally {
+    if (oldMode === undefined) delete process.env.RELEASE_TEST_GH_MODE;
+    else process.env.RELEASE_TEST_GH_MODE = oldMode;
+  }
+});
 
 test("formula timeout reports the target version before Homebrew", async () => {
   const f = await suiteFixture();
