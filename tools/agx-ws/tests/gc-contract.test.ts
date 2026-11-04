@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import {
   chmodSync,
   existsSync,
@@ -19,6 +19,7 @@ import {
   untrackedContent,
 } from "../src/workspace.ts";
 import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
+setDefaultTimeout(120_000);
 const scratch = mkdtempSync(join(tmpdir(), "agx-ws-gc-contract-"));
 const wsCli = process.env.GC_WS_CLI ?? join(import.meta.dir, "../src/ws.ts");
 const jj = Bun.which("jj") ?? "jj";
@@ -1044,4 +1045,51 @@ test("ws contract: a future workspace commit still produces a valid list row", a
   const rows = parseWorkspaceList(repo, listed.out, true);
   expect(rows.some((row) => row.name.includes("<invalid-workspace-"))).toBe(false);
   expect(rows.some((row) => row.dir === f.repo)).toBe(true);
+});
+
+test.each(["ancestry", "content"])('gc and rm retain %s landed only on local trunk until push', async (mode) => {
+  const f = await fixture(1);
+  const workspace = f.workspaces[0];
+  if (workspace === undefined) throw new Error("missing workspace");
+  const bare = join(f.parent, "origin.git");
+  const init = await run(["git", "init", "--bare", bare], f.parent, f.baseEnv);
+  expect(init.code, init.err).toBe(0);
+  await jjRun(["git", "remote", "add", "origin", bare], f.repo, f.baseEnv);
+  await jjRun(["git", "push", "--remote", "origin", "--bookmark", "main"], f.repo, f.baseEnv);
+  writeFileSync(join(workspace, "payload.txt"), "payload\n");
+  await jjRun(["commit", "-m", "payload"], workspace, f.baseEnv);
+  if (mode === "ancestry") {
+    await jjRun(["bookmark", "set", "main", "-r", "@-", "--allow-backwards"], workspace, f.baseEnv);
+  } else {
+    writeFileSync(join(f.repo, "payload.txt"), "payload\n");
+    await jjRun(["commit", "-m", "same content"], f.repo, f.baseEnv);
+    await jjRun(["bookmark", "set", "main", "-r", "@-", "--allow-backwards"], f.repo, f.baseEnv);
+  }
+  const before = await gc(f);
+  expect(before.code, before.err).toBe(0);
+  expect(parseOutput(before.out)?.rows.find((row) => row[0] === workspace)?.[2]).toBe("keep");
+  if (mode === "ancestry") {
+    const removed = await wsCommand(f, ["rm", "ws_1"]);
+    expect(removed.code, removed.out + removed.err).not.toBe(0);
+  }
+  await jjRun(["git", "push", "--remote", "origin", "--bookmark", "main"], f.repo, f.baseEnv);
+  const after = await gc(f);
+  expect(after.code, after.err).toBe(0);
+  const row = parseOutput(after.out)?.rows.find((candidate) => candidate[0] === workspace);
+  expect(row?.[2], row?.join(" ")).toBe("removable");
+  expect(row?.[5]).toContain("main@origin");
+});
+
+test("gc uses the local trunk when no remote-tracking trunk exists", async () => {
+  const f = await fixture(1);
+  const workspace = f.workspaces[0];
+  if (workspace === undefined) throw new Error("missing workspace");
+  writeFileSync(join(workspace, "local.txt"), "local\n");
+  await jjRun(["commit", "-m", "local payload"], workspace, f.baseEnv);
+  await jjRun(["bookmark", "set", "main", "-r", "@-", "--allow-backwards"], workspace, f.baseEnv);
+  const result = await gc(f);
+  expect(result.code, result.err).toBe(0);
+  const row = parseOutput(result.out)?.rows.find((candidate) => candidate[0] === workspace);
+  expect(row?.[2], row?.join(" ")).toBe("removable");
+  expect(row?.[5]).toContain("main");
 });

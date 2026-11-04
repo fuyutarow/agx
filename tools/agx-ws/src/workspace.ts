@@ -516,17 +516,20 @@ export async function unlanded(
   endCommits: string[],
   registeredOnly = false,
 ): Promise<Attempt<string[]>> {
+  const landing = await landingTrunk(repo, cfg);
+  if (!landing.ok) return landing;
+  const trunkRev = landing.value.commit ?? cfg.trunk;
   const here =
     existsSync(dir) && !registeredOnly
-      ? await unlandedFrom(dir, "@", cfg.trunk, false)
-      : await unlandedFrom(repo.backing, `${name}@`, cfg.trunk, true);
+      ? await unlandedFrom(dir, "@", trunkRev, false)
+      : await unlandedFrom(repo.backing, `${name}@`, trunkRev, true);
   // A registered workspace's working-copy view can be unavailable from its own
   // directory (for example, an old layout or a damaged working-copy pointer).
   // In that case, try the registered workspace commit from the backing checkout
   // before reporting an unknown result.
   const retried = !here.ok && existsSync(dir) && !registeredOnly;
   const resolved = retried
-    ? await unlandedFrom(repo.backing, `${name}@`, cfg.trunk, true)
+    ? await unlandedFrom(repo.backing, `${name}@`, trunkRev, true)
     : here;
   if (!resolved.ok) return bad(`cannot judge ${dir}: ${msg(resolved)}`);
   if (retried) {
@@ -539,15 +542,13 @@ export async function unlanded(
   }
   const found = [...resolved.value];
   for (const id of endCommits) {
-    const past = await unlandedFrom(repo.backing, id, cfg.trunk, true);
+    const past = await unlandedFrom(repo.backing, id, trunkRev, true);
     if (!past.ok)
       return bad(`cannot judge run-end commit ${id} of ${dir}: ${msg(past)}`);
     found.push(...past.value.filter((line) => !found.includes(line)));
   }
   if (found.length === 0 || endCommits.length > 0) return good(found);
-  const trunk = await trunkCommit(repo, cfg);
-  if (!trunk.ok) return trunk;
-  if (trunk.value === null) return good(found);
+  if (landing.value.commit === null) return good(found);
   const tipRepo =
     registeredOnly || retried || !existsSync(dir) ? repo.backing : dir;
   const tipRevision = tipRepo === repo.backing ? `${name}@` : "@";
@@ -557,7 +558,7 @@ export async function unlanded(
     tipRepo === repo.backing,
   );
   if (!tip.ok) return bad(`cannot judge ${dir}: ${msg(tip)}`);
-  const content = await outstanding(repo, tip.value.trim(), trunk.value);
+  const content = await outstanding(repo, tip.value.trim(), landing.value.commit);
   if (!content.ok)
     return bad(`cannot compare ${dir} with trunk: ${msg(content)}`);
   if (content.value.differing.length === 0) return good([]);
@@ -1440,9 +1441,9 @@ export async function remove(options: {
         return bad(`cannot verify workspace registration: ${name.value}`);
       const records = await agxRecords(repo.value.backing);
       if (!records.ok) return records;
-      const trunk = await trunkCommit(repo.value, cfg.value);
+      const trunk = await landingTrunk(repo.value, cfg.value);
       if (!trunk.ok) return trunk;
-      const graph = await gcCommitGraph(repo.value, trunk.value);
+      const graph = await gcCommitGraph(repo.value, trunk.value.commit);
       if (!graph.ok) return graph;
       const decision = await classifyGc(
         repo.value,
@@ -1452,7 +1453,7 @@ export async function remove(options: {
         records.value,
         graph.value,
         undefined,
-        trunk.value,
+        trunk.value.commit,
         {
           repo: repo.value.backing,
           dryRun: true,
@@ -1461,6 +1462,7 @@ export async function remove(options: {
           graceMinutes: 0,
           inventorySeconds: 60,
         },
+        undefined, undefined, trunk.value.ref,
       );
       if (!decision.collect && decision.reason.startsWith("unlanded change ")) {
         const pending = unlandedWorkspaceChange(current, graph.value);
@@ -1832,9 +1834,9 @@ async function removalGuard(
     return good(undefined);
   const cfg = await readConfig(repo);
   if (!cfg.ok) return cfg;
-  const trunk = await trunkCommit(repo, cfg.value);
+  const trunk = await landingTrunk(repo, cfg.value);
   if (!trunk.ok) return trunk;
-  if (trunk.value === null)
+  if (trunk.value.commit === null)
     return bad("cannot judge accepted work without trunk");
   const tip =
     forgottenCommit === undefined
@@ -1852,7 +1854,7 @@ async function removalGuard(
         true,
       );
   if (!resolvedTip.ok) return resolvedTip;
-  const work = await outstanding(repo, resolvedTip.value.trim(), trunk.value);
+  const work = await outstanding(repo, resolvedTip.value.trim(), trunk.value.commit);
   if (!work.ok) return work;
   return work.value.differing.length === 0
     ? good(undefined)
@@ -2203,7 +2205,7 @@ async function gcCommitGraph(
     commits.set(row.id, {
       ...row,
       parents: row.parents.split(",").filter(Boolean),
-      remoteBookmarks: row.remoteBookmarks.split(",").filter(Boolean),
+      remoteBookmarks: row.remoteBookmarks.split(",").filter((bookmark) => bookmark.length > 0 && !bookmark.endsWith("@git")),
       files: files.value,
       changedPaths: row.changedPaths.split("\0").filter(Boolean),
     });
@@ -2773,6 +2775,39 @@ async function trunkCommit(
   return resolved.ok ? good(resolved.value.commit) : resolved;
 }
 
+/** Freeze the remote copy of the trunk bookmark when one exists. */
+async function landingTrunk(repo: Repo, cfg: Config): Promise<Attempt<{ commit: string | null; ref: string }>> {
+  const local = await resolveTrunk(repo, cfg);
+  if (!local.ok) return local;
+  if (local.value.commit === null) return good({ commit: null, ref: cfg.trunk });
+  const names = await jjOut(
+    ["log", "--no-graph", "-r", local.value.commit, "-T", 'self.local_bookmarks().map(|b| b.name()).join("\\n")'],
+    repo.backing, true,
+  );
+  if (!names.ok) return names;
+  const localNames = names.value.split("\n").filter(Boolean);
+  const configuredName = cfg.trunk.split("@")[0] ?? cfg.trunk;
+  let name: string | undefined;
+  if (localNames.includes(configuredName)) name = configuredName;
+  else if (localNames.length === 1) name = localNames[0];
+  if (name === undefined) return good({ commit: local.value.commit, ref: cfg.trunk });
+  const remote = await jjOut(
+    ["log", "--no-graph", "-r", "remote_bookmarks(exact:" + JSON.stringify(name) + ")", "-T", 'self.remote_bookmarks().map(|b| if(b.remote() && b.remote() != "git", json({"ref" => stringify(b.name() ++ "@" ++ b.remote()), "id" => commit_id}) ++ "\\n", "")).join("")'],
+    repo.backing, true,
+  );
+  if (!remote.ok) return remote;
+  const rows = remote.value.split("\n").filter(Boolean).map((line) => jsonOf(z.object({ ref: z.string(), id: z.string() })).safeParse(line));
+  if (rows.some((row) => !row.success)) return bad("cannot parse remote trunk bookmarks");
+  const candidates = rows.flatMap((row) => row.success && row.data.ref.startsWith(name + "@") ? [row.data] : []);
+  const origin = candidates.filter((row) => row.ref === name + "@origin");
+  const selected = origin.length > 0 ? origin : candidates;
+  if (selected.length === 0) return good({ commit: local.value.commit, ref: name });
+  if (selected.length !== 1) return bad("remote trunk " + name + " must resolve to exactly one ref and commit");
+  const target = selected[0];
+  if (target === undefined) return bad("remote trunk disappeared");
+  return good({ commit: target.id, ref: target.ref });
+}
+
 async function resolveTrunk(
   repo: Repo,
   cfg: Config,
@@ -3274,6 +3309,7 @@ async function classifyGc(
   options: GcOptions,
   trace?: GcTrace,
   budget?: { remainingMs: number; exhausted: boolean },
+  trunkRef?: string,
 ): Promise<Classification> {
   const change = ws.change.length > 0 ? ws.change : "?";
   const age = ws.age.length > 0 ? ws.age : "?";
@@ -3493,9 +3529,10 @@ async function classifyGc(
     pendingChange.remoteBookmarks.length === 0
       ? ""
       : `; remote bookmark(s): ${pendingChange.remoteBookmarks.join(", ")}`;
+  const refSuffix = trunkRef === undefined ? "" : ` (${trunkRef})`;
   const landingReason = landedByContent
-    ? `landed by content on ${trunk}`
-    : "nothing unlanded";
+    ? `landed by content on ${trunk}${refSuffix}`
+    : `nothing unlanded on ${trunkRef ?? trunk}`;
   let removableReason = `${landingReason}${remoteReason}; no untracked content`;
   if (allRejected)
     removableReason = `${landingReason}${remoteReason}; all runs judged reject; results preserved (${lineage.map((record) => record.id).join(", ")}); no age wait`;
@@ -4220,7 +4257,7 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
   const run = async (): Promise<Attempt<GcResult>> => {
     const cfg = await readConfig(repo);
     if (!cfg.ok) return cfg;
-    const trunk = await resolveTrunk(repo, cfg.value);
+    const trunk = await landingTrunk(repo, cfg.value);
     if (!trunk.ok) return trunk;
     const tracing = process.env.AGX_WS_GC_TRACE === "1";
     const report = (step: string, ms: number, count?: number) => {
@@ -4357,6 +4394,7 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
           options,
           trace,
           budget,
+          trunk.value.ref,
         );
       }
       const elapsed = performance.now() - classificationStart;
@@ -4410,7 +4448,7 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
               return good("record retained: " + msg(currentConfig));
             if (protectedWorkspace(repo, currentConfig.value, ws))
               return good("workspace is kept by [ws].keep; record retained");
-            const currentTrunk = await trunkCommit(repo, currentConfig.value);
+            const currentTrunk = await landingTrunk(repo, currentConfig.value);
             if (!currentTrunk.ok)
               return good("record retained: " + msg(currentTrunk));
             const currentRecords = await agxRecords(repo.backing);
@@ -4430,7 +4468,7 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
                 name: ws.name,
                 dir: ws.dir,
                 commit: missingCommit,
-                trunk: currentTrunk.value,
+                trunk: currentTrunk.value.commit,
                 ...(land === undefined ? {} : { owner: "land" }),
               },
             );
@@ -4466,7 +4504,7 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
                   reason: msg(currentConfig),
                 },
               });
-            const currentTrunk = await trunkCommit(repo, currentConfig.value);
+            const currentTrunk = await landingTrunk(repo, currentConfig.value);
             if (!currentTrunk.ok)
               return good({
                 classification: {
@@ -4512,7 +4550,7 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
                   reason: msg(currentRecords),
                 },
               });
-            const currentGraph = await gcCommitGraph(repo, currentTrunk.value);
+            const currentGraph = await gcCommitGraph(repo, currentTrunk.value.commit);
             if (!currentGraph.ok)
               return good({
                 classification: {
@@ -4530,10 +4568,11 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
               currentRecords.value,
               currentGraph.value,
               undefined,
-              currentTrunk.value,
+              currentTrunk.value.commit,
               options,
               trace,
               budget,
+              currentTrunk.value.ref,
             );
             if (!checked.collect) return good({ classification: checked });
             if (options.journal?.signal !== undefined)
@@ -4593,7 +4632,7 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
         failed.push(...(c.verdict === "broken" ? [ws.dir] : []));
       }
       // Escape control characters without breaking the column contract.
-      if (options.dryRun) reason += `; trunk source: ${trunk.value.source}`;
+      if (options.dryRun) reason += `; trunk source: ${trunk.value.ref}`;
       lines.push(
         [ws.dir, kind, c.verdict, c.change, c.age, reason]
           .map((field) => field.replaceAll("\t", "\\t").replaceAll("\n", "\\n"))
