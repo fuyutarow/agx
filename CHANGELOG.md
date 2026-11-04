@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.89 — 2026-11-04
+
+- Allow route.default to be omitted during the fallback transition.
+
 ## 1.22.88 — 2026-11-04
 
 - route tests pin the Jev fixture key, isolate mise config, and expect the claude-priced localized selection; the 60 s default timeout covers loaded hosts
