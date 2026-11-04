@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.98 — 2026-11-04
+
+- Respect the configured routing brief limit and declare truncation to Jev.
+
 ## 1.22.97 — 2026-11-04
 
 - Make route refusals visible in run reports and dispatcher output.
