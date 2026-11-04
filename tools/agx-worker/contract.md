@@ -146,6 +146,11 @@ malformed rows, and read-only listings/stats.
 
 ## Tickets and dispatch
 
+Preflight checks each absolute path declared in `external_reads` for existence.
+A missing path refuses `check`, `run`, and `dispatch`, naming the entry and
+its repair. Other nonempty single-line entries are passed through without an
+existence check. The ticket body is not inspected for external reads.
+
 Tickets are caller-owned files. `agx worker run` accepts positional ticket paths and optionally a working
 tree and sandbox mode. A continuation uses the previous run ID and resumes its vendor session,
 except for the capacity recovery described below.

@@ -2,8 +2,9 @@ import { fatalMessages } from "./exit.ts";
 import { fromPromise, fromThrowable } from "neverthrow";
 import { createHash, randomUUID } from "node:crypto";
 import { inspectSandboxNeeds } from "./sandbox-needs.ts";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { basename, dirname, resolve } from "node:path";
+import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { validateSlug } from "../../../shared/src/slug.ts";
 import { ownerlessRefLocks } from "../../../shared/src/ref-locks.ts";
 import { checkPremises } from "../premises.ts";
@@ -141,6 +142,12 @@ export async function preflight(
       `remand schema: "ticket" invalid ticket: ${reason}. Fix: correct the ticket front matter`,
       "correct the ticket front matter",
     );
+  for (const entry of ticket?.external_reads ?? [])
+    if (isAbsolute(entry) && !existsSync(entry))
+      add(
+        `external_reads path does not exist: ${JSON.stringify(entry)}`,
+        "restore the path or correct external_reads",
+      );
   const continuationId = value(flags, "continue");
   const lineageRefusal =
     parsed?.success === true &&
