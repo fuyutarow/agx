@@ -1011,6 +1011,11 @@ No tie threshold, cheaper-row preference or exploration policy is introduced.
 
 ## Worker result directory
 
+For Claude-route briefs, the agx-manager end notice is the completion notice.
+The worker sends no completion ACK, even when the ticket requests one, and puts
+its result in `$AGX_RUN_DIR/result.md`. Codex-route briefs retain the ticket's
+ACK instruction.
+
 `run` creates and exports absolute `AGX_RUN_DIR=<state-root>/runs/<run-id>` before
 spawning the worker. It adds that directory to the worker sandbox's writable
 paths and names it in the brief. Workers write results, logs and measurements
