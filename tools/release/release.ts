@@ -48,6 +48,7 @@ export async function run(
     deadline?: number;
     progress?: boolean;
     completeOnExit?: boolean;
+    env?: NodeJS.ProcessEnv;
   } = {},
 ) {
   const started = performance.now();
@@ -61,7 +62,7 @@ export async function run(
   const readers: { cancel: () => Promise<void> }[] = [];
   const child = Bun.spawn(cmd, {
     cwd,
-    env: process.env,
+    env: { ...process.env, ...options.env },
     stdout: "pipe",
     stderr: "pipe",
     signal,
@@ -1126,6 +1127,7 @@ export async function machineSwap(
   const install = await execute(
     [brew, upgrading ? "upgrade" : "install", "fuyutarow/tap/agx"],
     home,
+    { env: { HOMEBREW_NO_INSTALL_CLEANUP: "1" } },
   );
   if (install.exit !== 0)
     return err(

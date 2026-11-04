@@ -414,6 +414,21 @@ test("brew update exceeding the old limit completes under the new limit", async 
   }
 });
 
+test("runner passes environment overrides to the child", async () => {
+  const f = await suiteFixture();
+  const result = await productionRun(
+    [
+      process.execPath,
+      "-e",
+      "process.stdout.write(process.env.HOMEBREW_NO_INSTALL_CLEANUP ?? '')",
+    ],
+    f.root,
+    { env: { HOMEBREW_NO_INSTALL_CLEANUP: "1" } },
+  );
+  expect(result.exit, result.stderr).toBe(0);
+  expect(result.stdout).toBe("1");
+});
+
 test("post-push failure reports recovery and rerun does not republish", async () => {
   const f = await suiteFixture();
   let pushed = false;
@@ -547,13 +562,20 @@ test("fake gh starts the tap formula workflow before brew and PATH checks", asyn
   const f = await suiteFixture();
   const consumer = join(f.root, "consumer with spaces");
   await mkdir(consumer);
+  const brewEnvironments: (NodeJS.ProcessEnv | undefined)[] = [];
+  const runner: typeof productionRun = (cmd, cwd, options) => {
+    if (cmd[0]?.endsWith("/brew") && cmd[1] === "upgrade")
+      brewEnvironments.push(options?.env);
+    return installProductionRun(cmd, cwd, options);
+  };
   const result = await machineSwap(
     "2.3.4",
     { waitSeconds: 0, verifyIn: [consumer] },
     f.root,
-    installProductionRun,
+    runner,
   );
   expect(result.isOk(), result.isErr() ? result.error : "").toBe(true);
+  expect(brewEnvironments).toEqual([{ HOMEBREW_NO_INSTALL_CLEANUP: "1" }]);
   const calls = (await Bun.file(join(f.root, "calls")).text())
     .trim()
     .split("\n");
