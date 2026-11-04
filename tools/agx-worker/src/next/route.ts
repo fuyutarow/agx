@@ -410,9 +410,22 @@ export async function route(
       `Ticket class: ${requirementClass}. Classify only the ticket. mechanical: an edit whose check is already stated. localized: a behavior fix inside one module. cross_module: an invariant, a public API, or behavior across modules must change.`;
   for (const [reason, value] of Object.entries(returns))
     criteria[reason] = value.criterion;
+  const truncated = brief.length > roster.auto.max_task_chars;
+  const end = truncated
+    ? brief.lastIndexOf("\n", roster.auto.max_task_chars - 1) + 1
+    : brief.length;
+  const task = brief.slice(0, end);
   const request: Record<string, unknown> = {
     state: {
-      task: brief.slice(0, Math.min(roster.auto.max_task_chars, 2400)),
+      task,
+      task_truncated: truncated,
+      task_omitted_chars: brief.length - task.length,
+      ...(truncated
+        ? {
+            task_truncation_notice:
+              "The task is truncated; omitted text is not evidence of missing input.",
+          }
+        : {}),
       published_task_metrics: {},
       routes: Object.fromEntries(
         Object.entries(usage).map(([name, value]) => [
@@ -448,7 +461,7 @@ export async function route(
     questions: {
       worker: {
         type: "choice",
-        instructions: `${ROUTING_OBJECTIVE} For a return, provide reason_code naming the specific missing input, conflict, or other reason.`,
+        instructions: ROUTING_OBJECTIVE,
         criteria,
       },
     },
@@ -456,8 +469,7 @@ export async function route(
   if (roster.auto.jev.api === "typesafe") request.model = roster.auto.jev.model;
   audit.input = request;
   audit.input_sha256 = hash(request);
-  audit.input_truncated =
-    brief.length > Math.min(roster.auto.max_task_chars, 2400);
+  audit.input_truncated = truncated;
   const post = await postJev(
     endpoint.value,
     request,

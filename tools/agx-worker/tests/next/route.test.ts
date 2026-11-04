@@ -1337,6 +1337,47 @@ test("audit retains class probabilities, the bar, qualifying rows, and determini
     expect(pickAuditOf(started).audit).toEqual(audit ?? {});
 });
 
+test("configured brief limit preserves short briefs and declares line-boundary cuts", async () => {
+  await isolateState();
+  const config = process.env.AGX_CONFIG;
+  if (config === undefined) expect.unreachable("missing fixture config");
+  await writeFile(
+    config,
+    (await readFile(config, "utf8")).replace(
+      /^max_task_chars = .*$/mu,
+      "max_task_chars = 6000",
+    ),
+  );
+  const server = startServer("localized");
+  const short = "x".repeat(5000);
+  await route(short);
+  expect(server.rawRequest()?.state).toMatchObject({
+    task: short,
+    task_truncated: false,
+    task_omitted_chars: 0,
+  });
+  const long = `${"x".repeat(4000)}\n${"y".repeat(3000)}\n`;
+  await route(long);
+  expect(server.rawRequest()?.state).toMatchObject({
+    task: `${"x".repeat(4000)}\n`,
+    task_truncated: true,
+    task_omitted_chars: 3001,
+    task_truncation_notice:
+      "The task is truncated; omitted text is not evidence of missing input.",
+  });
+  expect(routingEvents().events.at(-1)?.audit?.input_truncated).toBe(true);
+  expect(server.rawRequest()?.questions.worker.instructions).not.toContain(
+    "reason_code",
+  );
+  const unbroken = "z".repeat(6001);
+  await route(unbroken);
+  expect(server.rawRequest()?.state).toMatchObject({
+    task: "",
+    task_truncated: true,
+    task_omitted_chars: 6001,
+  });
+});
+
 test("route contract: the selected row depends on the ticket class, and the choice list Jev sees contains no model rows", async () => {
   await isolateState();
   const selectClass = async (ticketClass: string) => {
