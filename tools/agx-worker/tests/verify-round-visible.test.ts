@@ -89,7 +89,7 @@ process.stdout.write("fake transport accepted\\n");
     PATH: `${root}:${process.env.PATH ?? ""}`,
     HOME: root,
     AGX_STATE_DIR: state,
-    AGX_TMP_ROOT: join(root, "tmp"),
+    XDG_STATE_HOME: join(root, "tmp"),
     AGX_CONFIG: new URL("../src/roster/policy.example.toml", import.meta.url)
       .pathname,
     JEV_URL: `http://127.0.0.1:${server.port}/`,

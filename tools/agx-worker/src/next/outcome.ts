@@ -9,6 +9,7 @@ import { verifyKind, type VerifyKind } from "./verify.ts";
 export const Outcome = z.enum([
   "stopped",
   "lost",
+  "environment-lost",
   "ok",
   "no-change",
   "verify-failed",
@@ -36,12 +37,7 @@ const isWithin = (root: string, path: string): boolean => {
 export const workspaceSnapshot = (cwd: string) =>
   fromThrowable(() => {
     const workspaceRoot = resolve(cwd);
-    const internalDirectories = [
-      stateDir(),
-      ...(process.env.AGX_TMP_ROOT === undefined
-        ? []
-        : [resolve(cwd, process.env.AGX_TMP_ROOT)]),
-    ]
+    const internalDirectories = [stateDir()]
       .map((path) => resolve(path))
       .filter(
         (path) => path !== workspaceRoot && isWithin(workspaceRoot, path),

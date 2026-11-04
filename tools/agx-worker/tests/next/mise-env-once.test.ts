@@ -75,7 +75,7 @@ test.each([false, true])(
             HOME: root,
             XDG_CONFIG_HOME: join(root, "config"),
             AGX_STATE_DIR: join(root, "state"),
-            AGX_TMP_ROOT: join(root, "tmp"),
+            XDG_STATE_HOME: join(root, "tmp"),
             AGX_WORKER_BIN: worker,
             AGX_CONFIG: new URL(
               "../../src/roster/policy.example.toml",

@@ -117,9 +117,7 @@ keeps its original value. Only effective `workspace-write` receives these roots 
 `sandbox_workspace_write.writable_roots` on both fresh and resumed runs; read-only receives
 no shared writable roots. The daemon runtime directory (`$HOME/.cocoindex_code`) is not added:
 the cocoindex client connects to the existing socket without creating files in its directory;
-daemon startup owns runtime-file writes. No home-wide or temp-wide root is added. Workspace and existing
-temporary-directory permissions remain Codex's responsibility. Claude `workspace-write` also allows
-the run's temp directory and `/tmp` (`claudeWorkspaceWriteSettings`), then the same shared list.
+daemon startup owns runtime-file writes. No home-wide or temp-wide root is added. Both Codex and Claude `workspace-write` allow the run-owned temp directory under `$XDG_STATE_HOME/agx/runs/<id>/tmp`; Claude also allows `/tmp`. The recorded ended lifetime authorizes removal.
 When a worker hook has no
 bound continuation record, the worker owns its brief and workspace and does not become read-only.
 A Codex `Reading additional input from stdin...` stderr line with no subsequent stdout event for 30

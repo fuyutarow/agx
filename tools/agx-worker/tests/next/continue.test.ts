@@ -131,7 +131,7 @@ const fixture = async (ticketName = "pin") => {
           AGX_STATE_DIR: state,
           MISE_GLOBAL_CONFIG_FILE: join(root, "mise-config.toml"),
           XDG_CONFIG_HOME: join(root, "config"),
-          AGX_TMP_ROOT: join(root, "agx-tmp"),
+          XDG_STATE_HOME: join(root, "agx-tmp"),
           JEV_URL: "http://127.0.0.1:1/choice",
           AGX_WORKER_BIN: worker,
           TYPESAFE_API_KEY: "test-key",

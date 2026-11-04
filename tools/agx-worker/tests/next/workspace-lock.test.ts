@@ -177,7 +177,7 @@ console.log(JSON.stringify({ report: { summary: "done", changes: [], checks: [],
   const env = {
     ...subprocessEnvironment(),
     AGX_STATE_DIR: state,
-    AGX_TMP_ROOT: join(root, "tmp"),
+    XDG_STATE_HOME: join(root, "tmp"),
     JEV_URL: `http://127.0.0.1:${jev.port}/choice`,
     AGX_WORKER_BIN: worker,
     TYPESAFE_API_KEY: "test-key",

@@ -97,6 +97,9 @@ export function workerWritableRoots(input: {
       (cache) => cache.root,
     ),
     ...(input.runDir === undefined ? [] : [resolve(input.runDir)]),
+    ...((input.source ?? process.env).TMPDIR === undefined
+      ? []
+      : [resolve((input.source ?? process.env).TMPDIR ?? "")]),
   ];
   return [...new Set(roots)];
 }

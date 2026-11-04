@@ -43,6 +43,7 @@ import {
   publishCurrentRuns,
   publishWorkspacePublications,
   recordedRuns,
+  recordedFoldedRuns,
   recordPath,
   runningWorkspaceRun,
   stateDir,
@@ -64,7 +65,12 @@ import {
   printPreflightFailures,
   recordRefusal,
 } from "./preflight.ts";
-import { createRunTemp } from "../temp.ts";
+import {
+  agxTempRoot,
+  createRunTemp,
+  freeRunTemp,
+  recordedLifetime,
+} from "../temp.ts";
 import {
   claudeWorkspaceWriteAllowedTools,
   claudeWorkspaceWriteSettings,
@@ -598,13 +604,32 @@ async function runUnguarded(flags: Flags): Promise<number> {
   const attemptedRows = [row.id];
   let claudeRouteRan = false;
   const id = binding?.id ?? randomUUID();
-  // The run owns its temp space: removed on any exit path (process.exit included); a SIGKILL
-  // leaves it for the next run's sweep.
+  // Reclaim only recorded terminal runs, including owners killed after recording the end.
+  const endedIds = new Set(
+    recordedFoldedRuns()
+      .filter((run) => run.state === "ended" && run.ended_at !== null)
+      .map((run) => run.id),
+  );
+  for (const endedId of endedIds) {
+    if (!existsSync(join(agxTempRoot(), endedId, "tmp"))) continue;
+    const lifetime = recordedLifetime(endedId);
+    if (lifetime.state === "ended")
+      freeRunTemp(lifetime).mapErr((error) =>
+        process.stderr.write(`${error}\n`),
+      );
+  }
   const made = createRunTemp(id);
   if (made.isErr()) return exitWithError(`${made.error}\n`, 1);
   const temp = made.value;
   Object.assign(process.env, temp.env);
-  process.on("exit", temp.remove);
+  const cleanupTemp = () => {
+    const lifetime = recordedLifetime(id);
+    if (lifetime.state === "ended")
+      freeRunTemp(lifetime).mapErr((error) =>
+        process.stderr.write(`${error}\n`),
+      );
+  };
+  process.on("exit", cleanupTemp);
   const runDir = resolve(stateDir(), "runs", id);
   let activeProgressPath = join(runDir, "worker-progress.jsonl");
   let started = false;
@@ -1033,6 +1058,12 @@ async function runUnguarded(flags: Flags): Promise<number> {
       lateRecorded = true;
     }
   }, 100);
+  let environmentLost = false;
+  const checkEnvironment = () => {
+    if (existsSync(temp.dir)) return true;
+    environmentLost = true;
+    return false;
+  };
   let attemptNumber = 0;
   let verify: Awaited<ReturnType<typeof runVerify>> = [];
   const verifyRounds: (typeof verify)[] = [];
@@ -1041,6 +1072,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
   const verificationFeedback = async (
     session: string | null,
   ): Promise<boolean> => {
+    if (!checkEnvironment()) return false;
     verifyRoundNumber = verifyRounds.length + 1;
     verify = await runVerify(
       ticket.verify,
@@ -1094,6 +1126,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
     return true;
   };
   while (true) {
+    if (!checkEnvironment()) break;
     attemptNumber += 1;
     activeProgressPath = join(
       runDir,
@@ -1255,23 +1288,26 @@ async function runUnguarded(flags: Flags): Promise<number> {
   const parsedReport = parseReport(reportInput.structured, reportInput.message);
   for (const warning of parsedReport.ok ? (parsedReport.warnings ?? []) : [])
     process.stderr.write(`WARN ${warning}\n`);
-  const outcome = deriveOutcome({
-    capacity,
-    timedOut:
-      timedOut ||
-      workerReceipt.timed_out === true ||
-      workerReceipt.outcome === "timeout" ||
-      exit === 3 ||
-      exit === 124,
-    refused:
-      exit !== 0 ||
-      routeFailure !== undefined ||
-      workerReceipt.outcome === "refused" ||
-      (workerReceipt.exit_code !== undefined && workerReceipt.exit_code !== 0),
-    verify,
-    reportValid: parsedReport.ok,
-    changed,
-  });
+  const outcome = environmentLost
+    ? "environment-lost"
+    : deriveOutcome({
+        capacity,
+        timedOut:
+          timedOut ||
+          workerReceipt.timed_out === true ||
+          workerReceipt.outcome === "timeout" ||
+          exit === 3 ||
+          exit === 124,
+        refused:
+          exit !== 0 ||
+          routeFailure !== undefined ||
+          workerReceipt.outcome === "refused" ||
+          (workerReceipt.exit_code !== undefined &&
+            workerReceipt.exit_code !== 0),
+        verify,
+        reportValid: parsedReport.ok,
+        changed,
+      });
   let report: unknown = parsedReport.ok
     ? parsedReport.report
     : {
@@ -1347,6 +1383,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
     ...(typeof report === "object" && report !== null ? report : {}),
     ...(attemptedRows.length > 1 ? { rows: attemptedRows } : {}),
     verify_rounds: verifyRounds,
+    ...(environmentLost ? { environment_lost: temp.dir } : {}),
     execution,
     sandbox,
     sandbox_source,
@@ -1411,6 +1448,9 @@ async function runUnguarded(flags: Flags): Promise<number> {
       at: endedAt,
       exit,
       outcome,
+      ...(environmentLost
+        ? { cause: `run temp directory missing: ${temp.dir}` }
+        : {}),
       end_notice: endNotice,
       report_path: reportPath,
       vendor_session: vendorSession,
@@ -1437,7 +1477,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
   // replays the whole log under the current-runs lock other writers and judges may hold, and this
   // process held its workspace lock and unit open for all of it. The next writer or reader
   // publishes; workspace readers rescan a stale publication themselves.
-  temp.remove();
+  cleanupTemp();
   await workspaceLock.release();
   process.stdout.write(
     `${JSON.stringify({ id, ticket: ticketName, workspace, row: activeRow.id, ...(pinned === null || pinned === undefined ? {} : { continued_from_row: pinned.previousRow }), route: activeRow.route, model: activeRow.model, effort: activeRow.effort, ...(attemptedRows.length > 1 ? { rows: attemptedRows } : {}), sandbox, sandbox_source, sandbox_effective, sandbox_effective_source, exit, outcome, report_path: reportPath, state_file: recordPath(), host: hostname(), unit, execution })}\n`,

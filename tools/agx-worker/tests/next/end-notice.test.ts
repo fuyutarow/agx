@@ -180,7 +180,7 @@ await new Promise(() => {});
     ...subprocessEnvironment(),
     PATH: `${root}:${process.env.PATH ?? ""}`,
     AGX_STATE_DIR: state,
-    AGX_TMP_ROOT: join(root, "tmp"),
+    XDG_STATE_HOME: join(root, "tmp"),
     AGX_WORKER_BIN: worker,
     AGX_CONFIG: resolve("tools/agx-worker/src/roster/policy.example.toml"),
     AGX_DISPATCHER_SESSION: input.dispatcher,

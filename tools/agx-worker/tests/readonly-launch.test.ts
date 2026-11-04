@@ -99,7 +99,7 @@ async function fixture(tmpRoot?: (root: string) => string) {
     ...subprocessEnvironment(),
     XDG_CONFIG_HOME: join(root, "config"),
     AGX_STATE_DIR: state,
-    AGX_TMP_ROOT: tmpRoot?.(root) ?? join(root, "agx-tmp"),
+    XDG_STATE_HOME: tmpRoot?.(root) ?? join(root, "agx-tmp"),
     JEV_URL: `http://127.0.0.1:${port}`,
     TYPESAFE_API_KEY: "test-key",
     AGX_WORKER_COMMAND: worker,
@@ -145,7 +145,7 @@ test("a read-only claude dispatch starts with a run dir and plan permission, or 
 });
 
 test("a run that fails before launch ends launch-failed with its cause and stderr, never lost", async () => {
-  // AGX_TMP_ROOT below a regular file: the run temp cannot be created, so the process exits before
+  // XDG_STATE_HOME below a regular file: the run temp cannot be created, so the process exits before
   // it records started or makes a run dir.
   const { root, state, binding, dispatch } = await fixture((r) => {
     const file = join(r, "not-a-directory");

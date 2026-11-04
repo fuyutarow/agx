@@ -131,7 +131,6 @@ process.stdout.write(JSON.stringify({ exit: 0, report: { summary: "done", change
     ...subprocessEnvironment(),
     PATH: `${bin}:${process.env.PATH}`,
     AGX_STATE_DIR: state,
-    AGX_TMP_ROOT: join(root, "agx-tmp"),
     AGX_WORKER_BIN: vendor,
     AGX_CONFIG: new URL("../../src/roster/policy.example.toml", import.meta.url)
       .pathname,

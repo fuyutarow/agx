@@ -82,7 +82,6 @@ test.each([
           AGX_STATE_DIR: state,
           XDG_STATE_HOME: join(root, "xdg-state"),
           AGX_CODEX_HOST_FILE: hostPath,
-          AGX_TMP_ROOT: join(root, "tmp"),
           AGX_WORKER_BIN: join(import.meta.dir, "fixtures/outcome-worker.ts"),
           AGX_OUTCOME_FIXTURE: "ok",
           JEV_URL: "http://127.0.0.1:1/choice",

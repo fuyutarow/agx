@@ -119,7 +119,7 @@ test.each([
       JJ_EMAIL: "fixture@example.invalid",
       AGX_STATE_DIR: join(parent, "state"),
       AGX_WORKER_BIN: join(parent, "worker.ts"),
-      AGX_TMP_ROOT: join(parent, "tmp"),
+      XDG_STATE_HOME: join(parent, "tmp"),
       JEV_URL: "http://127.0.0.1:1/choice",
       AGX_CONFIG: new URL(
         "../../src/roster/policy.example.toml",
@@ -319,6 +319,7 @@ async function fixture(home = "tickets", retired = false) {
     GIT_WORK_TREE: undefined,
     GIT_INDEX_FILE: undefined,
     AGX_STATE_DIR: join(root, "state"),
+    XDG_STATE_HOME: join(root, "xdg-state"),
     AGX_CONFIG: new URL("../../src/roster/policy.example.toml", import.meta.url)
       .pathname,
   };
@@ -400,7 +401,7 @@ test.each(["scratch", "empty-git", "other-repository"])(
           env: {
             ...f.env,
             AGX_WORKER_BIN: worker,
-            AGX_TMP_ROOT: join(parent, "tmp"),
+            XDG_STATE_HOME: join(parent, "tmp"),
             JEV_URL: "http://127.0.0.1:1/choice",
           },
           stdin: "ignore",
@@ -780,7 +781,7 @@ test("run preserves exact original bytes and hash, base and premise commits, rep
         env: {
           ...f.env,
           AGX_WORKER_BIN: worker,
-          AGX_TMP_ROOT: join(f.root, "tmp"),
+          XDG_STATE_HOME: join(f.root, "tmp"),
           JEV_URL: "http://127.0.0.1:1/choice",
         },
         stdin: "ignore",

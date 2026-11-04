@@ -96,7 +96,7 @@ const dispatch = async (mode: "hang" | "kill" | "report") => {
           TYPESAFE_API_KEY: "test-key",
           AGX_WORKER_BIN: worker,
           AGX_FAKE_MODE: mode,
-          AGX_TMP_ROOT: join(root, "tmp"),
+          XDG_STATE_HOME: join(root, "tmp"),
           AGX_CONFIG: policyPath,
           AGX_DISPATCHER_SESSION: "test-dispatcher",
           HOME: root,

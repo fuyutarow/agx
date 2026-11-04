@@ -46,6 +46,7 @@ import { ticketContext } from "./ticket-home.ts";
 import { Sandbox, SandboxSource } from "./sandbox.ts";
 
 import { recordRoutingPick } from "./routing-events.ts";
+import { freeRunTemp, recordedLifetime } from "../temp.ts";
 
 export const PickAuditSchema = z.object({
   audit: z.record(z.string(), z.unknown()).optional(),
@@ -1264,13 +1265,9 @@ export async function listingHistory(workspace?: string, root = stateDir()) {
   return { runs, malformed };
 }
 
-async function readFoldedRuns(
-  root: string,
-  malformed?: Record<string, unknown>[],
-  probes?: Map<string, ListedRun>,
-) {
+function readRecordedFold(root: string, malformed?: Record<string, unknown>[]) {
   const path = recordPath(root);
-  if (!existsSync(path)) return [];
+  if (!existsSync(path)) return undefined;
   const fd = openSync(path, "r");
   const stat = fstatSync(fd);
   // The process cache holds this process's own fold; it is not re-parsed, which would reorder
@@ -1320,7 +1317,22 @@ async function readFoldedRuns(
     runs: [...runs.values()],
     malformed: malformedRows,
   });
-  return liveRuns(runs, stat, root, undefined, probes);
+  return { runs, stat };
+}
+
+/** The recorded fold excludes PID-based live/lost inference. */
+export function recordedFoldedRuns(root = stateDir()): FoldedRun[] {
+  return [...(readRecordedFold(root)?.runs.values() ?? [])];
+}
+
+async function readFoldedRuns(
+  root: string,
+  malformed?: Record<string, unknown>[],
+  probes?: Map<string, ListedRun>,
+) {
+  const fold = readRecordedFold(root, malformed);
+  if (fold === undefined) return [];
+  return liveRuns(fold.runs, fold.stat, root, undefined, probes);
 }
 
 export async function recordedRuns(root = stateDir()) {
@@ -1817,6 +1829,11 @@ async function sealWorkspaceLosses(
       },
       root,
     );
+    const lifetime = recordedLifetime(run.id, root);
+    if (lifetime.state === "ended")
+      freeRunTemp(lifetime, undefined, root).mapErr((error) =>
+        process.stderr.write(`${error}\n`),
+      );
   }
 }
 

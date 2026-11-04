@@ -16,6 +16,11 @@ import {
 import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 import { list } from "../../src/next/run.ts";
+import {
+  createRunTemp,
+  recordedLifetime,
+  freeRunTemp,
+} from "../../src/temp.ts";
 
 const previous = process.env.AGX_STATE_DIR;
 const roots: string[] = [];
@@ -323,6 +328,55 @@ test("warm fold reads exactly appended record bytes and zero for unchanged histo
   expect(await foldedRuns()).toEqual(await fullFoldedRuns());
 });
 
+test("freeing an ended run reuses the warm recorded fold", async () => {
+  const root = fixture();
+  const tempRoot = join(root, "temps");
+  const temp = createRunTemp("run", tempRoot)._unsafeUnwrap();
+  append(started("run"), root, false);
+  fs.appendFileSync(
+    recordPath(root),
+    Array.from(
+      { length: 1000 },
+      (_, i) =>
+        JSON.stringify({
+          kind: "progress",
+          id: "run",
+          at: "now",
+          path: String(i),
+        }) + "\n",
+    ).join(""),
+  );
+  append(
+    {
+      kind: "ended",
+      id: "run",
+      at: "now",
+      exit: 0,
+      report_path: null,
+      vendor_session: null,
+      verify: [],
+    },
+    root,
+    false,
+  );
+  await foldedRuns(root);
+  const read = spyOn(fs, "readSync");
+  const whole = spyOn(fs, "readFileSync");
+  try {
+    const lifetime = recordedLifetime("run", root);
+    if (lifetime.state !== "ended") throw new Error("missing end record");
+    expect(freeRunTemp(lifetime, tempRoot, root).isOk()).toBe(true);
+    expect(fs.existsSync(temp.dir)).toBe(false);
+    expect(read.mock.calls).toHaveLength(0);
+    expect(whole.mock.calls.some(([path]) => path === recordPath(root))).toBe(
+      false,
+    );
+  } finally {
+    read.mockRestore();
+    whole.mockRestore();
+  }
+});
+
 test("warm listing retains malformed imports without rereading history, while folds skip them", async () => {
   const root = fixture();
   append(started("native", process.pid));
@@ -358,7 +412,9 @@ test("warm listing retains malformed imports without rereading history, while fo
   expect(await listingHistory()).toEqual(history);
   expect(await list({ json: true })).toBe(0);
   expect(
-    warning.mock.calls.some(([line]) => String(line).includes("hidden_legacy=1")),
+    warning.mock.calls.some(([line]) =>
+      String(line).includes("hidden_legacy=1"),
+    ),
   ).toBe(true);
   expect(await list({ json: true, includeLegacy: true })).toBe(0);
   expect(output.mock.calls.at(-1)?.[0]).toContain('"row":42');
@@ -445,7 +501,11 @@ test("ls --running combines with JSON, all and selector; cached liveness is refr
   child.kill();
   await child.exited;
   const output = spyOn(process.stdout, "write").mockImplementation(() => true);
-  using _restoreOutput = { [Symbol.dispose]: () => { output.mockRestore(); } };
+  using _restoreOutput = {
+    [Symbol.dispose]: () => {
+      output.mockRestore();
+    },
+  };
   expect(await list({ running: true, json: true })).toBe(0);
   expect(output.mock.calls.at(-1)?.[0]).toBe("[]\n");
   expect(await foldedRuns()).toEqual(await fullFoldedRuns());

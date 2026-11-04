@@ -126,7 +126,7 @@ process.exitCode = capacity ? 75 : 0;
     AGX_WORKER_BIN: worker,
     AGX_CAPACITY_FIXTURE: mode,
     AGX_CAPACITY_LOG: join(f.root, "invocations.jsonl"),
-    AGX_TMP_ROOT: join(f.root, "tmp"),
+    XDG_STATE_HOME: join(f.root, "tmp"),
     AGX_CONFIG: policyPath,
     AGX_DISPATCHER_SESSION: "test-dispatcher",
     HOME: f.root,

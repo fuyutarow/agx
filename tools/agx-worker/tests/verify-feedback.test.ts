@@ -103,7 +103,7 @@ AbortSignal.timeout = (ms) => {
         ...subprocessEnvironment(),
         HOME: root,
         AGX_STATE_DIR: join(root, "state"),
-        AGX_TMP_ROOT: join(root, "tmp"),
+        XDG_STATE_HOME: join(root, "tmp"),
         AGX_CONFIG: new URL(
           "../src/roster/policy.example.toml",
           import.meta.url,

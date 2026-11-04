@@ -58,6 +58,7 @@ test("intake refuses every launch entry before routing, logs hashes, and admits 
     PATH: `${bin}:${process.env.PATH ?? ""}`,
     AGX_NEXT_STATE_DIR: undefined,
     AGX_STATE_DIR: state,
+    XDG_STATE_HOME: join(root, "xdg-state"),
     XDG_CONFIG_HOME: join(root, "config"),
     AGX_CONFIG: resolve("tools/agx-worker/src/roster/policy.example.toml"),
     AGX_WORKER_BIN: "/must-never-start",

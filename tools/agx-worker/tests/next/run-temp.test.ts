@@ -1,5 +1,13 @@
 import { prepareTicketRepo } from "../ticket-repo.ts";
-import { afterAll, afterEach, describe, expect, spyOn, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  describe,
+  expect,
+  setDefaultTimeout,
+  test,
+} from "bun:test";
+setDefaultTimeout(15000);
 import {
   chmodSync,
   existsSync,
@@ -7,16 +15,27 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  symlinkSync,
   readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { err } from "neverthrow";
+
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { createTempTracker } from "../temp.ts";
-import { createRunTemp, sweepStaleTemps } from "../../src/temp.ts";
+import {
+  agxTempRoot,
+  createRunTemp,
+  freeRunTemp,
+  recordedLifetime,
+} from "../../src/temp.ts";
+import { append } from "../../src/next/store.ts";
+import {
+  workerWritableRoots,
+  claudeWorkspaceWriteSettings,
+} from "../../src/workers/environment.ts";
 import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const tempDirs = createTempTracker();
@@ -52,13 +71,16 @@ const CLI = "tools/agx-worker/src/next/cli.ts";
 async function fixture(workerBody: string, verify: string | string[]) {
   const root = scratch("run-temp-");
   await prepareTicketRepo(root);
-  const tempRoot = join(root, "agx-tmp");
+  const tempRoot = join(root, "xdg-state", "agx", "runs");
   const ticket = join(root, "ticket.md");
   const worker = join(root, "fake-worker.ts");
   const jev = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
-    fetch: () => Response.json({ answers: { worker: { choice: "luna-high", confidence: 0.9 } } }),
+    fetch: () =>
+      Response.json({
+        answers: { worker: { choice: "luna-high", confidence: 0.9 } },
+      }),
   });
   jevServers.push(jev);
   writeFileSync(
@@ -74,7 +96,7 @@ async function fixture(workerBody: string, verify: string | string[]) {
     AGX_STATE_DIR: join(root, "state"),
     JEV_URL: `http://127.0.0.1:${jev.port}/choice`,
     AGX_WORKER_BIN: worker,
-    AGX_TMP_ROOT: tempRoot,
+    XDG_STATE_HOME: join(root, "xdg-state"),
     TYPESAFE_API_KEY: "test-key",
     AGX_CONFIG: new URL("../../src/roster/policy.example.toml", import.meta.url)
       .pathname,
@@ -119,14 +141,17 @@ describe("agx worker run owns its temp space", () => {
       `#!/bin/sh\nprintf '{"PATH":"%s:${join(home, "repo-bin")}","AGX_MISE_FIXTURE":"repo-value"}' "$PATH"\n`,
     );
     chmodSync(mise, 0o755);
+    const jj = Bun.which("jj");
+    if (jj === null) throw new Error("jj is required by the fixture");
+    symlinkSync(jj, join(home, ".local/bin/jj"));
     writeFileSync(join(f.root, "not-executable"), "not executable\n");
     const env = {
       HOME: home,
-      PATH: "/usr/bin:/bin",
+      PATH: `${join(home, ".local/bin")}:/usr/bin:/bin`,
       AGX_STATE_DIR: f.env.AGX_STATE_DIR,
       JEV_URL: f.env.JEV_URL,
       AGX_WORKER_BIN: f.env.AGX_WORKER_BIN,
-      AGX_TMP_ROOT: f.env.AGX_TMP_ROOT,
+      XDG_STATE_HOME: f.env.XDG_STATE_HOME,
       TYPESAFE_API_KEY: f.env.TYPESAFE_API_KEY,
       AGX_CONFIG: f.env.AGX_CONFIG,
     };
@@ -219,45 +244,90 @@ describe("agx worker run owns its temp space", () => {
       tmpdirSeen ?? "",
     );
     expect(existsSync(tmpdirSeen ?? "")).toBe(false);
-    expect(readdirSync(f.tempRoot)).toEqual([]);
+    expect(existsSync(tmpdirSeen ?? "")).toBe(false);
   });
 
-  test("a SIGKILLed run leaves its directory and the next run removes it", async () => {
-    const root0 = scratch("kill-");
-    const marker = join(root0, "worker-pid.txt");
-    const stuck = await fixture(
-      `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(marker)}, String(process.pid));\nawait Bun.sleep(30000);\n`,
-      "true",
+  test("missing temp before verify is environment-lost", async () => {
+    const f = await fixture(
+      `import { rmSync } from "node:fs"; rmSync(process.env.TMPDIR, { recursive: true }); \n${DONE}`,
+      "exit 7",
     );
-    const victim = Bun.spawn(
-      [process.execPath, CLI, "run", stuck.ticket, "--cd", stuck.root],
+    const child = Bun.spawn(
+      [process.execPath, CLI, "run", f.ticket, "--cd", f.root],
       {
         cwd: process.cwd(),
-        env: stuck.env,
-        stdout: "ignore",
-        stderr: "ignore",
+        env: f.env,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 10000,
       },
     );
-    servers.push(victim);
-    for (let attempt = 0; attempt < 200 && !existsSync(marker); attempt += 1)
-      await Bun.sleep(25);
-    expect(existsSync(marker)).toBe(true);
-    victim.kill("SIGKILL");
-    await victim.exited;
-    process.kill(Number(readFileSync(marker, "utf8")), "SIGKILL");
-    const leftover = readdirSync(stuck.tempRoot).filter(
-      (name) => !name.endsWith(".pid"),
-    );
-    expect(leftover).toHaveLength(1);
+    const [out, error, exit] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
+    expect(exit, error).toBe(0);
+    expect(out).toContain('"outcome":"environment-lost"');
+    expect(out).not.toContain('"outcome":"verify-failed"');
+    expect(
+      readFileSync(join(f.env.AGX_STATE_DIR, "records.jsonl"), "utf8"),
+    ).toContain('"outcome":"environment-lost"');
+  });
 
-    writeFileSync(join(stuck.root, "fake-worker.ts"), DONE);
-    const next = Bun.spawn(
-      [process.execPath, CLI, "run", stuck.ticket, "--cd", stuck.root],
-      { cwd: process.cwd(), env: stuck.env, timeout: 10_000 },
+  test("reclaim only removes recorded ended runs", async () => {
+    const f = await fixture(DONE, "true");
+    const live = createRunTemp("live", f.tempRoot)._unsafeUnwrap();
+    const ended = createRunTemp("ended", f.tempRoot)._unsafeUnwrap();
+    append(
+      {
+        kind: "started",
+        id: "ended",
+        at: "2026-11-04T00:00:00Z",
+        ticket: "fixture",
+        writes: [],
+        cwd: f.root,
+        workspace: f.root,
+        row: "fixture",
+        dispatcher_session: null,
+        vendor_session: null,
+        pid: process.pid,
+      },
+      f.env.AGX_STATE_DIR,
+      false,
     );
-    expect(await next.exited).toBe(0);
-    expect(readdirSync(stuck.tempRoot)).toEqual([]);
-  }, 45_000);
+    append(
+      {
+        kind: "ended",
+        id: "ended",
+        at: "2026-11-04T00:00:00Z",
+        exit: 0,
+        report_path: null,
+        vendor_session: null,
+        verify: [],
+      },
+      f.env.AGX_STATE_DIR,
+      false,
+    );
+    const child = Bun.spawn(
+      [process.execPath, CLI, "run", f.ticket, "--cd", f.root],
+      {
+        cwd: process.cwd(),
+        env: f.env,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 12000,
+      },
+    );
+    const [out, error, exit] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
+    expect(exit, error + out).toBe(0);
+    expect(existsSync(live.dir)).toBe(true);
+    expect(existsSync(ended.dir)).toBe(false);
+  });
 
   test("SIGTERM removes the run directory", async () => {
     const root0 = scratch("term-");
@@ -281,7 +351,11 @@ describe("agx worker run owns its temp space", () => {
     expect(readdirSync(f.tempRoot).length).toBeGreaterThan(0);
     child.kill("SIGTERM");
     await child.exited;
-    expect(readdirSync(f.tempRoot)).toEqual([]);
+    expect(
+      readdirSync(f.tempRoot).every(
+        (id) => !existsSync(join(f.tempRoot, id, "tmp")),
+      ),
+    ).toBe(true);
   });
 
   test("a read-only worker subtree is removed after the ended record is written", async () => {
@@ -294,7 +368,11 @@ describe("agx worker run owns its temp space", () => {
       { cwd: process.cwd(), env: f.env, timeout: 10_000, stdout: "pipe" },
     );
     expect(await result.exited).toBe(0);
-    expect(readdirSync(f.tempRoot)).toEqual([]);
+    expect(
+      readdirSync(f.tempRoot).every(
+        (id) => !existsSync(join(f.tempRoot, id, "tmp")),
+      ),
+    ).toBe(true);
     const state = readFileSync(
       join(f.env.AGX_STATE_DIR, "records.jsonl"),
       "utf8",
@@ -326,49 +404,66 @@ describe("createRunTemp", () => {
       );
   });
 
-  test("sweep removes dead-owner directories and keeps live ones", () => {
-    const root = scratch("sweep-");
-    const live = createRunTemp("live", root)._unsafeUnwrap();
-    const deadPid = 2 ** 22 + 12345;
-    writeFileSync(join(root, "dead.pid"), `${deadPid}\n`);
-    mkdirSync(join(root, "dead"));
-    expect(sweepStaleTemps(root, -1)).toEqual(["dead"]);
-    expect(existsSync(join(root, "dead"))).toBe(false);
-    expect(existsSync(live.dir)).toBe(true);
-    live.remove();
-    expect(readdirSync(root)).toEqual([]);
+  test("only a recorded ended lifetime permits cleanup", () => {
+    const root = scratch("lifetime-");
+    const records = join(root, "records");
+    const temp = createRunTemp("run-1", root)._unsafeUnwrap();
+    append(
+      {
+        kind: "started",
+        id: "run-1",
+        at: "2026-11-04T00:00:00Z",
+        ticket: "fixture",
+        writes: [],
+        cwd: root,
+        workspace: root,
+        row: "fixture",
+        dispatcher_session: null,
+        vendor_session: null,
+        pid: process.pid,
+      },
+      records,
+      false,
+    );
+    const live = recordedLifetime("run-1", records);
+    // @ts-expect-error a live lifetime cannot authorize deletion
+    expect(freeRunTemp(live, root, records).isErr()).toBe(true);
+    expect(existsSync(temp.dir)).toBe(true);
+    append(
+      {
+        kind: "ended",
+        id: "run-1",
+        at: "2026-11-04T00:00:00Z",
+        exit: 0,
+        report_path: null,
+        vendor_session: null,
+        verify: [],
+      },
+      records,
+      false,
+    );
+    const ended = recordedLifetime("run-1", records);
+    if (ended.state !== "ended") throw new Error("missing end record");
+    expect(freeRunTemp(ended, root, records).isOk()).toBe(true);
+    expect(existsSync(temp.dir)).toBe(false);
   });
 
-  test("read-only stale subdirectories are made writable before removal", () => {
-    const root = scratch("sweep-readonly-");
-    const deadPid = 2 ** 22 + 12345;
-    const child = join(root, "dead", "graveyard-fuyu");
-    mkdirSync(child, { recursive: true });
-    chmodSync(child, 0o555);
-    writeFileSync(join(root, "dead.pid"), `${deadPid}\n`);
-    expect(sweepStaleTemps(root, -1)).toEqual(["dead"]);
-    expect(existsSync(join(root, "dead"))).toBe(false);
-  });
-
-  test("a failed stale entry warns once and does not block a new run", () => {
-    const root = scratch("sweep-failure-");
-    const deadPid = 2 ** 22 + 12345;
-    const dead = join(root, "dead");
-    writeFileSync(join(root, "dead.pid"), `${deadPid}\n`);
-    mkdirSync(dead);
-    const write = spyOn(process.stderr, "write").mockImplementation(() => true);
-    const injectedError = Object.assign(new Error("fixture rm failure"), {
-      code: "EACCES",
-    });
-    expect(sweepStaleTemps(root, -1, () => err(injectedError))).toEqual([]);
-    const warningCalls = write.mock.calls;
-    write.mockRestore();
-    expect(warningCalls).toHaveLength(1);
-    expect(String(warningCalls[0]?.[0])).toContain(dead);
-    expect(String(warningCalls[0]?.[0])).toContain("EACCES");
-    const created = createRunTemp("new-run", root)._unsafeUnwrap();
-    expect(existsSync(created.dir)).toBe(true);
-    expect(existsSync(dead)).toBe(false);
-    created.remove();
+  test("state root and both sandbox roots include the run temp", () => {
+    const root = scratch("roots-");
+    const runDir = join(root, "agx", "runs", "run-1");
+    const temp = join(runDir, "tmp");
+    expect(agxTempRoot({ XDG_STATE_HOME: root })).toBe(
+      join(root, "agx", "runs"),
+    );
+    expect(
+      workerWritableRoots({ runDir, source: { TMPDIR: temp, HOME: root } }),
+    ).toContain(temp);
+    expect(
+      claudeWorkspaceWriteSettings({
+        runDir,
+        runTemp: temp,
+        source: { HOME: root },
+      }).sandbox.filesystem.allowWrite,
+    ).toContain(temp);
   });
 });

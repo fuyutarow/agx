@@ -253,7 +253,7 @@ for (const { unit, session } of [
     servers.push(server);
     Object.assign(f.env, {
       AGX_WORKER_BIN: worker,
-      AGX_TMP_ROOT: join(f.root, "tmp"),
+      XDG_STATE_HOME: join(f.root, "tmp"),
       JEV_URL: `http://127.0.0.1:${server.port}`,
       TYPESAFE_API_KEY: "test",
       AGX_CONFIG: resolve("tools/agx-worker/src/roster/policy.example.toml"),
@@ -486,7 +486,7 @@ test("a direct systemctl stop retains a started vendor session for continuation"
   servers.push(server);
   Object.assign(f.env, {
     AGX_WORKER_BIN: worker,
-    AGX_TMP_ROOT: join(f.root, "tmp"),
+    XDG_STATE_HOME: join(f.root, "tmp"),
     JEV_URL: `http://127.0.0.1:${server.port}`,
     TYPESAFE_API_KEY: "test",
     AGX_CONFIG: resolve("tools/agx-worker/src/roster/policy.example.toml"),
