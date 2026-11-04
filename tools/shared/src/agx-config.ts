@@ -29,6 +29,18 @@ const NonEmptyStrings = z.array(
 const VerifyConfig = z.strictObject({
   always: NonEmptyStrings.optional(),
 });
+const CheckConfig = z
+  .strictObject({
+    commands: NonEmptyStrings.optional(),
+    timeout_ms: z.number().int().positive().max(10_000).optional(),
+  })
+  .refine(
+    (check) => check.commands === undefined || check.timeout_ms !== undefined,
+    {
+      path: ["timeout_ms"],
+      message: "required when check.commands is declared",
+    },
+  );
 const RegenerablePaths = z.array(
   z
     .string()
@@ -75,6 +87,7 @@ const Config = z.strictObject({
   tickets: z.string().trim().min(1).optional(),
   ws: WorkspaceConfig.optional(),
   verify: VerifyConfig.optional(),
+  check: CheckConfig.optional(),
   route: RepoRouteConfig.optional(),
 });
 const ConfigEnvelope = z.record(z.string(), z.unknown());
@@ -197,6 +210,8 @@ type ResolvedAgxConfig = {
   regenerable: string[];
   unjudgedWarnHours: number;
   verifyAlways: string[];
+  checkCommands: string[];
+  checkTimeoutMs: number | undefined;
 };
 export type ResolvedAgxConfigWithProvenance = ResolvedAgxConfig & {
   policyRevision: string | undefined;
@@ -515,6 +530,8 @@ async function resolveConfig(
   let regenerable: string[] = [];
   let unjudgedWarnHours = 24;
   let verifyAlways: string[] = [];
+  let checkCommands: string[] = [];
+  let checkTimeoutMs: number | undefined;
   let repoRoute: RepoRouteOverride | undefined;
   if (policy !== undefined) {
     const text = policy.text;
@@ -555,6 +572,8 @@ async function resolveConfig(
     unjudgedWarnHours =
       parsed.data.ws?.unjudged_warn_hours ?? unjudgedWarnHours;
     verifyAlways = parsed.data.verify?.always ?? verifyAlways;
+    checkCommands = parsed.data.check?.commands ?? checkCommands;
+    checkTimeoutMs = parsed.data.check?.timeout_ms;
     repoRoute = parsed.data.route;
   }
   const local = await localConfig(root);
@@ -577,6 +596,8 @@ async function resolveConfig(
     regenerable,
     unjudgedWarnHours,
     verifyAlways,
+    checkCommands,
+    checkTimeoutMs,
     policyRevision: committed.value.revision,
     workingCopyPolicyDiffers,
     repoRoute,
@@ -602,6 +623,8 @@ export async function resolveAgxConfig(
     regenerable: config.regenerable,
     unjudgedWarnHours: config.unjudgedWarnHours,
     verifyAlways: config.verifyAlways,
+    checkCommands: config.checkCommands,
+    checkTimeoutMs: config.checkTimeoutMs,
   });
 }
 

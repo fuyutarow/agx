@@ -135,6 +135,15 @@ test("defaults without files and schema-only policy", async () => {
       });
   }
 });
+test.each(['commands = ["true"]', "commands = []"])(
+  "repository commands require an explicit timeout: %s",
+  async (declaration) => {
+    const f = await fixture(`schema = 1\n[check]\n${declaration}\n`);
+    const result = await resolveAgxConfig(f.root);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(String(result.error)).toContain("check.timeout_ms");
+  },
+);
 test("config contract: a schema = 1 agx.toml with [ws] is accepted", async () => {
   const f = await fixture(
     'schema = 1\n\n[ws]\nready = ["mise run check"]\ntrunk = "alpha"\n',

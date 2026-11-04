@@ -33,9 +33,13 @@ ready = ["mise trust -q", "bun install --frozen-lockfile"]
 
 [verify]
 always = ["mise run check"]
+
+[check]
+commands = ['test -s "$AGX_TICKET_PATH"']
+timeout_ms = 10000
 ```
 
-L1 accepts only `schema`, `tickets`, `[ws].ready`, `[verify].always` and `[route]`. Schema must equal 1.
+L1 accepts `schema`, `tickets`, `[ws]`, `[verify]`, `[check]` and `[route]`. Schema must equal 1.
 `[route]` accepts only `allow`, with the same meaning as the user policy key of the same
 name (see [User policy and catalog](#user-policy-and-catalog)). When present, it replaces the
 user policy's `route.allow` for runs whose repository is this one; every other route key stays
@@ -45,8 +49,7 @@ invalid `[route]`, before any effect. L2 rejects `[route]`.
 Declarations use TOML 1.0 syntax. Unknown keys, malformed TOML, duplicate TOML keys and unsupported or missing schema fail.
 Ticket paths must be nonempty relative strings; absolute POSIX and Windows paths and `~/`
 are rejected at L1. Relative ticket paths resolve from the main checkout. Paths are UTF-8
-strings; no canonicalization or signature is applied. Numeric settings other than schema
-are absent from L1. `[ws].keep` is rejected with guidance to put it in L2.
+strings; no canonicalization or signature is applied. `[ws].keep` is rejected with guidance to put it in L2.
 
 ```toml
 # L2: ~/.config/agx/repos/project.toml (filename is arbitrary)
@@ -62,7 +65,7 @@ keep = ["/srv/project.ws/ws-reference"]
 always = []
 ```
 
-L2 requires absolute `root` and schema 1. It accepts the L1 keys plus `[ws].keep` and
+L2 requires absolute `root` and schema 1. It accepts L1 keys except `[check]` and `[route]`, plus `[ws].keep` and
 `[usehooks]` with required `hooks`, `link_task`, `link_path` strings and nonempty `command`
 string array when present. Readiness, keep and verification arrays contain nonblank strings.
 Absolute ticket paths and `~/` expansion are allowed only here; relative paths still resolve
@@ -86,6 +89,15 @@ as `InspectionUnavailable` rather than a successful policy read. Worker inspecti
 exit 75; the ticket CLI currently treats this subclass as a configuration error and exits 2.
 
 ## Repository verification
+
+Before a worker starts, `check` and `dispatch` run `[check].commands` in order in
+the selected `--cd` workspace through `sh -c`. `AGX_TICKET_PATH` contains the
+absolute ticket path. A declaration of `[check].commands` requires `[check].timeout_ms`;
+the commands share that budget in milliseconds, with a permitted range of 1–10000.
+A nonzero exit or timeout refuses
+the ticket and reports the command and its output. Commands are repository-owned;
+agx does not interpret their rules. With no commands declared, none run. The key is
+repository policy only and has no local override.
 
 Worker runs execute `[verify].always` first and then ticket verification, in order in the same
 workspace. The brief includes these commands as checks to pass before returning. No declaration

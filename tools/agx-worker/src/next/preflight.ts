@@ -42,6 +42,7 @@ import {
   AgxConfigError,
   InspectionTimeout,
   InspectionUnavailable,
+  resolveAgxConfig,
 } from "../../../shared/src/agx-config.ts";
 
 export const PREFLIGHT_PREMISE_BUDGET_MS = 60_000;
@@ -56,6 +57,68 @@ const LegacyReport = z.looseObject({
   summary: z.string().optional(),
   changes: z.array(z.unknown()).optional(),
 });
+
+async function repositoryCheck(
+  command: string,
+  path: string,
+  cwd: string,
+  timeoutMs: number,
+  budgetMs: number,
+): Promise<string | null> {
+  const run = await fromPromise(
+    (async () => {
+      let timedOut = false;
+      const child = Bun.spawn(["sh", "-c", command], {
+        cwd,
+        env: { ...process.env, AGX_TICKET_PATH: resolve(path) },
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        detached: true,
+      });
+      const timer = setTimeout(() => {
+        timedOut = true;
+        const killed = fromThrowable(
+          () => process.kill(-child.pid, "SIGKILL"),
+          (error) => error,
+        )();
+        if (killed.isErr()) child.kill("SIGKILL");
+      }, timeoutMs);
+      const [exit, out, err] = await Promise.all([
+        child.exited,
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+      ]).finally(() => {
+        clearTimeout(timer);
+      });
+      if (!timedOut && exit === 0) return null;
+      return `repository check ${JSON.stringify(command)} ${timedOut ? `timed out after ${budgetMs}ms total command budget` : `exited ${exit}`}; output: ${out}${err}`;
+    })(),
+    (error) => error,
+  );
+  return run.isOk()
+    ? run.value
+    : `repository check ${JSON.stringify(command)} could not run: ${String(run.error)}`;
+}
+
+async function repositoryChecks(
+  commands: string[],
+  path: string,
+  cwd: string,
+  budgetMs: number,
+): Promise<string[]> {
+  const deadline = performance.now() + budgetMs;
+  const failures: string[] = [];
+  for (const command of commands) {
+    const remaining = Math.floor(deadline - performance.now());
+    const failure =
+      remaining <= 0
+        ? `repository check ${JSON.stringify(command)} timed out after ${budgetMs}ms total command budget`
+        : await repositoryCheck(command, path, cwd, remaining, budgetMs);
+    if (failure !== null) failures.push(failure);
+  }
+  return failures;
+}
 
 export async function earlyQuitRows(
   ticket: string,
@@ -275,6 +338,30 @@ export async function preflight(
       "cannot resolve --cd commit for base_rev",
       "select a tree with a resolvable commit",
     );
+  if (ticket !== undefined && worker.ok) {
+    const config = await resolveAgxConfig(worker.root, {
+      vcs: worker.vcs ?? "none",
+    });
+    if (!config.ok && config.error instanceof InspectionUnavailable)
+      return { temporary: config.error };
+    if (!config.ok)
+      failures.push(
+        config.error instanceof AgxConfigError
+          ? config.error
+          : new AgxConfigError(String(config.error)),
+      );
+    else if (config.value.checkTimeoutMs !== undefined)
+      (
+        await repositoryChecks(
+          config.value.checkCommands,
+          path,
+          cwd,
+          config.value.checkTimeoutMs,
+        )
+      ).forEach((failure) => {
+        add(failure, "correct the ticket or repository check and retry");
+      });
+  }
   const premise_commits: { premise: string; commit: string }[] = [];
   if (ticket !== undefined && ctx !== undefined) {
     if (ticket.base_rev !== undefined && ticket.base_rev !== ctx.base_rev)
