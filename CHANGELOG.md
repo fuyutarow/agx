@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.99 — 2026-11-05
+
+- Refuse missing absolute external read paths during preflight.
+
 ## 1.22.98 — 2026-11-04
 
 - Respect the configured routing brief limit and declare truncation to Jev.
