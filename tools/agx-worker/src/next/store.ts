@@ -13,6 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { createHash } from "node:crypto";
+import packageJson from "../../package.json" with { type: "json" };
 import {
   mkdir,
   open,
@@ -1001,16 +1002,16 @@ export async function overlapWarnings(
   writes: string[],
   repositoryRoot: string,
 ): Promise<void> {
-  const started = new Map<string, Extract<NextEvent, { kind: "started" }>>();
-  const ended = new Set<string>();
-  for (const event of events()) {
-    if (event.kind === "started") started.set(event.id, event);
-    if (event.kind === "ended") ended.add(event.id);
-  }
+  // Running runs come from the folded snapshot and the appended tail, never from a replay of
+  // the whole log: this advisory warning must not cost a pass over every record.
+  const started = new Map(
+    (await foldedRuns())
+      .filter((run) => run.state === "running")
+      .map((run) => [run.id, run] as const),
+  );
   for (const [id, run] of started) {
-    if (ended.has(id)) continue;
     const live = fromThrowable(
-      () => process.kill(run.pid, 0),
+      () => process.kill(run.lease.pid, 0),
       (error) => error,
     )();
     if (live.isErr()) continue;
@@ -1272,8 +1273,9 @@ async function readFoldedRuns(
   if (!existsSync(path)) return [];
   const fd = openSync(path, "r");
   const stat = fstatSync(fd);
-  const parsed = SnapshotSchema.safeParse(foldCache.get(path));
-  const snapshot = parsed.success ? parsed.data : undefined;
+  // The process cache holds this process's own fold; it is not re-parsed, which would reorder
+  // each run's keys into schema order and make a second read differ from the first.
+  const snapshot = foldCache.get(path) ?? loadFoldFile(root, fd, stat, path);
   const valid =
     snapshot !== undefined &&
     snapshot.inode === stat.ino &&
@@ -1326,6 +1328,126 @@ export async function recordedRuns(root = stateDir()) {
 }
 
 const foldCache = new Map<string, z.output<typeof SnapshotSchema>>();
+
+/**
+ * The folded log prefix, published so a reader replays only the bytes appended after it. The
+ * prefix identity is the log's inode and device, its consumed byte length, and the hash of its
+ * last complete line (`tailStart` is where that line begins): an append keeps the identity, any
+ * rewrite or truncation breaks it, and a reader that finds a mismatch folds the whole log.
+ */
+const FoldFileSchema = z
+  .object({
+    version: z.literal(2),
+    writer: z.literal(packageJson.version),
+    inode: z.number(),
+    device: z.number(),
+    offset: z.number().int().nonnegative(),
+    lineCount: z.number().int().nonnegative(),
+    tailStart: z.number().int().nonnegative(),
+    tailHash: z.string(),
+    // Written by the fold of this same release (`writer`), so not re-validated per run: parsing
+    // through RunSchema would cost seconds and reorder keys the full fold emits in fold order.
+    runs: z.array(
+      z.custom<FoldedRun>((run) => typeof run === "object" && run !== null),
+    ),
+    malformed: z.array(LegacyRow),
+  })
+  .refine((file) => file.tailStart <= file.offset);
+const foldFilePath = (root: string) => join(root, "records.snapshot.json");
+/** What the reader last proved equal to the file on disk, so an unchanged prefix is not rewritten. */
+const persisted = new Map<string, { inode: number; offset: number }>();
+
+function hashRange(fd: number, from: number, to: number): string {
+  return createHash("sha256")
+    .update(readChunk(fd, from, to - from))
+    .digest("hex");
+}
+
+/** Start of the last complete line in bytes [0, offset); `offset` ends on a newline. */
+function lastLineStart(fd: number, offset: number): number {
+  let end = offset - 1; // the newline that ends the last line
+  while (end > 0) {
+    const from = Math.max(0, end - 65_536);
+    const block = readChunk(fd, from, end - from);
+    const newline = block.lastIndexOf(10);
+    if (newline >= 0) return from + newline + 1;
+    end = from;
+  }
+  return 0;
+}
+
+/** Read-only: a missing, unparsable or mismatching file means no snapshot, never an error. */
+function loadFoldFile(
+  root: string,
+  fd: number,
+  stat: { ino: number; dev: number; size: number },
+  path: string,
+): z.output<typeof SnapshotSchema> | undefined {
+  const text = fromThrowable(() => readFileSync(foldFilePath(root), "utf8"))();
+  if (text.isErr()) return undefined;
+  const file = jsonOf(FoldFileSchema).safeParse(text.value);
+  if (
+    !file.success ||
+    file.data.inode !== stat.ino ||
+    file.data.device !== stat.dev ||
+    file.data.offset > stat.size
+  )
+    return undefined;
+  const hash = fromThrowable(() =>
+    hashRange(fd, file.data.tailStart, file.data.offset),
+  )();
+  if (hash.isErr() || hash.value !== file.data.tailHash) return undefined;
+  persisted.set(path, { inode: file.data.inode, offset: file.data.offset });
+  return {
+    version: 1,
+    inode: file.data.inode,
+    device: file.data.device,
+    size: file.data.offset,
+    offset: file.data.offset,
+    lineCount: file.data.lineCount,
+    runs: file.data.runs,
+    malformed: file.data.malformed,
+  };
+}
+
+/** Writers only: publish the fold the last read left in the cache, atomically. */
+async function publishFoldFile(root: string): Promise<void> {
+  const path = recordPath(root);
+  const cached = foldCache.get(path);
+  if (cached === undefined) return;
+  const done = persisted.get(path);
+  if (done?.inode === cached.inode && done.offset === cached.offset) return;
+  const fd = openSync(path, "r");
+  const prefix = fromThrowable(() => {
+    const info = fstatSync(fd);
+    if (info.ino !== cached.inode || info.dev !== cached.device) return null;
+    if (info.size < cached.offset) return null;
+    const tailStart =
+      cached.offset === 0 ? 0 : lastLineStart(fd, cached.offset);
+    return { tailStart, tailHash: hashRange(fd, tailStart, cached.offset) };
+  })();
+  closeSync(fd);
+  if (prefix.isErr() || prefix.value === null) return;
+  const target = foldFilePath(root);
+  const temp = target + "." + crypto.randomUUID() + ".tmp";
+  await writeFile(
+    temp,
+    JSON.stringify({
+      version: 2,
+      writer: packageJson.version,
+      inode: cached.inode,
+      device: cached.device,
+      offset: cached.offset,
+      lineCount: cached.lineCount,
+      ...prefix.value,
+      runs: cached.runs,
+      malformed: cached.malformed,
+    }),
+    { mode: 0o600 },
+  );
+  await rename(temp, target);
+  persisted.set(path, { inode: cached.inode, offset: cached.offset });
+}
 
 const RecordIdentity = z.object({
   size: z.number(),
@@ -1758,6 +1880,10 @@ export async function publishCurrentRuns(
     );
   // The per-workspace files are rewritten for every workspace in the log (thousands), so they
   // never sit under the lock: readers compare each file's source with the log and rescan when stale.
+  if (ownership === undefined && captured !== undefined)
+    await publishFoldFile(root).catch((error: unknown) =>
+      process.stderr.write(`agx: cannot publish fold: ${String(error)}\n`),
+    );
   if (ownership === undefined && captured !== undefined)
     await publishWorkspaceRuns(root, captured).catch((error: unknown) =>
       process.stderr.write(
