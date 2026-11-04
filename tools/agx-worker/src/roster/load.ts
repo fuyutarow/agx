@@ -74,7 +74,7 @@ const PolicySchema = z.strictObject({
         claude: z.enum(["continue", "stop"]).optional(),
       })
       .optional(),
-    default: z.string(),
+    default: z.string().optional(),
     exclude: z.array(z.string()).default([]),
     max_task_chars: z.number().int().positive(),
     timeout_ms: z.number().int().positive(),
@@ -123,7 +123,7 @@ const RosterSchema = z.strictObject({
   schema: z.literal(1),
   as_of: z.iso.date(),
   as_of_cost: z.iso.date().optional(),
-  default: z.string(),
+  default: z.string().optional(),
   auto: AutoSchema,
   claude_run: PolicySchema.shape.claude_run,
   sources: z.record(z.string(), z.url()),
@@ -202,7 +202,7 @@ export async function loadRoster(
     const allow = repoRoute?.allow ?? policy.route.allow;
     const defaultId = repoRoute?.default ?? policy.route.default;
     const ids = new Set(catalog.choice.map((row) => row.id));
-    if (!ids.has(defaultId)) {
+    if (defaultId !== undefined && !ids.has(defaultId)) {
       return {
         ok: false,
         error: `default must name a catalog row: ${defaultId}`,
@@ -226,7 +226,7 @@ export async function loadRoster(
     const defaultOk = choice.some(
       (row) => row.id === defaultId && onAllowedRoute(row),
     );
-    if (!defaultOk) {
+    if (defaultId !== undefined && !defaultOk) {
       return {
         ok: false,
         error: overridesRoute
@@ -240,7 +240,7 @@ export async function loadRoster(
       ...(catalog.as_of_cost === undefined
         ? {}
         : { as_of_cost: catalog.as_of_cost }),
-      default: defaultId,
+      ...(defaultId === undefined ? {} : { default: defaultId }),
       auto: {
         ...(allow === undefined ? {} : { routes: allow }),
         ...(policy.route.on_window_exhausted === undefined

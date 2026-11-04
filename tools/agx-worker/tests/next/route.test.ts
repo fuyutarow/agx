@@ -1263,6 +1263,8 @@ test("Jev transport failure falls back to route.default", async () => {
   await isolateState();
   const loaded = await loadRoster();
   if (!loaded.ok) expect.unreachable(loaded.error);
+  if (loaded.value.default === undefined)
+    expect.unreachable("fixture default missing");
   process.env.JEV_URL = "http://127.0.0.1:1/unreachable";
   const selected = await route("unreachable Jev fixture");
   expect(selected.id).toBe(loaded.value.default);

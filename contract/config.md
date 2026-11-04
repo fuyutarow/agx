@@ -113,16 +113,16 @@ own policy; maintainers review and version the catalog. The catalog supplies mod
 benchmark values, prices, use descriptions, source URLs and an `as_of` date; absent measurements
 remain absent rather than being estimated. Policy must not replace catalog row values.
 
-Policy contains `[route]` and `[claude_run]`. Route requires `default`, positive integer
+Policy contains `[route]` and `[claude_run]`. Route requires positive integer
 `max_task_chars` and `timeout_ms`, `no_egress` string array, `pick_temperature` in [0, 5], and
 `jev`. Optional `allow` is a nonempty array of `codex`/`claude`; optional `exclude` defaults to
-empty; optional `on_window_exhausted` maps each vendor to `continue` or `stop`.
+empty; optional `default` names a fallback row; optional `on_window_exhausted` maps each vendor to `continue` or `stop`.
 `jev` requires `api = "typesafe"`, URL and nonempty model, or `api = "reseller"` and URL.
 Claude policy requires positive `max_budget_usd`, positive integer `max_turns`, and a `reason`
 of at least 20 characters. Numbers use JavaScript binary64 with the stated validator bounds.
 
-Default and excluded IDs must exist in the catalog. Excluded rows disappear; default must
-remain a non-excluded codex row. `allow` becomes the router's allowed routes, rather than
+When supplied, default and excluded IDs must exist in the catalog. Excluded rows disappear; default must
+remain a non-excluded row on an allowed route. `allow` becomes the router's allowed routes, rather than
 removing rows from the exported choice array. Catalog Jev prices join the endpoint policy.
 Catalog IDs must be unique; routes are codex or claude. Catalog-level `as_of`, `sources` URL
 map, `jev` price table and nonempty `choice` are required. Individual benchmark source fields
@@ -144,7 +144,7 @@ effective roster and pricing. It writes one JSON object to stdout and exits 0 on
 A policy or catalog load failure exits 1 with a diagnostic on stderr and no successful
 JSON; invoking roster without a ticket or `--json` exits 2. Do not interpret failed
 output as an empty roster. The response has `schema: 1`, catalog `as_of` (a date, not a
-live price timestamp), `default`, `auto`, `claude_run`, `sources`, `choice`, and `objective`.
+live price timestamp), optional `default`, `auto`, `claude_run`, `sources`, `choice`, and `objective`.
 `auto` is the effective projection, not the operator TOML shape. Omitted optional route
 settings remain omitted in JSON; Jev prices come from the shipped catalog. No worker or
 Jev request is launched by this inspection.
@@ -195,7 +195,7 @@ The following is the complete accepted operator key set, including nested keys
 | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `schema`                    | Integer `1` only.                                                                                                                                                                                                                            |
 | `route.allow`               | Optional nonempty array of `codex` or `claude`; duplicates are accepted.                                                                                                                                                                     |
-| `route.default`             | String naming an existing, non-excluded codex catalog row. Routing fallback prefers it only when eligible; otherwise it uses the first eligible candidate.                                                                                   |
+| `route.default`             | Optional string naming an existing, non-excluded catalog row on an allowed route. Routing fallback prefers it only when eligible; otherwise it uses the first eligible candidate.                                                            |
 | `route.exclude`             | Optional string array, default `[]`; every ID must exist.                                                                                                                                                                                    |
 | `route.on_window_exhausted` | Optional table with optional `codex` and `claude` keys, each `continue` or `stop`. Omitted vendors default to `continue`; `stop` makes an exhausted route unavailable. This is a subscription-window policy, not a worker concurrency limit. |
 | `route.max_task_chars`      | Positive integer; bounds the task excerpt sent for selection. Current routing additionally caps that excerpt at 2400 JavaScript string units. It does not limit the worker brief.                                                            |
@@ -232,7 +232,7 @@ The catalog is coupled to the installed agx version, so accepted policy IDs can 
 when that version changes.
 
 Unreadable or missing policy, malformed TOML, unknown keys, missing required keys,
-unsupported schema, unknown default/excluded IDs, an excluded or non-codex default,
+unsupported schema, unknown default/excluded IDs, an excluded or disallowed default,
 and invalid composed catalog/generation data refuse the read. The diagnostic is flattened
 to one line; its exact text is not a parsing interface. See
 `tools/agx-worker/src/roster/load.ts:158–257` and

@@ -525,6 +525,12 @@ test("repository [route] parses allow and default", async () => {
       default: "haiku-low",
     });
 });
+test("repository [route] accepts an omitted default", async () => {
+  const f = await fixture('schema = 1\n[route]\nallow = ["claude"]\n');
+  const result = await resolveAgxConfigWithProvenance(f.root);
+  expect(result.ok).toBe(true);
+  if (result.ok) expect(result.value.repoRoute).toEqual({ allow: ["claude"] });
+});
 test("an absent repository [route] leaves repoRoute undefined", async () => {
   const f = await fixture("schema = 1\n");
   const result = await resolveAgxConfigWithProvenance(f.root);

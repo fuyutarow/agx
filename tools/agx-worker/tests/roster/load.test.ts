@@ -26,6 +26,27 @@ afterEach(async () => {
 });
 
 describe("roster loader", () => {
+  test("default may be omitted and is omitted from JSON", async () => {
+    const example = await readFile(examplePath, "utf8");
+    const result = await withPolicy(
+      example.replace('default = "luna-high"\n', ""),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok)
+      expect(JSON.parse(JSON.stringify(result.value))).not.toHaveProperty(
+        "default",
+      );
+  });
+
+  test("configured default remains in JSON", async () => {
+    const example = await readFile(examplePath, "utf8");
+    const result = await withPolicy(example);
+    expect(result.ok).toBe(true);
+    if (result.ok)
+      expect(JSON.parse(JSON.stringify(result.value)).default).toBe(
+        "luna-high",
+      );
+  });
   test("exclude removes a catalog row", async () => {
     const example = await readFile(examplePath, "utf8");
     const result = await withPolicy(
