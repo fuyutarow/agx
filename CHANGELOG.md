@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.95 — 2026-11-04
+
+- Keep workspaces until their changes land on the remote trunk.
+
 ## 1.22.94 — 2026-11-04
 
 - Use the manager end notice for Claude worker completion.
