@@ -377,7 +377,7 @@ describe("agx-worker run", () => {
     const ticket = join(root, "ticket.md");
     writeFileSync(
       ticket,
-      `+++\nschema = 2\nname = "stale-lock"\nwrites = []\noutcome = "must not dispatch"\nverify = []\n[proposition]\nid = "LOCK"\nclaim = "stale lock blocks dispatch"\nrefuted_by = "dispatch starts"\n+++\nProbe the lock guard.\n`,
+      `+++\nschema = 2\nname = "stale-lock"\nwrites = []\noutcome = "must not dispatch"\nverify = ["true"]\n[proposition]\nid = "LOCK"\nclaim = "stale lock blocks dispatch"\nrefuted_by = "dispatch starts"\n+++\nProbe the lock guard.\n`,
     );
     const state = join(root, "state");
     const result = Bun.spawnSync(

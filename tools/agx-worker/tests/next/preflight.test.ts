@@ -329,7 +329,7 @@ test("check and run preserve operational environment failure as exit 75 without 
   const ticket = join(root, "ticket.md");
   await writeFile(
     ticket,
-    '+++\nschema = 2\nwrites = []\nname = "temporary"\noutcome = "fixture"\n[proposition]\nid = "TEMP"\nclaim = "fixture"\nrefuted_by = "fixture"\n+++\n',
+    '+++\nschema = 2\nwrites = []\nverify = ["true"]\nname = "temporary"\noutcome = "fixture"\n[proposition]\nid = "TEMP"\nclaim = "fixture"\nrefuted_by = "fixture"\n+++\n',
   );
   const bin = join(root, "bin");
   const state = join(root, "state");

@@ -1047,8 +1047,10 @@ also enforces intake before Jev.
   read-only work and is valid; omission does not declare a scope.
 - `acceptance`: declare a nonempty `verify` command array or an acceptance oracle
   in `proposition.refuted_by`, tied to `outcome`. Human review criteria, evidence
-  and diff oracles are valid. No command is required for such review work. The
+  and diff oracles are valid for tickets with writes. The
   existing proposition fields express this; no additional review field is needed.
+- Read-only tickets (`writes = []`) must declare at least one `verify` command
+  that checks their output, such as `test -s "$AGX_RUN_DIR/result.md"`.
 
 Violations remain mechanical refusals, exit 2, with one stderr line per violation:
 `agx: remand RULE: "FIELD" REASON. Fix: REPAIR`. Existing schema, premise,

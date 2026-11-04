@@ -125,6 +125,16 @@ export async function preflight(
     bytes === null ? undefined : parseNextTicket(bytes.toString("utf8"), true);
   const ticket = parsed?.success === true ? parsed.ticket : undefined;
   failures.push(...(parsed?.intake ?? []));
+  if (
+    ticket !== undefined &&
+    (parsed?.intake?.length ?? 0) === 0 &&
+    ticket.writes.length === 0 &&
+    ticket.verify.length === 0
+  )
+    add(
+      "read-only ticket has no verify command",
+      'declare a verify command that checks the output, for example test -s "$AGX_RUN_DIR/result.md"',
+    );
   if (bytes === null) {
     const searched =
       reference === undefined || reference.searchedPaths.length === 0

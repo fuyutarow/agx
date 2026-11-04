@@ -92,7 +92,7 @@ const fixture = async (reportedSession: boolean) => {
   const ticket = join(root, "ticket.md");
   writeFileSync(
     ticket,
-    `+++\nschema = 2\nname = "session-persist"\nwrites = []\noutcome = "continue the fake vendor run"\nverify = []\ntimeout_s = 120\n[proposition]\nid = "SESSION"\nclaim = "reported sessions persist"\nrefuted_by = "a lost run cannot resume its vendor session"\n+++\nRun the session persistence fixture.\n`,
+    `+++\nschema = 2\nname = "session-persist"\nwrites = []\noutcome = "continue the fake vendor run"\nverify = ["true"]\ntimeout_s = 120\n[proposition]\nid = "SESSION"\nclaim = "reported sessions persist"\nrefuted_by = "a lost run cannot resume its vendor session"\n+++\nRun the session persistence fixture.\n`,
   );
 
   const vendor = join(root, "fake-vendor.ts");

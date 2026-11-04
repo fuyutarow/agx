@@ -141,7 +141,7 @@ async function fixture(delayRoute = false) {
   const workerPids: number[] = [];
   writeFileSync(
     ticket,
-    `+++\nschema = 2\nname = "workspace-lock"\nwrites = []\noutcome = "one writer"\nverify = []\n[proposition]\nid = "ONE"\nclaim = "one worker per workspace"\nrefuted_by = "two workers"\n+++\nFixture.\n`,
+    `+++\nschema = 2\nname = "workspace-lock"\nwrites = []\noutcome = "one writer"\nverify = ["true"]\n[proposition]\nid = "ONE"\nclaim = "one worker per workspace"\nrefuted_by = "two workers"\n+++\nFixture.\n`,
   );
   writeFileSync(
     worker,

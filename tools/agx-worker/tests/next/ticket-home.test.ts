@@ -39,7 +39,7 @@ afterEach(async () => {
 });
 const CLI = resolve("tools/agx-worker/src/next/cli.ts");
 const text = (extra = "") =>
-  `+++\nschema = 2\nwrites = []\nname = "home"\noutcome = "recover ticket"\n${extra}\n[proposition]\nid = "HOME"\nclaim = "ticket is recoverable"\nrefuted_by = "bytes differ"\n+++\n原本\r\n`;
+  `+++\nschema = 2\nwrites = []\nname = "home"\noutcome = "recover ticket"\nverify = ["true"]\n${extra}\n[proposition]\nid = "HOME"\nclaim = "ticket is recoverable"\nrefuted_by = "bytes differ"\n+++\n原本\r\n`;
 
 test("new dispatch refuses nonconforming names with agx ticket new repair, without artifacts", async () => {
   const f = await fixture();

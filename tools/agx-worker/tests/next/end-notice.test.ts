@@ -98,7 +98,7 @@ async function runCase(input: {
   const ticket = join(root, "ticket.md");
   await Bun.write(
     ticket,
-    '+++\nschema = 2\nname = "end-notice-fixture"\nwrites = []\noutcome = "notice timeout"\nverify = []\ntimeout_s = 60\n[proposition]\nid = "NOTICE"\nclaim = "one notice follows a vendor timeout"\nrefuted_by = "no notice or multiple notices"\n+++\nRun the timeout fixture.\n',
+    '+++\nschema = 2\nname = "end-notice-fixture"\nwrites = []\noutcome = "notice timeout"\nverify = ["true"]\ntimeout_s = 60\n[proposition]\nid = "NOTICE"\nclaim = "one notice follows a vendor timeout"\nrefuted_by = "no notice or multiple notices"\n+++\nRun the timeout fixture.\n',
   );
   const worker = join(root, "worker.ts");
   await Bun.write(

@@ -55,7 +55,7 @@ test.each([false, true])(
       const ticket = join(root, "ticket.md");
       await writeFile(
         ticket,
-        '+++\nschema = 2\nname = "mise-once"\ntimeout_s = 60\nwrites = []\ncapabilities = ["long-tool-loop"]\noutcome = "test dispatch"\nverify = []\n[proposition]\nid = "MISE-ONCE"\nclaim = "one invocation"\nrefuted_by = "two invocations"\n+++\nWork.\n',
+        '+++\nschema = 2\nname = "mise-once"\ntimeout_s = 60\nwrites = []\ncapabilities = ["long-tool-loop"]\noutcome = "test dispatch"\nverify = ["true"]\n[proposition]\nid = "MISE-ONCE"\nclaim = "one invocation"\nrefuted_by = "two invocations"\n+++\nWork.\n',
       );
       const child = Bun.spawn(
         [

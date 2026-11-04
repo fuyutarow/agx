@@ -256,7 +256,7 @@ test("real routing CLI captures response usage even for fallback, missing usage 
   const ticket = join(root, "ticket.md");
   writeFileSync(
     ticket,
-    '+++\nschema = 2\nwrites = []\noutcome = "fixture"\n[proposition]\nid = "P"\nclaim = "fixture"\nrefuted_by = "failure"\n+++\nFixture selection.\n',
+    '+++\nschema = 2\nwrites = []\nverify = ["true"]\noutcome = "fixture"\n[proposition]\nid = "P"\nclaim = "fixture"\nrefuted_by = "failure"\n+++\nFixture selection.\n',
   );
   async function pick() {
     const child = Bun.spawn([...args, "roster", ticket], {

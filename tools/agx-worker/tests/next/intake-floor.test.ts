@@ -47,9 +47,24 @@ test("intake refuses every launch entry before routing, logs hashes, and admits 
   let requests = 0;
   const server = Bun.serve({
     port: 0,
-    fetch: () => {
+    fetch: async (request) => {
       requests++;
-      return Response.json({ answers: {} });
+      const body = jsonOf(
+        z.object({
+          questions: z.object({
+            worker: z.object({ criteria: z.record(z.string(), z.unknown()) }),
+          }),
+        }),
+      ).safeParse(await request.text());
+      if (!body.success)
+        return new Response("invalid request", { status: 400 });
+      return Response.json({
+        answers: {
+          worker: {
+            choice: Object.keys(body.data.questions.worker.criteria)[0],
+          },
+        },
+      });
     },
   });
   servers.push(server);
@@ -127,9 +142,10 @@ test("intake refuses every launch entry before routing, logs hashes, and admits 
       );
     }
   }
+  expect(requests).toBe(0);
   await writeFile(
     path,
-    `+++\nschema = 2\nname = "intake"\noutcome = "Review the diff"\nwrites = []\n${review}+++\n`,
+    `+++\nschema = 2\nname = "intake"\noutcome = "Review the diff"\nwrites = []\nverify = ["test -s result.md"]\n${review}+++\n`,
   );
   const accepted = await invoke(["check", path, "--json"]);
   expect(accepted.exit, accepted.err).toBe(0);
@@ -138,5 +154,5 @@ test("intake refuses every launch entry before routing, logs hashes, and admits 
     ok: true,
     violations: [],
   });
-  expect(requests).toBe(0);
+  expect(requests).toBe(1);
 }, 60_000);

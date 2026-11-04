@@ -237,7 +237,7 @@ for (const { unit, session } of [
     await mkdir(join(f.root, ".agents", "tickets"), { recursive: true });
     await Bun.write(
       ticket,
-      '+++\nschema = 2\nname = "stop-fixture"\nwrites = []\noutcome = "stop fixture"\nverify = []\n[proposition]\nid = "STOP"\nclaim = "stops"\nrefuted_by = "vendor remains"\n+++\nWait.\n',
+      '+++\nschema = 2\nname = "stop-fixture"\nwrites = []\noutcome = "stop fixture"\nverify = ["true"]\n[proposition]\nid = "STOP"\nclaim = "stops"\nrefuted_by = "vendor remains"\n+++\nWait.\n',
     );
     const worker = join(f.root, "worker.ts");
     const resumedSession = join(f.root, "resumed-session");
@@ -467,7 +467,7 @@ test("a direct systemctl stop retains a started vendor session for continuation"
   const ticket = join(f.root, "ticket.md");
   await Bun.write(
     ticket,
-    '+++\nschema = 2\nname = "signal-fixture"\nwrites = []\noutcome = "signal fixture"\nverify = []\n[proposition]\nid = "SIGNAL"\nclaim = "preserves sessions"\nrefuted_by = "a stopped session is lost"\n+++\nWait.\n',
+    '+++\nschema = 2\nname = "signal-fixture"\nwrites = []\noutcome = "signal fixture"\nverify = ["true"]\n[proposition]\nid = "SIGNAL"\nclaim = "preserves sessions"\nrefuted_by = "a stopped session is lost"\n+++\nWait.\n',
   );
   const unit = "agt_signal-fixture";
   const session = "fake-vendor-session";

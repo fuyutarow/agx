@@ -30,7 +30,7 @@ afterAll(() => {
 });
 
 const ticketText = (prose: string): string =>
-  `+++\nschema = 2\nname = "pin"\nwrites = []\noutcome = "continue pinned"\nverify = []\n[proposition]\nid = "PIN"\nclaim = "continue pins the row"\nrefuted_by = "continue routes"\n+++\n${prose}\n`;
+  `+++\nschema = 2\nname = "pin"\nwrites = []\noutcome = "continue pinned"\nverify = ["true"]\n[proposition]\nid = "PIN"\nclaim = "continue pins the row"\nrefuted_by = "continue routes"\n+++\n${prose}\n`;
 
 // Seeds one ended run per prior row; the Jev endpoint is a closed port, so a continue that
 // routed would be refused (Jev unreachable) instead of keeping the pinned row.
@@ -515,7 +515,7 @@ appendFileSync(${JSON.stringify(join(f.state, "records.jsonl"))}, JSON.stringify
       f.ticket,
       ticketText("edited immediately before dispatch").replace(
         "verify = []",
-        `verify = []\npremises = ["file:${missing ? "missing" : "agx.toml"}"]`,
+        `verify = ["true"]\npremises = ["file:${missing ? "missing" : "agx.toml"}"]`,
       ),
     );
     const results = Array.from({ length: 2 }, () =>
@@ -662,8 +662,8 @@ describe("agx worker run --continue pins the prior row", () => {
     writeFileSync(
       f.ticket,
       ticketText("first prose").replace(
-        "verify = []",
-        "verify = []\ntimeout_s = 600",
+        'verify = ["true"]',
+        'verify = ["true"]\ntimeout_s = 600',
       ),
     );
     const catalog = join(f.root, "catalog.toml");
