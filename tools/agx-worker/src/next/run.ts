@@ -182,6 +182,10 @@ const boundAckName = (): string | undefined => {
     ? read.binding.address.slice("claude:".length)
     : undefined;
 };
+const claudeResultLine = (sandbox: string): string =>
+  sandbox === "read-only"
+    ? "Do not send a completion ACK; the agx-manager end notice is the completion notice. Return the result in your final response."
+    : claudeAckLine(boundAckName());
 export const renderPromise = (
   ticket: NextTicket,
   cwd: string,
@@ -211,7 +215,9 @@ export const renderPromise = (
       `refuted_by: ${ticket.proposition.refuted_by}`,
       "Everything below serves this proposition; do not let a side task displace it.",
       "",
-      `AGX_RUN_DIR=${runDir}. Write worker results, logs and measurements there; keep only source changes in the workspace.`,
+      sandbox === "read-only"
+        ? `AGX_RUN_DIR=${runDir}. Return your results in the final response; the runner records the response in its report.`
+        : `AGX_RUN_DIR=${runDir}. Write worker results, logs and measurements there; keep only source changes in the workspace.`,
       ...(ackTarget === undefined
         ? []
         : [`Completion ACK target: ${ackTarget}`]),
@@ -220,7 +226,10 @@ export const renderPromise = (
       `writes: ${JSON.stringify(ticket.writes.map((glob) => resolve(cwd, glob)))}`,
       ...(ticket.verify.length === 0 ? [] : [verifyLine(ticket.verify)]),
       ...(routeName === "claude"
-        ? [claudeAckLine(boundAckName()), ...claudeBashDenyLines(cwd)]
+        ? [
+            claudeResultLine(sandbox),
+            ...claudeBashDenyLines(cwd),
+          ]
         : []),
       `Sandbox mode: ${sandbox}${sandbox === "none" ? " (unsandboxed)" : ""}.`,
       ...(
@@ -1171,7 +1180,10 @@ async function runUnguarded(flags: Flags): Promise<number> {
           "",
           details.join("\n\n"),
           ...(activeRow.route === "claude"
-            ? ["", claudeAckLine(boundAckName())]
+            ? [
+                "",
+                claudeResultLine(sandbox),
+              ]
             : []),
         ].join("\n"),
       ),

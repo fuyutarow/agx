@@ -1012,14 +1012,19 @@ No tie threshold, cheaper-row preference or exploration policy is introduced.
 ## Worker result directory
 
 For Claude-route briefs, the agx-manager end notice is the completion notice.
-The worker sends no completion ACK, even when the ticket requests one, and puts
-its result in `$AGX_RUN_DIR/result.md`. Codex-route briefs retain the ticket's
-ACK instruction.
+The worker sends no completion ACK, even when the ticket requests one.
+Workspace-write workers put their result in `$AGX_RUN_DIR/result.md`;
+read-only workers return it in their final response. Codex-route briefs retain
+the ticket's ACK instruction.
 
 `run` creates and exports absolute `AGX_RUN_DIR=<state-root>/runs/<run-id>` before
-spawning the worker. It adds that directory to the worker sandbox's writable
-paths and names it in the brief. Workers write results, logs and measurements
-there, alongside runner-owned `report.json`; workspace paths hold source changes.
+spawning the worker. For workspace-write it adds that directory to the worker
+sandbox's writable paths and names it in the brief. Workers write results, logs
+and measurements there, alongside runner-owned `report.json`; workspace paths
+hold source changes. Read-only briefs direct results to the final response, and
+the runner records that response in its report. Preflight refuses read-only runs
+when any ticket or `[verify].always` entry names `AGX_RUN_DIR`, identifying the
+entry and repair, because the worker is not granted that writable root.
 A continuation receives its own run directory, not its parent's directory.
 After the worker exits, `[verify].always` and ticket `verify` commands receive the
 same `AGX_RUN_DIR` and `AGX_RUN_ID` values as the worker. For example,

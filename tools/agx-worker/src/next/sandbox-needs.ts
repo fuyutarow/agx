@@ -454,6 +454,15 @@ export async function inspectSandboxNeeds(
       `WARN sandbox capability=${capability}; requested=${sandbox}; evidence=${JSON.stringify(evidence)}; allows=none (--sandbox none, unsandboxed); sandbox unchanged`,
     );
   const entries = verificationEntries(verify, always);
+  const runDirRefusals =
+    sandbox === "read-only"
+      ? entries
+          .filter(({ command }) => command.includes("AGX_RUN_DIR"))
+          .map(
+            ({ command, source }) =>
+              `sandbox contract: ${source} command=${JSON.stringify(command)} names AGX_RUN_DIR, which a read-only worker cannot write; repair: remove the dependency on worker-written run files or choose workspace-write`,
+          )
+      : [];
   for (const { command, source } of entries) {
     if (
       /\b(?:systemctl|systemd-run)\b[^\n;&|]*\s--user\b/u.test(command) ||
@@ -475,7 +484,13 @@ export async function inspectSandboxNeeds(
       "external-vcs-store-write",
       `workspace VCS store=${store}; ${evidence.length === 0 ? "writes=[] (VCS mutation may require store writes)" : evidence.join("; ")}`,
     );
-  return { warnings, refusals: vcsRefusals(entries, allStores, root, sandbox) };
+  return {
+    warnings,
+    refusals: [
+      ...runDirRefusals,
+      ...vcsRefusals(entries, allStores, root, sandbox),
+    ],
+  };
 }
 
 export async function sandboxNeeds(
