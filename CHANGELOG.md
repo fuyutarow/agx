@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.94 — 2026-11-04
+
+- Use the manager end notice for Claude worker completion.
+
 ## 1.22.93 — 2026-11-04
 
 - Keep live run temporary directories under state and report lost environments.
