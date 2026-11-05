@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.101 — 2026-11-05
+
+- Enforce repository-declared ticket checks before worker launch.
+
 ## 1.22.100 — 2026-11-05
 
 - Require verification for read-only tickets.
