@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.102 — 2026-11-05
+
+- Refuse read-only runs whose verification references AGX_RUN_DIR and correct their result instructions.
+
 ## 1.22.101 — 2026-11-05
 
 - Enforce repository-declared ticket checks before worker launch.
