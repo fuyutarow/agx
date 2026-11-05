@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.105 — 2026-11-05
+
+- Report interrupted verification and preserve stopped-run results.
+
 ## 1.22.104 — 2026-11-05
 
 - Keep worker and verify command lookup on the suite version that started the run.
