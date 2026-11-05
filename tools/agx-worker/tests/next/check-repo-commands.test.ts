@@ -67,10 +67,11 @@ test.each([
       const result = await invoke(args);
       expect(result.exit, result.err).toBe(0);
     }
-    const config =
-      command === undefined
-        ? ""
-        : `\n[check]\ncommands = [${JSON.stringify(command)}]\n${timeout === undefined ? "" : `timeout_ms = ${timeout}\n`}`;
+    let config = "";
+    if (command !== undefined) {
+      config = `\n[check]\ncommands = [${JSON.stringify(command)}]\n`;
+      if (timeout !== undefined) config += `timeout_ms = ${timeout}\n`;
+    }
     await writeFile(
       join(root, "agx.toml"),
       `schema = 1\ntickets = "."\n${config}`,
@@ -101,7 +102,7 @@ exec ${JSON.stringify(process.execPath)} ${JSON.stringify(resolve("tools/agx-wor
     });
     await writeFile(
       join(root, "ticket.md"),
-      '+++\nschema = 2\nname = "ticket"\noutcome = "fixture"\nwrites = []\n[proposition]\nid = "CHECK"\nclaim = "checks run"\nrefuted_by = "launch skips check"\n+++\n',
+      '+++\nschema = 2\nname = "ticket"\noutcome = "fixture"\nwrites = []\nverify = ["true"]\n[proposition]\nid = "CHECK"\nclaim = "checks run"\nrefuted_by = "launch skips check"\n+++\n',
     );
     const args = [
       process.execPath,
