@@ -2,6 +2,11 @@
 
 `agx-worker` owns worker runs. Its package bin points to `src/next/cli.ts`. The suite also accepts `agx worker`.
 
+For a compiled suite executable with executable `agx` and `agx-worker` beside it,
+the real directory of the running binary leads PATH for both worker and verify.
+The report's `execution.suite_directory` records that directory. Source runs leave
+PATH unchanged by this rule; this does not alter the global PATH.
+
 | Command                                                                                        | Purpose                                                                                                                               |
 | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | `agx worker run TICKET [--cd TREE] [--sandbox MODE] [--continue RUN_ID] [--session ID]`        | Route a ticket to a roster worker, run it, and append run records.                                                                    |

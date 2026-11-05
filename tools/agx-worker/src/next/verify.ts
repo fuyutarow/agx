@@ -1,5 +1,12 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import {
+  accessSync,
+  constants,
+  existsSync,
+  readFileSync,
+  realpathSync,
+} from "node:fs";
+import { basename, dirname, join } from "node:path";
+import { fromThrowable } from "neverthrow";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { exitWithError } from "./exit.ts";
 import {
@@ -8,6 +15,30 @@ import {
 } from "../../../shared/src/agx-config.ts";
 
 export const MISE_ENV_TIMEOUT_MS = 60_000;
+
+/** Pin command lookup only for a compiled suite executable with both suite binaries. */
+export function ownSuiteDirectory(
+  execPath: string,
+  main: string,
+): string | undefined {
+  if (!main.startsWith("/$bunfs/")) return undefined;
+  return fromThrowable(() => {
+    const executable = realpathSync(execPath);
+    if (!["agx", "agx-worker"].includes(basename(executable))) return null;
+    const directory = dirname(executable);
+    accessSync(join(directory, "agx"), constants.X_OK);
+    accessSync(join(directory, "agx-worker"), constants.X_OK);
+    return directory;
+  })().unwrapOr(null) ?? undefined;
+}
+
+export function withSuitePath(
+  env: NodeJS.ProcessEnv,
+  directory: string | undefined,
+): NodeJS.ProcessEnv {
+  if (directory === undefined) return env;
+  return { ...env, PATH: `${directory}:${env.PATH ?? "/usr/bin:/bin"}` };
+}
 
 export const VerifyKind = z.enum(["passed", "failed", "unrunnable", "killed"]);
 export type VerifyKind = z.output<typeof VerifyKind>;

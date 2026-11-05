@@ -88,6 +88,8 @@ import {
   verifyKind,
   verifyLogName,
   verifyRoundOf,
+  ownSuiteDirectory,
+  withSuitePath,
   type VerifyKind,
 } from "./verify.ts";
 import { scheduleEndNotice } from "./end-notice.ts";
@@ -226,10 +228,7 @@ export const renderPromise = (
       `writes: ${JSON.stringify(ticket.writes.map((glob) => resolve(cwd, glob)))}`,
       ...(ticket.verify.length === 0 ? [] : [verifyLine(ticket.verify)]),
       ...(routeName === "claude"
-        ? [
-            claudeResultLine(sandbox),
-            ...claudeBashDenyLines(cwd),
-          ]
+        ? [claudeResultLine(sandbox), ...claudeBashDenyLines(cwd)]
         : []),
       `Sandbox mode: ${sandbox}${sandbox === "none" ? " (unsandboxed)" : ""}.`,
       ...(
@@ -669,8 +668,8 @@ async function runUnguarded(flags: Flags): Promise<number> {
   // Reclaim only recorded terminal runs, including owners killed after recording the end.
   const endedIds = new Set(
     recordedFoldedRuns()
-      .filter((run) => run.state === "ended" && run.ended_at !== null)
-      .map((run) => run.id),
+      .filter((record) => record.state === "ended" && record.ended_at !== null)
+      .map((record) => record.id),
   );
   for (const endedId of endedIds) {
     if (!existsSync(join(agxTempRoot(), endedId, "tmp"))) continue;
@@ -1020,7 +1019,11 @@ async function runUnguarded(flags: Flags): Promise<number> {
   };
   const before = workspaceSnapshot(cwd);
   if (activeRow.route === "claude") claudeRouteRan = true;
-  const baseEnv: NodeJS.ProcessEnv = { ...environment, ...temp.env };
+  const suiteDirectory = ownSuiteDirectory(process.execPath, Bun.main);
+  const baseEnv: NodeJS.ProcessEnv = withSuitePath(
+    { ...environment, ...temp.env },
+    suiteDirectory,
+  );
   const workerCommand = Bun.which(workerPath, {
     PATH: baseEnv.PATH ?? "/usr/bin:/bin",
     cwd,
@@ -1037,6 +1040,9 @@ async function runUnguarded(flags: Flags): Promise<number> {
   const execution = {
     executable_path: ownExecutable,
     executable_argv: ownCommand,
+    ...(suiteDirectory === undefined
+      ? {}
+      : { suite_directory: suiteDirectory }),
     path_source:
       process.env.AGX_WORKER_PATH_SOURCE === "dispatcher"
         ? "PATH from dispatcher"
@@ -1180,10 +1186,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
           "",
           details.join("\n\n"),
           ...(activeRow.route === "claude"
-            ? [
-                "",
-                claudeResultLine(sandbox),
-              ]
+            ? ["", claudeResultLine(sandbox)]
             : []),
         ].join("\n"),
       ),
@@ -1772,7 +1775,7 @@ export async function judgeRun(
   }
   const at = now();
   const judgment = {
-    kind: "judged",
+    kind: "judged" as const,
     id: resolution.row.id,
     at,
     decision,
@@ -1781,7 +1784,7 @@ export async function judgeRun(
       ? {}
       : { override_reason: overrideReason }),
     ...(evidence.length === 0 ? {} : { evidence }),
-  } as const;
+  };
   const lock = await acquireWorkspaceLockUntilAvailable(
     join(root, "current-runs.json"),
     root,
