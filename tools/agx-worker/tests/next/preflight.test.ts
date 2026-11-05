@@ -1,4 +1,3 @@
-import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { afterEach, expect, test } from "bun:test";
 import {
   chmod,
@@ -17,8 +16,33 @@ import { prepareTicketRepo } from "../ticket-repo.ts";
 import { parseNextTicket } from "../../src/next/ticket.ts";
 import { checkPremises } from "../../src/premises.ts";
 import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
+import { jsonOf, z } from "../../../shared/src/zod.ts";
 
 const roots: string[] = [];
+const routeServers: ReturnType<typeof Bun.serve>[] = [];
+
+function localRouteStub() {
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (request) => {
+      const parsed = jsonOf(
+        z.object({
+          questions: z.object({
+            worker: z.object({ criteria: z.record(z.string(), z.unknown()) }),
+          }),
+        }),
+      ).safeParse(await request.text());
+      if (!parsed.success) return new Response("invalid request", { status: 400 });
+      const choice = Object.keys(parsed.data.questions.worker.criteria)[0];
+      if (choice === undefined)
+        return new Response("no choices", { status: 400 });
+      return Response.json({ answers: { worker: { choice } } });
+    },
+  });
+  routeServers.push(server);
+  return `http://127.0.0.1:${server.port}/choice`;
+}
 
 test("premise refusal preserves the first diagnostic line and all observed output", () => {
   const output =
@@ -46,6 +70,7 @@ function inheritedEnv() {
   return env;
 }
 afterEach(async () => {
+  await Promise.all(routeServers.splice(0).map((server) => server.stop(true)));
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
   );
@@ -72,6 +97,7 @@ const overlapStartedRecord = (
   });
 
 test("public check warns about user bus and shared VCS store without changing ticket or sandbox", async () => {
+  const jevUrl = localRouteStub();
   const root = await mkdtemp(join(tmpdir(), "agx-sandbox-check-"));
   roots.push(root);
   await prepareTicketRepo(root);
@@ -83,6 +109,7 @@ test("public check warns about user bus and shared VCS store without changing ti
     resolve("tools/agx-worker/src/next/cli.ts"),
     join(bin, "agx-worker"),
   );
+
   const ticket = join(root, "sandbox-warning.md");
   const original =
     '+++\nschema = 2\nname = "sandbox-warning"\noutcome = "fixture"\nwrites = ["src/**"]\nverify = ["systemctl --user status fixture"]\n[proposition]\nid = "SANDBOX"\nclaim = "warning before start"\nrefuted_by = "silent dispatch"\n+++\n';
@@ -111,6 +138,8 @@ test("public check warns about user bus and shared VCS store without changing ti
             "../../src/roster/policy.example.toml",
             import.meta.url,
           ).pathname,
+          JEV_URL: jevUrl,
+          TYPESAFE_API_KEY: "fixture-only",
         },
         stdin: "ignore",
         stdout: "pipe",
@@ -228,6 +257,7 @@ test("check and run report writes, home, mise, live workspace and premises toget
 }, 30000);
 
 test("check warns only about overlapping runs whose ticket or workspace shares the ticket repository", async () => {
+  const jevUrl = localRouteStub();
   const root = await mkdtemp(join(tmpdir(), "agx-overlap-scope-"));
   const unrelated = await mkdtemp(join(tmpdir(), "agx-overlap-unrelated-"));
   roots.push(root, unrelated);
@@ -254,6 +284,8 @@ test("check warns only about overlapping runs whose ticket or workspace shares t
     AGX_STATE_DIR: state,
     AGX_CONFIG: new URL("../../src/roster/policy.example.toml", import.meta.url)
       .pathname,
+    JEV_URL: jevUrl,
+    TYPESAFE_API_KEY: "fixture-only",
   };
   const child = Bun.spawn(
     [
