@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.107 — 2026-11-05
+
+- Report Jev return classes with their meanings and probabilities.
+
 ## 1.22.106 — 2026-11-05
 
 - Require an explicit sender for agx msg send.
