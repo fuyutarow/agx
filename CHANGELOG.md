@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.106 — 2026-11-05
+
+- Require an explicit sender for agx msg send.
+
 ## 1.22.105 — 2026-11-05
 
 - Report interrupted verification and preserve stopped-run results.
