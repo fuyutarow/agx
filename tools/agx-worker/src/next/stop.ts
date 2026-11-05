@@ -1,3 +1,7 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { jsonOf, z } from "../../../shared/src/zod.ts";
+import { VerifyResult } from "./verify.ts";
 import { listingProgress } from "./listing-progress.ts";
 import { userInfo } from "node:os";
 import { fromThrowable } from "neverthrow";
@@ -10,6 +14,7 @@ import {
   events,
   foldedRuns,
   now,
+  stateDir,
 } from "./store.ts";
 
 const refuse = (message: string, exit = 2) => {
@@ -134,7 +139,6 @@ async function stopOwnedRun(run: ListedRun): Promise<number> {
     const result = await stopSystemdUnit(
       run,
       actor,
-      lease,
       lease.unit,
       systemctl,
     );
@@ -178,7 +182,6 @@ async function stopOwnedRun(run: ListedRun): Promise<number> {
 async function stopSystemdUnit(
   run: ListedRun,
   actor: string,
-  lease: NonNullable<ListedRun["lease"]>,
   unit: string,
   systemctl: string,
 ): Promise<{ failure: string | undefined; terminal: number | undefined }> {
@@ -200,15 +203,9 @@ async function stopSystemdUnit(
   );
   if (ended?.kind === "ended")
     return { failure, terminal: reportEndState(run, actor, ended) };
-  const current = await leaseFor(lease.pid, lease.unit);
-  if (current.start !== lease.start) return { failure, terminal: undefined };
-  return {
-    failure,
-    terminal: refuse(
-      `cannot stop ${unit}: ${failure}; inspect with agx worker ls ${run.id}`,
-      1,
-    ),
-  };
+  // A failed stop may still have signalled the owner. Observe the lease in the
+  // bounded stop loop before deciding whether the failure prevented stopping.
+  return { failure, terminal: undefined };
 }
 
 function reportAlreadyEnded(
@@ -261,6 +258,32 @@ function reportEndState(
 function recordStopped(run: ListedRun, actor: string) {
   const end = events().findLast((e) => e.id === run.id && e.kind === "ended");
   if (end?.kind === "ended") return end;
+  const runDir = join(stateDir(), "runs", run.id);
+  mkdirSync(runDir, { recursive: true });
+  const progressPath = join(runDir, "verify-progress.json");
+  const parsed = existsSync(progressPath)
+    ? jsonOf(
+        z.object({
+          completed: z.array(VerifyResult),
+          active: z
+            .object({ cmd: z.string(), log_path: z.string() })
+            .optional(),
+        }),
+      ).safeParse(readFileSync(progressPath, "utf8"))
+    : undefined;
+  const progress = parsed?.success === true ? parsed.data : undefined;
+  const verify = [
+    ...(progress?.completed ?? []),
+    ...(progress?.active === undefined
+      ? []
+      : [{ ...progress.active, exit: 143, kind: "interrupted" as const }]),
+  ];
+  const reportPath = join(runDir, "report.json");
+  const resultFile = join(runDir, "result.md");
+  writeFileSync(
+    reportPath,
+    `${JSON.stringify({ outcome: "stopped", result: existsSync(resultFile) ? resultFile : "unknown", verify, ...(parsed !== undefined && !parsed.success ? { verify_state: "unknown" } : {}) })}\n`,
+  );
   const stopped = {
     kind: "ended",
     id: run.id,
@@ -269,9 +292,9 @@ function recordStopped(run: ListedRun, actor: string) {
     outcome: "stopped",
     signal: "SIGTERM",
     stopped_by: actor,
-    report_path: null,
+    report_path: reportPath,
     vendor_session: run.vendor_session,
-    verify: [],
+    verify,
   } satisfies Parameters<typeof append>[0];
   append(stopped);
   return stopped;

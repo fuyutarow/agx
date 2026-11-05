@@ -4,6 +4,8 @@ import {
   appendFileSync,
   existsSync,
   mkdirSync,
+  openSync,
+  closeSync,
   readFileSync,
   writeFileSync,
 } from "node:fs";
@@ -311,6 +313,18 @@ const runVerify = async (
   always: string[],
   unit: string,
   round: number,
+  onStart: (
+    cmd: string,
+    logPath: string,
+    child: ReturnType<typeof Bun.spawn>,
+  ) => void,
+  onResult: (result: {
+    cmd: string;
+    exit: number;
+    log_path: string;
+    kind: VerifyKind;
+    source?: "[verify].always";
+  }) => void,
 ): Promise<
   {
     cmd: string;
@@ -328,38 +342,38 @@ const runVerify = async (
     source?: "[verify].always";
   }[] = [];
   for (const [index, cmd] of [...always, ...commands].entries()) {
-    const source = index < always.length ? "[verify].always" : undefined;
+    const source =
+      index < always.length ? ("[verify].always" as const) : undefined;
     const logPath = join(runDir, verifyLogName(round + 1, index));
+    const fd = openSync(logPath, "w");
     const child = Bun.spawn(
       ["sh", "-c", 'exec 2>&1; sh -c "$1"', "agx-verify", cmd],
       {
         cwd,
         stdin: "ignore",
-        stdout: "pipe",
+        stdout: fd,
         stderr: "ignore",
+        detached: process.platform !== "win32",
         env,
       },
     );
-    // Merge stderr into stdout before running the command so one pipe preserves
-    // the order in which the verification command writes both streams.
-    const output =
-      child.stdout === null
-        ? Promise.resolve("")
-        : new Response(child.stdout).text();
+    closeSync(fd);
+    onStart(cmd, logPath, child);
     const exit = await child.exited;
-    writeFileSync(logPath, await output);
     appendVerifyKilledNote(logPath, exit, child.signalCode, unit);
     const kind = verifyKind(exit, child.signalCode);
     process.stderr.write(
       `VERIFY exit=${exit} ${cmd} kind=${kind}${source === undefined ? "" : ` source=${source}`}\n`,
     );
-    results.push({
+    const result = {
       cmd,
       exit,
       log_path: logPath,
       kind,
       ...(source === undefined ? {} : { source }),
-    });
+    };
+    results.push(result);
+    onResult(result);
   }
   return results;
 };
@@ -698,6 +712,17 @@ async function runUnguarded(flags: Flags): Promise<number> {
   let dispatcherAddress: string | null = null;
   let stopTask: Promise<never> | undefined;
   let killWorker: (() => void) | undefined;
+  let verifyProgress: {
+    cmd: string;
+    exit: number;
+    log_path: string;
+    kind: VerifyKind;
+    source?: "[verify].always";
+  }[] = [];
+  let activeVerify:
+    | { cmd: string; log_path: string; child: ReturnType<typeof Bun.spawn> }
+    | undefined;
+  let stoppedRound = 0;
   const vendorSessionFromProgress = (): string | undefined => {
     const progress = fromThrowable(() =>
       readFileSync(activeProgressPath, "utf8"),
@@ -731,10 +756,32 @@ async function runUnguarded(flags: Flags): Promise<number> {
       null;
     persistVendorSession(vendorSession ?? undefined);
     killWorker?.();
+    if (activeVerify !== undefined) {
+      const { cmd, log_path, child } = activeVerify;
+      if (process.platform !== "win32")
+        fromThrowable(() => process.kill(-child.pid, "SIGKILL"))();
+      child.kill("SIGKILL");
+      verifyProgress.push({ cmd, log_path, exit: code, kind: "interrupted" });
+      activeVerify = undefined;
+    }
     if (started && !ended) {
       ended = true;
       const endedAt = now();
       stopTask = (async () => {
+        const stoppedReportPath = join(runDir, "report.json");
+        const resultFile = join(runDir, "result.md");
+        writeFileSync(
+          stoppedReportPath,
+          `${JSON.stringify({ outcome: "stopped", result: existsSync(resultFile) ? resultFile : "unknown", verify: verifyProgress, verify_round: stoppedRound === 0 ? undefined : stoppedRound })}\n`,
+        );
+        const parts = verifyProgress.map((v) => {
+          const label =
+            v.kind === "interrupted"
+              ? "interrupted"
+              : `completed exit=${v.exit}`;
+          return `${label}: ${v.cmd} (log: ${v.log_path})`;
+        });
+        const details = parts.length === 0 ? "not run" : parts.join(", ");
         const endNotice = scheduleEndNotice({
           id,
           ticket: ticketName,
@@ -744,8 +791,11 @@ async function runUnguarded(flags: Flags): Promise<number> {
           endedAt,
           outcome: "stopped",
           exit: code,
-          resultPath: null,
-          verifyExits: [],
+          resultPath: stoppedReportPath,
+          verifyExits: verifyProgress
+            .filter((v) => v.kind !== "interrupted")
+            .map((v) => v.exit),
+          verifyDetails: details,
           detachUnit: process.env.INVOCATION_ID !== undefined,
         });
         append(
@@ -758,7 +808,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
             end_notice: endNotice,
             signal,
             stopped_by: request?.stopped_by ?? `signal:${signal}`,
-            report_path: null,
+            report_path: stoppedReportPath,
             vendor_session: vendorSession,
             ...(attemptedRows.length > 1 ? { rows: attemptedRows } : {}),
             ...(attemptedRows.length > 1
@@ -771,7 +821,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
                   },
                 }
               : {}),
-            verify: [],
+            verify: verifyProgress,
           },
           stateDir(),
           false,
@@ -1142,6 +1192,8 @@ async function runUnguarded(flags: Flags): Promise<number> {
   ): Promise<boolean> => {
     if (!checkEnvironment()) return false;
     verifyRoundNumber = verifyRounds.length + 1;
+    stoppedRound = verifyRoundNumber;
+    verifyProgress = [];
     verify = await runVerify(
       ticket.verify,
       cwd,
@@ -1150,6 +1202,21 @@ async function runUnguarded(flags: Flags): Promise<number> {
       ctx.verifyAlways,
       unit,
       verifyRounds.length,
+      (cmd, log_path, child) => {
+        activeVerify = { cmd, log_path, child };
+        writeFileSync(
+          join(runDir, "verify-progress.json"),
+          `${JSON.stringify({ completed: verifyProgress, active: { cmd, log_path } })}\n`,
+        );
+      },
+      (result) => {
+        activeVerify = undefined;
+        verifyProgress.push(result);
+        writeFileSync(
+          join(runDir, "verify-progress.json"),
+          `${JSON.stringify({ completed: verifyProgress })}\n`,
+        );
+      },
     );
     const failed = verify.filter(
       (result) => result.exit !== 0 && result.kind !== "killed",

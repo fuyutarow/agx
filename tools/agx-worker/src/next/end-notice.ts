@@ -36,6 +36,7 @@ export const EndNoticeRequest = z.object({
   resultPath: z.string().nullable(),
   verifyExits: z.array(z.number()),
   verifyRound: VerifyRound.optional(),
+  verifyDetails: z.string().optional(),
   parentPid: z.number().int().positive(),
   deadlineMs: z.number().int().positive().default(NOTICE_DEADLINE_MS),
 });
@@ -212,7 +213,7 @@ async function sendEndNotice(
   const message =
     `agx run ${input.id} ${input.ticket} ended ${input.outcome} ` +
     `exit ${input.exit ?? "none"} after ${(elapsedMs / 60_000).toFixed(1)} min; result: ${input.resultPath ?? "none"}; ` +
-    `verify: ${verifyText(input.verifyExits, input.verifyRound)}; ` +
+    `verify: ${input.verifyDetails ?? verifyText(input.verifyExits, input.verifyRound)}; ` +
     "read: agx worker ls --json";
   const path = env.PATH;
   const executable =

@@ -1077,3 +1077,11 @@ Each refused preflight appends a `kind: "refusal"` event to `records.jsonl` with
 its own ID, timestamp, cwd, absolute `ticket_path`, `ticket_sha256` and violation
 strings. Hashes cover the exact ticket bytes; an unreadable ticket has a null hash.
 Refusal events are audit records and do not become runs or affect run counts.
+
+A stopped run writes `report.json` and retains verification evidence. Each command's
+log is created when the command starts, and its result is persisted when it ends.
+The stopped report, end notice, and worker listing distinguish an interrupted
+command from verification that did not start; completed entries include exit codes
+and log paths. If the worker's result artifact cannot be established, the report
+says `unknown`. The interrupted command's exit records the stop signal, not a
+measured command exit. Stopping kills the active verification process group.

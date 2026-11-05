@@ -40,7 +40,13 @@ export function withSuitePath(
   return { ...env, PATH: `${directory}:${env.PATH ?? "/usr/bin:/bin"}` };
 }
 
-export const VerifyKind = z.enum(["passed", "failed", "unrunnable", "killed"]);
+export const VerifyKind = z.enum([
+  "passed",
+  "failed",
+  "unrunnable",
+  "killed",
+  "interrupted",
+]);
 export type VerifyKind = z.output<typeof VerifyKind>;
 
 /** Shell conventions also cover signals received by a nested check process. */

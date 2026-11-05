@@ -121,6 +121,7 @@ export async function list(flags: Flags): Promise<number> {
           state: latestRun.state,
           outcome: latestRun.outcome,
           verify_exits: verifyExits,
+          verify: latestRun.verify,
           verify_round: latestRun.verify_round,
           report_path: latestRun.report_path,
           cause: latestRun.cause,
@@ -128,7 +129,7 @@ export async function list(flags: Flags): Promise<number> {
       );
     } else {
       process.stdout.write(
-        `${latestRun.id} state=${latestRun.state} outcome=${latestRun.outcome ?? "-"} verify_exits=${verifyExits.length === 0 ? "-" : verifyExits.join(",")}${verifyRoundFields(latestRun.verify_round)} report_path=${latestRun.report_path ?? "-"}${latestRun.cause === undefined ? "" : ` cause=${JSON.stringify(latestRun.cause)}`}\n`,
+        `${latestRun.id} state=${latestRun.state} outcome=${latestRun.outcome ?? "-"} verify_exits=${verifyExits.length === 0 ? "-" : verifyExits.join(",")}${verifyRoundFields(latestRun.verify_round)} verify=${JSON.stringify(latestRun.verify)} report_path=${latestRun.report_path ?? "-"}${latestRun.cause === undefined ? "" : ` cause=${JSON.stringify(latestRun.cause)}`}\n`,
       );
     }
     return 0;
@@ -157,7 +158,7 @@ export async function list(flags: Flags): Promise<number> {
   let output = visible
     .map(
       (entry) =>
-        `${entry.id} ${entry.state} tkt_${entry.ticket} row=${entry.row} exit=${entry.exit ?? "-"} outcome=${entry.outcome ?? "-"}${verifyRoundFields(entry.verify_round)}`,
+        `${entry.id} ${entry.state} tkt_${entry.ticket} row=${entry.row} exit=${entry.exit ?? "-"} outcome=${entry.outcome ?? "-"}${verifyRoundFields(entry.verify_round)} verify=${JSON.stringify(entry.verify)}`,
     )
     .join("\n");
   if (asJson) {
