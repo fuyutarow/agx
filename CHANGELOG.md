@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.103 — 2026-11-05
+
+- Reject writes entries whose literal prefix parent does not exist in the worker tree.
+
 ## 1.22.102 — 2026-11-05
 
 - Refuse read-only runs whose verification references AGX_RUN_DIR and correct their result instructions.
