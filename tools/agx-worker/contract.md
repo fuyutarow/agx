@@ -942,10 +942,11 @@ checks persisted/listed timeout, refusal/capacity distinction, and stats counts.
 
 Routing sends one Choice with the work classes `mechanical`, `localized`, and
 `cross_module`, followed by the returns `split`, `uncheckable`, and
-`contradiction`. A chosen return with a reason records a refusal and exits 2
-before worker startup. Historical routing refusals still accept `missing_input`.
-The pick audit retains the answer and complete probability distribution.
-Invalid or missing answers retain the eligible default-row fallback and its reason.
+`contradiction`. A chosen return records a refusal and exits 2 before worker startup.
+The diagnostic gives the class, its criterion and remedy, its probability when supplied,
+and the ticket fields sent. Historical routing refusals still accept `missing_input`
+and `reason_detail`. The pick audit retains the answer and complete probability distribution.
+Invalid, missing, or unknown answers refuse without selecting a row.
 
 ### Routing evidence and offline measurements
 

@@ -39,13 +39,18 @@ const scratch = async (prefix: string): Promise<string> => {
 };
 
 describe("agx-worker run", () => {
-  test.each([true, false])(
-    "route refusal is visible (reason supplied: %s)",
-    async (named) => {
+  test.each(["split", "uncheckable", "contradiction"])(
+    "route refusal is visible for %s",
+    async (reason) => {
       const root = await scratch("missing-input-");
       const state = join(root, "state");
       const ticket = join(root, "ticket.md");
-      const reason = "verify requires $AGX_RUN_DIR/parity.tsv";
+      const meanings = {
+        split: "independent outcomes",
+        uncheckable: "no observable acceptance",
+        contradiction: "Two explicit requirements cannot both be satisfied",
+      };
+      const meaning = meanings[reason];
       const binding = {
         id: "00000000-0000-4000-8000-000000000001",
         ticket: "missing-input",
@@ -80,7 +85,7 @@ describe("agx-worker run", () => {
       await probe.stop(true);
       writeFileSync(
         jevFile,
-        `Bun.serve({ hostname: "127.0.0.1", port: ${jevPort}, fetch: () => Response.json({ answers: { worker: { choice: "missing_input", ...${JSON.stringify(named ? { reason_code: reason } : {})}, detail: "Jev detail" } } }) });\n`,
+        `Bun.serve({ hostname: "127.0.0.1", port: ${jevPort}, fetch: () => Response.json({ answers: { worker: { choice: ${JSON.stringify(reason)}, probabilities: { [${JSON.stringify(reason)}]: 0.8 } } } }) });\n`,
       );
       const jev = Bun.spawn([process.execPath, jevFile], {
         stdout: "ignore",
@@ -128,15 +133,16 @@ describe("agx-worker run", () => {
         { cwd: process.cwd(), env, timeout: 10_000 },
       );
       expect(result.exitCode, result.stderr.toString()).toBe(2);
-      expect(result.stderr.toString()).toContain(
-        named ? reason : "without a reason_code",
-      );
+      expect(result.stderr.toString()).toContain(reason);
+      expect(result.stderr.toString()).toContain(meaning);
+      expect(result.stderr.toString()).toContain("Probability: 0.8");
+      expect(result.stderr.toString()).not.toContain("reason_code");
       expect(result.stdout.toString()).toContain("route-refused");
       const report = JSON.parse(
         readFileSync(join(state, "runs", binding.id, "report.json"), "utf8"),
       );
       expect(report.outcome).toBe("route-refused");
-      expect(report.summary).toContain("Jev detail");
+      expect(report.summary).toContain(meaning);
       const waited = Bun.spawnSync(
         [
           process.execPath,
@@ -148,7 +154,7 @@ describe("agx-worker run", () => {
         { cwd: process.cwd(), env, timeout: 10000 },
       );
       expect(waited.exitCode).toBe(0);
-      expect(waited.stdout.toString()).toContain("Jev detail");
+      expect(waited.stdout.toString()).toContain(meaning);
       const checked = Bun.spawnSync(
         [
           process.execPath,
@@ -161,9 +167,8 @@ describe("agx-worker run", () => {
         { cwd: process.cwd(), env, timeout: 10000 },
       );
       expect(checked.exitCode).toBe(2);
-      expect(checked.stderr.toString()).toContain(
-        named ? reason : "without a reason_code",
-      );
+      expect(checked.stderr.toString()).toContain(meaning);
+      expect(checked.stderr.toString()).not.toContain("reason_code");
       const parsedRecords = jsonOf(
         z.array(z.record(z.string(), z.unknown())),
       ).safeParse(
@@ -179,9 +184,7 @@ describe("agx-worker run", () => {
         records.some(
           (record) =>
             record.kind === "refusal" &&
-            JSON.stringify(record).includes(
-              named ? reason : "without a reason_code",
-            ),
+            JSON.stringify(record).includes(meaning),
         ),
       ).toBe(true);
       expect(

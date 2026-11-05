@@ -49,18 +49,13 @@ const Reply = z.looseObject({
     z.string(),
     z.looseObject({
       choice: z.string(),
-      reason_code: z.string().optional(),
       confidence: z.number().optional(),
       probabilities: z.record(z.string(), z.number()).optional(),
     }),
   ),
 });
 
-const ReturnReason = z.enum([
-  "split",
-  "uncheckable",
-  "contradiction",
-]);
+const ReturnReason = z.enum(["split", "uncheckable", "contradiction"]);
 const RequirementClassSchema = z.enum([
   "mechanical",
   "localized",
@@ -542,10 +537,10 @@ export async function route(
     audit.choice_probabilities = probabilities ?? null;
     const reply = post.ok ? post.text : null;
     const bounded = reply === null ? "unavailable" : reply.slice(0, 8192);
-    const truncated =
+    const replyTruncated =
       reply !== null && reply.length > 8192 ? " [truncated]" : "";
     return refuse(
-      `${message.trimEnd()}; Jev reply: ${JSON.stringify(bounded)}${truncated}\n`,
+      `${message.trimEnd()}; Jev reply: ${JSON.stringify(bounded)}${replyTruncated}\n`,
       2,
       source,
     );
@@ -571,12 +566,6 @@ export async function route(
   const selected = answer?.choice;
   const probabilities = answer?.probabilities;
   const reason = ReturnReason.safeParse(selected);
-  if (reason.success && (answer?.reason_code?.trim().length ?? 0) === 0)
-    return refuseReply(
-      `route refused: Jev returned ${reason.data} without a reason_code naming the missing input; ticket fields sent: task${capabilities.length === 0 ? "" : ", required_capabilities"}, task_size; no row is substituted\n`,
-      "refused-unnamed-return",
-      probabilities,
-    );
   if (reason.success) {
     audit.outcome_kind = "held";
     audit.selection_mode = "return";
@@ -590,17 +579,13 @@ export async function route(
       recordRoutingRefusal({
         ticket: brief,
         reason: reason.data,
-        ...(answer?.reason_code === undefined
-          ? {}
-          : { reason_detail: answer.reason_code }),
         ...(probabilities?.[reason.data] === undefined
           ? {}
           : { probability: probabilities[reason.data] }),
         pick_audit: pickAudit("jev-return", probabilities),
       });
-    const detail = answer?.reason_code;
     return refuseReply(
-      `agx: ticket returned: ${reason.data}: ${detail}\n`,
+      `agx: ticket returned: ${reason.data}: ${returns[reason.data].criterion} ${returns[reason.data].fix} Probability: ${probabilities?.[reason.data] ?? "unavailable"}; ticket fields sent: task${capabilities.length === 0 ? "" : ", required_capabilities"}, task_size; no row is substituted\n`,
       "jev-return",
       probabilities,
     );

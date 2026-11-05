@@ -67,7 +67,6 @@ export function recordRoutingPick(
 export function recordRoutingRefusal(input: {
   ticket: string;
   reason: "split" | "uncheckable" | "contradiction" | "missing_input";
-  reason_detail?: string;
   probability?: number;
   pick_audit?: PickAudit;
 }): void {
@@ -79,7 +78,6 @@ export function recordRoutingRefusal(input: {
     host: hostname(),
     ticket: input.ticket,
     reason: input.reason,
-    reason_detail: input.reason_detail,
     probability: input.probability ?? null,
     pick_audit: input.pick_audit,
   });

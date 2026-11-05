@@ -64,7 +64,7 @@ AbortSignal.timeout = (ms) => {
   );
   await writeFile(
     ticket,
-    `+++\nschema = 2\nname = "feedback"\ntimeout_s = 60\nwrites = ["changed.txt", "fixed"]\ncapabilities = ["long-tool-loop"]\noutcome = "test feedback"\nverify = [${JSON.stringify(command)}]\n[proposition]\nid = "FEEDBACK"\nclaim = "resume after verify"\nrefuted_by = "no feedback"\n+++\nWork.\n`,
+    `+++\nschema = 2\nname = "feedback"\ntimeout_s = ${mode === "capacity-refused" ? 600 : 60}\nwrites = ["changed.txt", "fixed"]\ncapabilities = ["long-tool-loop"]\noutcome = "test feedback"\nverify = [${JSON.stringify(command)}]\n[proposition]\nid = "FEEDBACK"\nclaim = "resume after verify"\nrefuted_by = "no feedback"\n+++\nWork.\n`,
   );
   let routeCalls = 0;
   const server = Bun.serve({
@@ -75,8 +75,8 @@ AbortSignal.timeout = (ms) => {
         answers: {
           worker:
             mode === "capacity-refused" && routeCalls > 1
-              ? { choice: "contradiction", reason_code: "fixture refusal" }
-              : { choice: "sol-medium", probabilities: { "sol-medium": 1 } },
+              ? { choice: "contradiction", probabilities: { contradiction: 1 } }
+              : { choice: "localized", probabilities: { localized: 1 } },
         },
       });
     },
@@ -180,7 +180,9 @@ test("failed verification feeds the same session and succeeds", async () => {
   expect(calls[1]?.args).toContain("--resume");
   expect(calls[1]?.args).toContain("test-session");
   expect(calls[1]?.prompt).toContain(command);
-  expect(calls[1]?.prompt).toContain("Verification failed. Fix the errors and finish.");
+  expect(calls[1]?.prompt).toContain(
+    "Verification failed. Fix the errors and finish.",
+  );
   expect(calls[1]?.prompt).toContain(REPORT_INSTRUCTION);
   expect(calls[1]?.prompt).toBe(
     calls[1]?.prompt.replace(REPORT_INSTRUCTION, "").trimEnd() +

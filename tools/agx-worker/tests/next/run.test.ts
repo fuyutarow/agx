@@ -48,7 +48,7 @@ describe("agx-worker run", () => {
     const root = await scratch("missing-input-");
     const state = join(root, "state");
     const ticket = join(root, "ticket.md");
-    const reason = "verify requires $AGX_RUN_DIR/parity.tsv";
+    const reason = "independent outcomes";
     const binding = {
       id: "00000000-0000-4000-8000-000000000001",
       ticket: "missing-input",
@@ -83,7 +83,7 @@ describe("agx-worker run", () => {
     await probe.stop(true);
     writeFileSync(
       jevFile,
-      `Bun.serve({ hostname: "127.0.0.1", port: ${jevPort}, fetch: () => Response.json({ answers: { worker: { choice: "split", reason_code: ${JSON.stringify(reason)} } } }) });\n`,
+      `Bun.serve({ hostname: "127.0.0.1", port: ${jevPort}, fetch: () => Response.json({ answers: { worker: { choice: "split", probabilities: { split: 1 } } } }) });\n`,
     );
     const jev = Bun.spawn([process.execPath, jevFile], {
       stdout: "ignore",
@@ -677,12 +677,9 @@ describe("agx-worker run", () => {
     );
     if (started.at === undefined || ended.at === undefined) return;
     // Session discovery may be recorded before the vendor exits.
-    expect(lines.filter((line) => line.kind !== "session").map((line) => line.kind)).toEqual([
-      "dispatching",
-      "started",
-      "progress",
-      "ended",
-    ]);
+    expect(
+      lines.filter((line) => line.kind !== "session").map((line) => line.kind),
+    ).toEqual(["dispatching", "started", "progress", "ended"]);
     expect(started.row).toBe("luna-high");
     expect(started.id).toBe(binding.id);
     expect(started.unit).toBe(binding.unit);
@@ -1058,7 +1055,10 @@ describe("agx-worker run", () => {
     const jev = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
-      fetch: () => Response.json({ answers: { worker: { choice: "mechanical", confidence: 0.9 } } }),
+      fetch: () =>
+        Response.json({
+          answers: { worker: { choice: "mechanical", confidence: 0.9 } },
+        }),
     });
     const failureCommand =
       'echo OUT; i=1; while [ "$i" -le 21 ]; do echo "MIDDLE-$i"; i=$((i + 1)); done; echo ERR-DETAIL >&2; exit 1';
@@ -1098,16 +1098,23 @@ describe("agx-worker run", () => {
         "--cd",
         root,
       ],
-      { cwd: process.cwd(), env, timeout: 10_000, stdout: "pipe", stderr: "pipe" },
+      {
+        cwd: process.cwd(),
+        env,
+        timeout: 10_000,
+        stdout: "pipe",
+        stderr: "pipe",
+      },
     );
-    const [runExit, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
+    const [runExit, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stderr).text(),
+    ]);
     await jev.stop(true);
     expect(runExit).toBe(0);
     expect(stderr).toContain("VERIFY exit=0 true");
     expect(stderr).toContain("VERIFY exit=3 sh -c 'exit 3'");
-    expect(stderr).toContain(
-      `VERIFY exit=1 ${failureCommand} kind=failed`,
-    );
+    expect(stderr).toContain(`VERIFY exit=1 ${failureCommand} kind=failed`);
     const rows = await foldedRuns(state);
     expect(rows).toHaveLength(1);
     const row = rows[0];

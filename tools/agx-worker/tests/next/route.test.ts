@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
-import { recordRoutingRefusal, routingEvents } from "../../src/next/routing-events.ts";
+import {
+  recordRoutingRefusal,
+  routingEvents,
+} from "../../src/next/routing-events.ts";
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
@@ -196,11 +199,6 @@ function startServer(
         requestBody = parsed.data;
       }
       const wireChoice = wireIds[choice] ?? choice;
-      let reasonCode: string | undefined;
-      if (choice === "missing_input")
-        reasonCode = "verify requires $AGX_RUN_DIR/parity.tsv";
-      else if (["split", "uncheckable", "contradiction"].includes(choice))
-        reasonCode = `specific ${choice} reason`;
       const wireProbabilities =
         probabilities === undefined
           ? undefined
@@ -214,7 +212,6 @@ function startServer(
         answers: {
           worker: {
             choice: wireChoice,
-            ...(reasonCode === undefined ? {} : { reason_code: reasonCode }),
             ...(wireProbabilities === undefined
               ? {}
               : { probabilities: wireProbabilities }),
@@ -937,13 +934,11 @@ test("route contract: Jev payload hides roster rows while classifying the ticket
   expect(server.calls()).toBe(1);
 });
 
-for (const reason of [
-  "split",
-  "uncheckable",
-  "contradiction",
-] as const) {
+for (const reason of ["split", "uncheckable", "contradiction"] as const) {
   test(
-    "return " + reason + " exits 2, records the answer and never reaches worker startup",
+    "return " +
+      reason +
+      " exits 2, records the answer and never reaches worker startup",
     async () => {
       const { root } = await isolateState();
       const server = startServer(reason, { [reason]: 1, model_0: 0 });
@@ -977,7 +972,18 @@ for (const reason of [
       expect(exit).toBe(2);
       expect(stdout).toBe("");
       expect(stderr).toContain("ticket returned: " + reason);
-      expect(stderr).toContain(`specific ${reason} reason`);
+      expect(stderr).toContain(
+        server.rawRequest()?.questions.worker.criteria[reason] ??
+          "missing criterion",
+      );
+      expect(stderr).toContain("Probability: 1");
+      expect(stderr).toContain("ticket fields sent: task, task_size");
+      expect(stderr).not.toContain("reason_code");
+      expect(routingEvents().events.at(-1)).toMatchObject({
+        source: "jev-return",
+        row: null,
+        outcome: "refusal",
+      });
       expect(await Bun.file(join(root, "worker-started")).exists()).toBe(false);
       expect(server.calls()).toBe(1);
       const parsedRecord = jsonOf(
@@ -997,49 +1003,28 @@ for (const reason of [
       if (!parsedRecord.success) return;
       const record = parsedRecord.data;
       expect(record.reason).toBe(reason);
+      expect(record.reason_detail).toBeUndefined();
       expect(record.pick_audit.answer.choice).toBe(reason);
       expect(record.pick_audit.probabilities[reason]).toBe(1);
     },
   );
 }
 
-test("route contract: a return without a reason_code is refused, never routed to a default row", async () => {
-  const { root } = await isolateState();
-  const server = startServer("unused");
-  for (const reasonCode of [undefined, "", "   "]) {
-    server.server.reload({
-      fetch: () =>
-        Response.json({
-          answers: {
-            worker: {
-              choice: "split",
-              reason_code: reasonCode,
-            },
-          },
-        }),
-    });
-    const { message, event } = await expectRefusal("unnamed return fixture");
-    expect(message).toContain(
-      "Jev returned split without a reason_code",
-    );
-    expect(event?.source).toBe("refused-unnamed-return");
-    expect(event?.audit?.answer).toMatchObject({ choice: "split" });
-  }
-  expect(
-    await Bun.file(join(root, "state", "routing-refusals.jsonl")).exists(),
-  ).toBe(false);
-});
-
 test("missing_input is invalid and historical refusals remain accepted", async () => {
   const { root } = await isolateState();
   const server = startServer("missing_input");
   const { message, event } = await expectRefusal("obsolete return fixture");
-  expect(server.rawRequest()?.questions.worker.criteria).not.toHaveProperty("missing_input");
+  expect(server.rawRequest()?.questions.worker.criteria).not.toHaveProperty(
+    "missing_input",
+  );
   expect(message).toContain('Jev choice "missing_input"');
   expect(event?.source).toBe("refused-invalid-class");
   const path = join(root, "state", "routing-refusals.jsonl");
   expect(await Bun.file(path).exists()).toBe(false);
-  recordRoutingRefusal({ ticket: "historical fixture", reason: "missing_input" });
+  recordRoutingRefusal({
+    ticket: "historical fixture",
+    reason: "missing_input",
+  });
   expect(JSON.parse(await readFile(path, "utf8")).reason).toBe("missing_input");
 });
 
