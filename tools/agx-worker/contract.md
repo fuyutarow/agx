@@ -348,24 +348,12 @@ For a fresh Claude process the wrapper generates a UUID, passes it through
 vendor process's environment. On Claude or Codex resume, it declares the full UUID
 supplied to resume. A non-UUID resume selector is not converted or guessed.
 Fresh Codex thread IDs are learned after spawn, so no declaration is installed
-for them. The generated brief tells these workers to pass
-`--from codex:<full-thread-UUID>` using the current thread ID reported by the vendor,
-or leave sender unknown when that ID is unavailable. Native inherited IDs, cwd,
-inventory, transcript order and the dispatcher address are not substitutes.
-
-`agx worker run` exports its own `AGX_RUN_ID` at the worker spawn boundary,
-replacing an inherited run ID. Vendor wrappers forward that run ID. With neither
-explicit sender declaration, agx msg uses the existing run reader and live progress
-projection to resolve that exact run's `route` and full `vendor_session` UUID.
-Missing runs, missing sessions, unsupported routes and non-UUID sessions remain unknown.
-
-agx msg chooses `--from` > explicit `AGX_MSG_FROM` > recorded run sender > unknown, validates the selected
-declaration before transport, and never infers native session identity. Its envelope's
-`from:` line is authoritative caller attribution, not authentication. Claude's
-visible from-name describes the relay transport, named
-`agx msg relay from <declared sender or unknown>`. A worker spawning another agent
-must clear or replace its own declaration; environment inheritance is not proof
-of that agent's identity.
+for them. A worker must pass its own full session address explicitly with
+`agx msg send --from`; absence exits 2 before discovery or transport. A Claude
+worker can use its own `AGX_MSG_FROM` when set, and a Codex worker can use its
+current thread UUID reported by the vendor. Never substitute dispatcher identity
+or guess an address. The envelope is caller attribution, not authentication.
+Manager end notices pass `agx-manager:<full-run-UUID>`.
 
 Harness VCS reads in premise checks, official-execution tracking and repo-retrieve run inside
 OS-enforced write denial before jj/Git starts: Landlock ABI >=3 on Linux x64/arm64 and

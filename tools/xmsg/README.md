@@ -8,16 +8,16 @@ session, with an enqueue outcome. Prefer the native route when already inside it
 Claude's `SendMessage`, `codex queue` for Codex, or `herdr agent prompt` under Herdr.
 
 ```sh
-agx msg send --to codex:<thread-id-or-exact-name> --message 'Can you check this?'
-agx msg send --to claude:<session-id-or-exact-name> --message 'Can you check this?'
-agx msg send --to 01a15424 --message 'Can you check this?'
-agx msg send --to 'review (v2)' --message 'Can you check this?'
+agx msg send --from codex:<full-session-UUID> --to codex:<thread-id-or-exact-name> --message 'Can you check this?'
+agx msg send --from codex:<full-session-UUID> --to claude:<session-id-or-exact-name> --message 'Can you check this?'
+agx msg send --from codex:<full-session-UUID> --to 01a15424 --message 'Can you check this?'
+agx msg send --from codex:<full-session-UUID> --to 'review (v2)' --message 'Can you check this?'
 ```
 
-| Proven sender    | Claude target                                                 | Codex target |
-| ---------------- | ------------------------------------------------------------- | ------------ |
-| Claude           | Refused before delivery; use Claude Code's native SendMessage | agx msg      |
-| Codex or unknown | agx msg                                                       | agx msg      |
+| Proven sender        | Claude target                                                 | Codex target |
+| -------------------- | ------------------------------------------------------------- | ------------ |
+| Claude               | Refused before delivery; use Claude Code's native SendMessage | agx msg      |
+| Codex or agx-manager | agx msg                                                       | agx msg      |
 
 Qualification is optional for a globally unique full UUID, UUID front prefix (at least
 4 hexadecimal digits, case-insensitive with canonical hyphens), or literal exact native
@@ -121,7 +121,7 @@ recipient can send another message using its native route or agx msg.
 
 ## Sender envelope
 
-Use `--from codex:<full-session-UUID>` or `--from claude:<full-session-UUID>` to declare the caller's exact reply address, independently of the recipient backend. Full UUIDs are canonicalized, never shortened. Names, prefixes, unsupported backends and malformed IDs exit 2 before discovery or transport. `--from` declares the sender on send and selects the expected reply sender on wait. This is attribution supplied by the caller, not authentication.
+Send requires `--from codex:<full-session-UUID>` or `--from claude:<full-session-UUID>` to declare the caller's exact reply address, independently of the recipient backend. Full UUIDs are canonicalized, never shortened. Names, prefixes, unsupported backends and malformed IDs exit 2 before discovery or transport. `--from` declares the sender on send and selects the expected reply sender on wait. This is attribution supplied by the caller, not authentication.
 
 Every send adds exactly one envelope at the common transport boundary:
 
@@ -137,54 +137,22 @@ The first line is sender metadata; Claude UUID destinations add a second header,
 deduplicates caller text as existing headers. Claude receipt correlation checks
 the exact composed envelope plus body.
 
-Sender selection is `--from` first, then the explicit `AGX_MSG_FROM` declaration,
-then the exact `AGX_RUN_ID` run's recorded vendor session and route, then the
-proven `CODEX_THREAD_ID` from the nearest Codex vendor process's own environment,
-then unknown.
-The run lookup uses the existing worker record reader and live progress projection;
-unknown runs, missing sessions, unsupported routes and non-UUID sessions stay unknown.
-Both declarations accept the same full addresses and UUID
-canonicalization. An invalid selected declaration (including an empty value) exits
-2 before discovery or transport; a valid `--from` overrides even an invalid
-`AGX_MSG_FROM`. List, status and wait ignore `AGX_MSG_FROM`; wait requires explicit addresses.
+Every send requires an explicit `--from`; omission exits 2 with usage before
+discovery or transport, even if `AGX_MSG_FROM` is set. The manager may use
+`agx-manager:<full-run-UUID>` for end notices. The envelope is caller-declared
+attribution, not authentication. Claude relay names include the declared sender.
 
-Without a proven sender, the first line reports unknown identity and checked and
-missing sources. Sends still work with truthful missing attribution. Inherited
-native session variables do not prove identity. A nearer Claude process or a
-missing or unreadable Codex ID does not prove a Codex sender. No cwd,
-inventory, transcript, latest session, name or lookup order determines the sender.
-No recipient inventory is used for sender selection.
-
-The envelope's first `from:` line is the authoritative **declared reply address**,
-not authenticated identity. The receiving Claude harness's visible from-name
-identifies a separate one-shot relay session, not the original sender. The relay
-uses `claude --print --name 'agx msg relay from <declared sender or unknown>'`.
-Its title repeats the declaration for visibility; its own session UUID is only
-transport and recovery metadata. Installed `claude --help` (2026-10-24) describes
-`-n, --name <name>` as setting a display name with no print-mode restriction.
-The envelope remains authoritative if the receiving harness displays another name.
-
-agx-worker clears any parent's `AGX_MSG_FROM` before launching a vendor process.
-For fresh Claude workers it assigns `--session-id` before spawn and sets
-`AGX_MSG_FROM=claude:<that-full-UUID>` in that process's environment. Resumed
-Claude and Codex workers receive a declaration only for a full UUID explicitly
-passed to resume. Native-name resumes have no declaration. Fresh Codex thread
-IDs are unavailable before spawn, so agx-worker leaves the declaration unset.
-`agx worker run` exports its own `AGX_RUN_ID`, replacing any inherited run ID.
-Once the vendor reports its session to that run's progress record, sends can
-resolve it automatically without `--from`.
-The generated worker brief instructs the worker to use
-`--from codex:<full-thread-UUID>` from the current thread ID reported by the vendor;
-if no ID is supplied, leave sender unknown. Never use the dispatcher address or
-guess an ID. `AGX_MSG_FROM` is an explicit assertion, not a provenance check;
-callers launching another agent must clear or replace their own declaration.
+Workers can pass their own full session address: fresh Claude workers receive it
+in `AGX_MSG_FROM`, and resumed workers receive it there when resumed by full UUID.
+Fresh Codex workers must use their current thread UUID supplied by the vendor.
+If the worker cannot establish its own address, it must not guess.
 
 ## Discover recipients
 
 ```sh
 agx msg list
 agx msg list --json --timeout-ms 5000
-agx msg send --to codex:<shown-short-UUID> --message 'Can you check this?'
+agx msg send --from codex:<full-session-UUID> --to codex:<shown-short-UUID> --message 'Can you check this?'
 ```
 
 Copy the shown address unchanged into `send --to`. Human output shortens UUIDs to the

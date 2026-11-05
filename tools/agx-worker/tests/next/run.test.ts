@@ -221,7 +221,7 @@ describe("agx-worker run", () => {
       await probe.stop(true);
       writeFileSync(
         jevFile,
-        `Bun.serve({ hostname: "127.0.0.1", port: ${port}, fetch: () => Response.json({ answers: { worker: { choice: "luna-high", confidence: 0.9 } } }) });\n`,
+        `Bun.serve({ hostname: "127.0.0.1", port: ${port}, fetch: () => Response.json({ answers: { worker: { choice: "mechanical", confidence: 0.9 } } }) });\n`,
       );
       const server = Bun.spawn([process.execPath, jevFile], {
         stdout: "ignore",
@@ -501,7 +501,7 @@ describe("agx-worker run", () => {
     await portProbe.stop(true);
     writeFileSync(
       jevFile,
-      `Bun.serve({ hostname: "127.0.0.1", port: ${jevPort}, fetch: () => Response.json({ answers: { worker: { choice: "luna-high", confidence: 0.9 } } }) });\n`,
+      `Bun.serve({ hostname: "127.0.0.1", port: ${jevPort}, fetch: () => Response.json({ answers: { worker: { choice: "mechanical", confidence: 0.9 } } }) });\n`,
     );
     const jev = Bun.spawn([process.execPath, jevFile], {
       stdout: "ignore",
@@ -517,7 +517,7 @@ describe("agx-worker run", () => {
     }
     writeFileSync(
       ticket,
-      `+++\nschema = 2\nname = "fake"\nwrites = ["src/**"]\noutcome = "run fake worker"\nconsumer = "legacy consumer field"\nfirst_return = "legacy return field"\nfirst_return_s = 1\ntimeout_s = 450\nread_only_diagnostic = true\ntimeout_reason = "legacy reason"\nverify = []\ncapabilities = ["routine-check"]\n[proposition]\nid = "T1"\nclaim = "fake worker runs"\nrefuted_by = "worker does not run"\ndecides = "infrastructure"\nserves = ["coordination-throughput"]\ngraph_node = "legacy-node"\n+++\nRESOURCE-CLASS(NONCOMPUTE): test fixture\nDo the test.\n`,
+      `+++\nschema = 2\nname = "fake"\nwrites = ["src/**"]\noutcome = "run fake worker"\nconsumer = "legacy consumer field"\nfirst_return = "legacy return field"\nfirst_return_s = 1\ntimeout_s = 1800\nread_only_diagnostic = true\ntimeout_reason = "legacy reason"\nverify = []\ncapabilities = ["routine-check"]\n[proposition]\nid = "T1"\nclaim = "fake worker runs"\nrefuted_by = "worker does not run"\ndecides = "infrastructure"\nserves = ["coordination-throughput"]\ngraph_node = "legacy-node"\n+++\nRESOURCE-CLASS(NONCOMPUTE): test fixture\nDo the test.\n`,
     );
     const interim = JSON.stringify({
       interim: true,
@@ -630,10 +630,10 @@ describe("agx-worker run", () => {
       },
     );
 
-    expect(
-      result.stderr.toString().trim().split("\n"),
-      result.stderr.toString(),
-    ).toHaveLength(1);
+    expect(result.stderr.toString().trim().split("\n")).toEqual([
+      expect.stringContaining("WARN ignored legacy ticket fields:"),
+      expect.stringContaining(`WARN overlap run=${binding.id}`),
+    ]);
     expect(result.stderr.toString()).toStartWith(
       "WARN ignored legacy ticket fields:",
     );
@@ -672,12 +672,8 @@ describe("agx-worker run", () => {
       join(state, "runs", started.id, "brief.md"),
       "utf8",
     );
-    expect(brief).toContain("--from overrides AGX_MSG_FROM");
     expect(brief).toContain(
-      "accepts CODEX_THREAD_ID only from the nearest vendor process's own environment",
-    );
-    expect(brief).toContain(
-      "If no source proves the caller, leave sender unknown",
+      "--from is required on agx msg send; pass your own full address: a Codex worker passes codex:$CODEX_THREAD_ID, a Claude worker passes the value of AGX_MSG_FROM.",
     );
     if (started.at === undefined || ended.at === undefined) return;
     // Session discovery may be recorded before the vendor exits.
@@ -1024,6 +1020,7 @@ describe("agx-worker run", () => {
         "unit",
         "worker_name",
         "verify",
+        "verify_round",
         "workspace",
         "workspace_name",
         "writes",
@@ -1061,7 +1058,7 @@ describe("agx-worker run", () => {
     const jev = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
-      fetch: () => Response.json({ answers: { worker: { choice: "luna-high", confidence: 0.9 } } }),
+      fetch: () => Response.json({ answers: { worker: { choice: "mechanical", confidence: 0.9 } } }),
     });
     const failureCommand =
       'echo OUT; i=1; while [ "$i" -le 21 ]; do echo "MIDDLE-$i"; i=$((i + 1)); done; echo ERR-DETAIL >&2; exit 1';
