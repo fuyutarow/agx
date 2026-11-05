@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.104 — 2026-11-05
+
+- Keep worker and verify command lookup on the suite version that started the run.
+
 ## 1.22.103 — 2026-11-05
 
 - Reject writes entries whose literal prefix parent does not exist in the worker tree.
