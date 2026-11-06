@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.1 — 2026-11-06
+
+- Remove obsolete native inventory and recipient selection code
+
 ## 2.0.0 — 2026-11-06
 
 - Replace model relays with Reason Network message delivery.
