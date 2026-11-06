@@ -343,7 +343,15 @@ The vendor wrapper removes inherited native session variables, AGX_MSG_FROM and
 AGX_XMSG_BOUND_CLAUDE_TARGET. Codex briefs ask for a Reason Network send_message
 ACK only when the dispatcher's live address is resolved; otherwise they say no ACK
 is expected. Claude workers use the run-end notice as their completion signal.
-The end notice resolves the dispatcher again when the run ends.
+The end notice resolves the dispatcher again when the run ends, then sends one
+`reason-network send <address> <message>` with no `--from` and no agx-owned session
+or MCP process. Its environment holds only PATH, HOME and REASON_NETWORK_HOME (when
+set), so Reason Network attributes the message to its terminal sender
+(`cli:terminal`), never to the dispatcher. The body starts with the marker line
+`agx end-notice run <run id>` and keeps "No reply needed; read: agx worker ls --json".
+The result is `accepted` (exit 0 and exactly one `message id <ULID>` line, the id in
+the receipt), `unreachable` (the dispatcher is not registered), `deadline`, or
+`unknown`; a send is never repeated.
 
 Harness VCS reads in premise checks, official-execution tracking and repo-retrieve run inside
 OS-enforced write denial before jj/Git starts: Landlock ABI >=3 on Linux x64/arm64 and
@@ -1001,7 +1009,7 @@ No tie threshold, cheaper-row preference or exploration policy is introduced.
 
 ## Worker result directory
 
-For Claude-route briefs, the agx-manager end notice is the completion notice.
+For Claude-route briefs, the run-end notice from the Reason Network terminal sender is the completion notice.
 The worker sends no completion ACK, even when the ticket requests one.
 Workspace-write workers put their result in `$AGX_RUN_DIR/result.md`;
 read-only workers return it in their final response. Codex-route briefs retain

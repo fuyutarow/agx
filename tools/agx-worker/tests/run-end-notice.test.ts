@@ -69,6 +69,21 @@ async function deliver(input: Case) {
     parentPid: dead.pid,
     ...(input.deadlineMs === undefined ? {} : { deadlineMs: input.deadlineMs }),
   };
+  const mode =
+    input.senderDelayMs === "never"
+      ? "hang"
+      : input.senderExit === undefined || input.senderExit === 0
+        ? "ok"
+        : "unknown";
+  const home = join(root, "rn-home");
+  await Bun.write(
+    join(home, "fake.json"),
+    JSON.stringify({
+      log: sent,
+      mode,
+      delayMs: String(typeof input.senderDelayMs === "number" ? input.senderDelayMs : 0),
+    }),
+  );
   const result = Bun.spawnSync(
     [
       process.execPath,
@@ -81,16 +96,7 @@ async function deliver(input: Case) {
         ...subprocessEnvironment(),
         PATH: `${root}:${process.env.PATH ?? ""}`,
         AGX_STATE_DIR: state,
-        FAKE_LOG: sent,
-        FAKE_MODE:
-          input.senderDelayMs === "never"
-            ? "hang"
-            : input.senderExit === undefined || input.senderExit === 0
-              ? "ok"
-              : "unknown",
-        FAKE_DELAY_MS: String(
-          typeof input.senderDelayMs === "number" ? input.senderDelayMs : 0,
-        ),
+        REASON_NETWORK_HOME: home,
       },
       timeout: 15_000,
     },
@@ -116,17 +122,13 @@ async function deliver(input: Case) {
     .flatMap((line) => {
       const parsed = jsonOf(
         z.object({
-          method: z.literal("tools/call"),
-          params: z.object({
-            arguments: z.object({
-              to: z.string(),
-              message: z.string(),
-              idempotency_key: z.string(),
-            }),
-          }),
+          command: z.literal("send"),
+          args: z.tuple([z.string(), z.string()]),
         }),
       ).safeParse(line);
-      return parsed.success ? [parsed.data.params.arguments] : [];
+      return parsed.success
+        ? [{ to: parsed.data.args[0], message: parsed.data.args[1] }]
+        : [];
     });
   const endedLines = records
     .trim()
@@ -175,7 +177,6 @@ for (const c of [
     expect(notices).toHaveLength(1);
     const send = sends[0];
     expect(send?.to).toBe("alice/dispatcher@host");
-    expect(send?.idempotency_key).toBe(`${runId(c.outcome)}:end`);
     const message = send?.message ?? "";
     expect(message).toContain(runId(c.outcome));
     expect(message).toContain("notice-ticket");
@@ -214,7 +215,7 @@ test("run end notice: a failed send is recorded and does not touch the outcome",
   expect(notices[0]?.notice).toMatchObject({
     status: "unknown",
     exit: 1,
-    receipt: "receipt unavailable; sender agx-manager",
+    receipt: "receipt unavailable",
   });
   expect(endedLines).toEqual([
     JSON.stringify({
@@ -253,7 +254,7 @@ test("run end notice: a sender that accepts after 3 s is recorded accepted", asy
   expect(notices[0]?.notice).toMatchObject({
     status: "accepted",
     exit: 0,
-    receipt: "message id 01ARZ3NDEKTSV4RRFFQ69G5FAV; sender agx-manager",
+    receipt: "message id 01ARZ3NDEKTSV4RRFFQ69G5FA1",
   });
 });
 
@@ -284,6 +285,10 @@ test("a bare Claude dispatcher is qualified for a real run end notice", async ()
   await mkdir(state);
   const reason = join(bin, "reason-network");
   const sent = join(root, "reason.log");
+  await Bun.write(
+    join(root, "rn-home", "fake.json"),
+    JSON.stringify({ log: sent, mode: "ok" }),
+  );
   await Bun.write(
     reason,
     `#!${process.execPath}\nimport ${JSON.stringify(resolve("tools/agx-worker/tests/fixtures/reason-notice.ts"))};\n`,
@@ -333,8 +338,7 @@ test("a bare Claude dispatcher is qualified for a real run end notice", async ()
           TYPESAFE_API_KEY: "test-key",
           CLAUDE_CODE_SESSION_ID: "bare-claude-session",
           AGX_DISPATCHER_SESSION: "",
-          FAKE_LOG: sent,
-          FAKE_MODE: "ok",
+          REASON_NETWORK_HOME: join(root, "rn-home"),
           XDG_STATE_HOME: join(root, "xdg"),
         },
         stdout: "pipe",
@@ -353,13 +357,13 @@ test("a bare Claude dispatcher is qualified for a real run end notice", async ()
       log = await Bun.file(sent)
         .text()
         .catch(() => "");
-      if (log.includes('"method":"tools/call"')) break;
+      if (log.includes('"command":"send"')) break;
       await Bun.sleep(50);
     }
     expect(log).toContain(
       '"agent":"claude-code","session":"bare-claude-session"',
     );
-    expect(log).toContain('"method":"tools/call"');
+    expect(log).toContain('"command":"send"');
     const records = await Bun.file(join(state, "records.jsonl")).text();
     expect(records).toContain('"dispatcher_session":"bare-claude-session"');
     expect(records).toContain('"ack_lookup_kind":"accepted"');

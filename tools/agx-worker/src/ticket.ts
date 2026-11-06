@@ -27,7 +27,7 @@ export function verifyLine(verify: string[]): string {
 
 /** Appended only to a claude-route brief, regardless of the bound target. */
 export function claudeAckLine(_name: string | undefined): string {
-  return "Do not send a completion ACK, even if the ticket asks for one. The agx-manager end notice is the completion notice; put the result in $AGX_RUN_DIR/result.md.";
+  return "Do not send a completion ACK, even if the ticket asks for one. The run-end notice, sent by Reason Network as its terminal sender, is the completion notice; put the result in $AGX_RUN_DIR/result.md.";
 }
 
 // --- overlap of write scopes ---------------------------------------------------------------------

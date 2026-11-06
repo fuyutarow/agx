@@ -2,11 +2,18 @@ import { afterEach, expect, test } from "bun:test";
 import { chmod, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { terminalEnvironment } from "../../src/next/end-notice.ts";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
 const id = "66666666-6666-4666-8666-666666666666";
-async function run(mode = "ok", missing = false) {
+const otherId = "77777777-7777-4777-8777-777777777777";
+const agentNames = [
+  "REASON_NETWORK_AGENT", "TINCAN_AGENT", "REASON_NETWORK_SESSION", "TINCAN_SESSION", "CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_PID",
+  "CODEX_THREAD_ID", "CODEX_SESSION_ID", "GROK_SESSION_ID", "GROK_WORKSPACE_ROOT", "GEMINI_CLI", "GEMINI_SESSION_ID", "CURSOR_AGENT",
+  "OPENCODE", "OPENCODE_SESSION_ID", "COPILOT_CLI", "COPILOT_AGENT_SESSION_ID", "AI_AGENT", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED",
+];
+async function fixture(mode = "ok", missing = false) {
   const root = await mkdtemp(join(tmpdir(), "notice-reason-")); roots.push(root);
   const state = join(root, "state"); const log = join(root, "calls");
   if (!missing) {
@@ -15,80 +22,85 @@ async function run(mode = "ok", missing = false) {
     await chmod(binary, 0o755);
   }
   const dead = Bun.spawnSync([process.execPath, "-e", "0"]);
-  const request = { id, ticket: "test", dispatcher: "claude:dispatcher", startedAt: "2026-11-03T00:00:00Z", endedAt: "2026-11-03T00:01:00Z", outcome: "ok", exit: 0, resultPath: null, verifyExits: [], parentPid: dead.pid, deadlineMs: 800 };
-  const invoke = async () => {
-    const child = Bun.spawn([process.execPath, resolve("tools/agx-worker/src/next/cli.ts"), "--internal-end-notice", JSON.stringify(request)], { env: { ...process.env, PATH: root, AGX_STATE_DIR: state, FAKE_LOG: log, FAKE_MODE: mode, CODEX_THREAD_ID: "worker-thread" }, stdout: "pipe", stderr: "pipe" });
+  const request = (runId: string) => ({ id: runId, ticket: "test", dispatcher: "claude:dispatcher", startedAt: "2026-11-03T00:00:00Z", endedAt: "2026-11-03T00:01:00Z", outcome: "ok", exit: 0, resultPath: null, verifyExits: [], parentPid: dead.pid, deadlineMs: 800 });
+  const invoke = async (runId = id, extra: Record<string, string> = {}, stateDir = state) => {
+    const agentEnv = Object.fromEntries(agentNames.map((name) => [name, "inherited"]));
+    // The send gets only PATH, HOME and REASON_NETWORK_HOME, so the fake reads its settings from REASON_NETWORK_HOME.
+    const home = join(root, `home-${runId}`);
+    await Bun.write(join(home, "fake.json"), JSON.stringify({ log, mode, delayMs: extra.FAKE_DELAY_MS }));
+    const child = Bun.spawn([process.execPath, resolve("tools/agx-worker/src/next/cli.ts"), "--internal-end-notice", JSON.stringify(request(runId))], { env: { ...process.env, ...agentEnv, CLAUDE_CODE_SESSION_ID: "dispatcher-session", CODEX_THREAD_ID: "worker-thread", PATH: root, HOME: process.env.HOME ?? root, REASON_NETWORK_HOME: home, AGX_STATE_DIR: stateDir, FAKE_CANARY: "parent-only" }, stdout: "pipe", stderr: "pipe" });
     const [exit, out, err] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
     expect(exit, `${out} ${err}`).toBe(0);
-    const records = (await Bun.file(join(state, "records.jsonl")).text()).trim().split("\n").map((line) => JSON.parse(line));
-    return records.filter((row) => row.kind === "end-notice").at(-1).notice;
+    const records = (await Bun.file(join(stateDir, "records.jsonl")).text()).trim().split("\n").map((line) => JSON.parse(line));
+    return records.filter((row) => row.kind === "end-notice" && row.id === runId).at(-1).notice;
   };
-  return { invoke, calls: async () => (await Bun.file(log).text().catch(() => "")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)) };
+  return { root, state, invoke, calls: async () => (await Bun.file(log).text().catch(() => "")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)) };
 }
-test("sends from manager to resolved dispatcher with a stable idempotency key", async () => {
-  const fixture = await run();
-  for (let i = 0; i < 2; i++) expect(await fixture.invoke()).toMatchObject({ status: "accepted", receipt: expect.stringContaining("01ARZ3NDEKTSV4RRFFQ69G5FAV") });
-  const calls = await fixture.calls();
-  expect(calls.filter((c) => c.command === "who").map((c) => [c.agent, c.session])).toEqual([["claude-code", "dispatcher"], ["claude-code", "dispatcher"]]);
-  expect(calls.filter((c) => c.command === "mcp").map((c) => [c.agent, c.session, c.thread])).toEqual([["reason", "agx-manager", "worker-thread"], ["reason", "agx-manager", "worker-thread"]]);
-  expect(calls.filter((c) => c.command === "status").every((c) => c.agent === "reason" && c.session === "agx-manager" && c.args.join(" ") === "--name agx-manager")).toBe(true);
-  // Per run: the first tool call (list_team) registers the session, the rename follows it, the send comes from agx-manager.
-  const steps = calls.flatMap((c) => c.command === "mcp" ? ["open"] : c.command === "status" ? [`rename:registered=${c.registered}`] : c.method === "tools/call" ? [c.params.name] : c.sentFrom !== undefined ? [`from:${c.sentFrom}`] : []);
-  expect(steps).toEqual(Array(2).fill(["open", "list_team", "rename:registered=true", "send_message", "from:agx-manager"]).flat());
-  const sends = calls.filter((c) => c.method === "tools/call" && c.params.name === "send_message").map((c) => c.params.arguments);
-  expect(sends).toHaveLength(2);
-  expect(calls.filter((c) => c.delivery === `${id}:end`)).toHaveLength(1);
-  for (const send of sends) { expect(send.idempotency_key).toBe(`${id}:end`); expect(send.to).toBe("alice/dispatcher@host"); expect(send.message).toContain("No reply needed; read: agx worker ls --json"); }
+
+test("one terminal send per run to the address lookupAddress resolved, with no agent variable", async () => {
+  const run = await fixture();
+  expect(await run.invoke()).toEqual({ status: "accepted", exit: 0, receipt: "message id 01ARZ3NDEKTSV4RRFFQ69G5FA6" });
+  const calls = await run.calls();
+  expect(calls.filter((c) => c.command === "who").map((c) => [c.agent, c.session])).toEqual([["claude-code", "dispatcher"]]);
+  const sends = calls.filter((c) => c.command === "send");
+  expect(sends).toHaveLength(1);
+  const send = sends[0];
+  expect(send.args).toHaveLength(2);
+  expect(send.hasFrom).toBe(false);
+  expect(send.args[0]).toBe("alice/dispatcher@host");
+  expect(send.args[1]).toContain(`agx run ${id} test ended ok exit 0`);
+  expect(send.args[1]).toContain("No reply needed; read: agx worker ls --json");
+  // The parent set every agent variable (and these two on top); the send's environment is the allowlist and nothing else.
+  expect(send.envNames).toEqual(["HOME", "PATH", "REASON_NETWORK_HOME"]);
+  for (const name of ["CLAUDECODE", "CODEX_SESSION_ID", "TINCAN_AGENT", "TINCAN_SESSION", "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID"]) expect(send.envNames).not.toContain(name);
+  expect(send.args[1].split("\n")[0]).toBe(`agx end-notice run ${id}`);
+  expect(calls.some((c) => c.command === "mcp" || c.command === "status")).toBe(false);
 });
-test("unregistered and absent binary are unreachable", async () => {
-  const unregistered = await run("unregistered");
+
+test("the child environment is the allowlist: PATH, HOME and REASON_NETWORK_HOME when set", () => {
+  const parent = { PATH: "/bin", HOME: "/home/x", REASON_NETWORK_HOME: "/rn", FAKE_LOG: "log", CLAUDE_PROJECT_DIR: "/p", ...Object.fromEntries(agentNames.map((name) => [name, "v"])), CODEX_SANDBOX_OTHER: "1" };
+  expect(terminalEnvironment(parent)).toEqual({ PATH: "/bin", HOME: "/home/x", REASON_NETWORK_HOME: "/rn" });
+  expect(terminalEnvironment({ PATH: "/bin", CLAUDECODE: "1" })).toEqual({ PATH: "/bin" });
+  expect(terminalEnvironment({})).toEqual({});
+});
+
+test("two notices for different runs started together are both accepted", async () => {
+  const run = await fixture();
+  const [first, second] = await Promise.all([
+    run.invoke(id, { FAKE_DELAY_MS: "400" }),
+    run.invoke(otherId, { FAKE_DELAY_MS: "400" }, join(run.root, "state-other")),
+  ]);
+  expect(first).toEqual({ status: "accepted", exit: 0, receipt: "message id 01ARZ3NDEKTSV4RRFFQ69G5FA6" });
+  expect(second).toEqual({ status: "accepted", exit: 0, receipt: "message id 01ARZ3NDEKTSV4RRFFQ69G5FA7" });
+  const calls = await run.calls();
+  expect(calls.filter((c) => c.command === "send")).toHaveLength(2);
+  expect(calls.filter((c) => c.delivery !== undefined).map((c) => c.delivery).sort()).toEqual([id, otherId]);
+  expect(calls.some((c) => c.command === "mcp")).toBe(false);
+});
+
+test("a send without a message id is unknown and is not retried", async () => {
+  for (const mode of ["no-id", "two-ids", "unknown"]) {
+    const run = await fixture(mode);
+    expect(await run.invoke()).toMatchObject({ status: "unknown", exit: 1 });
+    expect((await run.calls()).filter((c) => c.command === "send")).toHaveLength(1);
+  }
+  expect((await (await fixture("unknown")).invoke()).receipt).toBe("receipt unavailable");
+});
+
+test("an unregistered dispatcher is unreachable and nothing is sent; an absent binary is unreachable", async () => {
+  const unregistered = await fixture("unregistered");
   expect(await unregistered.invoke()).toMatchObject({ status: "unreachable", receipt: "dispatcher session is not registered with Reason Network or not live" });
-  expect((await unregistered.calls()).some((call) => call.command === "mcp")).toBe(false);
-  expect(await (await run("ok", true)).invoke()).toMatchObject({ status: "unreachable", receipt: "reason-network executable not found on PATH" });
+  expect((await unregistered.calls()).some((call) => call.command === "send" || call.command === "mcp")).toBe(false);
+  expect(await (await fixture("ok", true)).invoke()).toMatchObject({ status: "unreachable", receipt: "reason-network executable not found on PATH" });
 });
-test("deadline is not accepted and rename failure is retained", async () => {
-  expect(await (await run("unknown")).invoke()).toMatchObject({ status: "unknown", receipt: expect.stringContaining("receipt unavailable") });
-  const hanging = await run("hang");
-  expect(["deadline", "unknown"]).toContain((await hanging.invoke()).status);
-  const helper = (await hanging.calls()).find((call) => call.helper !== undefined)?.helper;
+
+test("a send that never ends is a deadline and its helper is killed", async () => {
+  const hanging = await fixture("hang");
+  expect((await hanging.invoke()).status).toBe("deadline");
+  const calls = await hanging.calls();
+  expect(calls.filter((c) => c.command === "send")).toHaveLength(1);
+  const helper = calls.find((call) => call.helper !== undefined)?.helper;
   expect(helper).toBeGreaterThan(0);
   const helperStat = await Bun.file(`/proc/${helper}/stat`).text().catch(() => "");
   expect(helperStat === "" || /^\d+ \(.*\) Z /u.test(helperStat)).toBe(true);
-  expect(["deadline", "unknown"]).toContain((await (await run("hang-initialize")).invoke()).status);
-  expect(await (await run("rename-fails")).invoke()).toMatchObject({ status: "accepted", receipt: expect.stringContaining("rename denied") });
-});
-test("the receipt names the rename outcome and the notice is sent from agx-manager", async () => {
-  const fixture = await run();
-  const notice = await fixture.invoke();
-  expect(notice.status).toBe("accepted");
-  expect(notice.receipt).toContain("sender agx-manager");
-  const calls = await fixture.calls();
-  expect(calls.filter((c) => c.sentFrom !== undefined).at(-1)?.sentFrom).toBe("agx-manager");
-});
-test("a rename before registration is refused by the daemon, so the notice renames only after list_team", async () => {
-  const root = await mkdtemp(join(tmpdir(), "notice-reason-fake-")); roots.push(root);
-  const binary = join(root, "reason-network");
-  await Bun.write(binary, `#!${process.execPath}\nimport ${JSON.stringify(resolve("tools/agx-worker/tests/fixtures/reason-notice.ts"))};\n`);
-  await chmod(binary, 0o755);
-  const early = Bun.spawnSync([binary, "status", "--name", "agx-manager"], { env: { ...process.env, FAKE_LOG: join(root, "calls"), REASON_NETWORK_AGENT: "reason", REASON_NETWORK_SESSION: "agx-manager" } });
-  expect(early.exitCode).toBe(1);
-  expect(early.stderr.toString()).toBe("this session is not registered");
-});
-test("a refused rename still sends the notice and the receipt says why", async () => {
-  const fixture = await run("rename-fails");
-  const notice = await fixture.invoke();
-  const { receipt } = notice;
-  expect(notice.status).toBe("accepted");
-  expect(receipt).toContain("rename failed: rename denied");
-  expect(receipt).toContain("01ARZ3NDEKTSV4RRFFQ69G5FAV");
-  expect((await fixture.calls()).filter((c) => c.sentFrom !== undefined).at(-1)?.sentFrom).toBe("fuyu-reason");
-});
-test("a failed registration skips the rename, says so, and still sends the notice", async () => {
-  const fixture = await run("list-fails");
-  const notice = await fixture.invoke();
-  expect(notice.status).toBe("accepted");
-  expect(notice.receipt).toContain("rename skipped: session not registered (directory unavailable)");
-  const calls = await fixture.calls();
-  expect(calls.some((c) => c.command === "status")).toBe(false);
-  expect(calls.filter((c) => c.delivery === `${id}:end`)).toHaveLength(1);
 });

@@ -58,6 +58,8 @@ async function deliver(input: { hangs: boolean; deadlineMs: number }) {
     parentPid: dead.pid,
     deadlineMs: input.deadlineMs,
   };
+  const home = join(root, "rn-home");
+  await Bun.write(join(home, "fake.json"), JSON.stringify({ log, mode: input.hangs ? "hang" : "hold-pipes" }));
   const started = performance.now();
   const child = Bun.spawn(
     [
@@ -74,8 +76,7 @@ async function deliver(input: { hangs: boolean; deadlineMs: number }) {
         ...subprocessEnvironment(),
         PATH: `${root}:${process.env.PATH ?? ""}`,
         AGX_STATE_DIR: state,
-        FAKE_LOG: log,
-        FAKE_MODE: input.hangs ? "hang" : "hold-pipes",
+        REASON_NETWORK_HOME: home,
       },
     },
   );

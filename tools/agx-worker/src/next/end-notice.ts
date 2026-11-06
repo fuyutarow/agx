@@ -1,4 +1,4 @@
-import { Session, lookupAddress, type Failure } from "../../../reason-transport/src/index.ts";
+import { lookupAddress, parseProse } from "../../../reason-transport/src/index.ts";
 import { z } from "../../../shared/src/zod.ts";
 import { fromThrowable } from "neverthrow";
 import { stableSelfCommand } from "../self-command.ts";
@@ -159,6 +159,27 @@ async function waitForParentExit(parentPid: number): Promise<void> {
   }
 }
 
+/**
+ * The environment of the `reason-network send` call is an allowlist: PATH, HOME and REASON_NETWORK_HOME (when set).
+ * Reason Network decides that a process is an agent session from many variables (agent.rs:12-35 `detect_env`,
+ * :98-118 `env_session_id`, :305-333 `CLAUDE_PID`/`CLAUDE_CODE_SESSION_ID`; paths.rs:19-29 legacy `TINCAN_*` spellings;
+ * main.rs:792-808 `agent_vars`), and a denylist misses the ones it does not name: `CLAUDECODE` alone selects claude-code
+ * and then the session comes from the ancestor registry. With any of them set, the sender is the dispatcher and Reason Network
+ * leaves the sender out of the recipients (daemon/directory.rs:417-418). With none, it sends as the terminal, `cli:terminal`
+ * (main.rs:466-498).
+ */
+const allowedVariables = ["PATH", "HOME", "REASON_NETWORK_HOME"] as const;
+
+/** The environment for the Reason Network CLI call: only the allowlisted variables that are set. */
+export function terminalEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    allowedVariables.flatMap((name) => {
+      const value = env[name];
+      return value === undefined ? [] : [[name, value] as const];
+    }),
+  );
+}
+
 async function sendEndNotice(
   input: EndNoticeRequest,
   env: NodeJS.ProcessEnv,
@@ -179,6 +200,7 @@ async function sendEndNotice(
       .total("milliseconds"),
   );
   const message =
+    `agx end-notice run ${input.id}\n` +
     `agx run ${input.id} ${input.ticket} ended ${input.outcome} ` +
     `exit ${input.exit ?? "none"} after ${(elapsedMs / 60_000).toFixed(1)} min; result: ${input.resultPath ?? "none"}; ` +
     `verify: ${input.verifyDetails ?? verifyText(input.verifyExits, input.verifyRound)}; ` +
@@ -188,67 +210,55 @@ async function sendEndNotice(
   const remaining = () => Math.max(1, Math.floor(deadlineAt - performance.now()));
   const expired = () => performance.now() >= deadlineAt;
   const deadline = (): EndNotice => ({ status: "deadline", exit: 4, receipt: `notice deadline exceeded after ${input.deadlineMs} ms` });
-  const failure = (outcome: Failure, lookup = false): EndNotice => {
-    if (expired()) return deadline();
-    if (lookup && outcome.kind === "refused") return { status: "unreachable", exit: 1, receipt: "dispatcher session is not registered with Reason Network or not live" };
-    return { status: outcome.kind === "unknown" ? "unknown" : "unreachable", exit: 1, receipt: outcome.text.slice(0, receiptLimit) };
-  };
   const separator = target.indexOf(":");
   const vendor = separator < 0 ? "" : target.slice(0, separator);
   const dispatcherSession = separator < 0 ? "" : target.slice(separator + 1);
   if (expired()) return deadline();
   const address = await lookupAddress({ binary: executable, vendor, session: dispatcherSession, deadlineMs: remaining() });
-  if (address.kind !== "accepted") return failure(address, true);
+  if (address.kind !== "accepted") {
+    if (expired()) return deadline();
+    if (address.kind === "refused") return { status: "unreachable", exit: 1, receipt: "dispatcher session is not registered with Reason Network or not live" };
+    return { status: address.kind === "unknown" ? "unknown" : "unreachable", exit: 1, receipt: address.text.slice(0, receiptLimit) };
+  }
   if (expired()) return deadline();
-  const opened = await Session.open({ binary: executable, session: "agx-manager", deadlineMs: remaining() });
-  if (opened.kind !== "accepted") return failure(opened);
-  return deliverOpened(opened.value, executable, env, address.value, input.id, message, remaining, expired, deadline, failure).finally(() => { opened.value.close(); });
+  return sendOnce(executable, terminalEnvironment(env), address.value, message, remaining, deadline);
 }
 
-async function renameManager(executable: string, env: NodeJS.ProcessEnv, remaining: () => number): Promise<string> {
-  const renamed = fromThrowable(() => Bun.spawn([executable, "status", "--name", "agx-manager"], {
-    stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: true,
-    env: { ...process.env, ...env, REASON_NETWORK_AGENT: "reason", REASON_NETWORK_SESSION: "agx-manager" },
+/**
+ * One `reason-network send <address> <message>` with no `--from`: Reason Network attributes it to its terminal
+ * sender and owns the delivery. There is no agx-owned session and no MCP process. The call is never repeated:
+ * anything but exit 0 with exactly one `message id` line is `unknown`, and a deadline is `deadline`.
+ */
+async function sendOnce(
+  executable: string,
+  env: NodeJS.ProcessEnv,
+  address: string,
+  message: string,
+  remaining: () => number,
+  deadline: () => EndNotice,
+): Promise<EndNotice> {
+  const started = fromThrowable(() => Bun.spawn([executable, "send", address, message], {
+    stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: true, env,
   }), String)();
-  if (renamed.isErr()) return `rename failed: ${renamed.error}`;
-  const child = renamed.value;
+  if (started.isErr()) return { status: "unknown", exit: 1, receipt: `send could not start: ${started.error}`.slice(0, receiptLimit) };
+  const child = started.value;
   const kill = () => { fromThrowable(() => process.kill(-child.pid, "SIGKILL"), String)(); child.kill("SIGKILL"); };
-  const timer = setTimeout(kill, remaining());
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; kill(); }, remaining());
   const output = Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);
   const code = await child.exited;
+  // A helper the sender left holding its pipes ends with the sender's process group.
   kill();
   clearTimeout(timer);
   let drainTimer: ReturnType<typeof setTimeout> | undefined;
   const drained = await Promise.race([output, new Promise<[string, string]>((resolve) => { drainTimer = setTimeout(() => { resolve(["", ""]); }, pipeDrainMs); })]);
   clearTimeout(drainTimer);
+  if (timedOut) return deadline();
   const [out, err] = drained;
+  const ids = parseProse("send", out);
+  if (code === 0 && ids !== undefined) return { status: "accepted", exit: 0, receipt: `message id ${ids.join(", ")}` };
   const detail = (out + err).trim();
-  if (code === 0) return "sender agx-manager";
-  return `rename failed: ${detail === "" ? `exit ${code}` : detail}`;
-}
-
-async function deliverOpened(
-  session: Session, executable: string, env: NodeJS.ProcessEnv, to: string, id: string,
-  message: string, remaining: () => number, expired: () => boolean, deadline: () => EndNotice,
-  failure: (outcome: Failure) => EndNotice,
-): Promise<EndNotice> {
-  if (expired()) return deadline();
-  // An MCP session registers on its first tool call (mcp.rs `session_for`, reached from list_team), and `status --name`
-  // refuses an unregistered key ("this session is not registered": daemon/sessions.rs:298). So register first, then rename.
-  const registered = await session.address(remaining());
-  const renameReceipt = registered.kind === "accepted"
-    ? await renameManager(executable, env, remaining)
-    : `rename skipped: session not registered (${registered.text.slice(0, 200)})`;
-  if (expired()) {
-    const result = deadline();
-    return { ...result, receipt: [result.receipt, renameReceipt].filter(Boolean).join("; ").slice(0, receiptLimit) };
-  }
-  const sent = await session.send({ to, message, idempotencyKey: `${id}:end`, deadlineMs: remaining() });
-  if (sent.kind !== "accepted") {
-    const result = failure(sent);
-    return { ...result, receipt: [result.receipt, renameReceipt].filter(Boolean).join("; ").slice(0, receiptLimit) };
-  }
-  return { status: "accepted", exit: 0, receipt: [`message id ${sent.value.join(", ")}`, renameReceipt].filter(Boolean).join("; ").slice(0, receiptLimit) };
+  return { status: "unknown", exit: 1, receipt: (detail === "" ? `send exit ${code}` : detail).slice(0, receiptLimit) };
 }
 
 /** Internal detached worker: deliver only after the run process has exited. */
