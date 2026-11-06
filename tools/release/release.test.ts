@@ -1436,7 +1436,19 @@ test("release contract: size", async () => {
   await symlink(join(repository, "tools"), join(root, "tools"));
   await symlink(join(repository, "node_modules"), join(root, "node_modules"));
 
-  const result = await productionBuild("suite", undefined, root, productionRun);
+  let reasonTransportStaged = false;
+  const inspectStage: typeof productionRun = async (cmd, cwd, options) => {
+    if (
+      cmd.includes("--compile") &&
+      cmd.some((arg) => arg.endsWith("/launcher.ts"))
+    )
+      reasonTransportStaged = await Bun.file(
+        join(root, "dist/suite/tools/reason-transport/src/index.ts"),
+      ).exists();
+    return productionRun(cmd, cwd, options);
+  };
+  const result = await productionBuild("suite", undefined, root, inspectStage);
+  expect(reasonTransportStaged).toBe(true);
   expect(result.isOk(), result.isErr() ? result.error : "").toBe(true);
   if (result.isErr()) return;
 

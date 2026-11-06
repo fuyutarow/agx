@@ -318,9 +318,14 @@ async function buildSuite(
     join(root, "tools/release/launcher.ts"),
     join(stagedRelease, "launcher.ts"),
   );
-  const shared = join(root, "tools/shared");
-  if (await Bun.file(join(shared, "src/cli.ts")).exists())
-    await symlink(shared, join(stagedTools, "shared"));
+  for (const [library, entry] of [
+    ["shared", "src/cli.ts"],
+    ["reason-transport", "src/index.ts"],
+  ] as const) {
+    const source = join(root, "tools", library);
+    if (await Bun.file(join(source, entry)).exists())
+      await symlink(source, join(stagedTools, library));
+  }
   const guardedEntrypoints = new Map<string, { path: string; command: string }>(
     [
       ["agx-worker", { path: "src/next/cli.ts", command: "agx-worker" }],
