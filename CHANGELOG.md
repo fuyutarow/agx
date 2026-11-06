@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.23.4 — 2026-11-06
+
+- Resolve Codex completion ACK addresses through Reason Network.
+- Stage reason-transport when building the suite launcher.
+
 ## 1.23.3 — 2026-11-06
 
 - Register MCP sessions under the reason agent.
