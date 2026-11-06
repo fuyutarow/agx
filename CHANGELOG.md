@@ -1,5 +1,10 @@
 # Changelog
 
+## 4.1.0 — 2026-11-06
+
+- Remove Session (the MCP session class) and the address and status parsers; lookupAddress and the send result parser remain
+- Send each run-end notice with one reason-network send CLI call as the terminal sender, with the agent variables removed; no agx-owned Reason Network session, rename or MCP process, so notices of runs ending together cannot replace each other
+
 ## 4.0.0 — 2026-11-06
 
 - agx msg send goes through Reason Network again: --from and --to take only <vendor>:<full UUID>; --exact, wait, list and status --relay are removed. Measured on 2026-11-06: idle and busy Codex TUIs and idle Claude sessions receive.
