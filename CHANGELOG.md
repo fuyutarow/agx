@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.23.2 — 2026-11-06
+
+- Resolve live Reason Network addresses by vendor session ID.
+
 ## 1.23.1 — 2026-11-06
 
 - Report invalid caller arguments as usage errors.
