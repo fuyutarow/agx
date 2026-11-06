@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.23.0 — 2026-11-06
+
+- Add a private Reason Network MCP transport library
+
 ## 1.22.107 — 2026-11-05
 
 - Report Jev return classes with their meanings and probabilities.
