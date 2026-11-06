@@ -13,6 +13,8 @@ async function opened(session: string) {
 }
 
 test("send, resend, status and session identity through stdio", async () => {
+  const previousThread = process.env.CODEX_THREAD_ID;
+  process.env.CODEX_THREAD_ID = "worker-thread";
   const session = await opened("my-session");
   try {
     const input = { to: "alice/test@box", message: "hello", idempotencyKey: "same-key", deadlineMs };
@@ -22,7 +24,7 @@ test("send, resend, status and session identity through stdio", async () => {
     expect(await session.send({ ...input, idempotencyKey: "another-key" })).toEqual({ kind: "accepted", value: ["01ARZ3NDEKTSV4RRFFQ69G5FAW"] });
     expect(await session.status(["01ARZ3NDEKTSV4RRFFQ69G5FAV"], deadlineMs)).toEqual({ kind: "accepted", value: { receipts: [{ status: "accepted" }] } });
     expect(await session.address(deadlineMs)).toEqual({ kind: "accepted", value: "alice/my-session@box" });
-  } finally { session.close(); }
+  } finally { session.close(); if (previousThread === undefined) delete process.env.CODEX_THREAD_ID; else process.env.CODEX_THREAD_ID = previousThread; }
 });
 
 test("pre-dispatch refusal and ambiguous error are distinct", async () => {

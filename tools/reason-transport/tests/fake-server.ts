@@ -11,6 +11,10 @@ for await (const line of lines) {
   if (!parsed.success || parsed.data.id === undefined) continue;
   const { id, method, params } = parsed.data;
   let result: unknown = {};
+  if (method === "initialize" && (process.env.REASON_NETWORK_AGENT !== "reason" || !line.includes("reason-agx-transport"))) {
+    process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id, error: { message: "incorrect agent or client identity" } })}\n`);
+    continue;
+  }
   if (method === "initialize" && process.env.REASON_NETWORK_SESSION === "failed-initialize") {
     process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id, error: { message: "initialization failed" } })}\n`);
     continue;

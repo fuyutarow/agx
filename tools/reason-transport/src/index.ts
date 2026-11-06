@@ -55,18 +55,19 @@ export async function lookupAddress(options: { binary: string; vendor: string; s
   if (options.vendor === "claude") agent = "claude-code";
   if (options.vendor === "codex") agent = "codex";
   if (agent === undefined) return { kind: "usage", text: "vendor must be claude or codex" };
-  const started = fromThrowable(() => spawn(options.binary, ["who", "--json"], { env: { ...process.env, REASON_NETWORK_AGENT: agent, REASON_NETWORK_SESSION: options.session }, stdio: "pipe" }), textOf)();
+  const started = fromThrowable(() => spawn(options.binary, ["who", "--json"], { env: { ...process.env, REASON_NETWORK_AGENT: agent, REASON_NETWORK_SESSION: options.session }, stdio: "pipe", detached: true }), textOf)();
   if (started.isErr()) return { kind: "unavailable", text: started.error };
   const child = started.value;
   child.stdin.end();
   child.stderr.resume();
+  child.on("exit", () => { if (child.pid !== undefined) fromThrowable(() => process.kill(-child.pid!, "SIGKILL"), textOf)(); });
   let output = "";
   child.stdout.setEncoding("utf8");
   child.stdout.on("data", (chunk: string) => { output += chunk; });
   return new Promise((resolve) => {
     let timedOut = false;
     let error: string | undefined;
-    const timer = setTimeout(() => { timedOut = true; child.kill("SIGKILL"); }, options.deadlineMs);
+    const timer = setTimeout(() => { timedOut = true; if (child.pid !== undefined) fromThrowable(() => process.kill(-child.pid!, "SIGKILL"), textOf)(); child.kill("SIGKILL"); }, options.deadlineMs);
     child.on("error", (cause) => { error = textOf(cause); });
     child.on("close", (code) => {
       clearTimeout(timer);
@@ -107,21 +108,27 @@ export class Session {
 
   static async open(options: { binary: string; session: string; deadlineMs: number }): Promise<Outcome<Session>> {
     if (options?.binary === undefined || options.binary.length === 0 || options.session === undefined || options.session.length === 0 || !validDeadline(options.deadlineMs)) return { kind: "usage", text: "binary, session and a positive deadlineMs are required" };
-    const started = fromThrowable(() => spawn(options.binary, ["mcp"], { env: { ...process.env, REASON_NETWORK_SESSION: options.session, REASON_NETWORK_NO_UPDATE: "1" }, stdio: "pipe" }), textOf)();
+    const started = fromThrowable(() => spawn(options.binary, ["mcp"], { env: { ...process.env, REASON_NETWORK_AGENT: "reason", REASON_NETWORK_SESSION: options.session, REASON_NETWORK_NO_UPDATE: "1" }, stdio: "pipe", detached: true }), textOf)();
     if (started.isErr()) return { kind: "unavailable", text: started.error };
+    if (started.value.pid === undefined) { started.value.on("error", () => {}); return { kind: "unavailable", text: "MCP process could not start" }; }
     const session = new Session(started.value);
-    const init = await session.request("initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "agx-reason-transport", version: "1.22.107" } }, options.deadlineMs);
-    if (init === undefined || init.error !== undefined) { session.close(); return { kind: "unavailable", text: init?.error?.message ?? "MCP initialization failed" }; }
+    const deadlineAt = performance.now() + options.deadlineMs;
+    const remaining = () => Math.max(1, Math.floor(deadlineAt - performance.now()));
+    const init = await session.request("initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "reason-agx-transport", version: "1.22.107" } }, remaining());
+    if (init === undefined) { session.close(); return { kind: "unknown", text: "MCP initialization reply unavailable or deadline expired" }; }
+    if (init.error !== undefined) { session.close(); return { kind: "unavailable", text: init.error.message }; }
     session.notify("notifications/initialized");
-    const listed = await session.request("tools/list", {}, options.deadlineMs);
-    const checked = toolsResult.safeParse(listed?.result);
+    if (performance.now() >= deadlineAt) { session.close(); return { kind: "unavailable", text: "MCP initialization deadline expired" }; }
+    const listed = await session.request("tools/list", {}, remaining());
+    if (listed === undefined) { session.close(); return { kind: "unknown", text: "MCP tools/list reply unavailable or deadline expired" }; }
+    const checked = toolsResult.safeParse(listed.result);
     if (!checked.success || !["send_message", "message_status", "list_team"].every((name) => checked.data.tools.some((tool) => tool.name === name))) {
       session.close(); return { kind: "unavailable", text: "required MCP tool missing or tools/list failed" };
     }
     return { kind: "accepted", value: session };
   }
 
-  close(): void { this.child.kill(); }
+  close(): void { if (this.child.pid !== undefined) fromThrowable(() => process.kill(-this.child.pid!, "SIGKILL"), textOf)(); this.child.kill("SIGKILL"); }
   private notify(method: string): void {
     if (!this.closed) this.child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method })}\n`);
   }

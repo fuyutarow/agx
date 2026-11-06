@@ -1,3 +1,4 @@
+import { Session, lookupAddress, type Failure } from "../../../reason-transport/src/index.ts";
 import { z } from "../../../shared/src/zod.ts";
 import { fromThrowable } from "neverthrow";
 import { stableSelfCommand } from "../self-command.ts";
@@ -7,28 +8,12 @@ import { VerifyRound, verifyText } from "./verify.ts";
 
 export type EndNotice = z.output<typeof EndNoticeResult>;
 
-/**
- * Budget for one `agx msg send` relay to a live Claude dispatcher.
- *
- * The relay is a one-shot `claude --print` model turn (inventory lookup, one
- * SendMessage tool call, receipt check), so acceptance takes seconds to tens of
- * seconds, never ~1 s. The old 1_200 ms budget ended every claude-route notice
- * as `deadline` (1363 recorded `deadline` end-notices, 0 accepted; dotfiles run
- * ffa7ab52: "acceptance unknown (timed out after 1195 ms)").
- *
- * Measurement: this sandbox cannot send to a live Claude session (Claude to
- * Claude is refused, only the completion ACK is authorized), so no acceptance
- * time was measured here; see result.md. 120 s is twice the `agx msg send`
- * default (60 s) and leaves a wide margin over a model turn. The notice worker
- * is detached from the run, so waiting costs the run nothing.
- */
 const NOTICE_DEADLINE_MS = 120_000;
 
 export const EndNoticeRequest = z.object({
   id: z.string(),
   ticket: z.string(),
   dispatcher: z.string().nullable(),
-  address: z.string().nullable(),
   startedAt: z.string(),
   endedAt: z.string(),
   outcome: z.string(),
@@ -43,11 +28,8 @@ export const EndNoticeRequest = z.object({
 
 export type EndNoticeRequest = z.output<typeof EndNoticeRequest>;
 
-/** Kill the sender only after its own deadline has had time to report. */
-const noticeGuardSlackMs = 1_000;
-/** The whole notice process exits by deadline + this, whatever its transport does. */
+/** The whole notice process exits by deadline + this slack. */
 const hardExitSlackMs = 2_000;
-/** After the sender ended or was killed, wait this long for its pipes to drain. */
 const pipeDrainMs = 500;
 const parentWaitLimitMs = 3_000;
 const receiptLimit = 4_000;
@@ -59,9 +41,8 @@ const pending: EndNotice = {
   receipt: "scheduled after run completion",
 };
 
-function targetFor(input: Pick<EndNoticeRequest, "dispatcher" | "address">) {
-  const target = input.address ?? input.dispatcher;
-  return target === null || target.trim() === "" ? null : target;
+function targetFor(input: Pick<EndNoticeRequest, "dispatcher">) {
+  return input.dispatcher === null || input.dispatcher.trim() === "" ? null : input.dispatcher;
 }
 
 /** Queue the notice worker without keeping this run alive. */
@@ -178,19 +159,6 @@ async function waitForParentExit(parentPid: number): Promise<void> {
   }
 }
 
-/** Resolve with `fallback` if `work` does not settle within `ms`. */
-function within<T>(work: Promise<T>, ms: number, fallback: T): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const late = new Promise<T>((resolve) => {
-    timer = setTimeout(() => {
-      resolve(fallback);
-    }, ms);
-  });
-  return Promise.race([work, late]).finally(() => {
-    clearTimeout(timer);
-  });
-}
-
 async function sendEndNotice(
   input: EndNoticeRequest,
   env: NodeJS.ProcessEnv,
@@ -214,108 +182,68 @@ async function sendEndNotice(
     `agx run ${input.id} ${input.ticket} ended ${input.outcome} ` +
     `exit ${input.exit ?? "none"} after ${(elapsedMs / 60_000).toFixed(1)} min; result: ${input.resultPath ?? "none"}; ` +
     `verify: ${input.verifyDetails ?? verifyText(input.verifyExits, input.verifyRound)}; ` +
-    "read: agx worker ls --json";
-  const path = env.PATH;
-  const executable =
-    path === undefined ? Bun.which("agx") : Bun.which("agx", { PATH: path });
-  if (executable === null)
-    return {
-      status: "unreachable",
-      exit: 127,
-      receipt: "agx executable not found on PATH",
-    };
+    "\nNo reply needed; read: agx worker ls --json";
+  const executable = env.PATH === undefined ? Bun.which("reason-network") : Bun.which("reason-network", { PATH: env.PATH });
+  if (executable === null) return { status: "unreachable", exit: 127, receipt: "reason-network executable not found on PATH" };
+  const remaining = () => Math.max(1, Math.floor(deadlineAt - performance.now()));
+  const expired = () => performance.now() >= deadlineAt;
+  const deadline = (): EndNotice => ({ status: "deadline", exit: 4, receipt: `notice deadline exceeded after ${input.deadlineMs} ms` });
+  const failure = (outcome: Failure, lookup = false): EndNotice => {
+    if (expired()) return deadline();
+    if (lookup && outcome.kind === "refused") return { status: "unreachable", exit: 1, receipt: "dispatcher session is not registered with Reason Network or not live" };
+    return { status: outcome.kind === "unknown" ? "unknown" : "unreachable", exit: 1, receipt: outcome.text.slice(0, receiptLimit) };
+  };
+  const separator = target.indexOf(":");
+  const vendor = separator < 0 ? "" : target.slice(0, separator);
+  const dispatcherSession = separator < 0 ? "" : target.slice(separator + 1);
+  if (expired()) return deadline();
+  const address = await lookupAddress({ binary: executable, vendor, session: dispatcherSession, deadlineMs: remaining() });
+  if (address.kind !== "accepted") return failure(address, true);
+  if (expired()) return deadline();
+  const opened = await Session.open({ binary: executable, session: "agx-manager", deadlineMs: remaining() });
+  if (opened.kind !== "accepted") return failure(opened);
+  return deliverOpened(opened.value, executable, env, address.value, input.id, message, remaining, expired, deadline, failure).finally(() => { opened.value.close(); });
+}
 
-  const remainingMs = Math.max(1, Math.floor(deadlineAt - performance.now()));
-  const spawned = fromThrowable(
-    () =>
-      Bun.spawn(
-        [
-          executable,
-          "msg",
-          "send",
-          "--to",
-          target,
-          ...(input.address === null ? [] : ["--exact"]),
-          "--from",
-          `agx-manager:${input.id}`,
-          "--message",
-          message,
-          "--timeout-ms",
-          String(remainingMs),
-        ],
-        {
-          stdin: "ignore",
-          stdout: "pipe",
-          stderr: "pipe",
-          // Own process group: the sender's helpers (a relay model turn, its
-          // tools) are killed with it instead of holding our pipes open.
-          detached: true,
-          env: { ...process.env, ...env, AGX_RUN_ID: input.id },
-        },
-      ),
-    (error) => error,
-  )();
-  if (spawned.isErr())
-    return {
-      status: "unreachable",
-      exit: 1,
-      receipt: `agx msg send failed: ${String(spawned.error).slice(0, receiptLimit)}`,
-    };
-  const child = spawned.value;
-  const killGroup = () => {
-    fromThrowable(
-      () => process.kill(-child.pid, "SIGKILL"),
-      (error) => error,
-    )();
-    fromThrowable(
-      () => {
-        child.kill("SIGKILL");
-        return true;
-      },
-      (error) => error,
-    )();
-  };
-  let timedOut = false;
-  const guard = setTimeout(() => {
-    timedOut = true;
-    killGroup();
-  }, remainingMs + noticeGuardSlackMs);
-  const stdout =
-    child.stdout === null
-      ? Promise.resolve("")
-      : new Response(child.stdout).text();
-  const stderr =
-    child.stderr === null
-      ? Promise.resolve("")
-      : new Response(child.stderr).text();
-  const exit = await child.exited;
-  clearTimeout(guard);
-  killGroup();
-  const [out, err] = await Promise.all([
-    within(stdout, pipeDrainMs, ""),
-    within(stderr, pipeDrainMs, ""),
-  ]);
-  const output = `${out}${err}`.trim().slice(-receiptLimit);
-  if (timedOut || exit === 4)
-    return {
-      status: "deadline",
-      exit: 4,
-      receipt:
-        output !== ""
-          ? output
-          : `notice deadline exceeded after ${input.deadlineMs} ms`,
-    };
-  if (exit === 0)
-    return {
-      status: "accepted",
-      exit,
-      receipt: output !== "" ? output : "agx msg send accepted",
-    };
-  return {
-    status: "unreachable",
-    exit,
-    receipt: output !== "" ? output : `agx msg send exited ${exit}`,
-  };
+async function renameManager(executable: string, env: NodeJS.ProcessEnv, remaining: () => number): Promise<string> {
+  const renamed = fromThrowable(() => Bun.spawn([executable, "status", "--name", "agx-manager"], {
+    stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: true,
+    env: { ...process.env, ...env, REASON_NETWORK_AGENT: "reason", REASON_NETWORK_SESSION: "agx-manager" },
+  }), String)();
+  if (renamed.isErr()) return `rename failed: ${renamed.error}`;
+  const child = renamed.value;
+  const kill = () => { fromThrowable(() => process.kill(-child.pid, "SIGKILL"), String)(); child.kill("SIGKILL"); };
+  const timer = setTimeout(kill, remaining());
+  const output = Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);
+  const code = await child.exited;
+  kill();
+  clearTimeout(timer);
+  let drainTimer: ReturnType<typeof setTimeout> | undefined;
+  const drained = await Promise.race([output, new Promise<[string, string]>((resolve) => { drainTimer = setTimeout(() => { resolve(["", ""]); }, pipeDrainMs); })]);
+  clearTimeout(drainTimer);
+  const [out, err] = drained;
+  const detail = (out + err).trim();
+  if (code === 0) return "";
+  return `rename failed: ${detail === "" ? `exit ${code}` : detail}`;
+}
+
+async function deliverOpened(
+  session: Session, executable: string, env: NodeJS.ProcessEnv, to: string, id: string,
+  message: string, remaining: () => number, expired: () => boolean, deadline: () => EndNotice,
+  failure: (outcome: Failure) => EndNotice,
+): Promise<EndNotice> {
+  if (expired()) return deadline();
+  const renameReceipt = await renameManager(executable, env, remaining);
+  if (expired()) {
+    const result = deadline();
+    return { ...result, receipt: [result.receipt, renameReceipt].filter(Boolean).join("; ").slice(0, receiptLimit) };
+  }
+  const sent = await session.send({ to, message, idempotencyKey: `${id}:end`, deadlineMs: remaining() });
+  if (sent.kind !== "accepted") {
+    const result = failure(sent);
+    return { ...result, receipt: [result.receipt, renameReceipt].filter(Boolean).join("; ").slice(0, receiptLimit) };
+  }
+  return { status: "accepted", exit: 0, receipt: [`message id ${sent.value.join(", ")}`, renameReceipt].filter(Boolean).join("; ").slice(0, receiptLimit) };
 }
 
 /** Internal detached worker: deliver only after the run process has exited. */
