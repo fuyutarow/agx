@@ -1,5 +1,10 @@
 # Changelog
 
+## 4.0.0 — 2026-11-06
+
+- agx msg send goes through Reason Network again: --from and --to take only <vendor>:<full UUID>; --exact, wait, list and status --relay are removed. Measured on 2026-11-06: idle and busy Codex TUIs and idle Claude sessions receive.
+- Run-end notices and Codex worker ACKs go through Reason Network; the notice is sent from agx-manager (registered before the rename) and its receipt names the rename outcome.
+
 ## 3.0.0 — 2026-11-06
 
 - Roll back agx msg to the 1.23.2 transport (codex queue and the Claude relay): Reason Network cannot reach Codex sessions that never called one of its tools.
