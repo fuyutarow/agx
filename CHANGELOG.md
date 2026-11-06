@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.23.3 — 2026-11-06
+
+- Register MCP sessions under the reason agent.
+- Send run-end notices through Reason Network.
+
 ## 1.23.2 — 2026-11-06
 
 - Resolve live Reason Network addresses by vendor session ID.
