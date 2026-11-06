@@ -673,7 +673,7 @@ describe("agx-worker run", () => {
       "utf8",
     );
     expect(brief).toContain(
-      "--from is required on agx msg send; pass your own full address: a Codex worker passes codex:$CODEX_THREAD_ID, a Claude worker passes the value of AGX_MSG_FROM.",
+      "No completion ACK: the run-end notice reports the end.",
     );
     if (started.at === undefined || ended.at === undefined) return;
     // Session discovery may be recorded before the vendor exits.

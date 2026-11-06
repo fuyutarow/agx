@@ -30,12 +30,6 @@ import { JJ_READ_ARGS } from "../../shared/src/jj-read.ts";
 import { readonlyCommand } from "../../shared/src/readonly-command.ts";
 import { InspectionTimeout } from "../../shared/src/agx-config.ts";
 import { resolveSuiteTool } from "../../shared/src/path-dispatch.ts";
-import {
-  BOUND_CLAUDE_TARGET_ENV,
-  encodeBoundClaudeTarget,
-  normalizeClaudeSelector,
-  resolveClaudeDeliveryTarget,
-} from "../../xmsg/src/claude-target.ts";
 
 import { stableCommand, stableSelfCommand } from "./self-command.ts";
 import { parseNextTicket } from "./next/ticket.ts";
@@ -70,21 +64,6 @@ type InvokeResult =
       out: "";
       err: string;
     };
-
-function dispatchAckTarget(
-  declared: string | undefined,
-  dispatcherSession: string | null,
-  env: NodeJS.ProcessEnv,
-): string | undefined {
-  if (declared !== undefined) return declared;
-  if (dispatcherSession === null) return undefined;
-  const qualified = normalizeClaudeSelector(dispatcherSession);
-  if (qualified !== undefined && dispatcherSession.startsWith("claude:"))
-    return qualified;
-  return env.CLAUDE_CODE_SESSION_ID === dispatcherSession
-    ? `claude:${dispatcherSession}`
-    : undefined;
-}
 
 function dispatchCommandTimeoutMs(
   env: NodeJS.ProcessEnv,
@@ -582,27 +561,6 @@ export async function dispatch(options: {
       env.CLAUDE_CODE_SESSION_ID,
       env.CODEX_SESSION_ID,
     ].find((session) => session !== undefined && session !== "") ?? null;
-  const ackSelector = dispatchAckTarget(
-    parsedTicket.ticket.ack_target,
-    dispatcherSession,
-    env,
-  );
-  let boundAckTarget: string | undefined;
-  let unboundAck: { target: string; error: string } | undefined;
-  if (ackSelector !== undefined) {
-    const resolved = await resolveClaudeDeliveryTarget(
-      ackSelector,
-      DISPATCH_CHECK_TIMEOUT_MS,
-    );
-    if (!resolved.ok) {
-      unboundAck = { target: ackSelector, error: resolved.reason };
-      process.stderr.write(
-        `agx worker dispatch: ACK target ${JSON.stringify(ackSelector)} is unbound; ACK will not be delivered by agx msg: ${resolved.reason.replaceAll(/[\r\n]+/gu, " ")}\n`,
-      );
-    } else {
-      boundAckTarget = encodeBoundClaudeTarget(resolved.binding);
-    }
-  }
   const wsSlug = options.ws ?? slug;
   const ticketRepo = await defaultRepositoryRoot(dirname(ticketPath), env);
   if (ticketRepo.root === undefined) {
@@ -968,9 +926,6 @@ export async function dispatch(options: {
       sandbox,
       sandbox_source,
       dispatcher_session: dispatcherSession,
-      ...(unboundAck === undefined
-        ? {}
-        : { ack: { status: "unbound", ...unboundAck } }),
       vendor_session: null,
       continues: previous?.id ?? null,
       supersedes: null,
@@ -1021,14 +976,10 @@ export async function dispatch(options: {
     "CLAUDE_CODE_SESSION_ID",
     "-E",
     "CODEX_SESSION_ID",
+    "-E",
+    "CODEX_THREAD_ID",
     `--setenv=PATH=${callerEnv.PATH}`,
     "--setenv=AGX_WORKER_PATH_SOURCE=dispatcher",
-    ...(boundAckTarget === undefined
-      ? []
-      : [`--setenv=${BOUND_CLAUDE_TARGET_ENV}=${boundAckTarget}`]),
-    ...(unboundAck === undefined
-      ? []
-      : ["--setenv=AGX_DISPATCH_ACK_UNBOUND=1"]),
     "--",
     ...unitCommand,
     "run",

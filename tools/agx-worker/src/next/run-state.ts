@@ -13,6 +13,7 @@ const EndNoticeStatus = z.enum([
   "pending",
   "accepted",
   "unreachable",
+  "unknown",
   "deadline",
   "skipped",
 ]);
