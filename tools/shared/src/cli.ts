@@ -120,7 +120,7 @@ export function standardCli(
       const first = argv[0];
       const commands = options.commands?.map((entry) => entry.options.name);
       let actions = commands;
-      if (name === "agx msg") actions = ["send"];
+      if (name === "agx msg") actions = ["list", "send", "status", "wait"];
       if (name === "agx-status" || name === "agx doctor") actions = [];
       if (
         first !== undefined &&

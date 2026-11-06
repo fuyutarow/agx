@@ -60,7 +60,7 @@ async function help(): Promise<void> {
       "  Inspect and judge runs: agx worker ls|judge.\n" +
       "  Issue/list/collect tickets: agx ticket new|ls|gc.\n" +
       "  Create/adopt/refresh/remove/collect workspaces: agx ws add|adopt|refresh|rm|gc.\n" +
-      "  Send a message: agx msg send.\n" +
+      "  Discover/send/check messages: agx msg list|send|status.\n" +
       "  Protect the trunk push path: agx change hook pre-push.\n" +
       "  Refresh/read suite health: agx doctor, agx status.\n" +
       "\nOPTIONS:\n  -h, --help  Show help\n  -V, --version  Show version\n",

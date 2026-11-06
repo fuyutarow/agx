@@ -16,7 +16,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { stableCommand, stableSelfCommand } from "../self-command.ts";
 import { legacyLandStatus } from "../state.ts";
-import { verifyLine } from "../ticket.ts";
+import { claudeAckLine, verifyLine } from "../ticket.ts";
 import { claudeBashDenyLines } from "../claude-bash-denies.ts";
 import {
   EMPTY_FINAL_MESSAGE,
@@ -97,9 +97,9 @@ import {
 import { scheduleEndNotice } from "./end-notice.ts";
 import { completionFor } from "./completion.ts";
 import {
-  lookupAddress,
-  type Outcome as LookupOutcome,
-} from "../../../reason-transport/src/index.ts";
+  normalizeClaudeSelector,
+  readBoundClaudeTarget,
+} from "../../../xmsg/src/claude-target.ts";
 
 export type Flags = Readonly<Record<string, string | boolean | undefined>>;
 const fatal = (message: string, exitCode = 2): never =>
@@ -113,14 +113,12 @@ export function systemdUnitName(cgroup: string): string | undefined {
     .findLast((part) => part.endsWith(".service"));
   return unit?.slice(0, -".service".length);
 }
-export const dispatcherIdentityFor = (
+const dispatcherAddressFor = (
   session: string | null,
   env: NodeJS.ProcessEnv,
 ): string | null => {
   if (session === null || session.trim() === "") return null;
-  if (session.startsWith("claude:")) return session;
-  if (session.startsWith("codex:"))
-    return `codex:${env.CODEX_THREAD_ID ?? session.slice(6)}`;
+  if (/^(codex|claude):.+$/u.test(session)) return session;
   const declaredVendor =
     env.AGX_DISPATCHER_VENDOR === "codex" ||
     env.AGX_DISPATCHER_VENDOR === "claude"
@@ -128,16 +126,12 @@ export const dispatcherIdentityFor = (
       : undefined;
   const matchingVendors = [
     ...(env.CLAUDE_CODE_SESSION_ID === session ? ["claude"] : []),
-    ...(env.CODEX_SESSION_ID === session || env.CODEX_THREAD_ID === session
-      ? ["codex"]
-      : []),
+    ...(env.CODEX_SESSION_ID === session ? ["codex"] : []),
   ];
   const vendor =
     declaredVendor ??
     (matchingVendors.length === 1 ? matchingVendors[0] : undefined);
-  const target =
-    vendor === "codex" ? (env.CODEX_THREAD_ID ?? session) : session;
-  return vendor === undefined ? null : `${vendor}:${target}`;
+  return vendor === undefined ? null : `${vendor}:${session}`;
 };
 const invocationUnitFor = async (): Promise<string | undefined> => {
   if (
@@ -184,37 +178,18 @@ const contextFor = async (path: string, cwd: string, ticket: NextTicket) => {
     );
   return ctx;
 };
-export async function lookupDispatcher(
-  identity: string | null,
-): Promise<LookupOutcome<string>> {
-  if (identity === null)
-    return { kind: "unavailable", text: "dispatcher identity unavailable" };
-  const binary = Bun.which(
-    "reason-network",
-    process.env.PATH === undefined ? {} : { PATH: process.env.PATH },
-  );
-  if (binary === null)
-    return { kind: "unavailable", text: "reason-network not found" };
-  const separator = identity.indexOf(":");
-  return lookupAddress({
-    binary,
-    vendor: identity.slice(0, separator),
-    session: identity.slice(separator + 1),
-    deadlineMs: 5000,
-  });
-}
-const ackLines = (
-  routeName: string | undefined,
-  result: LookupOutcome<string> | undefined,
-): string[] => {
-  if (routeName === "claude") return [];
-  if (result?.kind !== "accepted")
-    return ["No completion ACK: the run-end notice reports the end."];
-  return [
-    `Before ending, send one completion ACK with the Reason Network MCP tool send_message to ${result.value} (locator, verification result, remaining work). If the tool is unavailable, skip the ACK; the run-end notice reports the end.`,
-    "If the dispatcher renames its session during the run, this address goes stale; the run-end notice still resolves it at the end.",
-  ];
+/** The dispatch-bound session name for the ACK target, from the run environment; undefined when unbound. */
+const boundAckName = (): string | undefined => {
+  if (process.env.AGX_DISPATCH_ACK_UNBOUND === "1") return undefined;
+  const read = readBoundClaudeTarget();
+  return read.kind === "present"
+    ? read.binding.address.slice("claude:".length)
+    : undefined;
 };
+const claudeResultLine = (sandbox: string): string =>
+  sandbox === "read-only"
+    ? "Do not send a completion ACK; the agx-manager end notice is the completion notice. Return the result in your final response."
+    : claudeAckLine(boundAckName());
 export const renderPromise = (
   ticket: NextTicket,
   cwd: string,
@@ -225,7 +200,7 @@ export const renderPromise = (
     judgment: Readonly<{ decision: string; note: string }> | null;
     ticketDiff: string;
   },
-  ackLookup?: LookupOutcome<string>,
+  ackTarget?: string,
   routeName?: string,
 ): string =>
   withReportInstruction(
@@ -247,11 +222,16 @@ export const renderPromise = (
       sandbox === "read-only"
         ? `AGX_RUN_DIR=${runDir}. Return your results in the final response; the runner records the response in its report.`
         : `AGX_RUN_DIR=${runDir}. Write worker results, logs and measurements there; keep only source changes in the workspace.`,
+      ...(ackTarget === undefined
+        ? []
+        : [`Completion ACK target: ${ackTarget}`]),
       "Promise:",
       `outcome: ${ticket.outcome}`,
       `writes: ${JSON.stringify(ticket.writes.map((glob) => resolve(cwd, glob)))}`,
       ...(ticket.verify.length === 0 ? [] : [verifyLine(ticket.verify)]),
-      ...(routeName === "claude" ? claudeBashDenyLines(cwd) : []),
+      ...(routeName === "claude"
+        ? [claudeResultLine(sandbox), ...claudeBashDenyLines(cwd)]
+        : []),
       `Sandbox mode: ${sandbox}${sandbox === "none" ? " (unsandboxed)" : ""}.`,
       ...(
         [
@@ -267,7 +247,7 @@ export const renderPromise = (
           : [`${key}: ${JSON.stringify(ticket[key])}`],
       ),
       'If this work needs a tool release changeset, create it with `mise run changeset -- <tool> <patch|minor|major> "<entry>"`; do not hand-write a `.changes` file.',
-      ...ackLines(routeName, ackLookup),
+      "--from is required on agx msg send; pass your own full address: a Codex worker passes codex:$CODEX_THREAD_ID, a Claude worker passes the value of AGX_MSG_FROM.",
       "",
       prose.trim(),
     ].join("\n"),
@@ -585,6 +565,29 @@ async function runUnguarded(flags: Flags): Promise<number> {
     environment === undefined
   )
     return fatal("preflight did not resolve ticket and context");
+  const boundAckTarget = readBoundClaudeTarget();
+  if (boundAckTarget.kind === "invalid")
+    return fatal(
+      `invalid dispatch-bound Claude target: ${boundAckTarget.reason}`,
+    );
+  if (
+    boundAckTarget.kind === "present" &&
+    ticket.ack_target !== undefined &&
+    normalizeClaudeSelector(ticket.ack_target) !==
+      boundAckTarget.binding.selector
+  )
+    return fatal(
+      "dispatch-bound Claude target does not match ticket ack_target",
+    );
+  const requestedAckTarget =
+    ticket.ack_target ??
+    (boundAckTarget.kind === "present"
+      ? boundAckTarget.binding.selector
+      : undefined);
+  const ackTarget =
+    process.env.AGX_DISPATCH_ACK_UNBOUND === "1"
+      ? undefined
+      : requestedAckTarget;
   const timeoutMs = (ticket.timeout_s ?? 600) * 1000;
   const deadline = AbortSignal.timeout(timeoutMs);
   const runStartedAt = performance.now();
@@ -706,7 +709,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
   let activeProgressPath = join(runDir, "worker-progress.jsonl");
   let started = false;
   let ended = false;
-  let dispatcherIdentity: string | null = null;
+  let dispatcherAddress: string | null = null;
   let stopTask: Promise<never> | undefined;
   let killWorker: (() => void) | undefined;
   let verifyProgress: {
@@ -782,7 +785,8 @@ async function runUnguarded(flags: Flags): Promise<number> {
         const endNotice = scheduleEndNotice({
           id,
           ticket: ticketName,
-          dispatcher: dispatcherIdentity,
+          dispatcher,
+          address: dispatcherAddress,
           startedAt,
           endedAt,
           outcome: "stopped",
@@ -854,8 +858,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
   const interimPath = join(runDir, "interim.jsonl");
   const agxDispatcherSession = process.env.AGX_DISPATCHER_SESSION;
   const claudeSession = process.env.CLAUDE_CODE_SESSION_ID;
-  const codexSession =
-    process.env.CODEX_SESSION_ID ?? process.env.CODEX_THREAD_ID;
+  const codexSession = process.env.CODEX_SESSION_ID;
   let dispatcher: string | null = null;
   const explicitSession = value(flags, "session");
   if (explicitSession !== undefined && explicitSession !== "")
@@ -866,8 +869,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
     dispatcher = claudeSession;
   else if (codexSession !== undefined && codexSession !== "")
     dispatcher = codexSession;
-  dispatcherIdentity = dispatcherIdentityFor(dispatcher, process.env);
-  const ackLookup = await lookupDispatcher(dispatcherIdentity);
+  dispatcherAddress = dispatcherAddressFor(dispatcher, process.env);
   if (dispatcher === null)
     process.stderr.write(
       "WARN dispatcher session is unavailable; pass --session ID or preserve CLAUDE_CODE_SESSION_ID/CODEX_SESSION_ID (systemd-run: use -E NAME).\n",
@@ -883,7 +885,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
         prose,
         runDir,
         continuation,
-        ackLookup,
+        ackTarget,
         row.route,
       ),
     ),
@@ -962,7 +964,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
     sandbox_effective,
     sandbox_effective_source,
     dispatcher_session: dispatcher,
-    ack_lookup_kind: ackLookup.kind,
+    dispatcher_address: dispatcherAddress,
     vendor_session: resumeSession ?? null,
     continues:
       supersedes === undefined
@@ -1250,6 +1252,9 @@ async function runUnguarded(flags: Flags): Promise<number> {
           "Verification failed. Fix the errors and finish.",
           "",
           details.join("\n\n"),
+          ...(activeRow.route === "claude"
+            ? ["", claudeResultLine(sandbox)]
+            : []),
         ].join("\n"),
       ),
     );
@@ -1390,7 +1395,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
             prose,
             runDir,
             continuation,
-            ackLookup,
+            ackTarget,
             activeRow.route,
           ),
         ),
@@ -1559,7 +1564,8 @@ async function runUnguarded(flags: Flags): Promise<number> {
   const endNotice = scheduleEndNotice({
     id,
     ticket: ticketName,
-    dispatcher: dispatcherIdentity,
+    dispatcher,
+    address: dispatcherAddress,
     startedAt,
     endedAt,
     outcome,

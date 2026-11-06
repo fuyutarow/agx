@@ -339,11 +339,21 @@ worker markers, inheritance, and operational environment variables. Use
 
 ## Worker environment
 
-The vendor wrapper removes inherited native session variables, AGX_MSG_FROM and
-AGX_XMSG_BOUND_CLAUDE_TARGET. Codex briefs ask for a Reason Network send_message
-ACK only when the dispatcher's live address is resolved; otherwise they say no ACK
-is expected. Claude workers use the run-end notice as their completion signal.
-The end notice resolves the dispatcher again when the run ends.
+The vendor wrapper removes inherited native session variables and clears inherited
+`AGX_MSG_FROM`, even though other `AGX_*` configuration is forwarded. Dispatcher
+session metadata identifies the coordinator and never declares the worker's sender.
+
+For a fresh Claude process the wrapper generates a UUID, passes it through
+`--session-id`, and explicitly sets `AGX_MSG_FROM=claude:<full-UUID>` in that
+vendor process's environment. On Claude or Codex resume, it declares the full UUID
+supplied to resume. A non-UUID resume selector is not converted or guessed.
+Fresh Codex thread IDs are learned after spawn, so no declaration is installed
+for them. A worker must pass its own full session address explicitly with
+`agx msg send --from`; absence exits 2 before discovery or transport. A Claude
+worker can use its own `AGX_MSG_FROM` when set, and a Codex worker can use its
+current thread UUID reported by the vendor. Never substitute dispatcher identity
+or guess an address. The envelope is caller attribution, not authentication.
+Manager end notices pass `agx-manager:<full-run-UUID>`.
 
 Harness VCS reads in premise checks, official-execution tracking and repo-retrieve run inside
 OS-enforced write denial before jj/Git starts: Landlock ABI >=3 on Linux x64/arm64 and

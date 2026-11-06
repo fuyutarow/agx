@@ -49,25 +49,20 @@ test("cli contract: an unknown command prints usage on stderr with exit 2", asyn
     ["tools/xmsg/src/xmsg.ts", []],
     ["tools/agx-status/src/status.ts", []],
   ] as const;
-  await Promise.all(
-    cases.map(async ([entry, prefix]) => {
-      const result = await run(
-        join(ROOT, entry),
-        [...prefix, "not-a-command"],
-        false,
-        false,
-        env,
-      );
-      expect(
-        result.exit,
-        `${entry} ${prefix.join(" ")}: ${result.stderr}`,
-      ).toBe(2);
-      expect(result.stdout).toBe("");
-      expect(result.stderr).toMatch(
-        /^[^\n]*not-a-command[^\n]*--help[^\n]*\n$/u,
-      );
-    }),
-  );
+  await Promise.all(cases.map(async ([entry, prefix]) => {
+    const result = await run(
+      join(ROOT, entry),
+      [...prefix, "not-a-command"],
+      false,
+      false,
+      env,
+    );
+    expect(result.exit, `${entry} ${prefix.join(" ")}: ${result.stderr}`).toBe(
+      2,
+    );
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toMatch(/^[^\n]*not-a-command[^\n]*--help[^\n]*\n$/u);
+  }));
   const allowed = await run(
     join(ROOT, "tools/agx/src/agx.ts"),
     ["msg", "--help"],
@@ -77,7 +72,7 @@ test("cli contract: an unknown command prints usage on stderr with exit 2", asyn
   );
   expect(allowed.exit).toBe(0);
   expect(allowed.stderr).toBe("");
-  expect(allowed.stdout).toContain("send");
+  expect(allowed.stdout).toContain("list");
 });
 
 async function run(

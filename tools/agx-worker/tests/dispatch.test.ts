@@ -16,6 +16,10 @@ import { fileURLToPath } from "node:url";
 import { DispatchBindingSchema } from "../../shared/src/agx-dispatch-binding.ts";
 import { jsonOf, z } from "../../shared/src/zod.ts";
 import { DISPATCH_COMMAND_TIMEOUT_MS } from "../src/dispatch.ts";
+import {
+  BOUND_CLAUDE_TARGET_ENV,
+  encodeBoundClaudeTarget,
+} from "../../xmsg/src/claude-target.ts";
 import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 
 const ENTRY = fileURLToPath(new URL("../src/next/cli.ts", import.meta.url));
@@ -232,18 +236,117 @@ async function invoke(f: ReturnType<typeof fixture>, ...args: string[]) {
   return { stdout, stderr, exitCode };
 }
 
-test(
-  "dispatch does not bind an xmsg target",
-  async () => {
-    const f = fixture();
-    const result = await invoke(f);
-    expect(result.exitCode, result.stderr).toBe(0);
-    expect(readFileSync(f.unitArgs, "utf8")).not.toContain(
-      "AGX_XMSG_BOUND_CLAUDE_TARGET",
-    );
-  },
-  DISPATCH_TEST_TIMEOUT_MS,
-);
+test("dispatch passes the ticket ACK target to the run as a bound address", async () => {
+  const f = fixture();
+  writeFileSync(
+    f.ticket,
+    readFileSync(f.ticket, "utf8").replace(
+      "schema = 2",
+      'schema = 2\nack_target = "claude:coordinator-peer"',
+    ),
+  );
+  const result = await invoke(f);
+  expect(result.exitCode, result.stderr).toBe(0);
+  const bound = encodeBoundClaudeTarget({
+    selector: "claude:coordinator-peer",
+    address: "claude:coordinator-peer",
+  });
+  expect(readFileSync(f.unitArgs, "utf8")).toContain(
+    `--setenv=${BOUND_CLAUDE_TARGET_ENV}=${bound}`,
+  );
+}, DISPATCH_TEST_TIMEOUT_MS);
+
+test("dispatch contract: a claude uuid ACK target is bound to its session name at dispatch", async () => {
+  const f = fixture();
+  const uuid = "00000000-0000-4000-8000-000000000009";
+  const target = `claude:${uuid}`;
+  writeFileSync(
+    f.ticket,
+    readFileSync(f.ticket, "utf8").replace(
+      "schema = 2",
+      `schema = 2\nack_target = "${target}"`,
+    ),
+  );
+  const claude = join(f.root, "bin", "claude");
+  writeFileSync(
+    claude,
+    `#!/bin/sh\nprintf '%s\n' '[{"pid":12353,"cwd":"/example","kind":"interactive","startedAt":1761800000000,"sessionId":"${uuid}","name":"dx-agt_2hqv"}]'\n`,
+  );
+  chmodSync(claude, 0o755);
+  const result = await invoke(f);
+  expect(result.exitCode, result.stderr).toBe(0);
+  expect(readFileSync(f.unitArgs, "utf8")).toContain(
+    `--setenv=${BOUND_CLAUDE_TARGET_ENV}=${encodeBoundClaudeTarget({ selector: target, address: "claude:dx-agt_2hqv" })}`,
+  );
+}, DISPATCH_TEST_TIMEOUT_MS);
+
+test("dispatch contract: an unknown claude uuid ACK target is reported unbound", async () => {
+  const f = fixture();
+  const target = "claude:00000000-0000-4000-8000-000000000099";
+  writeFileSync(
+    f.ticket,
+    readFileSync(f.ticket, "utf8").replace(
+      "schema = 2",
+      `schema = 2\nack_target = "${target}"`,
+    ),
+  );
+  const claude = join(f.root, "bin", "claude");
+  writeFileSync(claude, "#!/bin/sh\nprintf '%s\\n' '[]'\n");
+  chmodSync(claude, 0o755);
+  const result = await invoke(f);
+  expect(result.exitCode, result.stderr).toBe(0);
+  expect(result.stderr).toContain("found 0 live registrations");
+  expect(result.stderr).toContain("ACK will not be delivered by agx msg");
+  const args = readFileSync(f.unitArgs, "utf8");
+  expect(args).toContain("--setenv=AGX_DISPATCH_ACK_UNBOUND=1");
+  expect(args).not.toContain(`--setenv=${BOUND_CLAUDE_TARGET_ENV}=`);
+}, DISPATCH_TEST_TIMEOUT_MS);
+
+test("dispatch contract: an unresolvable ACK target never fails the dispatch", async () => {
+  const f = fixture();
+  const target = "claude:12345678-1234-4123-8123-123456789abc";
+  f.env.CLAUDE_CODE_SESSION_ID = target.slice("claude:".length);
+  // A stub with no live registrations keeps this test off the host's real `claude agents`
+  // registry (a real call that varies with machine load); the target is unresolvable either way.
+  const claude = join(f.root, "bin", "claude");
+  writeFileSync(claude, "#!/bin/sh\nprintf '%s\\n' '[]'\n");
+  chmodSync(claude, 0o755);
+  const result = await invoke(f);
+  expect(result.exitCode, result.stderr).toBe(0);
+  expect(result.stderr).toContain("ACK will not be delivered by agx msg");
+  const args = readFileSync(f.unitArgs, "utf8");
+  expect(args).toContain("--setenv=AGX_DISPATCH_ACK_UNBOUND=1");
+  expect(args).not.toContain(`--setenv=${BOUND_CLAUDE_TARGET_ENV}=`);
+  const event = jsonOf(
+    z.object({
+      ack: z.object({
+        status: z.literal("unbound"),
+        target: z.string(),
+        error: z.string().min(1),
+      }),
+    }),
+  ).safeParse(
+    readFileSync(join(f.env.AGX_STATE_DIR!, "records.jsonl"), "utf8")
+      .trim()
+      .split("\n")[0]!,
+  );
+  expect(event.success).toBe(true);
+  if (event.success) expect(event.data.ack.target).toBe(target);
+}, DISPATCH_TEST_TIMEOUT_MS);
+
+test("dispatch binds its Claude session when the ticket omits an ACK target", async () => {
+  const f = fixture();
+  f.env.AGX_DISPATCHER_SESSION = undefined;
+  const result = await invoke(f);
+  expect(result.exitCode, result.stderr).toBe(0);
+  const bound = encodeBoundClaudeTarget({
+    selector: "claude:fixture-claude",
+    address: "claude:fixture-claude",
+  });
+  expect(readFileSync(f.unitArgs, "utf8")).toContain(
+    `--setenv=${BOUND_CLAUDE_TARGET_ENV}=${bound}`,
+  );
+}, DISPATCH_TEST_TIMEOUT_MS);
 
 test("dispatch contract: every flag the documentation names for dispatch is accepted", async () => {
   const f = fixture();
@@ -406,49 +509,45 @@ test.each([
 });
 
 // measured 5026ms on alpha 1.22.5 under host load
-test(
-  "continuation ignores a deleted registered sibling but refuses its own missing workspace",
-  async () => {
-    const f = fixture();
-    // Keep systemd and the worker fake, but exercise the actual jj registry.
-    rmSync(join(f.root, "bin", "jj"));
-    rmSync(join(f.repo, ".jj"), { recursive: true });
-    const jj = (...args: string[]) => {
-      const result = Bun.spawnSync(["jj", ...args], {
-        cwd: f.repo,
-        env: f.env,
-        timeout: INVOKE_TIMEOUT_MS,
-      });
-      expect(result.exitCode, result.stderr.toString()).toBe(0);
-      return result.stdout.toString();
-    };
-    jj("git", "init", ".");
-    const workspace = join(`${f.repo}.ws`, "ws_recorded");
-    const sibling = join(f.root, "deleted-sibling");
-    mkdirSync(`${f.repo}.ws`);
-    jj("workspace", "add", "--name", "z-recorded", workspace);
-    jj("workspace", "add", "--name", "a-deleted", sibling);
-    priorRun(f, workspace);
-    rmSync(sibling, { recursive: true });
-    expect(
-      jj("--ignore-working-copy", "workspace", "list", "-T", 'name ++ "\\n"'),
-    ).toContain("a-deleted");
-    const resumed = await invoke(f, "--continue", "prior-run");
-    expect(resumed.exitCode, resumed.stderr).toBe(0);
-    expect(await Bun.file(f.unitArgs).text()).toContain(`--cd\n${workspace}\n`);
-    expect(await Bun.file(f.wsArgs).exists()).toBe(false);
+test("continuation ignores a deleted registered sibling but refuses its own missing workspace", async () => {
+  const f = fixture();
+  // Keep systemd and the worker fake, but exercise the actual jj registry.
+  rmSync(join(f.root, "bin", "jj"));
+  rmSync(join(f.repo, ".jj"), { recursive: true });
+  const jj = (...args: string[]) => {
+    const result = Bun.spawnSync(["jj", ...args], {
+      cwd: f.repo,
+      env: f.env,
+      timeout: INVOKE_TIMEOUT_MS,
+    });
+    expect(result.exitCode, result.stderr.toString()).toBe(0);
+    return result.stdout.toString();
+  };
+  jj("git", "init", ".");
+  const workspace = join(`${f.repo}.ws`, "ws_recorded");
+  const sibling = join(f.root, "deleted-sibling");
+  mkdirSync(`${f.repo}.ws`);
+  jj("workspace", "add", "--name", "z-recorded", workspace);
+  jj("workspace", "add", "--name", "a-deleted", sibling);
+  priorRun(f, workspace);
+  rmSync(sibling, { recursive: true });
+  expect(
+    jj("--ignore-working-copy", "workspace", "list", "-T", 'name ++ "\\n"'),
+  ).toContain("a-deleted");
+  const resumed = await invoke(f, "--continue", "prior-run");
+  expect(resumed.exitCode, resumed.stderr).toBe(0);
+  expect(await Bun.file(f.unitArgs).text()).toContain(`--cd\n${workspace}\n`);
+  expect(await Bun.file(f.wsArgs).exists()).toBe(false);
 
-    priorRun(f, workspace);
-    rmSync(workspace, { recursive: true });
-    rmSync(f.unitArgs);
-    const missing = await invoke(f, "--continue", "prior-run");
-    expect(missing.exitCode, missing.stderr).toBe(2);
-    expect(missing.stderr).toContain(workspace);
-    expect(missing.stdout).toBe("");
-    expect(await Bun.file(f.unitArgs).exists()).toBe(false);
-  },
-  SIBLING_TEST_TIMEOUT_MS,
-);
+  priorRun(f, workspace);
+  rmSync(workspace, { recursive: true });
+  rmSync(f.unitArgs);
+  const missing = await invoke(f, "--continue", "prior-run");
+  expect(missing.exitCode, missing.stderr).toBe(2);
+  expect(missing.stderr).toContain(workspace);
+  expect(missing.stdout).toBe("");
+  expect(await Bun.file(f.unitArgs).exists()).toBe(false);
+}, SIBLING_TEST_TIMEOUT_MS);
 
 test.each(["foo-bar", "foo-bar-2", "another-ticket"])(
   "continuation keeps recorded workspace %s without creating one",
@@ -629,37 +728,33 @@ test("an already-running continuation is named and refused", async () => {
   expect(await Bun.file(f.unitArgs).exists()).toBe(false);
 });
 
-test(
-  "continuation refuses ambiguous and unknown prefixes with run candidates",
-  async () => {
-    const f = fixture();
-    const workspace = join(`${f.repo}.ws`, "ws_foo-bar");
-    mkdirSync(workspace, { recursive: true });
-    const records = ["aa94ee5d12345678", "aa94ee5d87654321"].map((id) => ({
-      id,
-      ticket: "foo-bar",
-      state: "ended",
-      cwd: workspace,
-      workspace,
-    }));
-    writeFileSync(f.records, JSON.stringify(records));
-    // An ambiguous prefix lists its candidates; an unknown selector reports only the recorded
-    // count, as resolveRunId does (tools/agx-worker/tests/next/run-id.test.ts pins that rule).
-    for (const [selector, expected] of [
-      ["aa94ee5d", records.map((row) => row.id)],
-      ["missing", ["unknown run id 'missing'; 2 recorded runs"]],
-    ] as const) {
-      const result = await invoke(f, "--continue", selector);
-      expect(result.exitCode).toBe(2);
-      expect(result.stdout).toBe("");
-      const lines = result.stderr.trim().split("\n");
-      expect(lines).toHaveLength(1);
-      for (const fragment of expected) expect(lines[0]).toContain(fragment);
-      expect(await Bun.file(f.unitArgs).exists()).toBe(false);
-    }
-  },
-  DISPATCH_TEST_TIMEOUT_MS,
-);
+test("continuation refuses ambiguous and unknown prefixes with run candidates", async () => {
+  const f = fixture();
+  const workspace = join(`${f.repo}.ws`, "ws_foo-bar");
+  mkdirSync(workspace, { recursive: true });
+  const records = ["aa94ee5d12345678", "aa94ee5d87654321"].map((id) => ({
+    id,
+    ticket: "foo-bar",
+    state: "ended",
+    cwd: workspace,
+    workspace,
+  }));
+  writeFileSync(f.records, JSON.stringify(records));
+  // An ambiguous prefix lists its candidates; an unknown selector reports only the recorded
+  // count, as resolveRunId does (tools/agx-worker/tests/next/run-id.test.ts pins that rule).
+  for (const [selector, expected] of [
+    ["aa94ee5d", records.map((row) => row.id)],
+    ["missing", ["unknown run id 'missing'; 2 recorded runs"]],
+  ] as const) {
+    const result = await invoke(f, "--continue", selector);
+    expect(result.exitCode).toBe(2);
+    expect(result.stdout).toBe("");
+    const lines = result.stderr.trim().split("\n");
+    expect(lines).toHaveLength(1);
+    for (const fragment of expected) expect(lines[0]).toContain(fragment);
+    expect(await Bun.file(f.unitArgs).exists()).toBe(false);
+  }
+}, DISPATCH_TEST_TIMEOUT_MS);
 
 test.each([undefined, ""])(
   "continuation of a run --cd falls back to recorded cwd (%s)",

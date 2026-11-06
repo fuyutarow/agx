@@ -33,22 +33,39 @@ async function script(path: string, body: string): Promise<void> {
   await chmod(path, 0o755);
 }
 
-const alive = async (pid: number): Promise<boolean> => {
-  const stat = await Bun.file(`/proc/${pid}/stat`).text().catch(() => "");
-  return stat !== "" && !/^\d+ \(.*\) Z /u.test(stat);
+const alive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 };
 
-/** Exercise the notice against a fake MCP child holding its pipes open. */
+/**
+ * Run the real notice process against a fake `agx msg send`. The fake leaves a
+ * `sleep 300` helper holding our stdout/stderr pipes, as a relay model turn
+ * would, and either answers `senderExit` at once or never.
+ */
 async function deliver(input: { hangs: boolean; deadlineMs: number }) {
   const root = await tempRoot();
   const state = join(root, "state");
-  const log = join(root, "calls.jsonl");
-  await script(join(root, "reason-network"), `import ${JSON.stringify(resolve("tools/agx-worker/tests/fixtures/reason-notice.ts"))};\n`);
+  const helperPid = join(root, "helper.pid");
+  await script(
+    join(root, "agx"),
+    `import { writeFileSync } from "node:fs";
+const helper = Bun.spawn(["sleep", "300"], { stdio: ["ignore", "inherit", "inherit"] });
+writeFileSync(process.env.HELPER_PID, String(helper.pid));
+if (process.env.SENDER_HANGS === "1") await new Promise(() => {});
+process.stdout.write("enqueued receipt-1\\n", () => process.exit(0));
+`,
+  );
   const dead = Bun.spawnSync([process.execPath, "-e", "0"]);
   const request = {
     id: RunId,
     ticket: "bounded-ticket",
     dispatcher: "claude:dispatcher",
+    address: "claude:dispatcher",
     startedAt: "2026-11-03T00:00:00Z",
     endedAt: "2026-11-03T00:03:00Z",
     outcome: "ok",
@@ -74,8 +91,8 @@ async function deliver(input: { hangs: boolean; deadlineMs: number }) {
         ...subprocessEnvironment(),
         PATH: `${root}:${process.env.PATH ?? ""}`,
         AGX_STATE_DIR: state,
-        FAKE_LOG: log,
-        FAKE_MODE: input.hangs ? "hang" : "hold-pipes",
+        HELPER_PID: helperPid,
+        SENDER_HANGS: input.hangs ? "1" : "0",
       },
     },
   );
@@ -91,11 +108,11 @@ async function deliver(input: { hangs: boolean; deadlineMs: number }) {
       const parsed = jsonOf(NoticeEvent).safeParse(line);
       return parsed.success ? [parsed.data.notice] : [];
     });
-  const calls = (await Bun.file(log).text().catch(() => "")).trim().split("\n");
-  const helper = calls.flatMap((line) => {
-    const parsed = jsonOf(z.object({ helper: z.number() })).safeParse(line);
-    return parsed.success ? [parsed.data.helper] : [];
-  })[0] ?? 0;
+  const helper = Number(
+    await Bun.file(helperPid)
+      .text()
+      .catch(() => "0"),
+  );
   return { exit, elapsedMs, notices, helper };
 }
 
@@ -110,7 +127,7 @@ test("a notice whose relay never accepts exits within its deadline plus a small 
   expect(exit).toBe(0);
   // The helper that held the sender's pipes is killed with it.
   expect(helper).toBeGreaterThan(0);
-  expect(await alive(helper)).toBe(false);
+  expect(alive(helper)).toBe(false);
 });
 
 test("an accepted notice exits promptly even when the sender left a helper on its pipes", async () => {
@@ -121,7 +138,7 @@ test("an accepted notice exits promptly even when the sender left a helper on it
   expect(notices.map((notice) => notice.status)).toEqual(["accepted"]);
   expect(elapsedMs).toBeLessThan(5_000);
   expect(exit).toBe(0);
-  expect(await alive(helper)).toBe(false);
+  expect(alive(helper)).toBe(false);
 });
 
 /** Fake `systemd-run` that records its argv and starts nothing. */
@@ -144,7 +161,8 @@ function schedule(root: string, marker: string) {
       id: RunId,
       ticket: "bounded-ticket",
       dispatcher: "claude:dispatcher",
-        startedAt: "2026-11-03T00:00:00Z",
+      address: "claude:dispatcher",
+      startedAt: "2026-11-03T00:00:00Z",
       endedAt: "2026-11-03T00:03:00Z",
       outcome: "ok",
       exit: 0,

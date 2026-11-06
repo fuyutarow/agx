@@ -180,7 +180,7 @@ export async function runClaude(config: RunConfig): Promise<RunResult> {
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
-    env: workerEnvironment(process.env),
+    env: workerEnvironment(process.env, { backend: "claude", session }),
     signal: signal,
     killSignal: "SIGTERM",
   });

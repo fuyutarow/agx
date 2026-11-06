@@ -63,18 +63,7 @@ test("suite forwards exact argv through PATH and preserves exit status", async (
     ["ws", ["ls"]],
     ["ticket", ["--help"]],
     ["status", ["--json", "a b.md", "--", "-Z", "雪"]],
-    [
-      "msg",
-      [
-        "send",
-        "--from",
-        "codex:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-        "--to",
-        "claude:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-        "--message",
-        "hello world",
-      ],
-    ],
+    ["msg", ["send", "--to", "fixture:session", "--message", "hello world"]],
   ] as const) {
     // Only --help used by suite discovery is special in these fake bins.
     const result = await run(f.bin, [tool, ...args], 37);

@@ -416,7 +416,10 @@ codexSandbox =
     : String(sandbox);
 
 // --- run --------------------------------------------------------------------------------------
-const environment = workerEnvironment(process.env);
+const environment = workerEnvironment(
+  process.env,
+  resume === undefined ? undefined : { backend: "codex", session: resume },
+);
 const sharedCaches = workerSharedCaches(environment);
 for (const cache of sharedCaches) {
   if (cache.key !== undefined) environment[cache.key] = cache.root;

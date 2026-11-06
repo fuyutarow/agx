@@ -23,13 +23,11 @@ const captureSchema = z.object({
 test("a parent's declaration is cleared even with matching native IDs", () => {
   const environment = workerEnvironment({
     AGX_MSG_FROM: `codex:${uuid}`,
-    AGX_XMSG_BOUND_CLAUDE_TARGET: "inherited",
     CODEX_THREAD_ID: uuid,
     CLAUDE_CODE_SESSION_ID: uuid,
     AGX_DISPATCHER_SESSION: uuid,
   });
   expect(environment.AGX_MSG_FROM).toBeUndefined();
-  expect(environment.AGX_XMSG_BOUND_CLAUDE_TARGET).toBeUndefined();
   expect(environment.CODEX_THREAD_ID).toBeUndefined();
   expect(environment.CLAUDE_CODE_SESSION_ID).toBeUndefined();
   expect(environment.AGX_DISPATCHER_SESSION).toBe(uuid);
@@ -101,7 +99,17 @@ for (const backend of ["claude", "codex"] as const) {
       if (!parsed.success) return;
       const actual = parsed.data;
       expect(actual.runId).toBe("sender-fixture-run");
-      expect(actual.sender).toBeNull();
+      if (resume === undefined && backend === "claude") {
+        const session = actual.args[actual.args.indexOf("--session-id") + 1];
+        expect(session).toMatch(/^[a-f0-9-]{36}$/u);
+        expect(actual.sender).toBe(`claude:${session}`);
+      } else if (resume === uuid.toUpperCase()) {
+        expect(actual.args).toContain(resume);
+        expect(actual.sender).toBe(`${backend}:${uuid}`);
+        expect(actual.args).not.toContain("--session-id");
+      } else {
+        expect(actual.sender).toBeNull();
+      }
     },
   );
 }
