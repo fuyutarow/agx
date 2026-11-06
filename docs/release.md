@@ -66,10 +66,8 @@ mise run release:publish -- suite --dry-run
 
 The build compiles every member command into `dist/suite/bin/`, printing the suite version for every command. It produces one platform archive:
 `dist/agx-<version>-linux-x64.tar.gz` on linux-x64. Its commands are agx,
-agx-worker, agx-ws, agx-ticket, agx-status, agx-msg, xmsg and jex.
-Messaging is compiled once as `agx-msg`; `xmsg` is a hard link to it inside `bin/`.
-The tar archive retains the hard link when extracted, so both names share one
-executable. Messaging help, version output and diagnostics name `agx msg`.
+agx-worker, agx-ws, agx-ticket, agx-status and jex.
+The suite has no messaging command; Reason Network owns messaging between sessions.
 A separate library build produces `dist/agx-usehooks-<version>.tgz`, a platform-independent ESM library.
 Asset paths and SHA-256 checksums are printed. Staging is cleared before building.
 

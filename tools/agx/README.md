@@ -7,17 +7,18 @@ A suite dispatcher with an aggregate doctor:
 - `agx ticket ARGS` → `agx-ticket ARGS`
 - `agx ws ARGS` → `agx-ws ARGS`
 - `agx status ARGS` → `agx-status ARGS`
-- `agx msg ARGS` → `agx-msg ARGS`
 
-`agx msg` is the canonical messaging command; `xmsg` aliases the same executable.
-Help, version output, and diagnostics use `agx msg`.
+`agx msg` is retired and fails as an unknown command (exit 2). Messaging belongs to
+Reason Network: inside a session use the MCP tools `send_message` and `list_team`;
+from a shell run `reason-network send <address> <message>` with addresses from
+`reason-network who`.
 
 Arguments and child exit status pass through. `agx -V` prints the suite version only.
 Compiled `agx` first uses executable tools in its own installation directory, then
 falls back to PATH. Running from source under Bun uses PATH only.
 `agx -h` takes each tool’s one-line description from its help using the same lookup.
 
-Only `worker`, `ticket`, `ws`, `status`, `msg`, and `doctor` are accepted as tools. An unknown tool exits 2
+Only `worker`, `ticket`, `ws`, `status`, `change`, and `doctor` are accepted as tools. An unknown tool exits 2
 with one stderr line naming the accepted tools and no stdout output.
 
 See [worker interfaces](../agx-worker/README.md) for worker commands.

@@ -13,7 +13,6 @@
         "tools/agx-ws/src/ws.ts",
         "tools/agx-ticket/src/tkt.ts",
         "tools/agx-status/src/status.ts",
-        "tools/xmsg/src/xmsg.ts",
         "tools/jex/src/jex.ts",
         "tools/fmt-staged.ts",
         "tools/lint-ts-candidate.ts",

@@ -10,7 +10,9 @@ import { doctor } from "./doctor.ts";
 import { change } from "./change.ts";
 
 const argv = process.argv.slice(2);
-const tools = ["worker", "ticket", "ws", "status", "msg", "doctor", "change"];
+const retiredMsg =
+  "agx: agx msg is retired; messaging belongs to Reason Network. Inside a session use the MCP tools send_message and list_team; from a shell run `reason-network send <address> <message>` with addresses from `reason-network who`\n";
+const tools = ["worker", "ticket", "ws", "status", "doctor", "change"];
 
 async function help(): Promise<void> {
   process.stdout.write(
@@ -60,7 +62,7 @@ async function help(): Promise<void> {
       "  Inspect and judge runs: agx worker ls|judge.\n" +
       "  Issue/list/collect tickets: agx ticket new|ls|gc.\n" +
       "  Create/adopt/refresh/remove/collect workspaces: agx ws add|adopt|refresh|rm|gc.\n" +
-      "  Send a message: agx msg send.\n" +
+      "  Message other sessions: Reason Network (send_message, list_team) or reason-network send.\n" +
       "  Protect the trunk push path: agx change hook pre-push.\n" +
       "  Refresh/read suite health: agx doctor, agx status.\n" +
       "\nOPTIONS:\n  -h, --help  Show help\n  -V, --version  Show version\n",
@@ -72,6 +74,11 @@ async function main(): Promise<void> {
   const [first, ...remaining] = argv;
   if (first === undefined || first === "--help" || first === "-h") {
     await help();
+    return;
+  }
+  if (first === "msg") {
+    process.stderr.write(retiredMsg);
+    process.exitCode = 2;
     return;
   }
   if (!tools.includes(first)) {

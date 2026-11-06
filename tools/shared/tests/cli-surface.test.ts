@@ -30,7 +30,6 @@ test("cli contract: an unknown command prints usage on stderr with exit 2", asyn
     "agx-ticket": "tools/agx-ticket/src/tkt.ts",
     "agx-ws": "tools/agx-ws/src/ws.ts",
     "agx-status": "tools/agx-status/src/status.ts",
-    "agx-msg": "tools/xmsg/src/xmsg.ts",
   }))
     await symlink(join(ROOT, source), join(root, name));
   const env = { PATH: `${root}:${process.env.PATH ?? ""}` };
@@ -40,13 +39,11 @@ test("cli contract: an unknown command prints usage on stderr with exit 2", asyn
     ["tools/agx/src/agx.ts", ["ticket"]],
     ["tools/agx/src/agx.ts", ["ws"]],
     ["tools/agx/src/agx.ts", ["change"]],
-    ["tools/agx/src/agx.ts", ["msg"]],
     ["tools/agx/src/agx.ts", ["status"]],
     ["tools/agx/src/agx.ts", ["doctor"]],
     ["tools/agx-worker/src/next/cli.ts", []],
     ["tools/agx-ticket/src/tkt.ts", []],
     ["tools/agx-ws/src/ws.ts", []],
-    ["tools/xmsg/src/xmsg.ts", []],
     ["tools/agx-status/src/status.ts", []],
   ] as const;
   await Promise.all(
@@ -68,16 +65,29 @@ test("cli contract: an unknown command prints usage on stderr with exit 2", asyn
       );
     }),
   );
-  const allowed = await run(
+  const retired = await run(
     join(ROOT, "tools/agx/src/agx.ts"),
-    ["msg", "--help"],
+    ["msg", "send", "--message", "hello"],
     false,
     false,
     env,
   );
-  expect(allowed.exit).toBe(0);
-  expect(allowed.stderr).toBe("");
-  expect(allowed.stdout).toContain("send");
+  expect(retired.exit).toBe(2);
+  expect(retired.stdout).toBe("");
+  expect(retired.stderr).toContain("send_message");
+  expect(retired.stderr).toContain("list_team");
+  expect(retired.stderr).toContain("reason-network send <address> <message>");
+  const packages = await Array.fromAsync(
+    new Bun.Glob("tools/*/package.json").scan({ cwd: ROOT }),
+  );
+  for (const packagePath of packages) {
+    const bins = Object.keys(
+      JSON.parse(await Bun.file(join(ROOT, packagePath)).text()).bin ?? {},
+    );
+    expect(bins).not.toContain("agx-msg");
+    expect(bins).not.toContain("xmsg");
+  }
+  expect(await Bun.file(join(ROOT, "tools/xmsg")).exists()).toBe(false);
 });
 
 async function run(
@@ -147,10 +157,7 @@ for await (const packagePath of new Bun.Glob("tools/*/package.json").scan({
     ([name]) => name !== "gpu-sampler",
   );
   for (const [name, source] of bins) {
-    const isMsgAlias = name === "agx-msg" || name === "xmsg";
-    const canonicalName = isMsgAlias
-      ? "agx msg"
-      : Object.keys(pkg.bin ?? {})[0];
+    const canonicalName = Object.keys(pkg.bin ?? {})[0];
     // This multi-process CLI matrix exceeded 5 seconds in the timeout measurement.
     test(`${name}: version aliases, typed short flag, deterministic plain help`, async () => {
       const root = await mkdtemp(join(tmpdir(), "cli-surface-"));
@@ -172,14 +179,6 @@ for await (const packagePath of new Bun.Glob("tools/*/package.json").scan({
         expect(plain.exit, plain.stderr).toBe(0);
         expect(plain.stderr).toBe("");
         expect(plain.stdout).toContain(name === "agx" ? "TOOLS:" : "Show help");
-        if (isMsgAlias) {
-          expect(plain.stdout).toContain(
-            `${canonicalName} v${suite.version}\n`,
-          );
-          expect(plain.stdout).toContain(
-            `  ${canonicalName} [flags...] [action]\n`,
-          );
-        }
         expect(plain.stdout).not.toContain("\u001B");
         for (const { tty, color } of environments) {
           const rendered = await run(entry, ["--help"], tty, color);
@@ -198,11 +197,7 @@ for await (const packagePath of new Bun.Glob("tools/*/package.json").scan({
         }
         const error = await run(entry, ["-Z"], false, false, extraEnv);
         expect(error.exit).toBeGreaterThan(0);
-        if (isMsgAlias) {
-          expect(error.stderr).toBe(`${canonicalName}: unknown flag Z\n`);
-        } else {
-          expect(error.stderr).toMatch(/(?:-Z|unknown option: Z)/u);
-        }
+        expect(error.stderr).toMatch(/(?:-Z|unknown option: Z)/u);
         expect(error.stderr).not.toContain("--Z");
       }
     }, 20_000);

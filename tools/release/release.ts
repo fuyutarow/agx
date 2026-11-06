@@ -21,7 +21,6 @@ export const packages = new Set([
   "agx-ws",
   "agx-ticket",
   "agx-status",
-  "xmsg",
   "jex",
   "agx-usehooks",
 ]);
@@ -32,14 +31,6 @@ const manifestSchema = z.object({
   source: z.string().optional(),
   bin: z.record(z.string().regex(/^[\da-z-]+$/u), z.string()).optional(),
 });
-const messagingBinSchema = z
-  .object({
-    "agx-msg": z.string().min(1),
-    xmsg: z.string().min(1),
-  })
-  .refine((bin) => bin["agx-msg"] === bin.xmsg, {
-    message: "agx-msg and xmsg must share the same source",
-  });
 
 export async function run(
   cmd: string[],
@@ -126,13 +117,7 @@ export async function packageInfo(pkg: string, root = repository) {
     await Bun.file(join(root, "tools/agx/package.json")).text(),
   );
   if (!suite.success) return err("Invalid suite manifest");
-  let commands = { ...parsed.data.bin };
-  if (pkg === "xmsg") {
-    const messaging = messagingBinSchema.safeParse(parsed.data.bin);
-    if (!messaging.success)
-      return err(`Invalid package.json for ${pkg}: ${messaging.error.message}`);
-    commands = messaging.data;
-  }
+  const commands = { ...parsed.data.bin };
   return ok({
     pkg,
     dir,
@@ -329,7 +314,6 @@ async function buildSuite(
   const guardedEntrypoints = new Map<string, { path: string; command: string }>(
     [
       ["agx-worker", { path: "src/next/cli.ts", command: "agx-worker" }],
-      ["xmsg", { path: "src/xmsg.ts", command: "xmsg" }],
       ["jex", { path: "src/jex.ts", command: "jex" }],
     ],
   );

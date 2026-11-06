@@ -6,8 +6,6 @@ const entrypoints = new Map<string, () => Promise<unknown>>([
   ["agx-ws", () => import("../agx-ws/src/ws.ts")],
   ["agx-ticket", () => import("../agx-ticket/src/tkt.ts")],
   ["agx-status", () => import("../agx-status/src/status.ts")],
-  ["agx-msg", () => import("../xmsg/src/xmsg.ts")],
-  ["xmsg", () => import("../xmsg/src/xmsg.ts")],
   ["jex", () => import("../jex/src/jex.ts")],
 ]);
 
@@ -18,8 +16,7 @@ if (entrypoint === undefined) {
   process.stderr.write(`FATAL: Unknown suite command: ${command}\n`);
   process.exitCode = 2;
 } else {
-  const entrypointCommand = command === "agx-msg" ? "xmsg" : command;
-  Reflect.set(globalThis, "AGX_RELEASE_ENTRYPOINT", entrypointCommand);
+  Reflect.set(globalThis, "AGX_RELEASE_ENTRYPOINT", command);
   await entrypoint().finally(() => {
     Reflect.deleteProperty(globalThis, "AGX_RELEASE_ENTRYPOINT");
   });

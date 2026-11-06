@@ -1,7 +1,10 @@
 import { attempt } from "../../shared/src/attempt.ts";
 import { cli as cleyeCli } from "cleye";
 import { standardCli } from "../../shared/src/cli.ts";
-import { DoctorRecord, WorkspaceDoctorSummary } from "../../shared/src/doctor-record.ts";
+import {
+  DoctorRecord,
+  WorkspaceDoctorSummary,
+} from "../../shared/src/doctor-record.ts";
 import { doctorTools } from "../../shared/src/doctor-aggregate.ts";
 import { resolveSuiteTool } from "../../shared/src/path-dispatch.ts";
 import { checkState } from "../../shared/src/state-dir.ts";
@@ -87,7 +90,10 @@ async function collect(tool: (typeof doctorTools)[number], timeout: number) {
     for (const line of stdout.split(/\r?\n/u)) {
       if (line.trim() === "") continue;
       const summary = jsonOf(WorkspaceDoctorSummary).safeParse(line);
-      if (summary.success && tool === "agx-ws") { workspaces.push(summary.data); continue; }
+      if (summary.success && tool === "agx-ws") {
+        workspaces.push(summary.data);
+        continue;
+      }
       const parsed = jsonOf(DoctorRecord).safeParse(line);
       if (!parsed.success || parsed.data.tool !== tool) {
         complete = false;

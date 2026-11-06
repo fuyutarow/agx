@@ -59,10 +59,7 @@ async function fixture(pkg = "agx-status") {
     JSON.stringify({
       name: `@agx/${pkg}`,
       version: "2.3.4",
-      bin:
-        pkg === "xmsg"
-          ? { "agx-msg": "src/main.ts", xmsg: "src/main.ts" }
-          : { [pkg]: "src/main.ts" },
+      bin: { [pkg]: "src/main.ts" },
     }),
   );
   await Bun.write(
@@ -686,60 +683,20 @@ test("package versions, tags and archive names ignore the repository version", a
   expect(executable.stdout).toBe("fixture executable\n");
 });
 
-test("xmsg archive compiles agx-msg once and preserves its hard-link alias", async () => {
-  const f = await fixture("xmsg");
-  await mkdir(join(f.root, "dist/xmsg/bin"), { recursive: true });
-  await Bun.write(join(f.root, "dist/xmsg/bin/stale"), "old");
-  const result = await build("xmsg", undefined, f.root);
-  expect(result.isOk()).toBe(true);
-  if (result.isErr()) return;
-  const listing = await run(["tar", "-tzf", result.value.archive], f.root);
-  expect(listing.stdout.trim().split("\n").toSorted()).toEqual([
-    "bin/",
-    "bin/agx-msg",
-    "bin/xmsg",
-  ]);
-  await messagingAlias(f.root, result.value.archive);
-  const calls = (await Bun.file(join(f.root, "calls")).text())
-    .trim()
-    .split("\n");
-  expect(calls).toHaveLength(1);
-  expect(calls[0]).toContain("/bin/agx-msg");
-});
-
-test("messaging manifests require explicit commands sharing a source", async () => {
-  const f = await fixture("xmsg");
-  for (const bin of [
-    undefined,
-    {},
-    { xmsg: "src/main.ts" },
-    { "agx-msg": "src/main.ts" },
-    { "agx-msg": "", xmsg: "" },
-    { "agx-msg": "src/main.ts", xmsg: "src/other.ts" },
-  ]) {
-    await Bun.write(
-      join(f.dir, "package.json"),
-      JSON.stringify({ version: "2.3.4", bin }),
-    );
-    const result = await build("xmsg", undefined, f.root);
-    expect(result.isErr()).toBe(true);
-    if (result.isErr())
-      expect(result.error).toContain("Invalid package.json for xmsg");
-    expect(await Bun.file(join(f.root, "calls")).exists()).toBe(false);
-    expect(await Bun.file(join(f.root, "dist/xmsg/bin/agx-msg")).exists()).toBe(
-      false,
-    );
-  }
-});
-
-test("current messaging manifest preserves both command entries", async () => {
+test("the suite package set has no messaging member", async () => {
+  expect(packages.has("xmsg")).toBe(false);
   const info = await packageInfo("xmsg");
-  expect(info.isOk()).toBe(true);
-  if (info.isOk())
-    expect(info.value.commands).toEqual({
-      "agx-msg": "src/xmsg.ts",
-      xmsg: "src/xmsg.ts",
-    });
+  expect(info.isErr()).toBe(true);
+  const agx = await packageInfo("agx");
+  expect(agx.isOk()).toBe(true);
+  const root = JSON.parse(
+    await Bun.file(join(repository, "package.json")).text(),
+  ) as { bin: Record<string, string> };
+  expect(Object.keys(root.bin)).not.toContain("agx-msg");
+  expect(Object.keys(root.bin)).not.toContain("xmsg");
+  expect(
+    await Bun.file(join(repository, "tools/xmsg/package.json")).exists(),
+  ).toBe(false);
 });
 
 test("unknown packages exit 2 without producing an archive", async () => {
@@ -1378,15 +1335,12 @@ async function suiteFixture() {
       join(dir, "package.json"),
       JSON.stringify({
         version: "2.3.4",
-        bin:
-          pkg === "xmsg"
-            ? { "agx-msg": "src/main.ts", xmsg: "src/main.ts" }
-            : { [pkg]: "src/main.ts" },
+        bin: { [pkg]: "src/main.ts" },
       }),
     );
     await Bun.write(
       join(dir, "src/main.ts"),
-      `process.stdout.write("${pkg === "xmsg" ? "agx msg" : pkg} 2.3.4\\n");`,
+      `process.stdout.write("${pkg} 2.3.4\\n");`,
     );
     await Bun.write(
       join(dir, "CHANGELOG.md"),
@@ -1458,9 +1412,7 @@ test("release contract: size", async () => {
   expect(info.isOk(), info.isErr() ? info.error : "").toBe(true);
   if (info.isErr()) return;
 
-  const names = [...packages]
-    .filter((pkg) => pkg !== "agx-usehooks")
-    .concat("agx-msg");
+  const names = [...packages].filter((pkg) => pkg !== "agx-usehooks");
   const files = await Promise.all(
     names.map((name) => stat(join(root, "dist/suite/bin", name))),
   );
@@ -1472,9 +1424,7 @@ test("release contract: size", async () => {
       root,
     );
     expect(version.exit, version.stderr).toBe(0);
-    expect(version.stdout).toBe(
-      `${name === "agx-msg" || name === "xmsg" ? "agx msg" : name} ${info.value.version}\n`,
-    );
+    expect(version.stdout).toBe(`${name} ${info.value.version}\n`);
   }
 }, 600_000);
 
@@ -1485,9 +1435,7 @@ test("suite archive contains all commands with member versions and only its plat
   if (result.isErr()) return;
   expect(result.value.assets).toHaveLength(1);
   const listing = await run(["tar", "-tzf", result.value.archive], f.root);
-  const names = [...packages]
-    .filter((pkg) => pkg !== "agx-usehooks")
-    .concat("agx-msg");
+  const names = [...packages].filter((pkg) => pkg !== "agx-usehooks");
   expect(listing.stdout.trim().split("\n").toSorted()).toEqual(
     ["bin/", ...names.map((name) => `bin/${name}`)].toSorted(),
   );
@@ -1502,11 +1450,10 @@ test("suite archive contains all commands with member versions and only its plat
       f.root,
     );
     expect(version.exit).toBe(0);
-    expect(version.stdout).toBe(
-      `${name === "agx-msg" || name === "xmsg" ? "agx msg" : name} 2.3.4\n`,
-    );
+    expect(version.stdout).toBe(`${name} 2.3.4\n`);
   }
-  await messagingAlias(f.root, result.value.archive, names.length);
+  expect(listing.stdout).not.toContain("agx-msg");
+  expect(listing.stdout).not.toContain("xmsg");
   const calls = (await Bun.file(join(f.root, "calls")).text()).split("\n");
   const suiteCompiles = calls.filter(
     (line) => line.includes("--compile") && line.includes("launcher.ts"),
@@ -1517,8 +1464,13 @@ test("suite archive contains all commands with member versions and only its plat
   for (const target of suiteTargets) {
     const built = await build("suite", target, f.root);
     expect(built.isOk()).toBe(true);
-    if (built.isOk())
-      await messagingAlias(f.root, built.value.archive, names.length);
+    if (built.isOk()) {
+      const targetListing = await run(
+        ["tar", "-tzf", built.value.archive],
+        f.root,
+      );
+      expect(targetListing.stdout).not.toContain("msg");
+    }
   }
   const archives = await Array.fromAsync(
     new Bun.Glob("*.tar.gz").scan(join(f.root, "dist")),
@@ -1530,28 +1482,6 @@ test("suite notes reject unavailable history", async () => {
   const f = await suiteFixture();
   expect((await suiteNotes(f.root, "v0.0.0", run)).isErr()).toBe(true);
 });
-
-async function messagingAlias(
-  root: string,
-  archive: string,
-  expectedLinkCount = 2,
-) {
-  const extracted = join(root, "dist", "extracted");
-  await rm(extracted, { recursive: true, force: true });
-  await mkdir(extracted, { recursive: true });
-  const unpacked = await run(["tar", "-xzf", archive, "-C", extracted], root);
-  expect(unpacked.exit, unpacked.stderr).toBe(0);
-  const canonical = join(extracted, "bin/agx-msg");
-  const alias = join(extracted, "bin/xmsg");
-  const [original, linked] = await Promise.all([stat(canonical), stat(alias)]);
-  expect(linked.dev).toBe(original.dev);
-  expect(linked.ino).toBe(original.ino);
-  expect(linked.nlink).toBe(expectedLinkCount);
-  const a = await run([canonical, "--version"], root);
-  const b = await run([alias, "--version"], root);
-  expect(a.exit).toBe(0);
-  expect(b).toEqual(a);
-}
 
 test("suite archive names carry mise OS and architecture tokens", () => {
   expect(

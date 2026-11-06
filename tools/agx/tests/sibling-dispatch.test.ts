@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 
 const entry = join(import.meta.dir, "../src/agx.ts");
-const tools = ["worker", "ticket", "ws", "status", "msg"];
+const tools = ["worker", "ticket", "ws", "status"];
 let root = "";
 let binary = "";
 let pathBin = "";

@@ -15,8 +15,8 @@ test("only prefixed workspace and ticket bins are exported", () => {
   expect(rootPackage.bin["agx-ws"]).toBe("tools/agx-ws/src/ws.ts");
   expect(rootPackage.bin["agx-ticket"]).toBe("tools/agx-ticket/src/tkt.ts");
   expect(rootPackage.bin["agx-status"]).toBe("tools/agx-status/src/status.ts");
-  expect(rootPackage.bin["agx-msg"]).toBe("tools/xmsg/src/xmsg.ts");
-  expect(rootPackage.bin.xmsg).toBe("tools/xmsg/src/xmsg.ts");
+  expect(Object.hasOwn(rootPackage.bin, "agx-msg")).toBe(false);
+  expect(Object.hasOwn(rootPackage.bin, "xmsg")).toBe(false);
   expect(Object.hasOwn(wsPackage.bin, "ws")).toBe(false);
   expect(Object.hasOwn(ticketPackage.bin, "tkt")).toBe(false);
   expect(wsPackage.bin["agx-ws"]).toBe("src/ws.ts");
@@ -26,7 +26,7 @@ test("only prefixed workspace and ticket bins are exported", () => {
 const entry = join(import.meta.dir, "../src/agx.ts");
 async function fixture() {
   const bin = await mkdtemp(join(tmpdir(), "agx-path-"));
-  for (const tool of ["worker", "ws", "ticket", "status", "msg"]) {
+  for (const tool of ["worker", "ws", "ticket", "status"]) {
     const path = join(bin, `agx-${tool}`);
     await writeFile(
       path,
@@ -63,18 +63,6 @@ test("suite forwards exact argv through PATH and preserves exit status", async (
     ["ws", ["ls"]],
     ["ticket", ["--help"]],
     ["status", ["--json", "a b.md", "--", "-Z", "雪"]],
-    [
-      "msg",
-      [
-        "send",
-        "--from",
-        "codex:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-        "--to",
-        "claude:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-        "--message",
-        "hello world",
-      ],
-    ],
   ] as const) {
     // Only --help used by suite discovery is special in these fake bins.
     const result = await run(f.bin, [tool, ...args], 37);
@@ -115,6 +103,36 @@ test.each([
     `agx: unknown command ${JSON.stringify(verb)}; use agx --help to list valid commands\n`,
   );
 });
+test("agx msg is retired: exits non-zero naming Reason Network and never dispatches", async () => {
+  await using f = await fixture();
+  // Even with an agx-msg executable on PATH the dispatcher must not forward to it.
+  const stale = join(f.bin, "agx-msg");
+  await writeFile(
+    stale,
+    `#!${process.execPath}\nprocess.stdout.write("dispatched\\n");\n`,
+  );
+  await chmod(stale, 0o755);
+  const result = await run(f.bin, [
+    "msg",
+    "send",
+    "--from",
+    "codex:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "--to",
+    "claude:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    "--message",
+    "hello",
+  ]);
+  expect(result.code).toBe(2);
+  expect(result.stdout).toBe("");
+  expect(result.stderr).toContain("agx msg is retired");
+  expect(result.stderr).toContain("send_message");
+  expect(result.stderr).toContain("list_team");
+  expect(result.stderr).toContain("reason-network send <address> <message>");
+  expect(result.stderr).toContain("reason-network who");
+  const help = await run(f.bin, ["-h"]);
+  expect(help.stdout).not.toMatch(/^ {2}msg /mu);
+  expect(help.stdout).not.toContain("agx msg send");
+});
 test("suite owns its version and takes descriptions from PATH tools", async () => {
   await using f = await fixture();
   for (const flag of ["-V", "--version"]) {
@@ -126,7 +144,7 @@ test("suite owns its version and takes descriptions from PATH tools", async () =
   const help = await run(f.bin, ["-h"]);
   expect(help.code).toBe(0);
   expect(help.stdout).not.toContain("99.0.0");
-  for (const tool of ["worker", "ticket", "ws", "status", "msg"])
+  for (const tool of ["worker", "ticket", "ws", "status"])
     expect(help.stdout).toContain(`  ${tool}  ${tool} description from owner`);
   expect(help.stdout).toContain(
     "  change  Coordinate changes and reserve alpha pushes for agx change land",

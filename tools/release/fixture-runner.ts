@@ -173,8 +173,7 @@ export async function fixtureRun(
     const fixtureEntry = entry.endsWith("/tools/release/launcher.ts")
       ? [
           "const command = process.argv[1]?.split('/').at(-1) ?? '';",
-          "const name = command === 'xmsg' || command === 'agx-msg' ? 'agx msg' : command;",
-          "process.stdout.write(name + ' 2.3.4\\n');",
+          "process.stdout.write(command + ' 2.3.4\\n');",
         ].join("\n")
       : await Bun.file(entry).text();
     await Bun.write(outfile, `#!${process.execPath}\n${fixtureEntry}`);

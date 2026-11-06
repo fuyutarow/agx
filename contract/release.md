@@ -7,8 +7,7 @@ Release `v<suite>` contains exactly four suite archives:
 - `agx-<suite>-darwin-x64.tar.gz`
 - `agx-<suite>-darwin-arm64.tar.gz`
 
-Each archive contains all suite commands in `bin/`, including `xmsg` as a
-hard link to `agx-msg`. Unsupported platforms have no suite asset and cannot
+Each archive contains all suite commands in `bin/`. Unsupported platforms have no suite asset and cannot
 install the suite.
 
 The platform-independent library is published only at `usehooks-v<suite>`:
