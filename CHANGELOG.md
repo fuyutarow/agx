@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.0 — 2026-11-06
+
+- Roll back agx msg to the 1.23.2 transport (codex queue and the Claude relay): Reason Network cannot reach Codex sessions that never called one of its tools.
+- Roll back the run-end notice and the worker ACK line to agx msg; Reason Network cannot reach passive Codex dispatchers.
+
 ## 2.0.1 — 2026-11-06
 
 - Remove obsolete native inventory and recipient selection code
