@@ -229,7 +229,6 @@ export function claudeWorkspaceWriteSettings(input: {
 /** Build the complete child environment; coordinator and vendor session state never crosses. */
 export function workerEnvironment(
   source: NodeJS.ProcessEnv = process.env,
-  identity?: { backend: "codex" | "claude"; session: string },
 ): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = {};
   for (const key of WORKER_ENV_KEYS) {
@@ -237,18 +236,14 @@ export function workerEnvironment(
     if (value !== undefined) environment[key] = value;
   }
   for (const [key, value] of Object.entries(source)) {
-    if (key.startsWith("AGX_") && key !== "AGX_MSG_FROM" && value !== undefined)
+    if (
+      key.startsWith("AGX_") &&
+      key !== "AGX_MSG_FROM" &&
+      key !== "AGX_XMSG_BOUND_CLAUDE_TARGET" &&
+      value !== undefined
+    )
       environment[key] = value;
   }
-  // A parent declaration is not this child's address. Only the launching wrapper
-  // can declare a full session UUID it supplies to this vendor process.
-  if (
-    identity !== undefined &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(
-      identity.session,
-    )
-  )
-    environment.AGX_MSG_FROM = `${identity.backend}:${identity.session.toLowerCase()}`;
   environment[AGX_WORKER_ENV] = AGX_WORKER_VALUE;
   return environment;
 }

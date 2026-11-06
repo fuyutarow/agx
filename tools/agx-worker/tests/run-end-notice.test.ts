@@ -42,10 +42,18 @@ async function deliver(input: Case) {
   const state = join(root, "state");
   const sent = join(root, "sent.jsonl");
   await mkdir(state, { recursive: true });
-  const ended = { kind: "ended", id: runId(input.outcome), outcome: input.outcome, exit: input.exit };
+  const ended = {
+    kind: "ended",
+    id: runId(input.outcome),
+    outcome: input.outcome,
+    exit: input.exit,
+  };
   await Bun.write(join(state, "records.jsonl"), `${JSON.stringify(ended)}\n`);
   const binary = join(root, "reason-network");
-  await Bun.write(binary, `#!${process.execPath}\nimport ${JSON.stringify(resolve("tools/agx-worker/tests/fixtures/reason-notice.ts"))};\n`);
+  await Bun.write(
+    binary,
+    `#!${process.execPath}\nimport ${JSON.stringify(resolve("tools/agx-worker/tests/fixtures/reason-notice.ts"))};\n`,
+  );
   await chmod(binary, 0o755);
   const dead = Bun.spawnSync([process.execPath, "-e", "0"]);
   const request = {
@@ -74,8 +82,15 @@ async function deliver(input: Case) {
         PATH: `${root}:${process.env.PATH ?? ""}`,
         AGX_STATE_DIR: state,
         FAKE_LOG: sent,
-        FAKE_MODE: input.senderDelayMs === "never" ? "hang" : input.senderExit === undefined || input.senderExit === 0 ? "ok" : "unknown",
-        FAKE_DELAY_MS: String(typeof input.senderDelayMs === "number" ? input.senderDelayMs : 0),
+        FAKE_MODE:
+          input.senderDelayMs === "never"
+            ? "hang"
+            : input.senderExit === undefined || input.senderExit === 0
+              ? "ok"
+              : "unknown",
+        FAKE_DELAY_MS: String(
+          typeof input.senderDelayMs === "number" ? input.senderDelayMs : 0,
+        ),
       },
       timeout: 15_000,
     },
@@ -90,15 +105,38 @@ async function deliver(input: Case) {
       const parsed = jsonOf(NoticeEvent).safeParse(line);
       return parsed.success ? [parsed.data] : [];
     });
-  const sends = (await Bun.file(sent).text().catch(() => ""))
-    .trim().split("\n").filter(Boolean).flatMap((line) => {
-      const parsed = jsonOf(z.object({ method: z.literal("tools/call"), params: z.object({ arguments: z.object({ to: z.string(), message: z.string(), idempotency_key: z.string() }) }) })).safeParse(line);
+  const sends = (
+    await Bun.file(sent)
+      .text()
+      .catch(() => "")
+  )
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .flatMap((line) => {
+      const parsed = jsonOf(
+        z.object({
+          method: z.literal("tools/call"),
+          params: z.object({
+            arguments: z.object({
+              to: z.string(),
+              message: z.string(),
+              idempotency_key: z.string(),
+            }),
+          }),
+        }),
+      ).safeParse(line);
       return parsed.success ? [parsed.data.params.arguments] : [];
     });
-  const endedLines = records.trim().split("\n").filter((line) => {
-    const parsed = jsonOf(z.object({ kind: z.literal("ended") })).safeParse(line);
-    return parsed.success;
-  });
+  const endedLines = records
+    .trim()
+    .split("\n")
+    .filter((line) => {
+      const parsed = jsonOf(z.object({ kind: z.literal("ended") })).safeParse(
+        line,
+      );
+      return parsed.success;
+    });
   return { result, notices, sends, endedLines };
 }
 
@@ -178,7 +216,14 @@ test("run end notice: a failed send is recorded and does not touch the outcome",
     exit: 1,
     receipt: "receipt unavailable",
   });
-  expect(endedLines).toEqual([JSON.stringify({ kind: "ended", id: runId("timeout"), outcome: "timeout", exit: 3 })]);
+  expect(endedLines).toEqual([
+    JSON.stringify({
+      kind: "ended",
+      id: runId("timeout"),
+      outcome: "timeout",
+      exit: 3,
+    }),
+  ]);
 });
 
 test("run end notice: the default budget leaves tens of seconds over a relay turn", () => {
@@ -227,3 +272,98 @@ test("run end notice: a sender that never answers records deadline after the bud
   expect(elapsed).toBeGreaterThanOrEqual(1_000);
   expect(elapsed).toBeLessThan(10_000);
 });
+
+test("a bare Claude dispatcher is qualified for a real run end notice", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agx-notice-run-"));
+  roots.push(root);
+  const { prepareTicketRepo } = await import("./ticket-repo.ts");
+  await prepareTicketRepo(root);
+  const bin = join(root, "bin");
+  const state = join(root, "state");
+  await mkdir(bin);
+  await mkdir(state);
+  const reason = join(bin, "reason-network");
+  const sent = join(root, "reason.log");
+  await Bun.write(
+    reason,
+    `#!${process.execPath}\nimport ${JSON.stringify(resolve("tools/agx-worker/tests/fixtures/reason-notice.ts"))};\n`,
+  );
+  await chmod(reason, 0o755);
+  const mise = join(bin, "mise");
+  await Bun.write(mise, '#!/bin/sh\nprintf "{}\\n"\n');
+  await chmod(mise, 0o755);
+  const ticket = join(root, "ticket.md");
+  await Bun.write(
+    ticket,
+    `+++\nschema = 2\nname = "notice-integration"\nwrites = []\noutcome = "fixture"\nverify = ["true"]\n[proposition]\nid = "NOTICE"\nclaim = "notice uses identity"\nrefuted_by = "wrong identity"\n+++\nFixture.\n`,
+  );
+  const vendor = join(root, "vendor.ts");
+  await Bun.write(
+    vendor,
+    'process.stdout.write(JSON.stringify({exit:0,report:{summary:"done",changes:[],checks:[],for_coordinator:[],open:[]},vendor_session:"vendor"}) + "\\n");',
+  );
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: () =>
+      Response.json({
+        answers: { worker: { choice: "mechanical", confidence: 0.9 } },
+      }),
+  });
+  try {
+    const child = Bun.spawn(
+      [
+        process.execPath,
+        resolve("tools/agx-worker/src/next/cli.ts"),
+        "run",
+        ticket,
+        "--cd",
+        root,
+      ],
+      {
+        env: {
+          ...subprocessEnvironment(),
+          PATH: `${bin}:${process.env.PATH}`,
+          AGX_STATE_DIR: state,
+          AGX_WORKER_BIN: vendor,
+          AGX_CONFIG: resolve(
+            "tools/agx-worker/src/roster/policy.example.toml",
+          ),
+          JEV_URL: `http://127.0.0.1:${server.port}/choice`,
+          TYPESAFE_API_KEY: "test-key",
+          CLAUDE_CODE_SESSION_ID: "bare-claude-session",
+          AGX_DISPATCHER_SESSION: "",
+          FAKE_LOG: sent,
+          FAKE_MODE: "ok",
+          XDG_STATE_HOME: join(root, "xdg"),
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 20_000,
+      },
+    );
+    const [stdout, stderr, exit] = await Promise.all([
+      child.stdout.text(),
+      child.stderr.text(),
+      child.exited,
+    ]);
+    expect(exit, stdout + stderr).toBe(0);
+    let log = "";
+    for (let i = 0; i < 100; i++) {
+      log = await Bun.file(sent)
+        .text()
+        .catch(() => "");
+      if (log.includes('"method":"tools/call"')) break;
+      await Bun.sleep(50);
+    }
+    expect(log).toContain(
+      '"agent":"claude-code","session":"bare-claude-session"',
+    );
+    expect(log).toContain('"method":"tools/call"');
+    const records = await Bun.file(join(state, "records.jsonl")).text();
+    expect(records).toContain('"dispatcher_session":"bare-claude-session"');
+    expect(records).toContain('"ack_lookup_kind":"accepted"');
+  } finally {
+    await server.stop(true);
+  }
+}, 30_000);
