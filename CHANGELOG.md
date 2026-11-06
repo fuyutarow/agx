@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.23.1 — 2026-11-06
+
+- Report invalid caller arguments as usage errors.
+
 ## 1.23.0 — 2026-11-06
 
 - Add a private Reason Network MCP transport library
