@@ -6,6 +6,7 @@ import { jsonOf, z } from "../../zod.ts";
 export type Failure =
   | { kind: "refused"; text: string }
   | { kind: "unavailable"; text: string }
+  | { kind: "usage"; text: string }
   | { kind: "unknown"; text: string };
 export type Outcome<T> = { kind: "accepted"; value: T } | Failure;
 
@@ -69,7 +70,7 @@ export class Session {
   }
 
   static async open(options: { binary: string; session: string; deadlineMs: number }): Promise<Outcome<Session>> {
-    if (options?.binary === undefined || options.binary.length === 0 || options.session === undefined || options.session.length === 0 || !validDeadline(options.deadlineMs)) return { kind: "unavailable", text: "binary, session and a positive deadlineMs are required" };
+    if (options?.binary === undefined || options.binary.length === 0 || options.session === undefined || options.session.length === 0 || !validDeadline(options.deadlineMs)) return { kind: "usage", text: "binary, session and a positive deadlineMs are required" };
     const started = fromThrowable(() => spawn(options.binary, ["mcp"], { env: { ...process.env, REASON_NETWORK_SESSION: options.session, REASON_NETWORK_NO_UPDATE: "1" }, stdio: "pipe" }), textOf)();
     if (started.isErr()) return { kind: "unavailable", text: started.error };
     const session = new Session(started.value);
@@ -100,7 +101,7 @@ export class Session {
     });
   }
   private async call(name: string, args: object, deadlineMs: number): Promise<Outcome<string>> {
-    if (!validDeadline(deadlineMs)) return { kind: "unavailable", text: "a positive deadlineMs is required" };
+    if (!validDeadline(deadlineMs)) return { kind: "usage", text: "a positive deadlineMs is required" };
     const reply = await this.request("tools/call", { name, arguments: args }, deadlineMs);
     if (reply === undefined) return { kind: "unknown", text: "MCP reply unavailable or deadline expired" };
     if (reply.error !== undefined) return { kind: "unknown", text: reply.error.message };
@@ -111,14 +112,14 @@ export class Session {
     return { kind: "accepted", value: text };
   }
   async send(input: { to: string; message: string; idempotencyKey: string; deadlineMs: number }): Promise<Outcome<string[]>> {
-    if (input?.to === undefined || input.to.length === 0 || input.message === undefined || input.message.length === 0 || input.idempotencyKey === undefined || input.idempotencyKey.length === 0) return { kind: "unavailable", text: "to, message and idempotencyKey are required" };
+    if (input?.to === undefined || input.to.length === 0 || input.message === undefined || input.message.length === 0 || input.idempotencyKey === undefined || input.idempotencyKey.length === 0) return { kind: "usage", text: "to, message and idempotencyKey are required" };
     const result = await this.call("send_message", { to: input.to, message: input.message, idempotency_key: input.idempotencyKey }, input.deadlineMs);
     if (result.kind !== "accepted") return result;
     const ids = parseProse("send", result.value);
     return Array.isArray(ids) && ids.length > 0 ? { kind: "accepted", value: ids } : { kind: "unknown", text: result.value };
   }
   async status(ids: string[], deadlineMs: number): Promise<Outcome<unknown>> {
-    if (!Array.isArray(ids) || ids.length === 0) return { kind: "unavailable", text: "message ids are required" };
+    if (!Array.isArray(ids) || ids.length === 0 || ids.some((id) => typeof id !== "string" || id.length === 0)) return { kind: "usage", text: "message ids are required" };
     const result = await this.call("message_status", { ids }, deadlineMs);
     if (result.kind !== "accepted") return result;
     const value = parseProse("status", result.value);

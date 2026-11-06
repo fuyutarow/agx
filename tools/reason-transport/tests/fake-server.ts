@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { createInterface } from "node:readline";
+import { appendFileSync } from "node:fs";
 import { jsonOf, z } from "../../zod.ts";
 
 const request = z.object({ id: z.number().optional(), method: z.string(), params: z.object({ name: z.string().optional(), arguments: z.record(z.string(), z.unknown()).optional() }).optional() });
@@ -10,9 +11,14 @@ for await (const line of lines) {
   if (!parsed.success || parsed.data.id === undefined) continue;
   const { id, method, params } = parsed.data;
   let result: unknown = {};
+  if (method === "initialize" && process.env.REASON_NETWORK_SESSION === "failed-initialize") {
+    process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id, error: { message: "initialization failed" } })}\n`);
+    continue;
+  }
   if (method === "tools/list") result = { tools: (process.env.REASON_NETWORK_SESSION === "missing-tool" ? ["send_message"] : ["send_message", "message_status", "list_team"]).map((name) => ({ name })) };
   if (method === "tools/call") {
     const mode = process.env.REASON_NETWORK_SESSION;
+    if (mode?.startsWith("calls:")) appendFileSync(mode.slice(6), "call\n");
     if (mode === "deadline") continue;
     if (mode === "disconnect") process.exit(0);
     let text = "";
