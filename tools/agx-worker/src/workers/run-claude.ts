@@ -1,5 +1,12 @@
-import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import {
+  existsSync,
+  mkdirSync,
+  statSync,
+  writeFileSync,
+  readFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
+import { homedir } from "node:os";
 import { cli as cleyeCli } from "cleye";
 import { standardCli } from "../../../shared/src/cli.ts";
 import cliPackage from "../../package.json" with { type: "json" };
@@ -10,10 +17,12 @@ import { activityWriter } from "../lifecycle.ts";
 import { workerEnvironment } from "./environment.ts";
 import { progressWriter } from "./codex-progress.ts";
 import { foldClaudeEvent, resultEvent } from "./claude-progress.ts";
+import { stateDir } from "../state.ts";
 import {
   CAPACITY_EXIT,
   CAPACITY_STOP_GRACE_MS,
   capacityMessage,
+  creditsUnavailable,
   modelAnswered,
   modelWaitMs,
 } from "./capacity.ts";
@@ -90,6 +99,8 @@ export type RunResult = Readonly<{
   claude: unknown;
   parseError: string | undefined;
   capacityCause?: string | undefined;
+  creditsUnavailable?: boolean | undefined;
+  credential?: "api_key" | "subscription" | undefined;
 }>;
 
 type Relay = Readonly<{
@@ -103,10 +114,11 @@ type Relay = Readonly<{
   stdout?: string | undefined;
   stderr?: string | undefined;
   parse_error?: string | undefined;
-  outcome?: "capacity";
   cause?: string;
   transient?: boolean;
   worker_fault?: boolean;
+  credential?: "api_key" | "subscription" | undefined;
+  outcome?: "capacity" | "credits_unavailable";
 }>;
 
 const RecordSchema = z.record(z.string(), z.unknown());
@@ -122,7 +134,69 @@ type ParsedStdout = Readonly<{
   parseError: string | undefined;
 }>;
 
+function addFileCredential(environment: NodeJS.ProcessEnv): void {
+  const keyPath = join(
+    process.env.HOME ?? homedir(),
+    ".config",
+    "agx",
+    "anthropic-api-key",
+  );
+  if (!existsSync(keyPath)) return;
+  const stat = statSync(keyPath);
+  if (!stat.isFile() || (stat.mode & 0o7777) !== 0o600) {
+    process.stderr.write(
+      "agx: anthropic-api-key must be a regular file with mode 0600; ignored\n",
+    );
+    return;
+  }
+  const key = readFileSync(keyPath, "utf8").trim();
+  if (key === "") return;
+  environment.ANTHROPIC_API_KEY = key;
+  delete environment.ANTHROPIC_AUTH_TOKEN;
+}
+
 export async function runClaude(config: RunConfig): Promise<RunResult> {
+  const environment = workerEnvironment(process.env);
+  const marker = join(stateDir(), "claude-credits-unavailable");
+  const fresh =
+    existsSync(marker) &&
+    Temporal.Now.instant().epochMilliseconds - statSync(marker).mtimeMs <
+      24 * 60 * 60 * 1000;
+  if (fresh) {
+    delete environment.ANTHROPIC_API_KEY;
+    delete environment.ANTHROPIC_AUTH_TOKEN;
+  } else addFileCredential(environment);
+  const credential =
+    (environment.ANTHROPIC_API_KEY ?? "") !== "" ||
+    (environment.ANTHROPIC_AUTH_TOKEN ?? "") !== ""
+      ? "api_key"
+      : "subscription";
+  const start = performance.now();
+  const first = await runClaudeAttempt(config, environment, credential);
+  if (
+    first.creditsUnavailable !== true ||
+    credential !== "api_key" ||
+    first.timedOut
+  )
+    return first;
+  mkdirSync(dirname(marker), { recursive: true });
+  writeFileSync(marker, "credits unavailable\n");
+  delete environment.ANTHROPIC_API_KEY;
+  delete environment.ANTHROPIC_AUTH_TOKEN;
+  const remaining = config.timeoutMs - (performance.now() - start);
+  if (remaining <= 0) return { ...first, timedOut: true, exitCode: 124 };
+  return runClaudeAttempt(
+    { ...config, timeoutMs: remaining },
+    environment,
+    "subscription",
+  );
+}
+
+async function runClaudeAttempt(
+  config: RunConfig,
+  environment: NodeJS.ProcessEnv,
+  credential: "api_key" | "subscription",
+): Promise<RunResult> {
   const session = config.resume ?? crypto.randomUUID();
   const args = [
     "-p",
@@ -158,6 +232,7 @@ export async function runClaude(config: RunConfig): Promise<RunResult> {
 
   const deadline = new AbortController();
   let capacityCause: string | undefined;
+  let creditsFailed = false;
   let timedOut = false;
   let modelWaitTimer: ReturnType<typeof setTimeout> | undefined;
   let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
@@ -180,7 +255,7 @@ export async function runClaude(config: RunConfig): Promise<RunResult> {
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
-    env: workerEnvironment(process.env),
+    env: environment,
     signal: signal,
     killSignal: "SIGTERM",
   });
@@ -200,6 +275,11 @@ export async function runClaude(config: RunConfig): Promise<RunResult> {
     );
   }, waitMs);
   const observeCapacity = (line: string): void => {
+    if (creditsUnavailable(line)) {
+      creditsFailed = true;
+      stopForCapacity("credits_unavailable");
+      return;
+    }
     const cause = capacityMessage(line, "claude");
     if (cause !== undefined) stopForCapacity(cause);
   };
@@ -235,6 +315,7 @@ export async function runClaude(config: RunConfig): Promise<RunResult> {
     process.env.AGX_INTERIM_REPORTS_FILE,
   );
   const feed = async (line: string): Promise<void> => {
+    line = redact(line);
     observeCapacity(line);
     if (modelAnswered(line, "claude")) clearTimeout(modelWaitTimer);
     progress?.feed(line);
@@ -252,14 +333,36 @@ export async function runClaude(config: RunConfig): Promise<RunResult> {
     await recordInterim(returnedText);
   };
   const recordActivity = activityWriter();
+  const secrets = [
+    environment.ANTHROPIC_API_KEY,
+    environment.ANTHROPIC_AUTH_TOKEN,
+  ].flatMap((value) => (value === undefined || value === "" ? [] : [value]));
+  const redact = (value: string): string =>
+    secrets.reduce(
+      (text, secret) => text.replaceAll(secret, "[REDACTED]"),
+      value,
+    );
   const graced = (reading: Promise<string>): Promise<string> =>
     child.exited.then(() =>
       Promise.race([reading, Bun.sleep(1_000).then(() => "")]),
     );
   const [stdout, stderr, exitCode] = await Promise.all([
-    graced(readLines(child.stdout, feed, recordActivity, observeCapacity)),
     graced(
-      readLines(child.stderr, observeCapacity, recordActivity, observeCapacity),
+      readLines(child.stdout, feed, recordActivity, (line) => {
+        observeCapacity(redact(line));
+      }),
+    ),
+    graced(
+      readLines(
+        child.stderr,
+        (line) => {
+          observeCapacity(redact(line));
+        },
+        recordActivity,
+        (line) => {
+          observeCapacity(redact(line));
+        },
+      ),
     ),
     child.exited,
   ]);
@@ -270,23 +373,25 @@ export async function runClaude(config: RunConfig): Promise<RunResult> {
   if (capacityCause !== undefined) resultExit = CAPACITY_EXIT;
   progress?.flush();
   if (config.progressFile !== undefined) {
-    const result = resultEvent(stdout);
+    const result = resultEvent(redact(stdout));
     return {
       exitCode: resultExit,
       timedOut,
-      stdout,
-      stderr,
+      stdout: redact(stdout),
+      stderr: redact(stderr),
       claude: result,
       parseError:
         result === undefined
           ? "no result event in the stream-json output"
           : undefined,
-      capacityCause,
+      capacityCause: creditsFailed ? undefined : capacityCause,
+      creditsUnavailable: creditsFailed,
+      credential,
     };
   }
 
   // A JSON syntax error is a zod issue (never a throw); its message is "not valid JSON: <parser text>"; the prefix is dropped to keep the old parseError.
-  const decoded = jsonText.safeParse(stdout);
+  const decoded = jsonText.safeParse(redact(stdout));
   const parsed: ParsedStdout = decoded.success
     ? { claude: decoded.data, parseError: undefined }
     : {
@@ -302,11 +407,13 @@ export async function runClaude(config: RunConfig): Promise<RunResult> {
   return {
     exitCode: resultExit,
     timedOut,
-    stdout,
-    stderr,
+    stdout: redact(stdout),
+    stderr: redact(stderr),
     claude,
     parseError,
-    capacityCause,
+    capacityCause: creditsFailed ? undefined : capacityCause,
+    creditsUnavailable: creditsFailed,
+    credential,
   };
 }
 
@@ -359,7 +466,7 @@ function primitive(
 
 export function toRelay(run: RunResult): Relay {
   const claude = asRecord(run.claude);
-  const capacity =
+  let capacity: Partial<Relay> =
     run.capacityCause === undefined
       ? {}
       : ({
@@ -368,9 +475,12 @@ export function toRelay(run: RunResult): Relay {
           transient: true,
           worker_fault: false,
         } satisfies Partial<Relay>);
+  if (run.creditsUnavailable === true)
+    capacity = { outcome: "credits_unavailable" };
   if (claude === undefined) {
     return {
       ...capacity,
+      credential: run.credential,
       exit_code: run.exitCode,
       timed_out: run.timedOut,
       stdout: boundedText(run.stdout),
@@ -382,6 +492,7 @@ export function toRelay(run: RunResult): Relay {
   const result = claude.result;
   return {
     ...capacity,
+    credential: run.credential,
     exit_code: run.exitCode,
     timed_out: run.timedOut,
     result: typeof result === "string" ? boundedText(result) : undefined,

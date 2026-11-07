@@ -872,6 +872,18 @@ missing progress directories are discovered once rather than opened per row.
 
 ## Dispatch receipt and run outcomes
 
+Claude reads `~/.config/agx/anthropic-api-key` when it is a nonempty regular
+file with mode 0600. The key is supplied only in the Claude child's environment;
+an invalid mode is diagnosed and ignored. Inherited Claude credentials remain
+available when the file is absent; a file key takes precedence over them.
+The final run receipt and Claude attempt receipt expose only `credential`, either
+`api_key` or `subscription`. If a keyed attempt reports an unavailable credit
+balance or spend limit, the wrapper records a marker in the agx state directory
+and retries once with both Anthropic key and auth token removed. For 24 hours the
+marker causes later Claude children to omit both credentials; after that the key
+is tried again. This billing condition is distinct from vendor capacity. Tools
+launched by Claude can inherit and read its environment, including the key.
+
 Human and agent consumers receive a dispatch receipt on stdout after the matching
 started record appears. `dispatch TICKET --json` emits exactly one JSON object;
 plain `dispatch TICKET` emits one line starting with the run ID followed by labeled

@@ -16,6 +16,7 @@ const ErrorEnvelope = z.looseObject({
   type: z.string().optional(),
   subtype: z.string().optional(),
   error_status: z.number().nullable().optional(),
+  error_code: z.string().optional(),
   message: z.string().optional(),
   error: z
     .union([
@@ -29,6 +30,37 @@ const ErrorEnvelope = z.looseObject({
   is_error: z.boolean().optional(),
   result: z.string().optional(),
 });
+
+/** Recognize billing failures only in vendor errors or plain diagnostics. */
+export function creditsUnavailable(line: string): boolean {
+  const parsed = jsonOf(ErrorEnvelope).safeParse(line);
+  if (parsed.success) {
+    const event = parsed.data;
+    if (
+      event.error_code === "enforced_spend_limit_reached" &&
+      event.type !== "assistant"
+    )
+      return true;
+    if (
+      !(
+        event.type === "error" ||
+        event.is_error === true ||
+        event.subtype === "api_retry" ||
+        event.error !== undefined
+      )
+    )
+      return false;
+    if (
+      event.type === "system" &&
+      event.subtype === "api_retry" &&
+      event.error === "billing_error"
+    )
+      return true;
+  } else if (line.trimStart().startsWith("{")) return false;
+  return /Your credit balance is too low to access the Anthropic API|Credit balance too low|You have reached your specified (?:workspace )?API usage limits|enforced_spend_limit_reached/iu.test(
+    line,
+  );
+}
 
 /** Only vendor errors or plain diagnostics count; quoted tool/assistant output does not. */
 export function capacityMessage(

@@ -1138,6 +1138,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
       cause: z.string().optional(),
       timed_out: z.boolean().optional(),
       exit_code: z.number().optional(),
+      credential: z.enum(["api_key", "subscription"]).optional(),
     }),
   );
   let workerReceipt: z.output<typeof workerReceiptSchema> = {};
@@ -1609,7 +1610,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
   cleanupTemp();
   await workspaceLock.release();
   process.stdout.write(
-    `${JSON.stringify({ id, ticket: ticketName, workspace, row: activeRow.id, ...(pinned === null || pinned === undefined ? {} : { continued_from_row: pinned.previousRow }), route: activeRow.route, model: activeRow.model, effort: activeRow.effort, ...(attemptedRows.length > 1 ? { rows: attemptedRows } : {}), sandbox, sandbox_source, sandbox_effective, sandbox_effective_source, exit, outcome, report_path: reportPath, state_file: recordPath(), host: hostname(), unit, execution })}\n`,
+    `${JSON.stringify({ id, ticket: ticketName, workspace, row: activeRow.id, ...(pinned === null || pinned === undefined ? {} : { continued_from_row: pinned.previousRow }), route: activeRow.route, model: activeRow.model, effort: activeRow.effort, ...(workerReceipt.credential === undefined ? {} : { credential: workerReceipt.credential }), ...(attemptedRows.length > 1 ? { rows: attemptedRows } : {}), sandbox, sandbox_source, sandbox_effective, sandbox_effective_source, exit, outcome, report_path: reportPath, state_file: recordPath(), host: hostname(), unit, execution })}\n`,
   );
   return exit;
 }
