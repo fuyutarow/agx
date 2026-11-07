@@ -11,6 +11,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runClaude, toRelay } from "../../src/workers/run-claude.ts";
+import { claudeCredential } from "../../src/workers/claude-credential.ts";
+import { workerEnvironment } from "../../src/workers/environment.ts";
 
 test("file, inherited credentials, cooldown and one fallback stay confined to the child", async () => {
   const root = mkdtempSync(join(tmpdir(), "agx-credit-test-"));
@@ -106,6 +108,42 @@ test("file, inherited credentials, cooldown and one fallback stay confined to th
     for (const key of Object.keys(process.env))
       if (!(key in old)) delete process.env[key];
     Object.assign(process.env, old);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("shared credential resolution covers file and inherited credentials until cooldown", () => {
+  const root = mkdtempSync(join(tmpdir(), "agx-credential-pick-"));
+  const oldHome = process.env.HOME;
+  const oldState = process.env.AGX_STATE_DIR;
+  try {
+    process.env.HOME = root;
+    process.env.AGX_STATE_DIR = join(root, "state");
+    const resolve = (env: NodeJS.ProcessEnv) =>
+      claudeCredential(workerEnvironment(env));
+    expect(resolve({})).toBe("subscription");
+    expect(resolve({ ANTHROPIC_API_KEY: "inherited" })).toBe("api_key");
+    expect(resolve({ ANTHROPIC_AUTH_TOKEN: "inherited" })).toBe("api_key");
+    mkdirSync(join(root, ".config", "agx"), { recursive: true });
+    writeFileSync(
+      join(root, ".config", "agx", "anthropic-api-key"),
+      "file-secret",
+      { mode: 0o600 },
+    );
+    expect(resolve({})).toBe("api_key");
+    mkdirSync(join(root, "state"), { recursive: true });
+    writeFileSync(
+      join(root, "state", "claude-credits-unavailable"),
+      "unavailable",
+    );
+    expect(resolve({})).toBe("subscription");
+    expect(resolve({ ANTHROPIC_API_KEY: "inherited" })).toBe("subscription");
+    expect(resolve({ ANTHROPIC_AUTH_TOKEN: "inherited" })).toBe("subscription");
+  } finally {
+    if (oldHome === undefined) delete process.env.HOME;
+    else process.env.HOME = oldHome;
+    if (oldState === undefined) delete process.env.AGX_STATE_DIR;
+    else process.env.AGX_STATE_DIR = oldState;
     rmSync(root, { recursive: true, force: true });
   }
 });

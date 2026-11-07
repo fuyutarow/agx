@@ -70,7 +70,9 @@ const execute = async (args: string[], env: NodeJS.ProcessEnv) => {
 };
 
 const capacityDispatch = async (mode: string) => {
-  const root = await mkdtemp(join(tmpdir(), `agx-test-${process.pid}-capacity-`));
+  const root = await mkdtemp(
+    join(tmpdir(), `agx-test-${process.pid}-capacity-`),
+  );
   roots.push(root);
   const f = { root };
   await prepareTicketRepo(f.root);
@@ -90,7 +92,7 @@ process.exitCode = capacity ? 75 : 0;
   const ticket = join(f.root, "capacity.md");
   await writeFile(
     ticket,
-    '+++\nschema = 2\nname = "capacity"\ntimeout_s = 60\nwrites = []\ncapabilities = ["long-tool-loop"]\noutcome = "test capacity reroute"\nverify = []\n[proposition]\nid = "CAPACITY"\nclaim = "reroute capacity"\nrefuted_by = "same row retried"\n+++\nWork.\n',
+    '+++\nschema = 2\nname = "capacity"\ntimeout_s = 600\nwrites = []\ncapabilities = ["long-tool-loop"]\noutcome = "test capacity reroute"\nverify = ["true"]\n[proposition]\nid = "CAPACITY"\nclaim = "reroute capacity"\nrefuted_by = "same row retried"\n+++\nWork.\n',
   );
   const policyExample = new URL(
     "../src/roster/policy.example.toml",
@@ -102,8 +104,10 @@ process.exitCode = capacity ? 75 : 0;
   const excluded = loaded.value.choice
     .filter((row) => !keep.has(row.id))
     .map((row) => row.id);
-  const policy = (await readFile(policyExample, "utf8"))
-    .replace("exclude = []", `exclude = ${JSON.stringify(excluded)}`);
+  const policy = (await readFile(policyExample, "utf8")).replace(
+    "exclude = []",
+    `exclude = ${JSON.stringify(excluded)}`,
+  );
   const policyPath = join(f.root, "policy.toml");
   await writeFile(policyPath, policy);
   const state = join(f.root, "state");
@@ -113,8 +117,8 @@ process.exitCode = capacity ? 75 : 0;
       Response.json({
         answers: {
           worker: {
-            choice: "sol-medium",
-            probabilities: { "sol-medium": 1 },
+            choice: "mechanical",
+            probabilities: { mechanical: 1 },
           },
         },
       }),

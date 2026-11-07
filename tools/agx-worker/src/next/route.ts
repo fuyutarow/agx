@@ -8,10 +8,13 @@ import {
   ROUTING_OBJECTIVE,
   type Choice,
   type LoadRosterOptions,
+  type RequirementClass,
   REQUIREMENT_BARS,
 } from "../roster/index.ts";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { exitWithError } from "./exit.ts";
+import { claudeCredential } from "../workers/claude-credential.ts";
+import { workerEnvironment } from "../workers/environment.ts";
 import { readRouteUsage } from "./usage.ts";
 import { setPendingPickAudit } from "./store.ts";
 import { recordJevUsage } from "./jev-usage.ts";
@@ -31,18 +34,43 @@ export const fitsPublishedTimeBox = (row: Choice, timeoutS: number): boolean =>
   row.aa_time_per_task_s !== null &&
   row.aa_time_per_task_s <= timeoutS * PUBLISHED_TASK_DURATION_BUDGET_RATIO;
 
-const comparePriceThenDuration = (a: Choice, b: Choice): number => {
-  const aPrice = (a.price_in ?? Infinity) + (a.price_out ?? Infinity);
-  const bPrice = (b.price_in ?? Infinity) + (b.price_out ?? Infinity);
-  const priceDifference = aPrice - bPrice;
-  if (priceDifference !== 0) return priceDifference;
-  return (
-    (a.aa_time_per_task_s ?? Infinity) - (b.aa_time_per_task_s ?? Infinity)
-  );
+const compareNumber = (a: number, b: number): number => {
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
 };
 
-const compareTb4Descending = (a: Choice, b: Choice): number =>
-  (b.tb4 ?? Number.NEGATIVE_INFINITY) - (a.tb4 ?? Number.NEGATIVE_INFINITY);
+/** Stage 3: filter by requirement, then deterministically rank eligible rows. */
+export function orderCandidates(
+  rows: readonly Choice[],
+  requirement: RequirementClass,
+  creditCovered: (row: Choice) => boolean,
+): Choice[] {
+  const bar = REQUIREMENT_BARS[requirement];
+  const qualifying = rows.filter(
+    (row) => (row.tb4 ?? (bar === 0 ? 0 : -Infinity)) >= bar,
+  );
+  const pool = qualifying.length > 0 ? qualifying : rows;
+  return pool.toSorted((a, b) => {
+    if (qualifying.length === 0) {
+      const score = compareNumber(b.tb4 ?? -Infinity, a.tb4 ?? -Infinity);
+      if (score !== 0) return score;
+    }
+    const credit = Number(creditCovered(b)) - Number(creditCovered(a));
+    if (credit !== 0) return credit;
+    const price = compareNumber(
+      (a.price_in ?? Infinity) + (a.price_out ?? Infinity),
+      (b.price_in ?? Infinity) + (b.price_out ?? Infinity),
+    );
+    if (price !== 0) return price;
+    const duration = compareNumber(
+      a.aa_time_per_task_s ?? Infinity,
+      b.aa_time_per_task_s ?? Infinity,
+    );
+    if (duration !== 0) return duration;
+    if (a.id === b.id) return 0;
+    return a.id < b.id ? -1 : 1;
+  });
+}
 
 const Reply = z.looseObject({
   answers: z.record(
@@ -387,18 +415,6 @@ export async function route(
       "refused-no-row-in-time-box",
     );
   }
-  const anonymizationMap: Record<string, string> = {};
-  const measuredEvidence: Record<
-    string,
-    {
-      judged_runs: number;
-      accepted_runs: number;
-      accepted_percent: number | null;
-      ended_runs: number;
-      median_wall_minutes: number | null;
-      text: string;
-    }
-  > = {};
   const criteria: Record<string, string> = {};
   for (const requirementClass of RequirementClassSchema.options)
     criteria[requirementClass] =
@@ -422,25 +438,6 @@ export async function route(
           }
         : {}),
       published_task_metrics: {},
-      routes: Object.fromEntries(
-        Object.entries(usage).map(([name, value]) => [
-          name,
-          {
-            available: value.available,
-            windows: Object.fromEntries(
-              Object.entries(value.windows).map(([windowName, window]) => [
-                windowName,
-                {
-                  used_percent: window.used_percent,
-                  elapsed_fraction: window.elapsed_fraction,
-                  pace: window.pace,
-                  status: window.status,
-                },
-              ]),
-            ),
-          },
-        ]),
-      ),
       task_size: {
         timeout_s: timeoutS,
         class: timeoutClass,
@@ -488,10 +485,8 @@ export async function route(
     source,
     probabilities: probabilities ?? null,
     answer: rawAnswer,
-    anonymization_map: anonymizationMap,
     usage_snapshot: usage,
     usage_id: usageId,
-    measured_evidence: measuredEvidence,
   });
   const recordPick = (
     row: Choice,
@@ -499,8 +494,6 @@ export async function route(
     probabilities: Record<string, number> | undefined,
   ): Choice => {
     audit.selected_row = row.id;
-    audit.anonymization_map = anonymizationMap;
-    audit.measured_evidence = measuredEvidence;
     audit.answer = rawAnswer;
     audit.selection_mode = "class";
     audit.choice_probabilities = probabilities ?? null;
@@ -531,8 +524,6 @@ export async function route(
     probabilities?: Record<string, number>,
   ) => {
     audit.selection_mode = "refusal";
-    audit.anonymization_map = anonymizationMap;
-    audit.measured_evidence = measuredEvidence;
     audit.answer = rawAnswer;
     audit.choice_probabilities = probabilities ?? null;
     const reply = post.ok ? post.text : null;
@@ -569,8 +560,6 @@ export async function route(
   if (reason.success) {
     audit.outcome_kind = "held";
     audit.selection_mode = "return";
-    audit.anonymization_map = anonymizationMap;
-    audit.measured_evidence = measuredEvidence;
     audit.answer = rawAnswer;
     audit.choice_probabilities = probabilities ?? null;
     if (options?.inspect !== true)
@@ -604,15 +593,15 @@ export async function route(
     );
   const requirementClass = parsedRequirementClass.data;
   const bar = REQUIREMENT_BARS[requirementClass];
-  const inTimeBox = candidates;
-  const qualifying = inTimeBox.filter(
+  const qualifying = candidates.filter(
     (row) => (row.tb4 ?? (bar === 0 ? 0 : Number.NEGATIVE_INFINITY)) >= bar,
   );
-  const pool = qualifying.length > 0 ? qualifying : inTimeBox;
-  const ordered =
-    qualifying.length > 0
-      ? pool.toSorted(comparePriceThenDuration)
-      : pool.toSorted(compareTb4Descending);
+  const creditAvailable =
+    claudeCredential(workerEnvironment(process.env)) === "api_key";
+  const covered = (row: Choice) => row.route === "claude" && creditAvailable;
+  const ordered = orderCandidates(candidates, requirementClass, covered);
+  audit.credit_covered = ordered.some((row) => covered(row));
+  audit.ordered_candidate_ids = ordered.map((row) => row.id);
   const chosen = ordered[0];
   if (chosen === undefined)
     return refuseReply(

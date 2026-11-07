@@ -84,7 +84,7 @@ export type Graded = Readonly<{
 }>;
 
 export const ROUTING_OBJECTIVE =
-  "Purpose: classify this ticket by the requirement it imposes. Use mechanical for an edit whose check is already stated, localized for a behavior fix inside one module, and cross_module when an invariant, public API, or behavior across modules must change. Return the ticket only when it cannot be done as written. Do not choose a worker. Subscription health: weigh 7-day windows most; 5-hour windows are secondary; stale or unknown usage is neutral.";
+  "Purpose: classify this ticket by the requirement it imposes. Use mechanical for an edit whose check is already stated, localized for a behavior fix inside one module, and cross_module when an invariant, public API, or behavior across modules must change. Return the ticket only when it cannot be done as written. Do not choose a worker.";
 
 /** What Jev reads about one row: its route, measured capability, and relative price. */
 export function criterionFor(r: Roster, c: Choice): string {

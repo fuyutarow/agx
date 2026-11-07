@@ -42,32 +42,6 @@ const RoutingRequest = z.looseObject({
         })
         .catchall(z.unknown()),
     ),
-    routes: z.looseObject({
-      claude: z.looseObject({
-        available: z.boolean(),
-        windows: z.record(
-          z.string(),
-          z.looseObject({
-            used_percent: z.number().nullable(),
-            elapsed_fraction: z.number().nullable(),
-            pace: z.number().nullable(),
-            status: z.string(),
-          }),
-        ),
-      }),
-      codex: z.looseObject({
-        available: z.boolean(),
-        windows: z.record(
-          z.string(),
-          z.looseObject({
-            used_percent: z.number().nullable(),
-            elapsed_fraction: z.number().nullable(),
-            pace: z.number().nullable(),
-            status: z.string(),
-          }),
-        ),
-      }),
-    }),
     task_size: z.looseObject({ timeout_s: z.number(), class: z.string() }),
   }),
   questions: z.looseObject({
@@ -368,7 +342,7 @@ describe("capability constrained routing", () => {
         expect(
           Object.keys(criteria).some((id) => id.startsWith("model_")),
         ).toBe(false);
-        expect(server.request()?.state.routes.claude.available).toBe(true);
+        expect(server.request()?.state.routes).toBeUndefined();
       });
     }
   }
@@ -506,7 +480,7 @@ describe("capability constrained routing", () => {
       server.request()?.questions.worker.criteria["cross_module"],
     ).toBeDefined();
   });
-  test("ROUTER-PURPOSE: built request carries the exact purpose and subscription health", async () => {
+  test("ROUTER-PURPOSE: built request carries the classification purpose", async () => {
     const { home } = await isolateState();
     const nowMs = Temporal.Now.instant().epochMilliseconds;
     // Claude 5h = .12 - .84 = -.72; Claude 7d = .20 - .12 = +.08.
@@ -549,27 +523,11 @@ describe("capability constrained routing", () => {
     expect(classCriteria).toContain("mechanical");
     expect(classCriteria).toContain("localized");
     expect(classCriteria).toContain("cross_module");
-    expect(
-      Object.keys(request?.state.routes.claude.windows["7d"] ?? {}),
-    ).toEqual(["used_percent", "elapsed_fraction", "pace", "status"]);
-    expect(Object.keys(request?.state.routes.claude.windows ?? {})).toEqual([
-      "7d",
-      "5h",
-    ]);
-    expect(request?.state.routes.claude.windows["7d"]?.pace).toBeCloseTo(
-      0.08,
-      5,
-    );
-    expect(request?.state.routes.codex.windows["7d"]?.pace).toBeCloseTo(
-      0.23,
-      5,
-    );
+    expect(request?.state.routes).toBeUndefined();
+    expect(JSON.stringify(request?.state)).not.toMatch(/windows|used_percent|elapsed_fraction|pace/);
     expect(request?.questions.worker.criteria["localized"]).toBeDefined();
     expect(request?.questions.worker.instructions).toContain(ROUTING_OBJECTIVE);
-    expect(request?.questions.worker.instructions).toContain(
-      "5-hour windows are secondary",
-    );
-    expect(ROUTING_OBJECTIVE).toContain("7-day windows most");
+    expect(ROUTING_OBJECTIVE).not.toContain("Subscription health");
   });
 
   test("route contract: a row whose published duration exceeds the time box is not offered", async () => {
@@ -695,9 +653,7 @@ describe("capability constrained routing", () => {
       parsed.ticket.timeout_s,
     );
     expect(selected.id).toBe("terra-high");
-    expect(server.request()?.state.routes.claude.windows["7d"]?.status).toBe(
-      "unknown",
-    );
+    expect(server.request()?.state.routes).toBeUndefined();
     expect(server.request()?.state.task_size).toEqual({
       timeout_s: 14_400,
       class: "multi-hour",
@@ -739,7 +695,7 @@ describe("capability constrained routing", () => {
     appendStarted(retry.id);
   });
 
-  test("the replayed subscription pace is visible to ticket classification", async () => {
+  test("subscription pace is excluded from ticket classification", async () => {
     const { home } = await isolateState();
     const nowMs = Temporal.Now.instant().epochMilliseconds;
     installUsage(home, nowMs, 3, 0.94, 45, 0.28);
@@ -748,24 +704,8 @@ describe("capability constrained routing", () => {
     const selected = await route("comparable routing replay");
     expect(selected.id).toBe(LOCALIZED_SELECTION);
     const request = server.request();
-    const claudeWeek = request?.state.routes.claude.windows["7d"];
-    const codexWeek = request?.state.routes.codex.windows["7d"];
-    expect(claudeWeek).toMatchObject({
-      used_percent: 3,
-      status: "fresh",
-    });
-    expect(claudeWeek?.elapsed_fraction).toBeCloseTo(0.94, 5);
-    expect(claudeWeek?.pace).toBeCloseTo(-0.91, 5);
-    expect(codexWeek).toMatchObject({
-      used_percent: 45,
-      status: "fresh",
-    });
-    expect(codexWeek?.elapsed_fraction).toBeCloseTo(0.28, 5);
-    expect(codexWeek?.pace).toBeCloseTo(0.17, 5);
-    expect(request?.questions.worker.instructions).toContain(ROUTING_OBJECTIVE);
-    expect(request?.questions.worker.instructions).toContain(
-      "stale or unknown usage is neutral",
-    );
+    expect(request?.state.routes).toBeUndefined();
+    expect(JSON.stringify(request?.state)).not.toMatch(/windows|used_percent|elapsed_fraction|pace/);
     expect(request?.questions.worker.criteria.localized).toBeDefined();
 
     const started = appendStarted(selected.id);
@@ -785,9 +725,8 @@ describe("capability constrained routing", () => {
 
     const selected = await route("exclude a capped route");
     expect(selected.route).toBe("codex");
-    expect(server.request()?.state.routes.claude.available).toBe(false);
-    expect(server.request()?.state.routes.claude.windows["7d"]?.status).toBe(
-      "unknown",
+    expect(server.request()?.state.routes).toBe(
+      undefined,
     );
     expect(server.request()?.questions.worker.criteria.localized).toBeDefined();
     expect(
@@ -805,14 +744,7 @@ describe("capability constrained routing", () => {
     const server = startServer("localized", { localized: 1 });
 
     const selected = await route("stale usage replay");
-    const routes = server.request()?.state.routes;
-    expect(routes).toBeDefined();
-    if (routes === undefined) return;
-    expect(routes.claude.available).toBe(true);
-
-    expect(routes.claude.windows["7d"]?.status).toBe("stale");
-    expect(routes.claude.windows["7d"]?.pace).toBeNull();
-    expect(routes.codex.available).toBe(true);
+    expect(server.request()?.state.routes).toBeUndefined();
     appendStarted(selected.id);
   });
 
@@ -829,9 +761,8 @@ describe("capability constrained routing", () => {
     expect(event?.audit?.choice_probabilities).toEqual({
       "not-a-roster-row": 1,
     });
-    expect(event?.audit?.usage_snapshot).toMatchObject(
-      server.request()?.state.routes ?? {},
-    );
+    expect(event?.audit?.usage_snapshot).toBeDefined();
+    expect(server.request()?.state.routes).toBeUndefined();
   });
 });
 
@@ -993,7 +924,6 @@ for (const reason of ["split", "uncheckable", "contradiction"] as const) {
           pick_audit: z.object({
             answer: z.object({ choice: z.string() }),
             probabilities: z.record(z.string(), z.number()),
-            anonymization_map: z.record(z.string(), z.string()),
           }),
         }),
       ).safeParse(
@@ -1312,6 +1242,11 @@ test("audit retains class probabilities, the bar, qualifying rows, and determini
   expect(audit?.tb4_bar).toBe(15);
   expect(audit?.qualifying_rows).toContain("terra-low");
   expect(audit?.selected_row).toBe(LOCALIZED_SELECTION);
+  expect(typeof audit?.credit_covered).toBe("boolean");
+  expect(Array.isArray(audit?.ordered_candidate_ids)).toBe(true);
+  expect((audit?.ordered_candidate_ids as string[])[0]).toBe(selected.id);
+  expect(audit?.anonymization_map).toBeUndefined();
+  expect(audit?.measured_evidence).toBeUndefined();
   expect(audit?.choice_probabilities).toEqual({ localized: 1 });
   expect(selected.id).toBe(LOCALIZED_SELECTION);
   expect(

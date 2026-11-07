@@ -1,12 +1,5 @@
-import {
-  existsSync,
-  mkdirSync,
-  statSync,
-  writeFileSync,
-  readFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { homedir } from "node:os";
 import { cli as cleyeCli } from "cleye";
 import { standardCli } from "../../../shared/src/cli.ts";
 import cliPackage from "../../package.json" with { type: "json" };
@@ -15,6 +8,7 @@ import { jsonOf, jsonText, z } from "../../../shared/src/zod.ts";
 import { interimReturnWriter, parseReturn } from "../report.ts";
 import { activityWriter } from "../lifecycle.ts";
 import { workerEnvironment } from "./environment.ts";
+import { claudeCredential } from "./claude-credential.ts";
 import { progressWriter } from "./codex-progress.ts";
 import { foldClaudeEvent, resultEvent } from "./claude-progress.ts";
 import { stateDir } from "../state.ts";
@@ -134,43 +128,10 @@ type ParsedStdout = Readonly<{
   parseError: string | undefined;
 }>;
 
-function addFileCredential(environment: NodeJS.ProcessEnv): void {
-  const keyPath = join(
-    process.env.HOME ?? homedir(),
-    ".config",
-    "agx",
-    "anthropic-api-key",
-  );
-  if (!existsSync(keyPath)) return;
-  const stat = statSync(keyPath);
-  if (!stat.isFile() || (stat.mode & 0o7777) !== 0o600) {
-    process.stderr.write(
-      "agx: anthropic-api-key must be a regular file with mode 0600; ignored\n",
-    );
-    return;
-  }
-  const key = readFileSync(keyPath, "utf8").trim();
-  if (key === "") return;
-  environment.ANTHROPIC_API_KEY = key;
-  delete environment.ANTHROPIC_AUTH_TOKEN;
-}
-
 export async function runClaude(config: RunConfig): Promise<RunResult> {
   const environment = workerEnvironment(process.env);
   const marker = join(stateDir(), "claude-credits-unavailable");
-  const fresh =
-    existsSync(marker) &&
-    Temporal.Now.instant().epochMilliseconds - statSync(marker).mtimeMs <
-      24 * 60 * 60 * 1000;
-  if (fresh) {
-    delete environment.ANTHROPIC_API_KEY;
-    delete environment.ANTHROPIC_AUTH_TOKEN;
-  } else addFileCredential(environment);
-  const credential =
-    (environment.ANTHROPIC_API_KEY ?? "") !== "" ||
-    (environment.ANTHROPIC_AUTH_TOKEN ?? "") !== ""
-      ? "api_key"
-      : "subscription";
+  const credential = claudeCredential(environment);
   const start = performance.now();
   const first = await runClaudeAttempt(config, environment, credential);
   if (
