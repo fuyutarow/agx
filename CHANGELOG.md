@@ -1,5 +1,9 @@
 # Changelog
 
+## 5.2.0 — 2026-11-07
+
+- Make model picks deterministic and credit-aware
+
 ## 5.1.0 — 2026-11-07
 
 - Use Claude API credits before falling back to subscription
