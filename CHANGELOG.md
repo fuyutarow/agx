@@ -1,5 +1,9 @@
 # Changelog
 
+## 5.1.0 — 2026-11-07
+
+- Use Claude API credits before falling back to subscription
+
 ## 5.0.0 — 2026-11-06
 
 - Remove agx msg (and the agx-msg and xmsg commands): messaging between sessions belongs to Reason Network (send_message and list_team inside a session, reason-network send from a shell). agx msg now exits 2 naming the replacement.
