@@ -93,7 +93,7 @@ async function fixture() {
     port: 0,
     fetch: () =>
       Response.json({
-        answers: { worker: { choice: "luna-high", confidence: 0.9 } },
+        answers: { worker: { choice: "mechanical", confidence: 0.9 } },
       }),
   });
   cleanups.push(async () => {

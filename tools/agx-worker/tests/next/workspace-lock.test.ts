@@ -158,7 +158,7 @@ console.log(JSON.stringify({ report: { summary: "done", changes: [], checks: [],
       routing = true;
       if (delayRoute) while (!existsSync(routeGate)) await Bun.sleep(10);
       return Response.json({
-        answers: { worker: { choice: "luna-high", confidence: 0.9 } },
+        answers: { worker: { choice: "mechanical", confidence: 0.9 } },
       });
     },
   });

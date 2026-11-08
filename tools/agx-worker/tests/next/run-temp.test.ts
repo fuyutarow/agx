@@ -79,7 +79,7 @@ async function fixture(workerBody: string, verify: string | string[]) {
     port: 0,
     fetch: () =>
       Response.json({
-        answers: { worker: { choice: "luna-high", confidence: 0.9 } },
+        answers: { worker: { choice: "mechanical", confidence: 0.9 } },
       }),
   });
   jevServers.push(jev);

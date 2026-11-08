@@ -248,7 +248,7 @@ test("real routing CLI captures response usage even for fallback, missing usage 
     port: 0,
     fetch: () =>
       Response.json({
-        answers: { worker: { choice: "luna-high" } },
+        answers: { worker: { choice: "mechanical" } },
         usage: { input_tokens: 123, output_tokens: 7 },
       }),
   });
@@ -293,7 +293,7 @@ test("real routing CLI captures response usage even for fallback, missing usage 
   expect(data.known_output_tokens).toBe(9);
   server.reload({
     fetch: () =>
-      Response.json({ answers: { worker: { choice: "luna-high" } } }),
+      Response.json({ answers: { worker: { choice: "mechanical" } } }),
   });
   await pick();
   data = report(stats(env));

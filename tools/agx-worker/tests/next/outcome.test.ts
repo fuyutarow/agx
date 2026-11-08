@@ -71,7 +71,7 @@ test("ended fixtures retain measured outcomes while routing omits ungraded raw h
     fetch: async (request) => {
       const parsed = jsonOf(Request).safeParse(await request.text());
       if (parsed.success) captured = parsed.data;
-      return Response.json({ answers: { worker: { choice: "luna-high" } } });
+      return Response.json({ answers: { worker: { choice: "mechanical" } } });
     },
   });
   servers.push(server);
@@ -266,7 +266,7 @@ test("outcome contract: malformed only when the returned report is unreadable", 
   const server = Bun.serve({
     port: 0,
     fetch: () =>
-      Response.json({ answers: { worker: { choice: "luna-high" } } }),
+      Response.json({ answers: { worker: { choice: "mechanical" } } }),
   });
   servers.push(server);
   const env = {
