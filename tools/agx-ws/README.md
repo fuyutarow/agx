@@ -158,7 +158,7 @@ include `trunk source`, without changing the six-column TSV or JSON row shape.
 
 ## Invariants
 
-- **Derived observations.** Decisions are derived from jj, shared `agx.toml` policy, `agx worker ls --json` and the filesystem. Explicit GC, including dry runs, publishes `<state dir>/workspace-verdicts.json` atomically under its own publication lock when no removal failed. This is an observation, not lifecycle authority. The lock directory `<parent>/<repo>.ws.lock` is removed on release. Foreground
+- **Derived observations.** Decisions are derived from jj, shared `agx.toml` policy, `agx worker ls --json` and the filesystem. Explicit non-dry GC publishes `<state dir>/workspace-verdicts.json` atomically under its own publication lock when no removal failed. This is an observation, not lifecycle authority. The lock directory `<parent>/<repo>.ws.lock` is removed on release. Foreground
   waiters advertise transient intent in the adjacent `.ws.lock.waiters/` directory, cleaned on
   completion; dead local waiter entries are discarded by GC.
 - **One lock per backing store**, shared by mutating verbs (`tools/shared` dir-lock; a dead holder's
@@ -197,7 +197,7 @@ live or continuing lineages and work the selected collection mode does not autho
 Lock-scope fixtures must show that slow classification does not hold up foreground creation for an
 entire GC pass, and that changed removal inputs are checked again under the store lock. Waits over
 five seconds must identify the holder's command, pid, host, start time and elapsed seconds.
-The old assertion that no state file is written is superseded by explicit verdict publication.
+A dry run writes no state file, neither the verdict observation nor the classification order; the read-only dry-run fixtures assert this (CHANGELOG 1.10.1: "Keep workspace gc dry-runs read-only with unwritable repository parents and state directories").
 
 `gc --all` discovers repositories from the append-only
 `$AGX_STATE_DIR/workspace-index.jsonl` creation history, every run's workspace

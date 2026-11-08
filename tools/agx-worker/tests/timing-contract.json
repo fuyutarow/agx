@@ -630,11 +630,6 @@
     "timeout": 90000
   },
   {
-    "file": "tools/agx-ws/tests/gc-usecases.test.ts",
-    "name": "gc usecase: U2 removes a workspace whose non-empty change is reachable from a remote bookmark",
-    "timeout": 12000
-  },
-  {
     "file": "tools/agx-ws/tests/lock-scope.test.ts",
     "name": "AGX-GC-DRYRUN-READONLY-PARENT-1025: single and all with ${existingState ? \"existing\" : \"missing\"} state",
     "timeout": 11000

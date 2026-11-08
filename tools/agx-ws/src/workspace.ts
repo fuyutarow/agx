@@ -3465,7 +3465,8 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
         );
       }
       classified[ws.dir] = Temporal.Now.instant().epochMilliseconds;
-      await writeGcOrder(repo.backing, orderEnv, classified);
+      // README "Dry runs use saved snapshots": a dry run keeps its order in memory and writes no state.
+      if (!options.dryRun) await writeGcOrder(repo.backing, orderEnv, classified);
       const elapsed = performance.now() - classificationStart;
       classificationMs += elapsed;
       const inventory = trace.inventoryMs - inventoryBefore;

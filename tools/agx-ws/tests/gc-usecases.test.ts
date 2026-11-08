@@ -280,7 +280,7 @@ test.todo("gc usecase: U1 dry-run gives each workspace one removable, keep, or b
   });
 });
 
-// measured 5807ms on alpha 1.22.5 under host load
+// measured 5807ms on alpha 1.22.5 under host load; the explicit 12000ms cap timed out in the 4b37cfec whole-suite gate, so this uses the file default (setDefaultTimeout 90000)
 test("gc usecase: U2 removes a workspace whose non-empty change is reachable from a remote bookmark", async () => {
   await withFixture(async (f) => {
     const collectedPath = await addWorkspace(f, "remote-collected");
@@ -351,7 +351,7 @@ test("gc usecase: U2 removes a workspace whose non-empty change is reachable fro
     expect(existsSync(collectedPath)).toBe(false);
     expect(existsSync(trunkPath)).toBe(false);
   });
-}, 12000);
+});
 
 test("gc usecase: U3 keeps and names the ten unpushed changes in a workspace", async () => {
   await withFixture(async (f) => {
