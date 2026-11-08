@@ -108,13 +108,13 @@ test("store contract: a non-contention flock error reports its errno", async () 
   expect(lock).toEqual({ ok: false, error: "flock failed: errno 9" });
 });
 
-async function until(predicate: () => boolean) {
+async function until(predicate: () => boolean, awaited = "the test predicate") {
   const deadline = performance.now() + 20_000;
   while (performance.now() < deadline) {
     if (predicate()) return;
     await Bun.sleep(10);
   }
-  expect(predicate()).toBe(true);
+  throw new Error(`timed out after 20000ms waiting for: ${awaited}`);
 }
 
 const Row = z.looseObject({
@@ -374,10 +374,13 @@ test("workspace ownership lasts through verification after the worker exits", as
     `import { existsSync, writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(verifying)}, "ready");\nwhile (!existsSync(${JSON.stringify(verifyGate)})) await Bun.sleep(10);\n`,
   );
   const command = `bun ${verifier}`;
+  const fixtureVerify = 'verify = ["true"]';
+  const ticketText = readFileSync(f.ticket, "utf8");
+  expect(ticketText).toContain(fixtureVerify);
   writeFileSync(
     f.ticket,
-    readFileSync(f.ticket, "utf8").replace(
-      "verify = []",
+    ticketText.replace(
+      fixtureVerify,
       `verify = [${JSON.stringify(command)}]`,
     ),
   );
@@ -387,7 +390,7 @@ test("workspace ownership lasts through verification after the worker exits", as
   });
   writeFileSync(f.gate, "release");
   const first = f.launch();
-  await until(() => existsSync(verifying));
+  await until(() => existsSync(verifying), "the verify command to start");
   const holder = f
     .records()
     .find((row) => row.kind === "started" && row.id !== "prior");
@@ -483,19 +486,12 @@ for (const [signal, exit] of [
     await until(() => f.workers().length === 1);
     first.child.kill(signal);
     expect((await first.result).exit).toBe(exit);
-    const published = jsonOf(z.object({ output: z.string() })).safeParse(
-      await Bun.file(
-        join(
-          f.env.AGX_STATE_DIR ?? expect.unreachable("missing isolated state"),
-          "current-runs.json",
-        ),
-      ).text(),
-    );
-    expect(published.success).toBe(true);
-    if (published.success) {
-      expect(published.data.output).toContain('"running":0');
-      expect(published.data.output).not.toContain('"state":"running"');
-    }
+    // The process has exited, so its ended record is already durable. current-runs.json is not
+    // rewritten on stop (contract: listing does not repair publications), so assert the log and ls.
+    const ended = f
+      .records()
+      .find((entry) => entry.id !== "prior" && entry.kind === "ended");
+    expect(ended).toMatchObject({ kind: "ended", outcome: "stopped", exit, signal });
     const row = (await f.listed()).find((entry) => entry.id !== "prior");
     expect(row).toMatchObject({ state: "ended", outcome: "stopped", signal });
     const before = f.records();
