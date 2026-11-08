@@ -31,10 +31,9 @@ const cleanup = async () => {
   await Promise.all(children.map((child) => child.exited));
   for (const server of servers.splice(0)) await server.stop(true);
   for (const pid of vendorPids) {
-    Bun.spawnSync(["kill", "-KILL", String(pid)], {
-      stdout: "ignore",
-      stderr: "ignore",
-    });
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {}
   }
   vendorPids.clear();
   for (const root of roots) rmSync(root, { recursive: true, force: true });
@@ -191,12 +190,11 @@ process.stdout.write(JSON.stringify({ exit: 0, report: { summary: "done", change
 };
 
 const killProcess = (pid: number): void => {
-  const result = Bun.spawnSync(["kill", "-KILL", String(pid)], {
-    stdout: "ignore",
-    stderr: "ignore",
-  });
-  if (result.exitCode !== 0)
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
     assert.fail(`could not kill fixture process ${pid}`);
+  }
 };
 
 const killRunAfterStart = async (

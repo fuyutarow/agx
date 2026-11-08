@@ -19,6 +19,9 @@ jj = "0.46.0"
 "host_command:stty" = "Terminal-mode fixtures for command help tests"
 "host_command:claude" = "Host session inventory and message transport"
 "host_command:codex" = "Host session inventory and message transport"
+"host_command:reason-network" = "Dispatcher lookup and completion notice messaging transport"
+"host_command:/usr/sbin/sysctl" = "macOS kernel boot-time metadata for host refresh scheduling"
+"host_command:diff" = "Ticket change summaries in continuation briefs"
 
 [tasks.setup]
 alias = "i"

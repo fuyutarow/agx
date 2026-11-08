@@ -44,11 +44,14 @@ if (command === "who" && process.argv[3] === "--json") {
     cwd: process.cwd(),
   });
   if (["hang", "hold-pipes"].includes(mode)) {
-    const helper = Bun.spawn(["/bin/sleep", "300"], {
+    const helper = Bun.spawn(
+      [process.execPath, "-e", "await new Promise(() => {})"],
+      {
       stdin: "ignore",
       stdout: "inherit",
       stderr: "inherit",
-    });
+      },
+    );
     helper.unref();
     record({ helper: helper.pid });
   }
