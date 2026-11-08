@@ -1,5 +1,9 @@
 # Changelog
 
+## 5.9.0 — 2026-11-08
+
+- Accept --repo as the repository path flag while retaining --cwd.
+
 ## 5.8.1 — 2026-11-08
 
 - Unify state directory resolution across agx tools.
