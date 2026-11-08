@@ -11,10 +11,10 @@ import {
   add,
   gc,
   gcAll,
-  LegacyWorkspaceConfigError,
   refresh,
   remove,
 } from "./workspace.ts";
+import { LegacyWorkspaceConfigError } from "./config.ts";
 import { doctor as doctorWorkspaces, doctorSummaries } from "./doctor.ts";
 
 import { checkState } from "./state-dir.ts";

@@ -5,7 +5,6 @@ import {
   agxRecords,
   classify,
   lineageOf,
-  readConfig,
   realOr,
   registeredRepoPaths,
   resolveRepo,
@@ -15,6 +14,7 @@ import {
   type Classification,
   type RunRecord,
 } from "./workspace.ts";
+import { readConfig } from "./config.ts";
 import { fromThrowable } from "../../shared/src/zod.ts";
 import { attempt, errorMessage, type Attempt } from "../../shared/src/attempt.ts";
 
