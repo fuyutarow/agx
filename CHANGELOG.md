@@ -1,5 +1,9 @@
 # Changelog
 
+## 10.0.3 — 2026-11-08
+
+- Report a retired configuration once in worker preflight instead of also reporting an unreadable dispatch roster
+
 ## 10.0.2 — 2026-11-08
 
 - Keep workspace gc dry runs from writing classification order state.
