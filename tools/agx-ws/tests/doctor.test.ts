@@ -17,7 +17,7 @@ test("unset repository override reads strict L2 config; an override bypasses it"
   for (const root of [undefined, join(scratch, "empty")]) {
     const child = Bun.spawn([process.execPath, "-e", source, scratch], {
       env: {
-        ...subprocessEnvironment(),
+        ...subprocessEnvironment({ HOME: scratch, XDG_STATE_HOME: join(scratch, "state"), AGX_STATE_DIR: join(scratch, "state", "agx") }),
         AGX_REPOS_ROOT: root,
         XDG_CONFIG_HOME: configHome,
       },
@@ -47,7 +47,7 @@ test("retired repository overrides fail with exit 2 even when empty or paired wi
     ]) {
       const child = Bun.spawn([process.execPath, cli, "doctor"], {
         env: {
-          ...subprocessEnvironment(),
+          ...subprocessEnvironment({ HOME: scratch, XDG_STATE_HOME: join(scratch, "state"), AGX_STATE_DIR: join(scratch, "state", "agx") }),
           [name]: value,
           AGX_REPOS_ROOT: replacement,
         },
@@ -70,7 +70,7 @@ test("retired repository overrides fail with exit 2 even when empty or paired wi
 
 function row(
   verdict: string,
-  kind: "ws" | "legacy",
+  kind: "ws" | "outside",
   recorded: boolean,
 ): DoctorWorkspaceRow {
   return {
@@ -92,11 +92,10 @@ function row(
 
 test("workspace findings omit only timer-eligible classes and retain owner actions", () => {
   for (const verdict of ["empty", "landed"]) {
-    expect(doctorFindings([row(verdict, "legacy", false)])).toEqual([]);
     expect(doctorFindings([row(verdict, "ws", true)])).toEqual([]);
     expect(doctorFindings([row(verdict, "ws", false)])).toHaveLength(1);
   }
-  for (const kind of ["ws", "legacy"] as const) {
+  for (const kind of ["ws", "outside"] as const) {
     expect(doctorFindings([row("abandoned", kind, true)]).join("\n")).toContain(
       "\tabandoned\t",
     );
@@ -114,7 +113,7 @@ test("workspace findings omit only timer-eligible classes and retain owner actio
 test("recent recorded workspaces cannot emit landing findings, but retain stale and abandoned actions", () => {
   const recent = (
     verdict: string,
-    kind: "ws" | "legacy" = "ws",
+    kind: "ws" | "outside" = "ws",
     recorded = true,
   ) => ({
     ...row(verdict, kind, recorded),
@@ -133,7 +132,7 @@ test("recent recorded workspaces cannot emit landing findings, but retain stale 
   for (const verdict of ["stale", "abandoned"])
     expect(doctorFindings([recent(verdict)])).toHaveLength(1);
   expect(doctorFindings([recent("empty", "ws", false)])).toHaveLength(1);
-  expect(doctorFindings([recent("unlanded", "legacy")])).toHaveLength(1);
+
 });
 
 test("registered paths contain exactly L2 roots, independent of cwd and retired registry files", async () => {
@@ -145,7 +144,7 @@ test("registered paths contain exactly L2 roots, independent of cwd and retired 
   const read = async () => {
     const child = Bun.spawn([process.execPath, "-e", source], {
       cwd: scratch,
-      env: { ...subprocessEnvironment(), XDG_CONFIG_HOME: configHome },
+      env: { ...subprocessEnvironment({ HOME: scratch, XDG_STATE_HOME: join(scratch, "state"), AGX_STATE_DIR: join(scratch, "state", "agx") }), XDG_CONFIG_HOME: configHome },
       stdout: "pipe",
       stderr: "pipe",
     });

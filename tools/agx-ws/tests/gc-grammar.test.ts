@@ -4,7 +4,6 @@ const Envelope = z.object({
     total: z.number(),
     unlanded: z.number(),
     collectable: z.number(),
-    legacy: z.number(),
     removed: z.number(),
     kept: z.record(z.string(), z.number()),
   }),
@@ -240,9 +239,6 @@ test("gc modes preserve effects and JSON envelope", async () => {
       expect(value.counts.collectable).toBe(
         original.filter((row) => row[2] === "removable").length,
       );
-      expect(value.counts.legacy).toBe(
-        original.filter((row) => row[1] === "legacy").length,
-      );
       expect(value.counts.removed).toBe(
         workspaces.filter(
           (row) =>
@@ -323,7 +319,6 @@ function envelope(text: string) {
           total: 0,
           unlanded: 0,
           collectable: 0,
-          legacy: 0,
           removed: 0,
           kept: {},
         },

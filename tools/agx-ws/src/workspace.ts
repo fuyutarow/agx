@@ -23,7 +23,6 @@ import {
   readdir,
   readlink,
   rm,
-  rmdir,
   stat,
   cp,
   mkdtemp,
@@ -32,7 +31,6 @@ import {
 } from "node:fs/promises";
 import { homedir, hostname, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import { projectSlug } from "../../shared/src/agent-name.ts";
 import {
   listAgxRepos,
   resolveAgxConfigWithProvenance,
@@ -134,7 +132,7 @@ async function jjOut(
   readonly: boolean,
   missingWorkspace?: MissingWorkspaceForget,
 ): Promise<Attempt<string>> {
-  // All forget callers, including adoption and readiness rollback, cross this boundary.
+  // All forget callers, including readiness rollback, cross this boundary.
   if (args[0] === "workspace" && args[1] === "forget") {
     const name = args[2];
     if (name === undefined) return bad("workspace forget requires a name");
@@ -1454,7 +1452,6 @@ export async function remove(options: {
           repo: repo.value.backing,
           dryRun: true,
           includeUnrecorded: true,
-          legacy: true,
           graceMinutes: 0,
           inventorySeconds: 60,
         },
@@ -1924,7 +1921,6 @@ export type GcOptions = {
   inventoryBudgetSeconds?: number;
   repoBudgetSeconds?: number;
   allBudgetSeconds?: number;
-  legacy?: boolean;
   abandoned?: boolean;
   /** Nested all-repository inventories retain their historical main-row omission. */
   includeMain?: boolean;
@@ -2311,158 +2307,6 @@ function protectedWorkspace(
   return keepEntries(repo, cfg, ws).length > 0;
 }
 
-export type AdoptOptions = {
-  path?: string | undefined;
-  repo?: string | undefined;
-  slug?: string | undefined;
-  all: boolean;
-  dryRun: boolean;
-  includeKept: boolean;
-  fixNames?: boolean;
-};
-
-/** Strip layout markers before normalization; run-id suffixes remain part of the slug. */
-function adoptionSlug(repo: Repo, dir: string): string {
-  let name = basename(dir).replace(/^ws_/u, "");
-  for (const prefix of [
-    `${repo.name}-arm-`,
-    `${repo.name}-ws-`,
-    process.env.AGX_WS_LEGACY_PREFIX ?? "",
-  ].filter((candidate) => candidate.length > 0)) {
-    if (name.startsWith(prefix)) {
-      name = name.slice(prefix.length);
-      break;
-    }
-  }
-  return projectSlug(name);
-}
-
-/** Re-home the snapshotted change; jj creates all pointers and path registrations. */
-async function moveWorkspace(
-  repo: Repo,
-  ws: Workspace,
-  target: string,
-  name: string,
-  graveyard: Graveyard,
-): Promise<Attempt<void>> {
-  const permitted = await removalGuard(repo, ws.dir);
-  if (!permitted.ok) return permitted;
-  const occupied = busy(realOr(ws.dir));
-  if (occupied !== undefined) return bad(occupied);
-  const change = await jjOut(
-    ["log", "--no-graph", "-r", "@", "-T", "change_id"],
-    ws.dir,
-    false,
-  );
-  if (!change.ok) return change;
-  const before = await jjOut(["diff", "--git"], ws.dir, true);
-  if (!before.ok) return before;
-  const rootInfo = await attempt(() => lstat(repo.wsRoot));
-  if (
-    !rootInfo.ok &&
-    !z.object({ code: z.literal("ENOENT") }).safeParse(rootInfo.error).success
-  )
-    return bad(`cannot inspect ${repo.wsRoot}: ${msg(rootInfo)}`);
-  const hadRoot = rootInfo.ok;
-  await mkdir(repo.wsRoot, { recursive: true });
-  // Reserve even empty targets: jj itself accepts an existing empty directory.
-  const reserved = await attempt(() => mkdir(target));
-  if (!reserved.ok) {
-    if (!hadRoot) await rmdir(repo.wsRoot);
-    return bad(`${target}: cannot reserve destination: ${msg(reserved)}`);
-  }
-  const rollback = async (failure: unknown): Promise<Attempt<void>> => {
-    const names = await workspaceNames(repo);
-    if (!names.ok)
-      return bad(`${errorMessage(failure)}; rollback failed: ${msg(names)}`);
-    if (names.value.includes(name)) {
-      const forgot = await jjOut(
-        ["workspace", "forget", name],
-        repo.backing,
-        false,
-      );
-      if (!forgot.ok)
-        return bad(`${errorMessage(failure)}; rollback failed: ${msg(forgot)}`);
-    }
-    const allowed = await removalGuard(repo, target);
-    if (!allowed.ok)
-      return bad(
-        `${errorMessage(failure)}; rollback retained workspace: ${msg(allowed)}`,
-      );
-    const removed = await attempt(async () => {
-      await rm(target, { recursive: true, force: true });
-      if (!hadRoot) await rmdir(repo.wsRoot);
-    });
-    return bad(
-      `${errorMessage(failure)}; ${removed.ok ? "new workspace removed; old workspace retained" : `rollback failed: ${msg(removed)}`}`,
-    );
-  };
-  const moved = await attempt(async (): Promise<Attempt<void>> => {
-    const made = await jjOut(
-      ["workspace", "add", "--name", name, "--sparse-patterns", "full", target],
-      repo.backing,
-      false,
-    );
-    if (!made.ok) return made;
-    const edited = await jjOut(["edit", change.value.trim()], target, false);
-    if (!edited.ok) return edited;
-    const status = await jjOut(["status"], target, false);
-    if (!status.ok) return status;
-    const after = await jjOut(
-      ["log", "--no-graph", "-r", "@", "-T", "change_id"],
-      target,
-      true,
-    );
-    if (!after.ok) return after;
-    const diff = await jjOut(["diff", "--git"], target, true);
-    if (!diff.ok) return diff;
-    if (after.value !== change.value || diff.value !== before.value)
-      return bad("change id or diff mismatch");
-    const active = busy(realOr(ws.dir));
-    if (active !== undefined) return bad(active);
-    // Remember precisely the forget operation so a burial failure can restore the old
-    // registration without rewinding unrelated operations in this shared store.
-    const burialTip = await jjOut(
-      ["log", "--no-graph", "-r", `${ws.name}@`, "-T", "commit_id"],
-      repo.backing,
-      true,
-    );
-    if (!burialTip.ok) return burialTip;
-    const forgot = await jjOut(
-      ["workspace", "forget", ws.name],
-      repo.backing,
-      false,
-    );
-    if (!forgot.ok) return forgot;
-    const operation = await jjOut(
-      ["op", "log", "--no-graph", "-n", "1", "-T", "id"],
-      repo.backing,
-      true,
-    );
-    const buried = operation.ok
-      ? await bury(graveyard, ws.dir, burialTip.value.trim())
-      : operation;
-    if (buried.ok) return good(undefined);
-    const restored = operation.ok
-      ? await jjOut(
-          ["op", "revert", operation.value.trim()],
-          repo.backing,
-          true,
-        )
-      : bad("cannot identify forget operation");
-    return bad(
-      `${msg(buried)}${restored.ok ? "" : `; old registration recovery failed: ${msg(restored)}`}`,
-    );
-  });
-  const result = moved.ok ? moved.value : bad(msg(moved));
-  return result.ok ? result : rollback(result.error);
-}
-
-const adoptLine = (dir: string, target: string, verdict: string): string =>
-  [dir, target, verdict]
-    .map((field) => field.replaceAll("\t", "\\t").replaceAll("\n", "\\n"))
-    .join("\t");
-
 /** Compare raw bytes (including binary files) without opening or snapshotting the orphan. */
 async function orphanFileDifference(
   dir: string,
@@ -2506,29 +2350,6 @@ async function orphanFileDifference(
   return compared.ok ? compared.value : `unknown: ${msg(compared)}`;
 }
 
-/** File content/path comparison, including extra files; .jj/.git metadata is excluded. */
-async function orphanDifference(
-  repo: Repo,
-  dir: string,
-  trunk: string,
-): Promise<string> {
-  const listed = await jjOut(
-    ["file", "list", "-r", trunk, "-T", 'json(path) ++ "\\n"'],
-    repo.backing,
-    true,
-  );
-  if (!listed.ok) return `unknown: ${msg(listed)}`;
-  const paths: string[] = [];
-  for (const line of listed.value.split("\n").filter(Boolean)) {
-    const path = jsonOf(z.string()).safeParse(line);
-    if (!path.success) return "unknown: invalid trunk file list";
-    paths.push(path.data);
-    const difference = await orphanFileDifference(dir, trunk, path.data);
-    if (difference !== undefined) return difference;
-  }
-  return orphanExtraFiles(dir, new Set(paths));
-}
-
 /** Compare tracked disk bytes with the saved working-copy tree without taking a jj snapshot. */
 async function workingCopyDifference(dir: string): Promise<string | undefined> {
   const listed = await jjOut(
@@ -2545,221 +2366,6 @@ async function workingCopyDifference(dir: string): Promise<string | undefined> {
     if (difference !== undefined) return difference;
   }
   return undefined;
-}
-
-async function orphanExtraFiles(
-  dir: string,
-  known: Set<string>,
-): Promise<string> {
-  const pending = [dir];
-  let visited = 0;
-  while (pending.length > 0) {
-    const path = pending.pop();
-    if (path === undefined) break;
-    if (++visited > 100_000)
-      return "unknown: file inventory exceeds 100000 entries";
-    const info = await attempt(() => lstat(path));
-    if (!info.ok) return `unknown: ${msg(info)}`;
-    if (!info.value.isDirectory() && !known.has(relative(dir, path)))
-      return `yes: extra file ${relative(dir, path)}`;
-    if (!info.value.isDirectory()) continue;
-    const entries = await attempt(() => readdir(path));
-    if (!entries.ok) return `unknown: ${msg(entries)}`;
-    pending.push(
-      ...entries.value
-        .filter((name) => name !== ".jj" && name !== ".git")
-        .map((name) => join(path, name)),
-    );
-  }
-  return "no (file bytes and paths; excludes .jj/.git metadata)";
-}
-
-/** Discover legacy sibling/nested leftovers without following directory symlinks. */
-async function orphanLines(
-  repo: Repo,
-  cfg: Config,
-  registered: Workspace[],
-): Promise<Attempt<string[]>> {
-  const siblings = await attempt(() =>
-    readdir(repo.parent, { withFileTypes: true }),
-  );
-  if (!siblings.ok) return siblings;
-  const roots = siblings.value
-    .filter(
-      (entry) =>
-        entry.isDirectory() &&
-        (entry.name.startsWith(`${repo.name}-arm-`) ||
-          entry.name.startsWith(`${repo.name}-ws-`) ||
-          (process.env.AGX_WS_LEGACY_PREFIX !== undefined &&
-            process.env.AGX_WS_LEGACY_PREFIX.length > 0 &&
-            entry.name.startsWith(process.env.AGX_WS_LEGACY_PREFIX) &&
-            (() => {
-              const owner = jjWorkspace(join(repo.parent, entry.name));
-              return owner.ok && owner.value.backingRoot === repo.backing;
-            })()) ||
-          entry.name === `${repo.name}-ws`),
-    )
-    .map((entry) => join(repo.parent, entry.name));
-  const candidates = roots.filter(
-    (path) => basename(path) !== `${repo.name}-ws`,
-  );
-  for (const root of roots.filter(
-    (path) => basename(path) === `${repo.name}-ws`,
-  )) {
-    const nested = await attempt(() => readdir(root, { withFileTypes: true }));
-    if (!nested.ok) return nested;
-    candidates.push(
-      ...nested.value
-        .filter((entry) => entry.isDirectory())
-        .map((entry) => join(root, entry.name)),
-    );
-  }
-  const seen = new Set(registered.map((ws) => realOr(ws.dir)));
-  const lines: string[] = [];
-  for (const dir of candidates) {
-    if (seen.has(realOr(dir))) continue;
-    const target = join(repo.wsRoot, `ws_${adoptionSlug(repo, dir)}`);
-    const difference = await orphanDifference(repo, dir, cfg.trunk);
-    lines.push(
-      adoptLine(
-        dir,
-        target,
-        `orphan: files differ from ${cfg.trunk}: ${difference}; not registered in jj workspace list; owner decision required; never adopted`,
-      ),
-    );
-  }
-  return good(lines);
-}
-
-async function adoptRow(
-  repo: Repo,
-  cfg: Config,
-  ws: Workspace,
-  options: AdoptOptions,
-  reserved: Set<string>,
-  targets: Set<string>,
-  graveyard?: Graveyard,
-): Promise<{ line: string; failed: boolean }> {
-  const name = `ws_${options.slug === undefined ? adoptionSlug(repo, ws.dir) : projectSlug(options.slug)}`;
-  const target = join(repo.wsRoot, name);
-  const kept = keepEntries(repo, cfg, ws);
-  const present = await attempt(() => lstat(target));
-  const source = jjWorkspace(ws.dir);
-  let reason: string | undefined;
-  if (realOr(ws.dir) === realOr(target))
-    reason = "already at target workspace path";
-  else if (!source.ok) reason = msg(source);
-  else if (
-    source.value.root !== realOr(ws.dir) ||
-    source.value.backingRoot !== repo.backing
-  )
-    reason = "workspace metadata does not match repository registration";
-  else if (kept.length > 0 && !options.includeKept)
-    reason = `kept by [ws].keep: ${kept.map((entry) => JSON.stringify(entry)).join(", ")}; pass --include-kept`;
-  else if (present.ok || targets.has(target))
-    reason = "target already exists or is reserved";
-  else if (
-    !z.object({ code: z.literal("ENOENT") }).safeParse(present.error).success
-  )
-    reason = `cannot inspect target: ${msg(present)}`;
-  else if (reserved.has(name))
-    reason = `jj workspace ${name} is already registered`;
-  else reason = busy(realOr(ws.dir));
-  if (reason === undefined) {
-    targets.add(target);
-    reserved.add(name);
-  }
-  if (reason === undefined && !options.dryRun && graveyard !== undefined) {
-    const moved = await moveWorkspace(repo, ws, target, name, graveyard);
-    if (!moved.ok) reason = msg(moved);
-  }
-  const verdict = options.dryRun ? "would-adopt" : "adopted";
-  const update =
-    kept.length === 0
-      ? ""
-      : `; remove the matching entry from agx.toml [ws].keep or L2 [ws].keep: ${kept.map((entry) => JSON.stringify(entry)).join(", ")}`;
-  return {
-    line: adoptLine(
-      ws.dir,
-      target,
-      `${reason === undefined ? verdict : `refused: ${reason}`}${update}`,
-    ),
-    failed: reason !== undefined,
-  };
-}
-
-/** Dry runs never lock, snapshot, or write, including when inspecting a real repository. */
-export async function adopt(
-  options: AdoptOptions,
-): Promise<Attempt<{ lines: string[]; failed: string[] }>> {
-  const batch = options.all || options.fixNames === true;
-  if (options.all && options.fixNames === true)
-    return bad("--all cannot be combined with --fix-names");
-  if (batch && (options.path !== undefined || options.slug !== undefined))
-    return bad("--all/--fix-names cannot be combined with a path or --slug");
-  if (batch && options.repo === undefined)
-    return bad("--all/--fix-names requires --repo");
-  if (!batch && options.path === undefined)
-    return bad("provide a workspace path or --all --repo <R>");
-  const resolved = resolveRepo(options.repo ?? options.path ?? process.cwd());
-  if (!resolved.ok) return resolved;
-  const repo = resolved.value;
-  const initialConfig = await readConfig(repo);
-  if (!initialConfig.ok) return initialConfig;
-  const run = async (): Promise<
-    Attempt<{ lines: string[]; failed: string[] }>
-  > => {
-    const cfg = await readConfig(repo);
-    if (!cfg.ok) return cfg;
-    const listed = await workspaces(repo);
-    if (!listed.ok) return listed;
-    const selected = listed.value.filter((ws) => {
-      if (options.fixNames === true)
-        return (
-          within(ws.dir, realOr(repo.wsRoot)) &&
-          basename(ws.dir).startsWith(`ws_${repo.name}-arm-`)
-        );
-      if (options.all) return !within(ws.dir, realOr(repo.wsRoot));
-      return realOr(ws.dir) === realOr(resolve(options.path ?? ""));
-    });
-    if (!batch && selected.length !== 1)
-      return bad(
-        "path must be the root of a registered non-primary workspace of this repository",
-      );
-    const names = await workspaceNames(repo);
-    if (!names.ok) return names;
-    const reserved = new Set(names.value);
-    const targets = new Set<string>();
-    const graveyard = options.dryRun ? undefined : await checkGraveyard();
-    if (graveyard !== undefined && !graveyard.ok) return graveyard;
-    const rows = [];
-    for (const ws of selected)
-      rows.push(
-        await adoptRow(
-          repo,
-          cfg.value,
-          ws,
-          options,
-          reserved,
-          targets,
-          graveyard?.value,
-        ),
-      );
-    const lines = rows.map((row) => row.line);
-    const failed = rows
-      .filter((row) => row.failed)
-      .map((row) => row.line.split("\t")[0] ?? "?");
-    const orphans =
-      options.dryRun && batch
-        ? await orphanLines(repo, cfg.value, listed.value)
-        : good([]);
-    if (!orphans.ok) return orphans;
-    lines.push(...orphans.value);
-    return good({ lines, failed });
-  };
-  if (options.dryRun) return run();
-  const pre = common(repo);
-  return pre.ok ? withLock(repo, "agx ws adopt", run) : pre;
 }
 
 /** Freeze one real trunk commit for the whole repo; root is not a usable integration branch. */
@@ -3321,6 +2927,7 @@ async function classifyGc(
     collect = false,
   ): Classification => ({ verdict: label, change, age, reason, collect });
   if (ws.main) return verdict("keep", "main checkout is not removable");
+  if (kind === "outside") return verdict("keep", `${ws.dir} is outside workspace root ${repo.wsRoot}`);
   if (ws.recordError !== undefined) return verdict("broken", ws.recordError);
   if (ws.rootMissing === true)
     return verdict("broken", `workspace ${ws.name} has no recorded root path`);
@@ -3386,17 +2993,8 @@ async function classifyGc(
     });
   const abandonedReason = `all runs ended without acceptance over 24h ago: ${localRuns.map((record) => `${record.id} (${record.outcome})`).join(", ")}`;
   const recorded = lineage.length > 0;
-  const layoutAllowed =
-    kind === "legacy"
-      ? options.legacy === true
-      : recorded || options.includeUnrecorded;
-  if (!layoutAllowed)
-    return verdict(
-      "keep",
-      kind === "legacy"
-        ? "legacy workspace; pass --legacy to collect"
-        : "unrecorded workspace; pass --include-unrecorded to collect",
-    );
+  if (!recorded && !options.includeUnrecorded)
+    return verdict("keep", "unrecorded workspace; pass --include-unrecorded to collect");
   if (endedWithoutAcceptanceFor24h && options.abandoned !== true)
     return verdict("keep", `${abandonedReason}; pass --abandoned to collect`);
   if (trunk === null)
@@ -3821,7 +3419,7 @@ export function gcCounts(lines: string[]) {
     else kept.other++;
   }
   const originalRows = lines.map((line) => line.split("\t")).filter((row) => row[1] !== "repo" && row[2] !== "collected");
-  return { total: originalRows.length, unlanded: originalRows.filter((row) => row[2] === "keep" && row[5]?.includes("unlanded change ") === true).length, collectable: originalRows.filter((row) => row[2] === "removable").length, legacy: originalRows.filter((row) => row[1] === "legacy").length, removed, kept };
+  return { total: originalRows.length, unlanded: originalRows.filter((row) => row[2] === "keep" && row[5]?.includes("unlanded change ") === true).length, collectable: originalRows.filter((row) => row[2] === "removable").length, removed, kept };
 }
 
 type GcResult = {
@@ -4235,10 +3833,11 @@ function recordMissingGcRemoval(classification: Classification, path: string, jo
 }
 
 function deferredGcRow(ws: Workspace, repo: Repo): string {
-  let kind = "legacy";
+  let kind = "outside";
   if (ws.main) kind = "main";
-  else if (dirname(resolve(ws.dir)) === resolve(repo.wsRoot) && basename(resolve(ws.dir)).startsWith("ws_")) kind = "ws";
-  return [ws.dir, kind, "keep", ws.change, ws.age, "repository time budget exhausted"].join("\t");
+  else if (within(realOr(ws.dir), realOr(repo.wsRoot))) kind = "ws";
+  const reason = kind === "outside" ? `${ws.dir} is outside workspace root ${repo.wsRoot}` : "repository time budget exhausted";
+  return [ws.dir, kind, "keep", ws.change, ws.age, reason].join("\t");
 }
 
 export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
@@ -4324,12 +3923,11 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
       const comparisonBefore = trace.comparisonMs;
       const classificationStart = performance.now();
       const land = landState(ws);
-      let kind = "legacy";
+      let kind = "outside";
       if (ws.main) kind = "main";
       else if (land !== undefined) kind = "land";
       else if (
-        dirname(resolve(ws.dir)) === resolve(repo.wsRoot) &&
-        basename(resolve(ws.dir)).startsWith("ws_")
+        within(realOr(ws.dir), realOr(repo.wsRoot))
       )
         kind = "ws";
       const directoryInfo =
@@ -4346,7 +3944,9 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
           ? await landLockStatus(land)
           : undefined;
       let c: Classification;
-      if (ws.recordError !== undefined) {
+      if (kind === "outside" && directoryInfo?.ok === true) {
+        c = { verdict: "keep", change: ws.change, age: ws.age, reason: `${ws.dir} is outside workspace root ${repo.wsRoot}`, collect: false };
+      } else if (ws.recordError !== undefined) {
         c = { verdict: "broken", change: ws.change, age: ws.age, reason: ws.recordError, collect: false };
       } else if (missingDirectory && land !== undefined) {
         c =
@@ -4743,7 +4343,7 @@ export type DoctorWorkspaceRow = {
   repo: string;
   dir: string;
   name: string;
-  kind: "ws" | "legacy";
+  kind: "ws" | "outside";
   recorded: boolean;
   classification: Classification;
   ageMs: number | undefined;
@@ -4780,10 +4380,10 @@ export async function doctorInventory(
     if (!records.ok) return records;
     for (const ws of candidates.value) {
       const kind =
-        dirname(resolve(ws.dir)) === resolve(repo.wsRoot) &&
-        basename(resolve(ws.dir)).startsWith("ws_")
+        within(realOr(ws.dir), realOr(repo.wsRoot))
           ? "ws"
-          : "legacy";
+          : "outside";
+      if (kind === "outside") continue;
       const info = await attempt(() => stat(ws.dir));
       const ageMs = info.ok
         ? Temporal.Now.instant().epochMilliseconds - info.value.mtimeMs
@@ -4854,7 +4454,7 @@ export async function doctor(): Promise<Attempt<string[]>> {
   return good(doctorFindings(inventory.value));
 }
 
-/** Findings count workspaces that the unattended `agx ws gc --apply --all --legacy` cannot collect. */
+/** Findings count workspaces that the unattended `agx ws gc --apply --all` cannot collect. */
 export function doctorFindings(rows: DoctorWorkspaceRow[]): string[] {
   const findings: string[] = [];
   for (const row of rows) {
@@ -4868,7 +4468,7 @@ export function doctorFindings(rows: DoctorWorkspaceRow[]): string[] {
     if (
       c.collect &&
       c.verdict !== "abandoned" &&
-      (row.kind === "legacy" || row.recorded)
+      row.recorded
     )
       continue;
     const emit = (finding: string, fix: string) => {
@@ -4886,12 +4486,7 @@ export function doctorFindings(rows: DoctorWorkspaceRow[]): string[] {
     if (c.verdict === "abandoned") {
       emit(
         "abandoned",
-        `agx ws gc --apply --abandoned${row.kind === "legacy" ? " --legacy" : ""} --repo ${row.repo}`,
-      );
-    } else if (row.kind === "legacy") {
-      emit(
-        c.verdict === "empty" ? "legacy-empty" : "legacy-layout",
-        `agx ws gc --apply --legacy --repo ${row.repo}`,
+        `agx ws gc --apply --abandoned --repo ${row.repo}`,
       );
     } else if (c.verdict === "empty") {
       emit("empty", `agx ws gc --apply --include-unrecorded --repo ${row.repo}`);
@@ -5039,7 +4634,6 @@ const Counts = z.object({
   total: z.number(),
   unlanded: z.number(),
   collectable: z.number(),
-  legacy: z.number(),
 });
 const VerdictCache = z.object({
   fleetComplete: z.boolean().optional(),

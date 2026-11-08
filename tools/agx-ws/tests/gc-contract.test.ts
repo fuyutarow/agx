@@ -946,7 +946,7 @@ test("ws contract: gc summary counts removed and kept by reason", async () => {
   }
   expect(plain.code, plain.err).toBe(0);
   const repoLine = plain.out.split("\n").find((line) => line.startsWith(`${f.repo}\trepo\t`));
-  expect(repoLine?.split("\t")[4]).toMatch(/^\{"total":\d+,"unlanded":\d+,"collectable":\d+,"legacy":\d+\}$/u);
+  expect(repoLine?.split("\t")[4]).toMatch(/^\{"total":\d+,"unlanded":\d+,"collectable":\d+\}$/u);
 });
 
 test("ws doctor inventories returned runs and warns by age", async () => {

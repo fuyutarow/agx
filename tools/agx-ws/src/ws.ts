@@ -9,7 +9,6 @@ import { errorMessage } from "../../shared/src/attempt.ts";
 import packageJson from "../package.json" with { type: "json" };
 import {
   add,
-  adopt,
   doctor as doctorWorkspaces,
   doctorSummaries,
   gc,
@@ -21,10 +20,15 @@ import {
 
 import { checkState } from "./state-dir.ts";
 
-if (process.argv[2] === "harvest") {
+if (process.argv[2] === "harvest" || process.argv[2] === "adopt") {
   process.stderr.write(
-    'ws: unknown command "harvest"; use --help to list valid commands\n',
+    `ws: unknown command "${process.argv[2]}"; use --help to list valid commands\n`,
   );
+  process.exit(2);
+}
+
+if (process.argv[2] === "gc" && process.argv.slice(3).some((arg) => arg === "--legacy" || arg.startsWith("--legacy="))) {
+  process.stderr.write("ws: unknown option '--legacy'\n");
   process.exit(2);
 }
 
@@ -129,62 +133,6 @@ const addCommand = command(
     }),
 );
 
-const adoptCommand = command(
-  {
-    name: "adopt",
-    parameters: ["[path]"],
-    strictFlags: true,
-    ignoreArgv: rejectPrototypeFlag,
-    help: {
-      description:
-        "Re-home a jj workspace into <repo>.ws/ws_<hyphen-slug>, stripping legacy layout prefixes and preserving its change. TSV: old path, target path, verdict and reason. Refuses processes inside and existing targets.",
-    },
-    flags: {
-      repo: repoFlag,
-      slug: {
-        type: String,
-        description:
-          "override the old basename; normalized to lowercase hyphen words",
-      },
-      all: {
-        type: Boolean,
-        description: "adopt every legacy workspace; requires --repo",
-      },
-      fixNames: {
-        type: Boolean,
-        description:
-          "re-home ws_<repo>-arm-* workspaces to stripped names; requires --repo",
-      },
-      dryRun: {
-        type: Boolean,
-        description: "read-only TSV plan; move nothing",
-      },
-      includeKept: {
-        type: Boolean,
-        description: "include [ws].keep entries and print required updates",
-      },
-    },
-  },
-  async (argv) => {
-    const done = await adopt({
-      path: argv._.path,
-      repo: argv.flags.repo,
-      slug: argv.flags.slug,
-      all: argv.flags.all === true,
-      fixNames: argv.flags.fixNames === true,
-      dryRun: argv.flags.dryRun === true,
-      includeKept: argv.flags.includeKept === true,
-    });
-    if (!done.ok) {
-      fail(done.error);
-      return;
-    }
-    for (const line of done.value.lines) process.stdout.write(`${line}\n`);
-    if (argv.flags.dryRun !== true && done.value.failed.length > 0)
-      fail(`could not adopt: ${done.value.failed.join(", ")}`);
-  },
-);
-
 const rmCommand = command(
   {
     name: "rm",
@@ -251,7 +199,7 @@ const gcCommand = command(
     ignoreArgv: rejectPrototypeFlag,
     help: {
       description:
-        'default: report; --apply removes. Shared reclaim grammar: tools/agx-worker/contract.md. Enumerate jj workspaces. Print TSV: path, kind, verdict, change id, age, reason. Exit 1 for failed collection or broken workspaces; refused repositories exit 2. Legacy workspaces are report-only until --legacy. Keep a workspace by setting `keep = ["ws_<name>"]` under `[ws]` in the main checkout root `agx.toml` (example: `keep = ["ws_reference"]`). Machine-local keep entries live under `[ws]` in `$XDG_CONFIG_HOME/agx/repos/<name>.toml`. agx ws add is the only creator.',
+        'default: report; --apply removes. Shared reclaim grammar: tools/agx-worker/contract.md. Enumerate jj workspaces. Print TSV: path, kind, verdict, change id, age, reason. Exit 1 for failed collection or broken workspaces; refused repositories exit 2. Keep a workspace by setting `keep = ["ws_<name>"]` under `[ws]` in the main checkout root `agx.toml` (example: `keep = ["ws_reference"]`). Machine-local keep entries live under `[ws]` in `$XDG_CONFIG_HOME/agx/repos/<name>.toml`. agx ws add is the only creator.',
     },
     flags: {
       dryRun: { type: Boolean, description: "report only; remove nothing" },
@@ -263,14 +211,10 @@ const gcCommand = command(
         type: Boolean,
         description: "emit rows and authoritative verdict counts",
       },
-      legacy: {
-        type: Boolean,
-        description: "also forget and rip empty or landed legacy workspaces",
-      },
       abandoned: {
         type: Boolean,
         description:
-          "also collect workspaces whose runs all ended without acceptance over 24h ago; legacy layouts also need --legacy",
+          "also collect workspaces whose runs all ended without acceptance over 24h ago",
       },
       all: {
         type: Boolean,
@@ -386,7 +330,6 @@ const gcCommand = command(
     const options = {
       dryRun: argv.flags.apply !== true,
       includeUnrecorded: argv.flags.includeUnrecorded === true,
-      legacy: argv.flags.legacy === true,
       abandoned: argv.flags.abandoned === true,
       graceMinutes: argv.flags.graceMinutes ?? 30,
       inventorySeconds: argv.flags.inventorySeconds ?? 10,
@@ -446,9 +389,9 @@ const gcCommand = command(
       for (const repo of (done.value.repositories ?? []).filter(
         (candidate) => candidate.status !== "refused",
       )) {
-        const { total, unlanded, collectable, legacy } = repo.counts;
+        const { total, unlanded, collectable } = repo.counts;
         process.stdout.write(
-          `${repo.root}\trepo\t${repo.status}\t${repo.sources.join(",")}\t${JSON.stringify({ total, unlanded, collectable, legacy })}\n`,
+          `${repo.root}\trepo\t${repo.status}\t${repo.sources.join(",")}\t${JSON.stringify({ total, unlanded, collectable })}\n`,
         );
       }
       for (const line of done.value.lines) process.stdout.write(`${line}\n`);
@@ -538,7 +481,6 @@ void cli({
   ignoreArgv: rejectPrototypeFlag,
   commands: [
     addCommand,
-    adoptCommand,
     refreshCommand,
     rmCommand,
     gcCommand,

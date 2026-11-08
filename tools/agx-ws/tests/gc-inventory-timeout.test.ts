@@ -54,7 +54,7 @@ test("gc keeps timed-out inventory unknown while reporting a broken working copy
   // Advance only the inventory's deadline clock, so the timeout is independent of host speed.
   const wrapper = join(scratch, "clock.ts");
   writeFileSync(wrapper, `const now = performance.now.bind(performance);\nObject.defineProperty(performance, "now", { value: () => { const stack = new Error().stack ?? ""; return now() + (stack.includes("timedOut") ? 2000 : 0); } });\nawait import(${JSON.stringify(cli)});\n`);
-  const result = await run(["bun", wrapper, "gc", "--apply", "--include-unrecorded", "--legacy", "--grace-minutes", "0", "--inventory-seconds", "1", "--json", "--repo", repo]);
+  const result = await run(["bun", wrapper, "gc", "--apply", "--include-unrecorded", "--grace-minutes", "0", "--inventory-seconds", "1", "--json", "--repo", repo]);
   const parsed = jsonOf(z.object({ rows: z.array(z.array(z.string())), counts: z.object({ kept: z.object({ broken: z.number() }) }) })).safeParse(result.out);
   expect(parsed.success, `${result.err}\n${result.out}`).toBe(true);
   if (!parsed.success) return;

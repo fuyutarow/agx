@@ -34,7 +34,7 @@ parts, agx-worker consumes a tree through `--cd`, and `agx ws gc` reads `agx wor
 agx ws add <slug> [--rev R] [--repo P] [--reuse] [--json]
 agx ws refresh <slug> [--repo P]
 agx ws rm  <slug> [--repo P]
-agx ws gc  [--apply | --dry-run] [--include-unrecorded] [--legacy] [--abandoned] [--json] [--repo P | --all]
+agx ws gc  [--apply | --dry-run] [--include-unrecorded] [--abandoned] [--json] [--repo P | --all]
 ```
 
 - **add** — resolves `--rev` (exactly one commit), updates stale source/backing workspaces with
@@ -68,8 +68,8 @@ from the matching L2 `[ws]` table. A config in a secondary workspace does not ov
 ## gc: what is collected
 
 Inventory comes from registered jj workspaces, excluding the main checkout. The standard
-`<repo>.ws/ws_*` layout has kind `ws`; other registered layouts, including historical
-`<parent>/<repo>-ws-*` and `<parent>/<repo>-arm-*`, have kind `legacy` and require `--legacy`.
+`<repo>.ws/ws_*` layout has kind `ws`. Registered workspaces outside the workspace root
+are kept, including historical `<parent>/<repo>-ws-*` and `<parent>/<repo>-arm-*` paths.
 Missing or foreign workspace directories are kept. Ordinary collection requires:
 
 1. **Lineage is terminal.** The lineage is every `agx worker ls --json` record whose `workspace` or `cwd` lies
@@ -94,7 +94,7 @@ Missing or foreign workspace directories are kept. Ordinary collection requires:
    snapshots/rechecks under the lock immediately before removal.
 
 A standard workspace with no agx record is **unrecorded**: otherwise collectable rows carry an
-unrecorded reason and need `--include-unrecorded`. Legacy rows use the separate `--legacy` permission.
+unrecorded reason and need `--include-unrecorded`.
 Ordinary classification checks sparse patterns after keep, process, run and staleness checks.
 Any set other than exactly `.` (including empty), or an unreadable set, keeps the workspace;
 an earlier veto may supply the report reason instead. GC never widens sparse patterns.
@@ -102,7 +102,7 @@ an earlier veto may supply the report reason instead. GC never widens sparse pat
 `--abandoned` opts into abandoning a workspace whose local runs all ended with an outcome over
 24 hours ago and whose lineage has no acceptance. This classification follows process, run,
 staleness and sparse guards but precedes content comparison; it can discard unlanded rejected work.
-Legacy layouts also need `--legacy`. Land-temporary checkouts use their separate land lock and
+Land-temporary checkouts use their separate land lock and
 are retained when that lock is busy or uncertain. Removal holds the land lock when applicable.
 
 Dry runs use saved snapshots and never take the exclusive store lock or create foreground waiter
@@ -200,12 +200,6 @@ Lock-scope fixtures must show that slow classification does not hold up foregrou
 entire GC pass, and that changed removal inputs are checked again under the store lock. Waits over
 five seconds must identify the holder's command, pid, host, start time and elapsed seconds.
 The old assertion that no state file is written is superseded by explicit verdict publication.
-
-Legacy workspace adoption strips `<repository>-arm-` and `<repository>-ws-`
-from directory names. Set `AGX_WS_LEGACY_PREFIX` to an additional literal prefix
-(including its trailing separator) to adopt a consumer's older layout. Orphan
-inventory includes that prefix only when jj confirms the workspace belongs to the
-selected backing repository. Unset or empty means no additional prefix.
 
 `gc --all` discovers repositories from the append-only
 `$AGX_STATE_DIR/workspace-index.jsonl` creation history, every run's workspace
