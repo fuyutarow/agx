@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.7.1 — 2026-11-08
+
+- Correct the change command help description.
+- Describe worker commands and hide internal flags from help.
+
 ## 5.7.0 — 2026-11-08
 
 - Automatically reclaim expired judged run files after a pin decision
