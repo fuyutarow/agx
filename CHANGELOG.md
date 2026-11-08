@@ -1,5 +1,9 @@
 # Changelog
 
+## 5.4.0 — 2026-11-08
+
+- Bound worker run directories and add explicit reclaim.
+
 ## 5.3.0 — 2026-11-08
 
 - Ensure repeated workspace GC runs advance through deferred candidates and report oversized jj operation stores.
