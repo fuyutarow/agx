@@ -196,5 +196,5 @@ test("hermetic contract: spawned mise and agx ignore host user config", async ()
     agxResult.stdout,
   );
   expect(roster.success).toBe(true);
-  if (roster.success) expect("default" in roster.data).toBe(false);
+  if (roster.success) expect(Object.hasOwn(roster.data, "default")).toBe(false);
 });

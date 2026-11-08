@@ -157,8 +157,9 @@ test("ended fixtures retain measured outcomes while routing omits ungraded raw h
       child.exited,
     ]);
     // contract.md: vendor capacity ends the run with exit 75; killed runs exit 143.
-    const expectedExit =
-      mode === "killed-bound" ? 143 : mode === "capacity" ? 75 : 0;
+    let expectedExit = 0;
+    if (mode === "killed-bound") expectedExit = 143;
+    else if (mode === "capacity") expectedExit = 75;
     expect(exit, `${mode}: ${stderr}\n${stdout}`).toBe(expectedExit);
     const receipt = jsonOf(z.looseObject({ outcome: z.string() })).safeParse(
       stdout,

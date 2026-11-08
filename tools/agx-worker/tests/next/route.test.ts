@@ -525,7 +525,7 @@ describe("capability constrained routing", () => {
     expect(classCriteria).toContain("cross_module");
     expect(request?.state.routes).toBeUndefined();
     expect(JSON.stringify(request?.state)).not.toMatch(
-      /windows|used_percent|elapsed_fraction|pace/,
+      /windows|used_percent|elapsed_fraction|pace/u,
     );
     expect(request?.questions.worker.criteria["localized"]).toBeDefined();
     expect(request?.questions.worker.instructions).toContain(ROUTING_OBJECTIVE);
@@ -708,7 +708,7 @@ describe("capability constrained routing", () => {
     const request = server.request();
     expect(request?.state.routes).toBeUndefined();
     expect(JSON.stringify(request?.state)).not.toMatch(
-      /windows|used_percent|elapsed_fraction|pace/,
+      /windows|used_percent|elapsed_fraction|pace/u,
     );
     expect(request?.questions.worker.criteria.localized).toBeDefined();
 
@@ -957,7 +957,12 @@ test("missing_input is invalid and historical refusals remain accepted", async (
     ticket: "historical fixture",
     reason: "missing_input",
   });
-  expect(JSON.parse(await readFile(path, "utf8")).reason).toBe("missing_input");
+  const recordedRefusal = jsonOf(
+    z.looseObject({ reason: z.string() }),
+  ).safeParse(await readFile(path, "utf8"));
+  expect(recordedRefusal.success).toBe(true);
+  if (recordedRefusal.success)
+    expect(recordedRefusal.data.reason).toBe("missing_input");
 });
 
 test("a missing worker answer is refused and recorded, with no default row", async () => {
@@ -1246,7 +1251,12 @@ test("audit retains class probabilities, the bar, qualifying rows, and determini
   expect(audit?.selected_row).toBe(LOCALIZED_SELECTION);
   expect(typeof audit?.credit_covered).toBe("boolean");
   expect(Array.isArray(audit?.ordered_candidate_ids)).toBe(true);
-  expect((audit?.ordered_candidate_ids as string[])[0]).toBe(selected.id);
+  const orderedCandidateIds = z
+    .array(z.string())
+    .safeParse(audit?.ordered_candidate_ids);
+  expect(orderedCandidateIds.success).toBe(true);
+  if (orderedCandidateIds.success)
+    expect(orderedCandidateIds.data[0]).toBe(selected.id);
   expect(audit?.anonymization_map).toBeUndefined();
   expect(audit?.measured_evidence).toBeUndefined();
   expect(audit?.choice_probabilities).toEqual({ localized: 1 });

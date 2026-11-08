@@ -3,11 +3,14 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
+import { jsonOf, z } from "../../../shared/src/zod.ts";
 
 test("canonical imported runs and judgments retain identity and tie-breaks", () => {
   const root = mkdtempSync(join(tmpdir(), "agx-imported-events-"));
   using _cleanup = {
-    [Symbol.dispose]: () => rmSync(root, { recursive: true, force: true }),
+    [Symbol.dispose]: () => {
+      rmSync(root, { recursive: true, force: true });
+    },
   };
   const at = "2026-10-15T00:00:00Z";
   const events = [
@@ -71,14 +74,23 @@ test("canonical imported runs and judgments retain identity and tie-breaks", () 
     );
   const listing = invoke("ls", "--json", "--all");
   expect(listing.exitCode).toBe(0);
-  expect(JSON.parse(listing.stdout.toString())).toMatchObject([
-    {
-      id: "legacy-id",
-      ticket: "old",
-      legacy: { run_id: "original", source: "legacy-v1" },
-      judgment: { decision: "accept", note: "larger", legacy_key: "judged:z" },
-    },
-  ]);
+  const parsedListing = jsonOf(z.array(z.unknown())).safeParse(
+    listing.stdout.toString(),
+  );
+  expect(parsedListing.success).toBe(true);
+  if (parsedListing.success)
+    expect(parsedListing.data).toMatchObject([
+      {
+        id: "legacy-id",
+        ticket: "old",
+        legacy: { run_id: "original", source: "legacy-v1" },
+        judgment: {
+          decision: "accept",
+          note: "larger",
+          legacy_key: "judged:z",
+        },
+      },
+    ]);
   for (const [command, flag] of [
     ["ls", "--include-legacy"],
     ["stats", "--import-legacy"],

@@ -13,7 +13,9 @@ import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 import { prepareTicketRepo } from "../ticket-repo.ts";
 
 const roots: string[] = [];
+const servers: ReturnType<typeof Bun.serve>[] = [];
 afterEach(async () => {
+  await Promise.all(servers.splice(0).map((server) => server.stop(true)));
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
   );
@@ -48,56 +50,53 @@ test("check validates absolute external reads, not descriptions or ticket body",
         answers: { worker: { choice: "mechanical", confidence: 0.9 } },
       }),
   });
-  try {
-    const check = async (entry: string) => {
-      await writeFile(
-        ticket,
-        `+++\nschema = 2\nname = "external"\noutcome = "fixture"\nwrites = []\nverify = ["test -s result.md"]\nexternal_reads = [${JSON.stringify(entry)}, "a reference description"]\n[proposition]\nid = "P"\nclaim = "exists"\nrefuted_by = "missing"\n+++\nBody mentions ${missing}\n`,
-      );
-      const env = {
-        ...subprocessEnvironment(),
-        JEV_URL: `http://127.0.0.1:${server.port}/choice`,
-        TYPESAFE_API_KEY: "fixture-only",
-        PATH: `${bin}:${process.env.PATH}`,
-        AGX_STATE_DIR: join(root, "state"),
-        XDG_CONFIG_HOME: join(root, "config"),
-        MISE_GLOBAL_CONFIG_FILE: join(root, "mise.toml"),
-        AGX_CONFIG: resolve("tools/agx-worker/src/roster/policy.example.toml"),
-      };
-      Reflect.deleteProperty(env, "AGX_NEXT_STATE_DIR");
-      const child = Bun.spawn(
-        [
-          process.execPath,
-          resolve("tools/agx/src/agx.ts"),
-          "worker",
-          "check",
-          ticket,
-          "--cd",
-          workspace,
-        ],
-        {
-          env,
-          stdin: "ignore",
-          stdout: "pipe",
-          stderr: "pipe",
-          timeout: 15000,
-        },
-      );
-      const [exit, stdout, stderr] = await Promise.all([
-        child.exited,
-        new Response(child.stdout).text(),
-        new Response(child.stderr).text(),
-      ]);
-      return { exit, stdout, stderr };
+  servers.push(server);
+  const check = async (entry: string) => {
+    await writeFile(
+      ticket,
+      `+++\nschema = 2\nname = "external"\noutcome = "fixture"\nwrites = []\nverify = ["test -s result.md"]\nexternal_reads = [${JSON.stringify(entry)}, "a reference description"]\n[proposition]\nid = "P"\nclaim = "exists"\nrefuted_by = "missing"\n+++\nBody mentions ${missing}\n`,
+    );
+    const env = {
+      ...subprocessEnvironment(),
+      JEV_URL: `http://127.0.0.1:${server.port}/choice`,
+      TYPESAFE_API_KEY: "fixture-only",
+      PATH: `${bin}:${process.env.PATH}`,
+      AGX_STATE_DIR: join(root, "state"),
+      XDG_CONFIG_HOME: join(root, "config"),
+      MISE_GLOBAL_CONFIG_FILE: join(root, "mise.toml"),
+      AGX_CONFIG: resolve("tools/agx-worker/src/roster/policy.example.toml"),
     };
-    const passed = await check(existing);
-    expect(passed.exit, passed.stderr).toBe(0);
-    expect(passed.stdout).toContain("OK ticket=external");
-    const refused = await check(missing);
-    expect(refused.exit).toBe(2);
-    expect(refused.stderr).toContain(missing);
-    expect(refused.stderr).toContain("repair:");
-  } finally {
-    server.stop();
-  }
+    Reflect.deleteProperty(env, "AGX_NEXT_STATE_DIR");
+    const child = Bun.spawn(
+      [
+        process.execPath,
+        resolve("tools/agx/src/agx.ts"),
+        "worker",
+        "check",
+        ticket,
+        "--cd",
+        workspace,
+      ],
+      {
+        env,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 15000,
+      },
+    );
+    const [exit, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    return { exit, stdout, stderr };
+  };
+  const passed = await check(existing);
+  expect(passed.exit, passed.stderr).toBe(0);
+  expect(passed.stdout).toContain("OK ticket=external");
+  const refused = await check(missing);
+  expect(refused.exit).toBe(2);
+  expect(refused.stderr).toContain(missing);
+  expect(refused.stderr).toContain("repair:");
 }, 30000);

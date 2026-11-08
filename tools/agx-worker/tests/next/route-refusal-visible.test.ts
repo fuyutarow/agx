@@ -138,11 +138,16 @@ describe("agx-worker run", () => {
       expect(result.stderr.toString()).toContain("Probability: 0.8");
       expect(result.stderr.toString()).not.toContain("reason_code");
       expect(result.stdout.toString()).toContain("route-refused");
-      const report = JSON.parse(
+      const report = jsonOf(
+        z.looseObject({ outcome: z.string(), summary: z.string() }),
+      ).safeParse(
         readFileSync(join(state, "runs", binding.id, "report.json"), "utf8"),
       );
-      expect(report.outcome).toBe("route-refused");
-      expect(report.summary).toContain(meaning);
+      expect(report.success).toBe(true);
+      if (report.success) {
+        expect(report.data.outcome).toBe("route-refused");
+        expect(report.data.summary).toContain(meaning);
+      }
       const waited = Bun.spawnSync(
         [
           process.execPath,

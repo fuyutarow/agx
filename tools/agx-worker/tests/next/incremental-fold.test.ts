@@ -24,7 +24,9 @@ import {
 
 const previous = process.env.AGX_STATE_DIR;
 const roots: string[] = [];
+const spyRestorers: Array<() => void> = [];
 afterEach(async () => {
+  for (const restore of spyRestorers.splice(0)) restore();
   await flushRunPublications();
   if (previous === undefined) delete process.env.AGX_STATE_DIR;
   else process.env.AGX_STATE_DIR = previous;
@@ -362,19 +364,23 @@ test("freeing an ended run reuses the warm recorded fold", async () => {
   await foldedRuns(root);
   const read = spyOn(fs, "readSync");
   const whole = spyOn(fs, "readFileSync");
-  try {
-    const lifetime = recordedLifetime("run", root);
-    if (lifetime.state !== "ended") throw new Error("missing end record");
-    expect(freeRunTemp(lifetime, tempRoot, root).isOk()).toBe(true);
-    expect(fs.existsSync(temp.dir)).toBe(false);
-    expect(read.mock.calls).toHaveLength(0);
-    expect(whole.mock.calls.some(([path]) => path === recordPath(root))).toBe(
-      false,
-    );
-  } finally {
-    read.mockRestore();
-    whole.mockRestore();
-  }
+  spyRestorers.push(
+    () => {
+      read.mockRestore();
+    },
+    () => {
+      whole.mockRestore();
+    },
+  );
+  const lifetime = recordedLifetime("run", root);
+  expect(lifetime.state).toBe("ended");
+  if (lifetime.state !== "ended") return;
+  expect(freeRunTemp(lifetime, tempRoot, root).isOk()).toBe(true);
+  expect(fs.existsSync(temp.dir)).toBe(false);
+  expect(read.mock.calls).toHaveLength(0);
+  expect(whole.mock.calls.some(([path]) => path === recordPath(root))).toBe(
+    false,
+  );
 });
 
 test("warm listing retains malformed imports without rereading history, while folds skip them", async () => {

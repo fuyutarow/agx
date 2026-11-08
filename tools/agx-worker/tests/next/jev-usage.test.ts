@@ -9,15 +9,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const roots: string[] = [];
-const repoRoot = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "../../../..",
-);
+const repoRoot = resolve(import.meta.dirname, "../../../..");
 const cliPath = join(repoRoot, "tools/agx/src/agx.ts");
 const workerCliPath = join(repoRoot, "tools/agx-worker/src/next/cli.ts");
 const policyPath = join(
@@ -290,7 +286,11 @@ test("real routing CLI captures response usage even for fallback, missing usage 
     ]);
     expect(exit, err).toBe(0);
     expect(out).toContain("luna-low");
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise<void>((done) => {
+      setTimeout(() => {
+        done();
+      }, 100);
+    });
   }
   await pick();
   let data = report(stats(env));

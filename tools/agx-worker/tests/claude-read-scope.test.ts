@@ -43,7 +43,7 @@ describe("claude workspace-write read scope", () => {
   });
 
   test("the settings carry no deny rule that would mask the repository's own deny rules", () => {
-    expect("deny" in settings.permissions).toBe(false);
+    expect(Object.hasOwn(settings.permissions, "deny")).toBe(false);
   });
 
   test("run.ts builds these settings only for workspace-write; read-only and none stay unchanged", () => {

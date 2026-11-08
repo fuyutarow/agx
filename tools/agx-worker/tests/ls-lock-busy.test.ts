@@ -1,13 +1,18 @@
-import { afterAll, expect, setDefaultTimeout, test } from "bun:test";
+import { afterAll, afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 import { createTempTracker } from "./temp.ts";
+import { jsonOf, z } from "../../shared/src/zod.ts";
 
 setDefaultTimeout(60_000);
 const temps = createTempTracker();
 afterAll(temps.assertRemoved);
+const holderCleanups: Array<() => Promise<void>> = [];
+afterEach(async () => {
+  for (const cleanup of holderCleanups.splice(0)) await cleanup();
+});
 
 const store = new URL("../src/next/store.ts", import.meta.url).pathname;
 const cli = new URL("../src/next/cli.ts", import.meta.url).pathname;
@@ -88,21 +93,18 @@ await lock.release();
     stderr: "pipe",
     timeout: 30_000,
   });
-  try {
-    const reader = holder.stdout.getReader();
-    expect(new TextDecoder().decode((await reader.read()).value)).toBe(
-      "held\n",
-    );
-    reader.releaseLock();
-    const result = await ls(state);
-    expect(result.code).toBe(0);
-    expect(result.ms).toBeLessThan(2000);
-    const rows: unknown = JSON.parse(result.stdout);
-    expect(Array.isArray(rows)).toBe(true);
-    // ls is a pure reader: it never takes the publish lock, so nothing is skipped or reported.
-    expect(result.stderr).toBe("");
-  } finally {
+  holderCleanups.push(async () => {
     await holder.stdin.end();
     await holder.exited;
-  }
+  });
+  const reader = holder.stdout.getReader();
+  expect(new TextDecoder().decode((await reader.read()).value)).toBe("held\n");
+  reader.releaseLock();
+  const result = await ls(state);
+  expect(result.code).toBe(0);
+  expect(result.ms).toBeLessThan(2000);
+  const rows = jsonOf(z.array(z.unknown())).safeParse(result.stdout);
+  expect(rows.success).toBe(true);
+  // ls is a pure reader: it never takes the publish lock, so nothing is skipped or reported.
+  expect(result.stderr).toBe("");
 });

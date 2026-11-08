@@ -1,5 +1,6 @@
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { jsonOf, z } from "../../../shared/src/zod.ts";
 
 // A fake `reason-network` with the two commands the run-end notice uses: `who --json` and `send <address> <message>`.
 // `mcp` is recorded and refused: the notice must never start an MCP process.
@@ -8,15 +9,22 @@ import { join } from "node:path";
 const command = process.argv[2];
 const home = process.env.REASON_NETWORK_HOME;
 const settingsFile = home === undefined ? undefined : join(home, "fake.json");
-const settings: { log?: string; mode?: string; delayMs?: string } =
+const settingsSchema = z.object({
+  log: z.string().optional(),
+  mode: z.string().optional(),
+  delayMs: z.string().optional(),
+});
+const settingsResult =
   settingsFile !== undefined && existsSync(settingsFile)
-    ? JSON.parse(readFileSync(settingsFile, "utf8"))
-    : {};
+    ? jsonOf(settingsSchema).safeParse(readFileSync(settingsFile, "utf8"))
+    : undefined;
+const settings = settingsResult?.success === true ? settingsResult.data : {};
 const log = process.env.FAKE_LOG ?? settings.log ?? "";
 const mode = process.env.FAKE_MODE ?? settings.mode ?? "ok";
 const delayMs = process.env.FAKE_DELAY_MS ?? settings.delayMs;
-const record = (data: object) =>
+const record = (data: object) => {
   appendFileSync(log, `${JSON.stringify(data)}\n`);
+};
 
 if (command === "who" && process.argv[3] === "--json") {
   record({
@@ -40,16 +48,16 @@ if (command === "who" && process.argv[3] === "--json") {
     command,
     args,
     hasFrom: args.includes("--from"),
-    envNames: Object.keys(process.env).sort(),
+    envNames: Object.keys(process.env).toSorted(),
     cwd: process.cwd(),
   });
   if (["hang", "hold-pipes"].includes(mode)) {
     const helper = Bun.spawn(
       [process.execPath, "-e", "await new Promise(() => {})"],
       {
-      stdin: "ignore",
-      stdout: "inherit",
-      stderr: "inherit",
+        stdin: "ignore",
+        stdout: "inherit",
+        stderr: "inherit",
       },
     );
     helper.unref();
