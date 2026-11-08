@@ -90,7 +90,9 @@ test("roster --json publishes pricing with missing prices omitted on a fixture",
   });
   expect(missing).not.toHaveProperty("price_cached_in");
   expect(missing).not.toHaveProperty("aa_cost_per_task_usd");
-  expect(missing).not.toHaveProperty("aa_time_per_task_s");
+  // The shipped catalog publishes this row's per-task time (catalog.toml, AA 2026-11-03), so it is
+  // exported at that value; the omission case is luna-medium below, which publishes none.
+  expect(missing?.aa_time_per_task_s).toBe(346.14);
   expect(
     roster.choice.find((row) => row.id === "luna-medium"),
   ).not.toHaveProperty("aa_time_per_task_s");

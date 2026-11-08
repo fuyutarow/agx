@@ -44,7 +44,7 @@ async function fixture(tmpRoot?: (root: string) => string) {
   const ticket = join(root, "ticket.md");
   writeFileSync(
     ticket,
-    `+++\nschema = 2\nname = "readonly-launch"\nwrites = []\noutcome = "read-only claude launch"\nverify = []\n[proposition]\nid = "READONLY"\nclaim = "read-only claude starts or is refused"\nrefuted_by = "ends lost without a cause"\n+++\nRead only.\n`,
+    `+++\nschema = 2\nname = "readonly-launch"\nwrites = []\noutcome = "read-only claude launch"\nverify = ["true"]\n[proposition]\nid = "READONLY"\nclaim = "read-only claude starts or is refused"\nrefuted_by = "ends lost without a cause"\n+++\nRead only.\n`,
   );
   const policy = join(root, "policy.toml");
   writeFileSync(
@@ -66,7 +66,7 @@ async function fixture(tmpRoot?: (root: string) => string) {
   const jev = join(root, "jev.ts");
   writeFileSync(
     jev,
-    `Bun.serve({ hostname: "127.0.0.1", port: ${port}, fetch: () => Response.json({ answers: { worker: { choice: "haiku-low", confidence: 0.9 } } }) });\n`,
+    `Bun.serve({ hostname: "127.0.0.1", port: ${port}, fetch: () => Response.json({ answers: { worker: { choice: "mechanical", confidence: 0.9 } } }) });\n`,
   );
   servers.push(
     Bun.spawn([process.execPath, jev], { stdout: "ignore", stderr: "ignore" }),

@@ -25,13 +25,16 @@ for (const duringVerify of [false, true]) {
         ? `process.stdout.write(JSON.stringify({exit:0, report:{summary:"done",changes:[],checks:[],for_coordinator:[],open:[]}})+"\\n");`
         : `await Bun.write(${JSON.stringify(ready)}, "ready"); setInterval(() => {}, 1000);`,
     );
+    // The end notice is one `reason-network send <address> <message>` (src/next/end-notice.ts sendOnce);
+    // `agx msg` is retired (tools/agx/src/agx.ts). The fake answers `who --json` for the dispatcher
+    // session and records the message it is asked to send.
     const notice = join(root, "notice");
-    const agx = join(root, "agx");
+    const reasonNetwork = join(root, "reason-network");
     await Bun.write(
-      agx,
-      `#!${process.execPath}\nawait Bun.write(${JSON.stringify(notice)}, process.argv[process.argv.indexOf("--message") + 1]);\n`,
+      reasonNetwork,
+      `#!${process.execPath}\nconst args = process.argv.slice(2);\nif (args[0] === "who") console.log(JSON.stringify({ sessions: [{ address: "fixture@codex", is_me: true }] }));\nelse if (args[0] === "send") { await Bun.write(${JSON.stringify(notice)}, args[2] ?? ""); console.log("message id 01ARZ3NDEKTSV4RRFFQ69G5FAV"); }\nelse process.exit(2);\n`,
     );
-    await chmod(agx, 0o755);
+    await chmod(reasonNetwork, 0o755);
     const server = Bun.serve({
       port: 0,
       fetch: () =>

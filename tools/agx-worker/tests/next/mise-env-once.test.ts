@@ -24,8 +24,8 @@ test.each([false, true])(
         Response.json({
           answers: {
             worker: {
-              choice: "sol-medium",
-              probabilities: { "sol-medium": 1 },
+              choice: "mechanical",
+              probabilities: { mechanical: 1 },
             },
           },
         }),

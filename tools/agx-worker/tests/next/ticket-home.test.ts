@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
   mkdir,
@@ -17,7 +17,12 @@ import { parseNextTicket } from "../../src/next/ticket.ts";
 import { ticketContext, treeRead } from "../../src/next/ticket-home.ts";
 import { prepareTicketRepo, writeLocalTicketConfig } from "../ticket-repo.ts";
 import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
+import { startFakeJev } from "../fake-jev.ts";
 
+// `check` routes through Jev before it passes (run.ts check), so every acceptance path needs a
+// loopback endpoint; refusal paths return before routing and do not depend on it.
+const jev = startFakeJev();
+afterAll(() => jev.stop());
 const roots: string[] = [];
 function inheritedEnv() {
   const env = { ...subprocessEnvironment() };
@@ -120,7 +125,8 @@ test.each([
       AGX_STATE_DIR: join(parent, "state"),
       AGX_WORKER_BIN: join(parent, "worker.ts"),
       XDG_STATE_HOME: join(parent, "tmp"),
-      JEV_URL: "http://127.0.0.1:1/choice",
+      JEV_URL: jev.url,
+          TYPESAFE_API_KEY: "test-key",
       AGX_CONFIG: new URL(
         "../../src/roster/policy.example.toml",
         import.meta.url,
@@ -331,6 +337,8 @@ async function fixture(home = "tickets", retired = false) {
     GIT_INDEX_FILE: undefined,
     AGX_STATE_DIR: join(root, "state"),
     XDG_STATE_HOME: join(root, "xdg-state"),
+    JEV_URL: jev.url,
+    TYPESAFE_API_KEY: "test-key",
     AGX_CONFIG: new URL("../../src/roster/policy.example.toml", import.meta.url)
       .pathname,
   };
@@ -413,7 +421,8 @@ test.each(["scratch", "empty-git", "other-repository"])(
             ...f.env,
             AGX_WORKER_BIN: worker,
             XDG_STATE_HOME: join(parent, "tmp"),
-            JEV_URL: "http://127.0.0.1:1/choice",
+            JEV_URL: jev.url,
+          TYPESAFE_API_KEY: "test-key",
           },
           stdin: "ignore",
           stdout: "pipe",
@@ -496,6 +505,8 @@ test("check accepts an absolute home declared on the repository trunk", async ()
     JJ_USER: "Fixture",
     JJ_EMAIL: "fixture@example.invalid",
     AGX_STATE_DIR: join(parent, "state"),
+    JEV_URL: jev.url,
+    TYPESAFE_API_KEY: "test-key",
     AGX_CONFIG: new URL("../../src/roster/policy.example.toml", import.meta.url)
       .pathname,
   };
@@ -740,10 +751,13 @@ test("run preserves exact original bytes and hash, base and premise commits, rep
   const baseRev = ctx.base_rev;
   expect(baseRev).not.toBeNull();
   if (baseRev === null || typeof previousCommit !== "string") return;
+  // An absolute external read must exist on this machine (preflight), so use a file this test owns.
+  const reference = join(f.root, "reference.txt");
+  await writeFile(reference, "reference\n");
   const original = Buffer.concat([
     Buffer.from(
       text(
-        'premises = ["file:agx.toml", "rev:HEAD^"]\nresources = { cpu = 1, ram_gb = 1 }\nexternal_reads = ["/reference"]\nfirst_return_s = 60\nnetwork = "none"\nsandbox = "read-only"',
+        `premises = ["file:agx.toml", "rev:HEAD^"]\nresources = { cpu = 1, ram_gb = 1 }\nexternal_reads = [${JSON.stringify(reference)}]\nfirst_return_s = 60\nnetwork = "none"\nsandbox = "read-only"`,
       ),
     ),
     Buffer.from([255, 0, 13, 10]),
@@ -793,7 +807,8 @@ test("run preserves exact original bytes and hash, base and premise commits, rep
           ...f.env,
           AGX_WORKER_BIN: worker,
           XDG_STATE_HOME: join(f.root, "tmp"),
-          JEV_URL: "http://127.0.0.1:1/choice",
+          JEV_URL: jev.url,
+          TYPESAFE_API_KEY: "test-key",
         },
         stdin: "ignore",
         stdout: "pipe",

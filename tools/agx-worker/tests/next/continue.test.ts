@@ -1,4 +1,5 @@
 import { prepareTicketRepo } from "../ticket-repo.ts";
+import { startFakeJev } from "../fake-jev.ts";
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
@@ -29,6 +30,10 @@ afterAll(() => {
   tempDirs.assertRemoved();
 });
 
+// Continuations that must route (an unpublished row, a retired row) reach a loopback Jev fake; the
+// pinned continuations keep the closed port above, so a pin that routed would be refused.
+const routeJev = startFakeJev();
+afterAll(() => routeJev.stop());
 const ticketText = (prose: string): string =>
   `+++\nschema = 2\nname = "pin"\nwrites = []\noutcome = "continue pinned"\nverify = ["true"]\n[proposition]\nid = "PIN"\nclaim = "continue pins the row"\nrefuted_by = "continue routes"\n+++\n${prose}\n`;
 
@@ -426,7 +431,14 @@ test.each([false, true])(
           `schema = 2${item.ticket === undefined ? "" : `\nsandbox = "${item.ticket}"`}`,
         ),
       );
-      const result = f.resume(item.prior, {}, entry, compiled, item.args);
+      // claude-run's row publishes no duration, so this continuation routes and needs Jev.
+      const result = f.resume(
+        item.prior,
+        { JEV_URL: routeJev.url },
+        entry,
+        compiled,
+        item.args,
+      );
       expect(result.exitCode, result.stderr.toString()).toBe(0);
       const parsedReceipt = schema.safeParse(result.stdout.toString().trim());
       expect(parsedReceipt.success).toBe(true);
@@ -514,7 +526,7 @@ appendFileSync(${JSON.stringify(join(f.state, "records.jsonl"))}, JSON.stringify
     writeFileSync(
       f.ticket,
       ticketText("edited immediately before dispatch").replace(
-        "verify = []",
+        'verify = ["true"]',
         `verify = ["true"]\npremises = ["file:${missing ? "missing" : "agx.toml"}"]`,
       ),
     );
@@ -607,19 +619,19 @@ describe("agx worker run --continue pins the prior row", () => {
       join(f.state, "records.jsonl"),
       `${[...original, ...extra].map((event) => JSON.stringify(event)).join("\n")}\n`,
     );
-    for (const [selector, candidates] of [
-      ["codex-r", ["codex-run", "codex-run-extra"]],
-      [
-        "absent",
-        ["bare-run", "claude-run", "codex-run", "codex-run-extra", "ghost-run"],
-      ],
+    // Candidates exist only for an ambiguous prefix. An unknown selector matches none, so its
+    // refusal names the selector and the recorded run count (CHANGELOG 4.7.0: "Report selector
+    // candidates on refusal"; src/next/run-id.ts resolveRunId).
+    for (const [selector, expected] of [
+      ["codex-r", ["codex-run", "codex-run-extra", "is ambiguous"]],
+      ["absent", ["unknown run 'absent'", "5 recorded runs"]],
     ] as const) {
       const before = f.events().length;
       const result = f.resume(selector);
       expect(result.exitCode).toBe(2);
       const lines = result.stderr.toString().trim().split("\n");
       expect(lines).toHaveLength(1);
-      for (const candidate of candidates) expect(lines[0]).toContain(candidate);
+      for (const text of expected) expect(lines[0]).toContain(text);
       expect(f.events()).toHaveLength(before + 1);
       expect(f.events().at(-1)?.kind).toBe("refusal");
     }
@@ -628,7 +640,7 @@ describe("agx worker run --continue pins the prior row", () => {
   test("a row without a published duration starts fresh on an eligible route", async () => {
     const f = await fixture();
     f.writeOriginal("claude-run");
-    const result = f.resume("claude-run");
+    const result = f.resume("claude-run", { JEV_URL: routeJev.url });
     expect(result.exitCode).toBe(0);
     const receiptResult = jsonOf(Receipt).safeParse(
       result.stdout.toString().trim(),
@@ -765,7 +777,7 @@ describe("agx worker run --continue pins the prior row", () => {
     );
     const checked = f.resume(
       "codex-run",
-      { AGX_CONFIG: policy },
+      { AGX_CONFIG: policy, JEV_URL: routeJev.url },
       undefined,
       false,
       [],
@@ -775,7 +787,10 @@ describe("agx worker run --continue pins the prior row", () => {
     expect(checked.stdout.toString()).toContain(
       `CONTINUE run=codex-run row=terra-high -> luna-high workspace=${f.root}`,
     );
-    const continued = f.resume("codex-run", { AGX_CONFIG: policy });
+    const continued = f.resume("codex-run", {
+      AGX_CONFIG: policy,
+      JEV_URL: routeJev.url,
+    });
     expect(continued.exitCode, continued.stderr.toString()).toBe(0);
     const receipt = jsonOf(
       Receipt.extend({
@@ -952,7 +967,7 @@ if (process.argv[2] === "--internal-codex") {
     writeFileSync(
       f.ticket,
       ticketText("test dispatcher lookup").replace(
-        "verify = []",
+        'verify = ["true"]',
         'verify = ["xmsg"]',
       ),
     );

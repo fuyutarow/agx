@@ -560,7 +560,9 @@ export async function preflight(
       "select an existing run id from agx worker ls",
     );
   const loaded = await loadRoster();
-  if (!loaded.ok)
+  // A configuration refusal (for example retired .agx.toml) already names the cause; the roster
+  // loader re-reports the same failure, so it is not added a second time.
+  if (!loaded.ok && !failures.some((failure) => failure instanceof AgxConfigError))
     add(
       `cannot read dispatch roster: ${loaded.error}`,
       "repair AGX_CONFIG or its policy",

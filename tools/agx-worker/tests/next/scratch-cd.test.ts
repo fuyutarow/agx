@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterAll, afterEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -6,7 +6,11 @@ import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { ticketContext } from "../../src/next/ticket-home.ts";
 import { prepareTicketRepo } from "../ticket-repo.ts";
 import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
+import { startFakeJev } from "../fake-jev.ts";
 
+// Acceptance routes through Jev; a loopback fake keeps the test off the real service.
+const jev = startFakeJev();
+afterAll(() => jev.stop());
 const roots: string[] = [];
 afterEach(async () => {
   await Promise.all(
@@ -84,7 +88,8 @@ test.each([
           AGX_CODEX_HOST_FILE: hostPath,
           AGX_WORKER_BIN: join(import.meta.dir, "fixtures/outcome-worker.ts"),
           AGX_OUTCOME_FIXTURE: "ok",
-          JEV_URL: "http://127.0.0.1:1/choice",
+          JEV_URL: jev.url,
+          TYPESAFE_API_KEY: "test-key",
           AGX_CONFIG: new URL(
             "../../src/roster/policy.example.toml",
             import.meta.url,

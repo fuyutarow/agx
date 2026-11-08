@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterAll, afterEach, expect, test } from "bun:test";
 import {
   existsSync,
   chmodSync,
@@ -7,6 +7,7 @@ import {
   lstatSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { createHash } from "node:crypto";
@@ -17,6 +18,11 @@ import { DispatchBindingSchema } from "../../shared/src/agx-dispatch-binding.ts"
 import { jsonOf, z } from "../../shared/src/zod.ts";
 import { DISPATCH_COMMAND_TIMEOUT_MS } from "../src/dispatch.ts";
 import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
+import { startFakeJev } from "./fake-jev.ts";
+
+// Routed checks and continuations call Jev; the loopback fake keeps them hermetic.
+const jev = startFakeJev();
+afterAll(() => jev.stop());
 
 const ENTRY = fileURLToPath(new URL("../src/next/cli.ts", import.meta.url));
 const RunRecord = z.looseObject({
@@ -62,7 +68,7 @@ function fixture() {
   const ticket = join(tickets, "foo-bar.md");
   writeFileSync(
     ticket,
-    `+++\nschema = 2\nwrites = []\nname = "foo-bar"\noutcome = "fixture"\n[proposition]\nid = "P1"\nclaim = "fixture"\nrefuted_by = "fixture"\n+++\n`,
+    `+++\nschema = 2\nwrites = []\nname = "foo-bar"\noutcome = "fixture"\nverify = ["true"]\n[proposition]\nid = "P1"\nclaim = "fixture"\nrefuted_by = "fixture"\n+++\n`,
   );
   const records = join(root, "records.json");
   const unitArgs = join(root, "unit-args.txt");
@@ -198,6 +204,8 @@ function fixture() {
     FAKE_WS_ARGS: wsArgs,
     FAKE_WS_SLEEP_SECONDS: "",
     FAKE_SYSTEMD_RUN_SCRIPT: systemdRunner,
+    JEV_URL: jev.url,
+    TYPESAFE_API_KEY: "test-key",
   };
   return {
     root,
@@ -919,6 +927,10 @@ test("worker contract: the unit command uses the stable executable path", async 
     { stdout: "pipe", stderr: "pipe", timeout: 30000 },
   );
   expect(built.exitCode, built.stderr.toString()).toBe(0);
+  // Homebrew's opt link is the stable name the unit runs (src/self-command.ts stableCommand);
+  // the fixture reproduces that link so the unit can start.
+  mkdirSync(join(f.root, "opt/agx/bin"), { recursive: true });
+  symlinkSync(executable, join(f.root, "opt/agx/bin/agx-worker"));
   const child = Bun.spawn([executable, "dispatch", f.ticket], {
     cwd: f.repo,
     env: f.env,
@@ -1182,7 +1194,7 @@ test.each([
     writeFileSync(join(f.root, "bin/jj"), `#!/bin/sh\nexec '${jj}' "$@"\n`);
     writeFileSync(
       f.ticket,
-      `+++\nschema = 2\nwrites = []\nname = "foo-bar"\noutcome = "fixture"\npremises = ${missingPremise ? '["file:main-only"]' : "[]"}\n[proposition]\nid = "P1"\nclaim = "fixture"\nrefuted_by = "fixture"\n+++\n`,
+      `+++\nschema = 2\nwrites = []\nname = "foo-bar"\noutcome = "fixture"\nverify = ["true"]\npremises = ${missingPremise ? '["file:main-only"]' : "[]"}\n[proposition]\nid = "P1"\nclaim = "fixture"\nrefuted_by = "fixture"\n+++\n`,
     );
     const state = f.env.AGX_STATE_DIR;
     if (state === undefined)
@@ -1301,7 +1313,14 @@ console.log(await Bun.file(${JSON.stringify(f.records)}).text());
       await Bun.file(checkArgv).text(),
     );
     expect(observedArgs.success).toBe(true);
-    expect(observedArgs.data).toEqual(checkArgs);
+    // Dispatch's internal preflight always skips routing (src/dispatch.ts preflight argv;
+    // src/next/cli.ts skipRouting: "internal dispatch preflight; routing occurs in the run").
+    const sandboxAt = checkArgs.indexOf("--sandbox");
+    expect(observedArgs.data).toEqual([
+      ...checkArgs.slice(0, sandboxAt + 2),
+      "--skip-routing",
+      ...checkArgs.slice(sandboxAt + 2),
+    ]);
     expect(await Bun.file(join(workspace, ".agx.toml")).exists()).toBe(false);
     expect(await Bun.file(join(workspace, "agx.toml")).exists()).toBe(false);
     expect(
@@ -1545,7 +1564,7 @@ test.each([false, true])(
     ]) {
       // The fake service replaces its listing, so restore the prior row for each dispatch.
       priorRun(f, join(`${f.repo}.ws`, "ws_foo-bar"));
-      const ticket = `+++\nschema = 2\nwrites = []\nname = "foo-bar"\noutcome = "fixture"\n${item.ticket === undefined ? "" : `sandbox = "${item.ticket}"\n`}[proposition]\nid = "P1"\nclaim = "fixture"\nrefuted_by = "fixture"\n+++\n`;
+      const ticket = `+++\nschema = 2\nwrites = []\nname = "foo-bar"\noutcome = "fixture"\nverify = ["true"]\n${item.ticket === undefined ? "" : `sandbox = "${item.ticket}"\n`}[proposition]\nid = "P1"\nclaim = "fixture"\nrefuted_by = "fixture"\n+++\n`;
       writeFileSync(f.ticket, ticket);
       const child = Bun.spawn(
         [
