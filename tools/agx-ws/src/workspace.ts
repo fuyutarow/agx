@@ -45,6 +45,7 @@ import {
 } from "../../shared/src/attempt.ts";
 import { acquire, pidAlive } from "../../shared/src/dir-lock.ts";
 import { stateDir } from "./state-dir.ts";
+import { opStoreSize, orderGcCandidates, readGcOrder, writeGcOrder } from "./gc-order.ts";
 import { indexedWorkspaces, recordWorkspace } from "./workspace-index.ts";
 import { validateSlug } from "../../shared/src/slug.ts";
 import { fromThrowable, jsonOf, z } from "../../shared/src/zod.ts";
@@ -4242,10 +4243,13 @@ function deferredGcRow(ws: Workspace, repo: Repo): string {
 export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
   if (options.env !== undefined && gcEnvironment.getStore() === undefined)
     return gcEnvironment.run({ ...process.env, ...options.env }, () => gc(options));
-  const repoStarted = performance.now();
   const resolved = resolveRepo(options.repo);
   if (!resolved.ok) return resolved;
   const repo = resolved.value;
+  const storeSize = await opStoreSize(repo.backing);
+  if (storeSize > 1024 ** 3)
+    writeSync(2, `gc: jj op_store is at least ${(storeSize / 1024 ** 3).toFixed(2)} GiB; jj operations in this repository are slowed by it\n`);
+  const repoStarted = performance.now();
   const initialConfig = await readConfig(repo);
   if (!initialConfig.ok) return initialConfig;
   const pre = common(repo, options.dryRun);
@@ -4293,6 +4297,9 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
       exhausted: false,
     };
     let repoBudgetExhausted = false;
+    let deferred = 0;
+    const orderEnv = gcEnvironment.getStore() ?? process.env;
+    const classified = await readGcOrder(repo.backing, orderEnv);
     let removalMs = 0;
     let classificationMs = 0;
     let completed = 0;
@@ -4303,10 +4310,11 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
         `gc trace: cumulative: workspaces=${completed}/${candidates.value.length} classification=${Math.max(0, classificationMs - trace.inventoryMs - trace.comparisonMs).toFixed(3)} ms inventory=${trace.inventoryMs.toFixed(3)} ms count=${trace.inventoryCount} comparison=${trace.comparisonMs.toFixed(3)} ms removal=${removalMs.toFixed(3)} ms slowest=${JSON.stringify(slowest?.workspace ?? null)} ms=${(slowest?.ms ?? 0).toFixed(3)} step=${slowest?.step ?? "none"}\n`,
       );
     };
-    for (const ws of candidates.value) {
+    for (const ws of orderGcCandidates(candidates.value, classified)) {
       if (options.journal?.signal !== undefined) break;
       if (performance.now() - repoStarted >= (options.repoBudgetSeconds ?? 180) * 1000) {
         repoBudgetExhausted = true;
+        deferred++;
         lines.push(deferredGcRow(ws, repo));
         decrementGcRemaining(options.journal);
         continue;
@@ -4397,6 +4405,8 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
           trunk.value.ref,
         );
       }
+      classified[ws.dir] = Temporal.Now.instant().epochMilliseconds;
+      await writeGcOrder(repo.backing, orderEnv, classified);
       const elapsed = performance.now() - classificationStart;
       classificationMs += elapsed;
       const inventory = trace.inventoryMs - inventoryBefore;
@@ -4642,6 +4652,7 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
       if (options.journal !== undefined) options.journal.remaining--;
       if (completed % 50 === 0) reportProgress();
     }
+    if (deferred > 0) writeSync(2, `gc: ${deferred} workspaces deferred by the repository budget; the next run starts with them\n`);
     if (completed % 50 !== 0 || completed === 0) reportProgress();
     report(
       "per-workspace classification",

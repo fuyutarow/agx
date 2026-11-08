@@ -266,3 +266,8 @@ GC recognizes identical ordinary-file copies in both `results/` and `harvest/`
 inside the workspace's runs. Its existing all-rejected, landing, live-run and
 other keep protections still apply. Harvest does not record a judgment or collect
 a workspace. Run `agx ws gc --dry-run` to inspect collection after harvesting.
+
+GC remembers when it last classified each workspace, so a subsequent run starts
+with candidates deferred by the repository time budget. Deferred workspaces are
+kept and reported. A large jj operation store is reported separately; GC does not
+modify it. Classification history is stored in the agx state directory.
