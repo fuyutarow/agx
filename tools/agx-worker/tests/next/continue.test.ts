@@ -21,7 +21,10 @@ import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const tempDirs = createTempTracker();
 const roots: string[] = [];
+const timers = new Set<ReturnType<typeof setTimeout>>();
 const removeRoots = () => {
+  for (const timer of timers) clearTimeout(timer);
+  timers.clear();
   for (const root of roots) rmSync(root, { recursive: true, force: true });
 };
 afterEach(removeRoots);
@@ -52,21 +55,22 @@ const spawnCli = async (
     stdout: "pipe",
     stderr: "pipe",
   });
-  const killer = setTimeout(() => child.kill(), 10_000);
-  try {
-    const [stdout, stderr] = await Promise.all([
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-    ]);
-    await child.exited;
-    return {
-      exitCode: child.exitCode,
-      stdout: Buffer.from(stdout),
-      stderr: Buffer.from(stderr),
-    };
-  } finally {
-    clearTimeout(killer);
-  }
+  const killer = setTimeout(() => {
+    child.kill();
+  }, 10_000);
+  timers.add(killer);
+  const [stdout, stderr] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+  await child.exited;
+  clearTimeout(killer);
+  timers.delete(killer);
+  return {
+    exitCode: child.exitCode,
+    stdout: Buffer.from(stdout),
+    stderr: Buffer.from(stderr),
+  };
 };
 
 const fixture = async (ticketName = "pin") => {
@@ -245,7 +249,14 @@ test.each(["check", "run"])(
         }),
       ].toSorted();
     const beforePaths = paths();
-    const refused = await f.resume("timeout-sec", {}, undefined, false, [], command);
+    const refused = await f.resume(
+      "timeout-sec",
+      {},
+      undefined,
+      false,
+      [],
+      command,
+    );
     expect(refused.exitCode, refused.stderr.toString()).toBe(2);
     expect(refused.stdout.toString()).toBe("");
     expect(refused.stderr.toString()).toBe(
@@ -567,14 +578,16 @@ appendFileSync(${JSON.stringify(join(f.state, "records.jsonl"))}, JSON.stringify
     // Sequential, as the two attempts were under spawnSync: each attempt must see the other's records.
     const results = [];
     for (let attempt = 0; attempt < 2; attempt += 1)
-      results.push(await f.resume(
-        "codex-run",
-        env,
-        undefined,
-        false,
-        ["--sandbox", "none"],
-        "dispatch",
-      ));
+      results.push(
+        await f.resume(
+          "codex-run",
+          env,
+          undefined,
+          false,
+          ["--sandbox", "none"],
+          "dispatch",
+        ),
+      );
     expect(
       results.map((result) => result.exitCode),
       results.map((result) => result.stderr.toString()).join("\n"),
@@ -761,7 +774,14 @@ describe("agx worker run --continue pins the prior row", () => {
         )
         .join("\n")}\n`,
     );
-    const checked = await f.resume("codex-run", env, undefined, false, [], "check");
+    const checked = await f.resume(
+      "codex-run",
+      env,
+      undefined,
+      false,
+      [],
+      "check",
+    );
     expect(checked.exitCode, checked.stderr.toString()).toBe(0);
     expect(checked.stdout.toString()).toContain("row=luna-max -> terra-high");
     const continued = await f.resume("codex-run", env);
@@ -878,7 +898,14 @@ describe("agx worker run --continue pins the prior row", () => {
       join(f.state, "records.jsonl"),
       `${events.map((event) => JSON.stringify(event)).join("\n")}\n`,
     );
-    const result = await f.resume("codex-run", {}, undefined, false, [], "check");
+    const result = await f.resume(
+      "codex-run",
+      {},
+      undefined,
+      false,
+      [],
+      "check",
+    );
     expect(result.exitCode).toBe(2);
     expect(result.stderr.toString()).toContain("workspace");
     expect(result.stderr.toString()).toContain("no longer exists");
