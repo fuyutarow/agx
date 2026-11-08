@@ -1,5 +1,13 @@
 # Changelog
 
+## 10.0.0 — 2026-11-08
+
+- Allow status with retired state configuration present.
+- Allow ticket commands with retired state configuration present.
+- Remove --import-legacy and --include-legacy flags.
+- Remove startup refusal for retired state configuration and agx-next.
+- Retire obsolete doctor state migration refusals.
+
 ## 9.0.0 — 2026-11-08
 
 - Remove agx ws adopt and the gc --legacy flag.
