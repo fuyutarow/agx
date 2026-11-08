@@ -1,5 +1,9 @@
 # Changelog
 
+## 5.7.0 — 2026-11-08
+
+- Automatically reclaim expired judged run files after a pin decision
+
 ## 5.6.0 — 2026-11-08
 
 - Rotate routing journals by UTC day while retaining legacy history.
