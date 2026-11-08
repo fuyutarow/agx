@@ -1,5 +1,9 @@
 # Changelog
 
+## 5.4.1 — 2026-11-08
+
+- Share the uv cache with Python workers
+
 ## 5.4.0 — 2026-11-08
 
 - Bound worker run directories and add explicit reclaim.
