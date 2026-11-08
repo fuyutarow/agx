@@ -7,10 +7,12 @@ import {
   openSync,
   closeSync,
   readFileSync,
+  readdirSync,
   writeFileSync,
 } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
+import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
@@ -1628,6 +1630,75 @@ export { runningSummary } from "./listing.ts";
 /** How long judge waits for the publication lock before it fails naming the holder. */
 const PUBLICATION_LOCK_WAIT_MS = 30_000;
 
+async function reclaimAfterJudge(root: string): Promise<void> {
+  const configured = process.env.XDG_CONFIG_HOME;
+  const config =
+    configured === undefined || configured === ""
+      ? join(process.env.HOME ?? homedir(), ".config")
+      : configured;
+  const directory = join(config, "agx", "run-pins.d");
+  const listing = fromThrowable(() => readdirSync(directory))();
+  if (listing.isErr()) {
+    const parsed = z.object({ code: z.string() }).safeParse(listing.error);
+    if (!parsed.success || parsed.data.code !== "ENOENT")
+      process.stderr.write(
+        `stopped at automatic reclaim: ${String(listing.error)}\n`,
+      );
+    return;
+  }
+  await Promise.try(async () => {
+    const files = listing.value
+      .filter((name) => name.endsWith(".txt"))
+      .toSorted()
+      .map((name) => join(directory, name));
+    const args =
+      files.length === 0
+        ? ["--no-pins"]
+        : files.flatMap((file) => ["--pin", file]);
+    const child = Bun.spawn(
+      [
+        ...stableSelfCommand(),
+        "reclaim-runs",
+        "--older-than",
+        "14",
+        "--apply",
+        ...args,
+      ],
+      {
+        env: {
+          ...process.env,
+          AGX_STATE_DIR: root,
+          AGX_RECLAIM_AUTOMATIC: "1",
+        },
+        stdout: "ignore",
+        stderr: "pipe",
+        detached: true,
+      },
+    );
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      fromThrowable(() => process.kill(-child.pid, "SIGKILL"))().mapErr(() => {
+        child.kill("SIGKILL");
+      });
+    }, 3000);
+    const [exit, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stderr).text(),
+    ]);
+    clearTimeout(timer);
+    if (stderr !== "") process.stderr.write(stderr);
+    if (timedOut)
+      process.stderr.write(
+        "stopped at automatic reclaim: time limit exceeded\n",
+      );
+    else if (exit !== 0 && !stderr.includes("stopped at"))
+      process.stderr.write("stopped at automatic reclaim: sweep failed\n");
+  }).catch((error: unknown) => {
+    process.stderr.write(`stopped at automatic reclaim: ${String(error)}\n`);
+  });
+}
+
 /** Judge's lock failure names the lock (the publication lock, `current-runs.json`) and its holder. */
 const publicationLockFailure = (root: string, reason: string): string =>
   `cannot publish current runs: publication lock ${join(root, "current-runs.json")} (the lock every run, judge and publication takes to rewrite the snapshot): ${reason}; nothing was recorded, retry`;
@@ -1769,6 +1840,7 @@ export async function judgeBatch(
     (runtime.writeStdout ?? ((line) => process.stdout.write(line)))(
       `${JSON.stringify({ line: index + 1, id: entry.id, status: entry.status })}\n`,
     );
+  await reclaimAfterJudge(root);
   return 0;
 }
 
@@ -1882,6 +1954,7 @@ export async function judgeRun(
     `${JSON.stringify({ id: judgment.id, verdict: judgment.decision, ...(judgment.note === "" ? {} : { note: judgment.note }), ...(judgment.override_reason === undefined ? {} : { override_reason: judgment.override_reason }), at: judgment.at })}\n`,
   );
   await publishWorkspacePublications(root);
+  await reclaimAfterJudge(root);
   return 0;
 }
 

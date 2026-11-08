@@ -1020,7 +1020,16 @@ containing a pinned path, listing the run as pinned. An unreadable pin file or
 a non-absolute entry refuses the operation before any removal.
 The record set is `brief.md`, `ticket.orig.md` and its SHA256, `report.json`,
 `result.md`, run-ID receipt and last-message files, spawn and attempt JSON,
-interim and progress files, verify logs, and `judged-evidence-<sha256>.txt` files. Reclaim never runs automatically.
+interim and progress files, verify logs, and `judged-evidence-<sha256>.txt` files.
+Ended, judged runs retain non-record files for 14 days after ending; records are
+retained. After a successful single or batch judgment, one automatic sweep moves
+non-record files from at most 20 eligible runs, oldest ended first, with a
+three-second limit. It runs only when `$XDG_CONFIG_HOME/agx/run-pins.d` exists
+(default `~/.config/agx/run-pins.d`): every `*.txt` file supplies absolute pinned
+paths, and an empty directory explicitly means no pins. The sweep appends one
+receipt per moved run to `<state>/reclaim.jsonl` and reports moved totals on
+stderr. A failure is reported with `stopped at` and does not change the judge
+result. Running and unjudged runs are never reclaimed.
 The byte total measures removal from run directories; `rip` retains a graveyard,
 so it does not promise filesystem space has been freed. Read-only briefs direct results to the final response, and
 the runner records that response in its report. Preflight refuses read-only runs
