@@ -154,5 +154,5 @@ test(
       true,
     );
   },
-  (WORKER_SECONDS + 150) * 1_000,
+  WORKER_SECONDS * 1_000 + 150_000,
 );

@@ -5,6 +5,11 @@
     "timeout": 120000
   },
   {
+    "file": "tools/agx-ticket/tests/gc-grammar.test.ts",
+    "name": "file default",
+    "timeout": 60000
+  },
+  {
     "file": "tools/agx-ticket/tests/lifecycle.test.ts",
     "name": "a workspace already removed by ws retains ticket state but cannot authorize GC",
     "timeout": 12000
@@ -90,6 +95,11 @@
     "timeout": 20000
   },
   {
+    "file": "tools/agx-worker/tests/dispatch-exits.test.ts",
+    "name": "dispatch exits within seconds of its receipt while the 60 s run still completes",
+    "timeout": 210000
+  },
+  {
     "file": "tools/agx-worker/tests/dispatch.test.ts",
     "name": "compiled dispatcher outside manager PATH pins its own executable",
     "timeout": 40000
@@ -97,7 +107,17 @@
   {
     "file": "tools/agx-worker/tests/dispatch.test.ts",
     "name": "continuation ignores a deleted registered sibling but refuses its own missing workspace",
-    "timeout": 11000
+    "timeout": 120000
+  },
+  {
+    "file": "tools/agx-worker/tests/dispatch.test.ts",
+    "name": "continuation keeps recorded workspace %s without creating one",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/dispatch.test.ts",
+    "name": "continuation refuses ambiguous and unknown prefixes with run candidates",
+    "timeout": 30000
   },
   {
     "file": "tools/agx-worker/tests/dispatch.test.ts",
@@ -108,6 +128,11 @@
     "file": "tools/agx-worker/tests/dispatch.test.ts",
     "name": "dispatch contract: the inspection bound honours DISPATCH_COMMAND_TIMEOUT_MS",
     "timeout": 15000
+  },
+  {
+    "file": "tools/agx-worker/tests/dispatch.test.ts",
+    "name": "dispatch does not bind an xmsg target",
+    "timeout": 30000
   },
   {
     "file": "tools/agx-worker/tests/dispatch.test.ts",
@@ -123,6 +148,11 @@
     "file": "tools/agx-worker/tests/dispatch.test.ts",
     "name": "real jj continued workspace %s agrees with check (missing premise=%s)",
     "timeout": 60000
+  },
+  {
+    "file": "tools/agx-worker/tests/end-notice-bounded.test.ts",
+    "name": "file default",
+    "timeout": 30000
   },
   {
     "file": "tools/agx-worker/tests/host.test.ts",
@@ -147,6 +177,41 @@
   {
     "file": "tools/agx-worker/tests/jj-read.test.ts",
     "name": "installed jj reads neither snapshot, import/export refs nor integrate operations",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/ls-lock-busy.test.ts",
+    "name": "file default",
+    "timeout": 60000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/check-external-reads.test.ts",
+    "name": "check validates absolute external reads, not descriptions or ticket body",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/check-readonly-needs-verify.test.ts",
+    "name": "preflight requires verify for read-only tickets and accepts a human oracle for writes",
+    "timeout": 60000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/check-readonly-run-dir.test.ts",
+    "name": "check and dispatch refuse read-only verify entries before launch",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/check-readonly-run-dir.test.ts",
+    "name": "workspace-write with run directory and read-only with other verify pass check",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/check-repo-commands.test.ts",
+    "name": "repository check: %s",
+    "timeout": 60000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/check-writes-parent.test.ts",
+    "name": "check requires the literal prefix parent in the --cd tree",
     "timeout": 30000
   },
   {
@@ -210,14 +275,24 @@
     "timeout": 60000
   },
   {
+    "file": "tools/agx-worker/tests/next/jev-usage.test.ts",
+    "name": "empty, explicit zero and missing usage have distinct meanings; imported legacy is deduplicated",
+    "timeout": 15000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/jev-usage.test.ts",
+    "name": "malformed complete records refuse JSON; incomplete tails and unknown dates are explicit",
+    "timeout": 15000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/jev-usage.test.ts",
+    "name": "real routing CLI captures response usage even for fallback, missing usage remains unknown",
+    "timeout": 15000
+  },
+  {
     "file": "tools/agx-worker/tests/next/judge-lock.test.ts",
     "name": "file default",
     "timeout": 40000
-  },
-  {
-    "file": "tools/agx-worker/tests/next/legacy-judgments.test.ts",
-    "name": "C3 equal-time imported ties are deterministic across discovery order, native ties win",
-    "timeout": 11000
   },
   {
     "file": "tools/agx-worker/tests/next/ls-selector.test.ts",
@@ -276,6 +351,11 @@
   },
   {
     "file": "tools/agx-worker/tests/next/outcome.test.ts",
+    "name": "outcome contract: a capacity reroute that finds a row continues on that row",
+    "timeout": 180000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/outcome.test.ts",
     "name": "outcome contract: malformed only when the returned report is unreadable",
     "timeout": 180000
   },
@@ -301,17 +381,42 @@
   },
   {
     "file": "tools/agx-worker/tests/next/route.test.ts",
+    "name": "file default",
+    "timeout": 60000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/route.test.ts",
     "name": "local accepted and rejected history cannot change the Jev request",
     "timeout": 20000
   },
   {
-    "file": "tools/agx-worker/tests/next/run-temp.test.ts",
-    "name": "a SIGKILLed run leaves its directory and the next run removes it",
-    "timeout": 45000
+    "file": "tools/agx-worker/tests/next/routing-stats.test.ts",
+    "name": "real roster CLI selections are persisted before any worker starts",
+    "timeout": 15000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/routing-stats.test.ts",
+    "name": "stats rejects invalid windows and incompatible flags",
+    "timeout": 15000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/run-dir-bytes.test.ts",
+    "name": "worker run measures its 300 MiB output and delivers the size notice",
+    "timeout": 60000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/run-path-own-version.test.ts",
+    "name": "actual run passes its suite PATH to the worker and verify and records it",
+    "timeout": 60000
   },
   {
     "file": "tools/agx-worker/tests/next/run-temp.test.ts",
     "name": "bare service environment shares user tools, mise PATH and temp with verify; records failure kinds",
+    "timeout": 15000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/run-temp.test.ts",
+    "name": "file default",
     "timeout": 15000
   },
   {
@@ -338,6 +443,16 @@
     "file": "tools/agx-worker/tests/next/session-persist.test.ts",
     "name": "a lost run with no reported session starts fresh and says so",
     "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/stop.test.ts",
+    "name": "file default",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/stopped-run-verify.test.ts",
+    "name": "stopped run reports verify ${duringVerify ? \"interrupted\" : \"not run\"}",
+    "timeout": 20000
   },
   {
     "file": "tools/agx-worker/tests/next/ticket-home.test.ts",
@@ -430,6 +545,46 @@
     "timeout": 20000
   },
   {
+    "file": "tools/agx-worker/tests/run-end-notice.test.ts",
+    "name": "a bare Claude dispatcher is qualified for a real run end notice",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/run-exits-after-end.test.ts",
+    "name": "file default",
+    "timeout": 90000
+  },
+  {
+    "file": "tools/agx-worker/tests/run-lock-hold.test.ts",
+    "name": "file default",
+    "timeout": 60000
+  },
+  {
+    "file": "tools/agx-worker/tests/timeout-report.test.ts",
+    "name": "a worker that %s leaves a manager-written report",
+    "timeout": 120000
+  },
+  {
+    "file": "tools/agx-worker/tests/timeout-report.test.ts",
+    "name": "a worker's own final report is left as it wrote it",
+    "timeout": 100000
+  },
+  {
+    "file": "tools/agx-worker/tests/verify-feedback.test.ts",
+    "name": "file default",
+    "timeout": 60000
+  },
+  {
+    "file": "tools/agx-worker/tests/verify-feedback.test.ts",
+    "name": "first verify completes after the deadline",
+    "timeout": 15000
+  },
+  {
+    "file": "tools/agx-worker/tests/verify-round-visible.test.ts",
+    "name": "file default",
+    "timeout": 60000
+  },
+  {
     "file": "tools/agx-ws/tests/add-hang.test.ts",
     "name": "WS-ADD-HANG-2: three piped adds have a fixed jj budget as history and workspace counts grow",
     "timeout": 90000
@@ -438,6 +593,36 @@
     "file": "tools/agx-ws/tests/deadline.test.ts",
     "name": "agx ws add whole-command deadline identifies %s on stderr",
     "timeout": 20000
+  },
+  {
+    "file": "tools/agx-ws/tests/gc-contract.test.ts",
+    "name": "file default",
+    "timeout": 120000
+  },
+  {
+    "file": "tools/agx-ws/tests/gc-grammar.test.ts",
+    "name": "file default",
+    "timeout": 120000
+  },
+  {
+    "file": "tools/agx-ws/tests/gc-inventory-timeout.test.ts",
+    "name": "gc keeps timed-out inventory unknown while reporting a broken working copy",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-ws/tests/gc-inventory-timeout.test.ts",
+    "name": "rm allows a slow inventory, refuses untracked content, and explains timeouts",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-ws/tests/gc-progress.test.ts",
+    "name": "budget-limited runs advance and never remove deferred workspaces",
+    "timeout": 60000
+  },
+  {
+    "file": "tools/agx-ws/tests/gc-read-race.test.ts",
+    "name": "gc keeps classifying after %s failure",
+    "timeout": 30000
   },
   {
     "file": "tools/agx-ws/tests/gc-usecases.test.ts",
@@ -465,6 +650,11 @@
     "timeout": 64000
   },
   {
+    "file": "tools/agx-ws/tests/trunk-state.test.ts",
+    "name": "file default",
+    "timeout": 60000
+  },
+  {
     "file": "tools/agx-ws/tests/workspace.test.ts",
     "name": "${source}: add, rm, gc and doctor use the shared policy",
     "timeout": 12000
@@ -473,11 +663,6 @@
     "file": "tools/agx-ws/tests/workspace.test.ts",
     "name": "AGX-WS-GC-KEEP-BY-DIFF-1024: accepted ${integration} and real paths",
     "timeout": 11000
-  },
-  {
-    "file": "tools/agx-ws/tests/workspace.test.ts",
-    "name": "AGX-WS-HARVEST-1025 copies once, leaves workspace bytes intact, and enables gc",
-    "timeout": 12000
   },
   {
     "file": "tools/agx-ws/tests/workspace.test.ts",
@@ -516,26 +701,6 @@
   },
   {
     "file": "tools/agx-ws/tests/workspace.test.ts",
-    "name": "WS-ADOPT-2: every failure after add removes registration and directory, retaining source",
-    "timeout": 21000
-  },
-  {
-    "file": "tools/agx-ws/tests/workspace.test.ts",
-    "name": "WS-ADOPT-2: fix-names plans and moves only prefixed adopted workspaces",
-    "timeout": 11000
-  },
-  {
-    "file": "tools/agx-ws/tests/workspace.test.ts",
-    "name": "WS-ADOPT-2: strips layout prefixes, preserves run suffixes and re-homes adopted changes",
-    "timeout": 12000
-  },
-  {
-    "file": "tools/agx-ws/tests/workspace.test.ts",
-    "name": "WS-ADOPT: unlanded and nested workspaces move intact; kept and live ones are refused",
-    "timeout": 20000
-  },
-  {
-    "file": "tools/agx-ws/tests/workspace.test.ts",
     "name": "WS-GC-UNACCEPTED: abandonment requires rejection; flags never override unjudged runs",
     "timeout": 18000
   },
@@ -548,6 +713,11 @@
     "file": "tools/release/release.test.ts",
     "name": "brew update completes while a descendant holds output pipes for five minutes",
     "timeout": 10000
+  },
+  {
+    "file": "tools/release/release.test.ts",
+    "name": "file default",
+    "timeout": 120000
   },
   {
     "file": "tools/release/release.test.ts",

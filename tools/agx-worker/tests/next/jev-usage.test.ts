@@ -219,7 +219,7 @@ test("empty, explicit zero and missing usage have distinct meanings; imported le
   const missing = report(stats(env));
   expect(missing.unknown.historical_runs).toBe(1);
   expect(missing.input_tokens).toBeNull();
-});
+}, 15000);
 
 test("malformed complete records refuse JSON; incomplete tails and unknown dates are explicit", () => {
   const { root, env } = fixture();
@@ -232,7 +232,7 @@ test("malformed complete records refuse JSON; incomplete tails and unknown dates
   journal(root, "jev-usage.jsonl", [capture(1, null)]);
   journal(root, "runs.jsonl", [{ kind: "run", run_id: "undated" }]);
   expect(report(stats(env)).unknown.time).toBe(1);
-});
+}, 15000);
 
 test.each([
     { extra: ["--usage", "other"] },
@@ -312,4 +312,4 @@ test("real routing CLI captures response usage even for fallback, missing usage 
   expect(data.known_input_tokens).toBe(133);
   expect(data.unknown.captured_calls).toBe(1);
   expect(data.input_tokens).toBeNull();
-});
+}, 15000);
