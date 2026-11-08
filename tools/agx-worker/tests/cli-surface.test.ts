@@ -40,3 +40,18 @@ test("worker help describes every command and hides internal flags", () => {
     rmSync(state, { recursive: true, force: true });
   }
 });
+
+test("removed classify command is rejected", () => {
+  const state = mkdtempSync(join(tmpdir(), "agx-classify-removed-"));
+  try {
+    const result = Bun.spawnSync(
+      [process.execPath, cli, "classify", "run-id"],
+      { env: { ...process.env, AGX_STATE_DIR: state } },
+    );
+    expect(result.exitCode).toBe(2);
+    expect(result.stdout.toString()).toBe("");
+    expect(result.stderr.toString()).toContain("unknown command \"classify\"");
+  } finally {
+    rmSync(state, { recursive: true, force: true });
+  }
+});

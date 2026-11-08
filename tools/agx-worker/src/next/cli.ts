@@ -29,7 +29,6 @@ const COMMAND_DESCRIPTIONS = {
   stop: "Stop a worker run.",
   check: "Check a ticket and its launch preflights.",
   ls: "List worker runs.",
-  classify: "Classify a worker run.",
   judge: "Record judgments on worker runs.",
   stats: "Show worker usage and routing statistics.",
   doctor: "Diagnose worker records.",
@@ -465,22 +464,6 @@ Ticket min_effort = "low" | "medium" | "high" | "xhigh" | "max" sets a routing f
         override: parsed.flags.override,
         evidence: parsed.flags.evidence,
       });
-  } else if (commandName === "classify") {
-    const parsed = cli(
-      {
-        name: "agx worker classify",
-        parameters: ["<run>"],
-        flags: {
-          json: { type: Boolean, description: "emit JSON facts" },
-        },
-        strictFlags: true,
-        ignoreArgv: rejectPrototypeFlag,
-      },
-      undefined,
-      commandArgs,
-    );
-    const { classifyRun } = await import("./classify.ts");
-    exit = await classifyRun({ id: parsed._[0], json: parsed.flags.json });
   } else if (commandName === "stats") {
     const parsed = cli(
       {

@@ -86,49 +86,20 @@ function command(
   };
 }
 
-test("classify contract: a timed-out run whose verify passed with a diff is verified-timeout", () => {
+test("worker listing classifies a timed-out run whose verify passed with a diff as verified-timeout", () => {
   const run = fixture("verified-timeout", {
     outcome: "timeout",
     exit: 124,
     verify: [{ cmd: "bun check", exit: 0, log_path: "unused" }],
     changed_files: 2,
   });
-  const result = command(["classify", run.id, "--json"], run.state);
-  expect(result.exit).toBe(0);
-  expect(result.stderr).toBe("");
-  const parsed = jsonOf(
-    z.object({
-      id: z.string(),
-      completion: z.string(),
-      facts: z.object({
-        outcome: z.string(),
-        verify: z.object({
-          ran: z.boolean(),
-          exits: z.array(z.number()),
-          all_passed: z.boolean(),
-        }),
-        workspace_diff_from_start: z.object({
-          changed_files: z.number().nullable(),
-          nonempty: z.boolean().nullable(),
-        }),
-      }),
-    }),
-  ).safeParse(result.stdout);
-  expect(parsed.success).toBe(true);
-  if (!parsed.success) return;
-  expect(parsed.data.completion).toBe("verified-timeout");
-  expect(parsed.data.facts).toEqual({
-    outcome: "timeout",
-    verify: { ran: true, exits: [0], all_passed: true },
-    workspace_diff_from_start: { changed_files: 2, nonempty: true },
-  });
-
   const listed = command(["ls", "--json", "--all"], run.state);
   expect(listed.exit).toBe(0);
+  expect(listed.stderr).toBe("");
   expect(listed.stdout).toContain('"completion":"verified-timeout"');
 });
 
-test("classify contract: a timed-out run without a passing verify is incomplete", () => {
+test("worker listing classifies timed-out runs without a passing verify as incomplete", () => {
   const cases = [
     { name: "no-verify", verify: [], changed_files: 2 },
     {
@@ -144,7 +115,7 @@ test("classify contract: a timed-out run without a passing verify is incomplete"
       verify: item.verify,
       changed_files: item.changed_files,
     });
-    const result = command(["classify", run.id, "--json"], run.state);
+    const result = command(["ls", item.name, "--json"], run.state);
     expect(result.exit).toBe(0);
     expect(result.stdout).toContain('"completion":"incomplete"');
   }

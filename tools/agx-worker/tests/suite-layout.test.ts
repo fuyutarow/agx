@@ -25,7 +25,6 @@ test("the CLI exposes the run, doctor, and process interface commands", () => {
     "stop",
     "check",
     "ls",
-    "classify",
     "judge",
     "stats",
     "doctor",

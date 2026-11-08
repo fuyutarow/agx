@@ -7,12 +7,11 @@ import {
 } from "../../shared/src/path-dispatch.ts";
 
 import { doctor } from "./doctor.ts";
-import { change } from "./change.ts";
 
 const argv = process.argv.slice(2);
 const retiredMsg =
   "agx: agx msg is retired; messaging belongs to Reason Network. Inside a session use the MCP tools send_message and list_team; from a shell run `reason-network send <address> <message>` with addresses from `reason-network who`\n";
-const tools = ["worker", "ticket", "ws", "status", "doctor", "change"];
+const tools = ["worker", "ticket", "ws", "status", "doctor"];
 
 async function help(): Promise<void> {
   process.stdout.write(
@@ -22,12 +21,6 @@ async function help(): Promise<void> {
     if (tool === "doctor") {
       process.stdout.write(
         "  doctor  Refresh and publish aggregate doctor findings\n",
-      );
-      continue;
-    }
-    if (tool === "change") {
-      process.stdout.write(
-        "  change  Coordinate changes and reserve alpha pushes for agx change land\n",
       );
       continue;
     }
@@ -60,10 +53,9 @@ async function help(): Promise<void> {
       "  Read agx --help, then agx <tool> --help, then agx <tool> <command> --help.\n" +
       "  Validate/start/run workers: agx worker check|dispatch|run.\n" +
       "  Inspect and judge runs: agx worker ls|judge.\n" +
-      "  Issue/list/collect tickets: agx ticket new|ls|gc.\n" +
+      "  Issue/collect tickets: agx ticket new|gc.\n" +
       "  Create/adopt/refresh/remove/collect workspaces: agx ws add|adopt|refresh|rm|gc.\n" +
       "  Message other sessions: Reason Network (send_message, list_team) or reason-network send.\n" +
-      "  Protect the trunk push path: agx change hook pre-push.\n" +
       "  Refresh/read suite health: agx doctor, agx status.\n" +
       "\nOPTIONS:\n  -h, --help  Show help\n  -V, --version  Show version\n",
   );
@@ -90,10 +82,6 @@ async function main(): Promise<void> {
   }
   if (first === "doctor") {
     await doctor(remaining);
-    return;
-  }
-  if (first === "change") {
-    change(remaining);
     return;
   }
   const target = await resolveSuiteTool(`agx-${first}`);

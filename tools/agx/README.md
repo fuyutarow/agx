@@ -18,7 +18,7 @@ Compiled `agx` first uses executable tools in its own installation directory, th
 falls back to PATH. Running from source under Bun uses PATH only.
 `agx -h` takes each tool’s one-line description from its help using the same lookup.
 
-Only `worker`, `ticket`, `ws`, `status`, `change`, and `doctor` are accepted as tools. An unknown tool exits 2
+Only `worker`, `ticket`, `ws`, `status`, and `doctor` are accepted as tools. An unknown tool exits 2
 with one stderr line naming the accepted tools and no stdout output.
 
 See [worker interfaces](../agx-worker/README.md) for worker commands.
