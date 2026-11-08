@@ -4582,6 +4582,44 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
             if (!checked.collect) return good({ classification: checked });
             if (options.journal?.signal !== undefined)
               return good({ classification: checked });
+            const preserved = await attempt(() =>
+              harvestWorkspace(currentWs.dir, currentRecords.value, false),
+            );
+            if (!preserved.ok) {
+              return good({
+                classification: {
+                  ...checked,
+                  verdict: "keep",
+                  collect: false,
+                  reason: "result preservation failed: " + msg(preserved),
+                },
+              });
+            }
+            if (!preserved.value.ok) {
+              const failure = msg(preserved.value);
+              return good({
+                classification: {
+                  ...checked,
+                  verdict: "keep",
+                  collect: false,
+                  reason: "result preservation failed: " + failure,
+                },
+              });
+            }
+            if (preserved.value.value.length > 0) {
+              checked.reason +=
+                "; run results preserved: " +
+                preserved.value.value
+                  .map((row) =>
+                    join(
+                      stateDir(gcEnvironment.getStore()),
+                      "runs",
+                      row.id,
+                      "harvest",
+                    ),
+                  )
+                  .join(", ");
+            }
             const removed = await collectWorkspace(
               repo,
               currentWs,
@@ -5110,67 +5148,6 @@ export type HarvestRun = {
   bytes: number;
 };
 
-/** Copy ordinary result files only; exclusive creation never overwrites earlier evidence. */
-export async function harvest(options: {
-  repo?: string | undefined;
-  all?: boolean | undefined;
-  dryRun?: boolean | undefined;
-}): Promise<Attempt<{ runs: HarvestRun[]; files: number; bytes: number }>> {
-  if (options.all === true && options.repo !== undefined)
-    return bad("--all and --repo cannot be combined");
-  let roots: Attempt<Map<string, Set<string>>>;
-  if (options.all === true) roots = await discoverRepos();
-  else {
-    const repo = resolveRepo(options.repo ?? process.cwd());
-    if (!repo.ok) return repo;
-    roots = good(new Map([[repo.value.backing, new Set<string>()]]));
-  }
-  if (!roots.ok) return roots;
-  for (const root of roots.value.keys()) {
-    const repo = resolveRepo(root);
-    if (!repo.ok) return repo;
-    const config = await readConfig(repo.value);
-    if (!config.ok) return config;
-  }
-  const records = await agxRecords(process.cwd());
-  if (!records.ok) return records;
-  const runs: HarvestRun[] = [];
-  for (const root of roots.value.keys()) {
-    const done = await harvestRepo(
-      root,
-      records.value,
-      options.dryRun === true,
-    );
-    if (!done.ok) return done;
-    runs.push(...done.value);
-  }
-  return good({
-    runs,
-    files: runs.reduce((sum, run) => sum + run.files.length, 0),
-    bytes: runs.reduce((sum, run) => sum + run.bytes, 0),
-  });
-}
-
-async function harvestRepo(
-  root: string,
-  records: RunRecord[],
-  dryRun: boolean,
-): Promise<Attempt<HarvestRun[]>> {
-  const repo = resolveRepo(root);
-  if (!repo.ok) return repo;
-  const config = await readConfig(repo.value);
-  if (!config.ok) return config;
-  const candidates = await workspaces(repo.value);
-  if (!candidates.ok) return candidates;
-  const rows: HarvestRun[] = [];
-  for (const ws of candidates.value) {
-    const done = await harvestWorkspace(ws.dir, records, dryRun);
-    if (!done.ok) return done;
-    rows.push(...done.value);
-  }
-  return good(rows);
-}
-
 async function harvestWorkspace(
   dir: string,
   records: RunRecord[],
@@ -5179,6 +5156,7 @@ async function harvestWorkspace(
   if (!existsSync(dir)) return good([]);
   const lineage = lineageOf(records, realOr(dir));
   if (lineage.some((run) => !TERMINAL_STATES.has(run.state))) return good([]);
+  if (!lineage.some((run) => run.state === "ended")) return good([]);
   const tracked = await jjOut(
     ["file", "list", "-T", 'path ++ "\\0"'],
     dir,
@@ -5188,7 +5166,9 @@ async function harvestWorkspace(
   const trackedPaths = new Set(tracked.value.split("\0").filter(Boolean));
   const rows: HarvestRun[] = [];
   for (const run of lineage) {
-    if (run.state !== "ended" || !/^[a-zA-Z0-9_-]+$/u.test(run.id)) continue;
+    if (run.state !== "ended") continue;
+    if (!/^[a-zA-Z0-9_-]+$/u.test(run.id))
+      return bad(`unsafe run id for result preservation: ${run.id}`);
     const collected = await attempt(() => harvestPaths(dir, run, trackedPaths));
     if (!collected.ok) return collected;
     const copied = await attempt(() =>
@@ -5263,7 +5243,12 @@ async function harvestRun(
     skipped: 0,
     bytes: 0,
   };
-  const destination = join(stateDir(), "runs", run.id, "harvest");
+  const destination = join(
+    stateDir(gcEnvironment.getStore()),
+    "runs",
+    run.id,
+    "harvest",
+  );
   for (const path of [...paths].toSorted()) {
     const copied = await copyHarvestFile(dir, destination, path, dryRun);
     if (!copied.ok) return copied;
@@ -5309,6 +5294,8 @@ async function copyHarvestFile(
     await mkdir(dirname(target), { recursive: true });
     await using file = await open(target, "wx", 0o600);
     await file.writeFile(bytes);
+    if (!bytes.equals(await readFile(target)))
+      return bad(`harvest read-back failed: ${target}`);
   }
   return good(bytes.length);
 }

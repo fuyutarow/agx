@@ -40,7 +40,7 @@ Evidence locators:
 | collect | safety | GC-UNLANDED | Unpushed or unreachable changes are kept and named; a missing workspace with an unreachable commit retains its `jj` record. | FJ J2 lines 14–17; GC U3 lines 329–371; DOT line 148 | GC U3 — `gc usecase: U3 keeps and names the ten unpushed changes in a workspace` | `tools/agx-ws/src/workspace.ts:unlandedWorkspaceChange` (line 2678) |
 | collect | safety | GC-ORPHAN-RM | `agx ws rm` compares an unregistered sibling's trunk-tracked disk files and refuses removal if any differ. | GC U5-RM lines 435–474 | GC U5-RM — `gc usecase: U5 rm compares unregistered sibling files to trunk before removal` | `tools/agx-ws/src/workspace.ts:removeBrokenWorkspace` (line 1292) |
 | collect | safety | GC-UNTRACKED | Declared regenerable paths do not block collection, but other untracked files are kept and named. | GC U7-files lines 510–548; DOT lines 134–138, 170 | GC U7-files — `gc usecase: U7 ignores declared regenerable paths but keeps other untracked files by name` | `tools/agx-ws/src/workspace.ts:classifyGc` (line 2713) |
-| collect | safety | GC-PRESERVE | Before forget, preserve accepted or unreachable changes and durable run findings/results with a readable recovery receipt; if preservation fails, keep the workspace. | DOT lines 134–139, 153–160 | none (the local rejected-results test is narrower than archive/read-back-before-forget) | `tools/agx-ws/src/workspace.ts:gc` (line 3442) |
+| collect | safety | GC-PRESERVE | Before forget, preserve accepted or unreachable changes and durable run findings/results with a readable recovery receipt; if preservation fails, keep the workspace. | DOT lines 134–139, 153–160 | `tools/agx-ws/tests/workspace.test.ts`: GC preserves ended run results; GC keeps a workspace when result preservation conflicts | `tools/agx-ws/src/workspace.ts:gc` (line 3442) |
 | collect | safety | GC-LOCK | Hold the workspace lock for forget plus tombstone rename, not for deleting a large tombstone, so other workspace work can proceed. | GC U9 lines 627–680; DOT lines 135, 155 | `tools/agx-ws/tests/gc-contract.test.ts` — `gc contract: lock is available while a large tombstone is still being deleted` | `tools/agx-ws/src/workspace.ts:gc` (line 3442) |
 
 ## Gaps
@@ -52,7 +52,7 @@ Evidence locators:
 - `GC-ORPHAN`, `GC-REGEN-CONFIG`, and `GC-WORKER-STORE`: their source cases are TODO; no active test or implementing source function was found in this checkout.
 - `GC-STALE`: no test checks end +7-day expiry against end +14-day payload retention, and the current classifier uses a 24-hour abandoned-run threshold.
 - `GC-ABANDONED`: no test checks automatic collection after terminal disposition; current GC still requires `--abandoned` for this class.
-- `GC-PRESERVE`: no test checks archive/read-back before forget or the fail-closed keep verdict when archival fails.
+- `GC-PRESERVE`: `tools/agx-ws/tests/workspace.test.ts` checks result read-back after collection and fail-closed retention on a copy conflict.
 
 ## Overlaps
 

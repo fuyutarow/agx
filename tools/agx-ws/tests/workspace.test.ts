@@ -520,6 +520,7 @@ beforeAll(() => {
   mkdirSync(home, { recursive: true });
   shim("agx", `cat "${records}"`);
   shim("stat", `echo "$FAKE_FS"`);
+  shim("rip", `mkdir -p "$RIP_GRAVEYARD"; target=$(mktemp -d "$RIP_GRAVEYARD/rip-XXXXXXXX"); mv "$1" "$target/"`);
   setRecords([]);
 });
 afterAll(() => {
@@ -857,7 +858,6 @@ test("config contract: printed .ws.toml migration is accepted", async () => {
     ["rm", "safe"],
     ["adopt", "--all", "--repo", path, "--dry-run"],
     ["gc", "--dry-run", "--repo", path],
-    ["harvest", "--repo", path, "--dry-run"],
   ];
   for (const args of commands) {
     const result = await ws(args, path);
@@ -3050,81 +3050,77 @@ const recFor = (dir: string) => ({
 });
 
 describe("gc integration branches", () => {
-  // measured 5647ms on the census of alpha under host load
-  test("AGX-WS-HARVEST-1025 copies once, leaves workspace bytes intact, and enables gc", async () => {
-    const env = baseEnv({ AGX_STATE_DIR: join(scratch, "harvest-state") });
-    const fixtureWs = (args: string[], cwd: string) => ws(args, cwd, env);
-    const path = await repo('trunk = "main"\n');
-    // 1.22.32 excludes ignored files from untracked inventory.
-    expect((await fixtureWs(["add", "harvest-reject"], path)).code).toBe(0);
-    expect((await fixtureWs(["add", "harvest-running"], path)).code).toBe(0);
-    const dir = wsDir(path, "harvest-reject");
-    const live = wsDir(path, "harvest-running");
-    const files = [
-      "worker.result.md",
-      ".agent-state/harvest/result.md",
-      "metrics/result.json",
-    ];
-    for (const file of files) await Bun.write(join(dir, file), "measurement");
-    await Bun.write(join(live, "worker.result.md"), "still running");
+  test("GC preserves ended run results before removing a workspace", async () => {
+    const env = baseEnv({ AGX_STATE_DIR: join(scratch, "gc-preserve-state") });
+    const path = await repo('trunk = "main"\nregenerable = ["results/"]\n');
+    expect((await ws(["add", "preserve"], path, env)).code).toBe(0);
+    const dir = wsDir(path, "preserve");
+    await Bun.write(join(dir, "results/result.md"), "durable finding");
     setRecords([
       {
         ...recFor(dir),
-        id: "harvest-reject",
-        ticket: "harvest",
-        writes: [".agent-state/harvest/**"],
-        report_path: join(dir, "metrics/result.json"),
+        id: "preserve",
+        report_path: join(dir, "results/result.md"),
       },
-      { ...recFor(live), id: "harvest-running", state: "running" },
     ]);
-    const before = await fixtureWs(["gc", "--dry-run"], path);
-    expect(before.out).toContain("untracked content: 3 files");
-    const preview = await fixtureWs(
-      ["harvest", "--repo", path, "--dry-run", "--json"],
-      path,
-    );
-    expect(preview.code, preview.err).toBe(0);
-    expect(preview.out).toContain('"files":3,"bytes":33');
-    const target = join(
-      env.AGX_STATE_DIR!,
-      "runs",
-      "harvest-reject",
-      "harvest",
-    );
-    expect(existsSync(target)).toBe(false);
-    const first = await fixtureWs(["harvest", "--repo", path, "--json"], path);
-    expect(first.code, first.err).toBe(0);
-    expect(first.out).toContain('"files":3,"bytes":33');
-    for (const file of files) {
-      expect(await Bun.file(join(dir, file)).text()).toBe("measurement");
-      expect(await Bun.file(join(target, file)).text()).toBe("measurement");
-    }
-    expect(
-      existsSync(
-        join(env.AGX_STATE_DIR!, "runs", "harvest-running", "harvest"),
-      ),
-    ).toBe(false);
-    const second = await fixtureWs(["harvest", "--all", "--json"], path);
-    expect(second.code, second.err).toBe(0);
-    expect(second.out).toContain('"files":0,"bytes":0');
-    await Bun.write(join(dir, "worker.result.md"), "changed result");
-    const conflict = await fixtureWs(["harvest", "--repo", path], path);
-    expect(conflict.code).toBe(1);
-    expect(conflict.err).toContain("harvest conflict");
-    expect(await Bun.file(join(target, "worker.result.md")).text()).toBe(
-      "measurement",
-    );
-    expect(await Bun.file(join(dir, "worker.result.md")).text()).toBe(
-      "changed result",
-    );
-    await Bun.write(join(dir, "worker.result.md"), "measurement");
-    const collected = await fixtureWs(["gc", "--apply"], path);
+    const collected = await ws(["gc", "--apply"], path, env);
     expect(collected.code, collected.err).toBe(0);
     expect(existsSync(dir)).toBe(false);
-    expect(await Bun.file(join(live, "worker.result.md")).text()).toBe(
-      "still running",
+    const target = join(
+      env.AGX_STATE_DIR!,
+      "runs/preserve/harvest/results/result.md",
     );
-  }, 12000);
+    expect(await Bun.file(target).text()).toBe("durable finding");
+    expect(collected.out).toContain(
+      join(env.AGX_STATE_DIR!, "runs/preserve/harvest"),
+    );
+  });
+
+  test("GC keeps a workspace when result preservation conflicts and continues", async () => {
+    const env = baseEnv({
+      AGX_STATE_DIR: join(scratch, "gc-preserve-failure-state"),
+    });
+    const path = await repo('trunk = "main"\nregenerable = ["results/"]\n');
+    for (const slug of ["conflict", "success"])
+      expect((await ws(["add", slug], path, env)).code).toBe(0);
+    const conflict = wsDir(path, "conflict");
+    const success = wsDir(path, "success");
+    for (const dir of [conflict, success])
+      await Bun.write(join(dir, "results/result.md"), "new result");
+    setRecords(
+      [conflict, success].map((dir) => ({
+        ...recFor(dir),
+        id: dir === conflict ? "conflict" : "success",
+        report_path: join(dir, "results/result.md"),
+      })),
+    );
+    await Bun.write(
+      join(env.AGX_STATE_DIR!, "runs/conflict/harvest/results/result.md"),
+      "old result",
+    );
+    const collected = await ws(["gc", "--apply"], path, env);
+    expect(collected.code, collected.err).toBe(0);
+    expect(existsSync(conflict)).toBe(true);
+    expect(existsSync(success)).toBe(false);
+    expect(collected.out).toContain(
+      "result preservation failed: harvest conflict",
+    );
+    expect(
+      await Bun.file(
+        join(env.AGX_STATE_DIR!, "runs/success/harvest/results/result.md"),
+      ).text(),
+    ).toBe("new result");
+  });
+
+  test("removed harvest command is unknown", async () => {
+    shim("agx-ws", `exec bun "${WS}" "$@"`);
+    const result = await run(
+      ["bun", join(import.meta.dir, "../../agx/src/agx.ts"), "ws", "harvest"],
+      scratch,
+    );
+    expect(result.code).not.toBe(0);
+    expect(result.err.toLowerCase()).toContain("unknown command");
+  });
 
   test("GC keeps an empty saved checkout with unsnapshotted disk edits and never snapshots it", async () => {
     const path = await repo('trunk = "main"\n');
