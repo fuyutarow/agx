@@ -1,5 +1,10 @@
 # Changelog
 
+## 6.0.0 — 2026-11-08
+
+- Bare gc now only reports; removing calls must add --apply.
+- Bare gc now only reports; removing calls must add --apply.
+
 ## 5.10.0 — 2026-11-08
 
 - Accept explicit reclaim mode flags.
