@@ -1073,3 +1073,14 @@ command from verification that did not start; completed entries include exit cod
 and log paths. If the worker's result artifact cannot be established, the report
 says `unknown`. The interrupted command's exit records the stop signal, not a
 measured command exit. Stopping kills the active verification process group.
+
+`reclaim-runs` previews bytes that would move to the graveyard. Apply requires
+at least one `--pin FILE` or an explicit `--no-pins`; omission exits 2 before
+moving anything. Apply reports bytes moved, not disk space freed. The shared
+line counts file bytes whose inode has links outside the selected set. `rip`
+keeps moved files in its graveyard until purged. An unreadable run or entry is
+reported and skipped; the final skipped count is on stderr. On a `rip` failure
+exit 1 reports the stopped run, completed moves and unattempted runs. Rerun the
+same command to rescan and continue; already moved entries are absent. Exit 0
+means the scan completed, including any reported skips; exit 2 indicates invalid
+arguments or pins. An interrupted apply can also be rerun after inspection.

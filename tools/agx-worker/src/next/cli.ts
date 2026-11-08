@@ -76,9 +76,10 @@ async function main(): Promise<void> {
   const commandName = rawArgs[0];
   const commandArgs = rawArgs.slice(1);
   if (commandName === "reclaim-runs") {
-    const parsed = cli({ name: "agx worker reclaim-runs", parameters: [], strictFlags: true, ignoreArgv: rejectPrototypeFlag, flags: { olderThan: { type: Number, description: "minimum age in days" }, apply: { type: Boolean, description: "move eligible files to the graveyard" }, pin: { type: [String], description: "file containing absolute paths to protect (repeatable)" } } }, undefined, commandArgs);
+    const noPins = commandArgs.includes("--no-pins");
+    const parsed = cli({ name: "agx worker reclaim-runs", parameters: [], strictFlags: true, ignoreArgv: rejectPrototypeFlag, help: { description: "Examples:\n  agx worker reclaim-runs --older-than 14\n  agx worker reclaim-runs --older-than 14 --apply --pin pins.txt\nUse --no-pins to explicitly apply without pins." }, flags: { olderThan: { type: Number, description: "minimum age in days" }, apply: { type: Boolean, description: "move eligible files to the graveyard" }, pin: { type: [String], description: "file containing absolute paths to protect (repeatable)" } } }, undefined, commandArgs.filter((arg) => arg !== "--no-pins"));
     const { reclaimRuns } = await import("./reclaim-runs.ts");
-    process.exitCode = await reclaimRuns(parsed.flags.olderThan ?? Number.NaN, parsed.flags.apply === true, stateDir(), parsed.flags.pin ?? []);
+    process.exitCode = await reclaimRuns(parsed.flags.olderThan ?? Number.NaN, parsed.flags.apply === true, stateDir(), parsed.flags.pin ?? [], noPins);
     return;
   } else if (commandName === "probe") {
     const parsed = cli(
