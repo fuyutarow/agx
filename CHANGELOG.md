@@ -1,5 +1,10 @@
 # Changelog
 
+## 7.0.0 — 2026-11-08
+
+- Remove the unused agx change command and its pre-push hook.
+- Remove the unused agx worker classify command.
+
 ## 6.0.1 — 2026-11-08
 
 - Vendor capacity whose reroute finds no usable row now ends as outcome capacity with exit 75, keeping the refusal reason on stderr and in the report; a reroute that finds a row is unchanged.
