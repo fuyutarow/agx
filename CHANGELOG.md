@@ -1,5 +1,9 @@
 # Changelog
 
+## 5.3.0 — 2026-11-08
+
+- Ensure repeated workspace GC runs advance through deferred candidates and report oversized jj operation stores.
+
 ## 5.2.0 — 2026-11-07
 
 - Make model picks deterministic and credit-aware
