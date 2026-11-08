@@ -1,5 +1,12 @@
 # Changelog
 
+## 5.8.1 — 2026-11-08
+
+- Unify state directory resolution across agx tools.
+- Use shared state directory resolution for tickets.
+- Use shared state directory resolution for workspaces.
+- Use unified state directory resolution for status.
+
 ## 5.8.0 — 2026-11-08
 
 - Document the state-root allowlist and doctor finding.
