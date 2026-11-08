@@ -22,14 +22,16 @@ export function ownSuiteDirectory(
   main: string,
 ): string | undefined {
   if (!main.startsWith("/$bunfs/")) return undefined;
-  return fromThrowable(() => {
-    const executable = realpathSync(execPath);
-    if (!["agx", "agx-worker"].includes(basename(executable))) return null;
-    const directory = dirname(executable);
-    accessSync(join(directory, "agx"), constants.X_OK);
-    accessSync(join(directory, "agx-worker"), constants.X_OK);
-    return directory;
-  })().unwrapOr(null) ?? undefined;
+  return (
+    fromThrowable(() => {
+      const executable = realpathSync(execPath);
+      if (!["agx", "agx-worker"].includes(basename(executable))) return null;
+      const directory = dirname(executable);
+      accessSync(join(directory, "agx"), constants.X_OK);
+      accessSync(join(directory, "agx-worker"), constants.X_OK);
+      return directory;
+    })().unwrapOr(null) ?? undefined
+  );
 }
 
 export function withSuitePath(

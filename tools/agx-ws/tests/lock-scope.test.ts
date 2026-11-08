@@ -158,23 +158,46 @@ async function waitForWaiter(dir: string, pid: number): Promise<string[]> {
 }
 
 test("ws contract: a lock waiter killed by SIGTERM or SIGINT leaves no waiter record", async () => {
-  for (const [signal, exitCode] of [["SIGTERM", 143], ["SIGINT", 130]] as const) {
+  for (const [signal, exitCode] of [
+    ["SIGTERM", 143],
+    ["SIGINT", 130],
+  ] as const) {
     const f = await fixture(["waiting"]);
-    await Bun.write(join(f.lock, "owner.json"), JSON.stringify({
-      pid: process.pid, host: hostname(), what: "fixture holder", since: Temporal.Now.instant().toString(),
-    }));
+    await Bun.write(
+      join(f.lock, "owner.json"),
+      JSON.stringify({
+        pid: process.pid,
+        host: hostname(),
+        what: "fixture holder",
+        since: Temporal.Now.instant().toString(),
+      }),
+    );
     const child = Bun.spawn([process.execPath, ws, "rm", "waiting"], {
-      cwd: f.repo, env: f.env, stdout: "pipe", stderr: "pipe", signal: AbortSignal.timeout(45_000),
+      cwd: f.repo,
+      env: f.env,
+      stdout: "pipe",
+      stderr: "pipe",
+      signal: AbortSignal.timeout(45_000),
     });
-    const output = Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+    const output = Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
     await (async () => {
       const dir = `${f.lock}.waiters`;
       const entries = await waitForWaiter(dir, child.pid);
-      expect(entries.some((entry) => entry.startsWith(`${child.pid}-`))).toBe(true);
+      expect(entries.some((entry) => entry.startsWith(`${child.pid}-`))).toBe(
+        true,
+      );
       child.kill(signal);
       const [, err, code] = await output;
       expect(code, err).toBe(exitCode);
-      expect((await readdir(dir).catch(() => [])).some((entry) => entry.startsWith(`${child.pid}-`))).toBe(false);
+      expect(
+        (await readdir(dir).catch(() => [])).some((entry) =>
+          entry.startsWith(`${child.pid}-`),
+        ),
+      ).toBe(false);
     })().finally(() => {
       child.kill();
     });
@@ -206,10 +229,17 @@ async function snapshot(root: string): Promise<unknown[]> {
 }
 
 function withoutAge(output: string) {
-  const parsed = jsonOf(z.looseObject({ rows: z.array(z.array(z.string())) })).safeParse(output);
+  const parsed = jsonOf(
+    z.looseObject({ rows: z.array(z.array(z.string())) }),
+  ).safeParse(output);
   expect(parsed.success).toBe(true);
   if (!parsed.success) return null;
-  return { ...parsed.data, rows: parsed.data.rows.map((row) => row.map((value, i) => i === 4 ? "<age>" : value)) };
+  return {
+    ...parsed.data,
+    rows: parsed.data.rows.map((row) =>
+      row.map((value, i) => (i === 4 ? "<age>" : value)),
+    ),
+  };
 }
 
 for (const existingState of [false, true])
@@ -255,8 +285,11 @@ for (const existingState of [false, true])
         // Commit age advances between invocations; compare all other JSON fields.
         expect(withoutAge(result.out)).toEqual(withoutAge(expected.out));
         // 1.22.38 emits synchronous progress with measured elapsed time.
-        expect(result.err.replaceAll(/elapsed=\d+\.\d+s/gu, "elapsed=<time>"))
-          .toBe(expected.err.replaceAll(/elapsed=\d+\.\d+s/gu, "elapsed=<time>"));
+        expect(
+          result.err.replaceAll(/elapsed=\d+\.\d+s/gu, "elapsed=<time>"),
+        ).toBe(
+          expected.err.replaceAll(/elapsed=\d+\.\d+s/gu, "elapsed=<time>"),
+        );
         expect(await snapshot(f.root)).toEqual(readonlyBefore);
       }
     })().finally(() => {
@@ -437,7 +470,11 @@ if (args.includes("log") && args.some(arg => arg.includes("::working_copies()"))
 ${delegateJj}`,
       );
     }
-    const collected = await f.commandWithEnv(["gc", "--apply", "--include-unrecorded"]);
+    const collected = await f.commandWithEnv([
+      "gc",
+      "--apply",
+      "--include-unrecorded",
+    ]);
     expect(collected.code, collected.err).toBe(0);
     expect(await Bun.file(gate).text()).toBe("under lock");
     const reason = {
@@ -465,7 +502,11 @@ test("WS-GC-LOCK-SCOPE: gc skips a repository locked by add", async () => {
       since: Temporal.Now.instant().toString(),
     }),
   );
-    const collected = await f.commandWithEnv(["gc", "--apply", "--include-unrecorded"]);
+  const collected = await f.commandWithEnv([
+    "gc",
+    "--apply",
+    "--include-unrecorded",
+  ]);
   expect(collected.code, collected.err).toBe(0);
   expect(collected.out).toContain("agx ws add owner");
   expect(collected.out).toContain("collection skipped");

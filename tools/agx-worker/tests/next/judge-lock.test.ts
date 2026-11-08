@@ -63,7 +63,12 @@ async function fixture(ended: boolean) {
   return { root, id, records };
 }
 
-function launchJudge(root: string, id: string, extra: string[] = [], timeout = 5_000) {
+function launchJudge(
+  root: string,
+  id: string,
+  extra: string[] = [],
+  timeout = 5_000,
+) {
   const child = Bun.spawn(
     [process.execPath, cli, "judge", id, "accept", ...extra],
     {

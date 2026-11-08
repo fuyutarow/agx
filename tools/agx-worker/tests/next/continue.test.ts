@@ -824,8 +824,6 @@ describe("agx worker run --continue pins the prior row", () => {
     expect(result.stderr.toString()).toContain("no longer exists");
   });
 
-
-
   test("the ticket file is re-read on continue", async () => {
     const f = await fixture();
     f.writeOriginal();

@@ -16,7 +16,11 @@ import {
 } from "./workspace.ts";
 import { readConfig } from "./config.ts";
 import { fromThrowable } from "../../shared/src/zod.ts";
-import { attempt, errorMessage, type Attempt } from "../../shared/src/attempt.ts";
+import {
+  attempt,
+  errorMessage,
+  type Attempt,
+} from "../../shared/src/attempt.ts";
 
 const bad = (message: string): Attempt<never> => ({
   ok: false,
@@ -130,17 +134,43 @@ export async function doctorSummaries() {
     if (!cfg.ok) return cfg;
     const candidates = await workspaces(repo);
     if (!candidates.ok) return candidates;
-    const runs = records.value.filter((run) =>
-      run.state === "ended" && run.returned !== undefined && (run.judgment === null || run.judgment === undefined) &&
-      (within(run.workspace, repo.backing) || within(run.cwd, repo.backing) || within(run.workspace, repo.wsRoot) || within(run.cwd, repo.wsRoot) ||
-       candidates.value.some((ws) => within(run.workspace, realOr(ws.dir)) || within(run.cwd, realOr(ws.dir))))
+    const runs = records.value.filter(
+      (run) =>
+        run.state === "ended" &&
+        run.returned !== undefined &&
+        (run.judgment === null || run.judgment === undefined) &&
+        (within(run.workspace, repo.backing) ||
+          within(run.cwd, repo.backing) ||
+          within(run.workspace, repo.wsRoot) ||
+          within(run.cwd, repo.wsRoot) ||
+          candidates.value.some(
+            (ws) =>
+              within(run.workspace, realOr(ws.dir)) ||
+              within(run.cwd, realOr(ws.dir)),
+          )),
     );
     const dates = runs.flatMap((run) => {
-      const parsed = fromThrowable(() => Temporal.Instant.from(run.ended_at ?? "").epochMilliseconds)();
+      const parsed = fromThrowable(
+        () => Temporal.Instant.from(run.ended_at ?? "").epochMilliseconds,
+      )();
       return parsed.isOk() ? [parsed.value] : [];
     });
-    const age = dates.length === 0 || dates.length !== runs.length ? null : Math.max(0, (Temporal.Now.instant().epochMilliseconds - Math.min(...dates)) / 3_600_000);
-    summaries.push({ type: "workspace_summary" as const, repo: repo.backing, workspace_count: candidates.value.length, unjudged_returned_runs: runs.length, oldest_unjudged_age_hours: age, unjudged_warn_hours: cfg.value.unjudgedWarnHours ?? 24 });
+    const age =
+      dates.length === 0 || dates.length !== runs.length
+        ? null
+        : Math.max(
+            0,
+            (Temporal.Now.instant().epochMilliseconds - Math.min(...dates)) /
+              3_600_000,
+          );
+    summaries.push({
+      type: "workspace_summary" as const,
+      repo: repo.backing,
+      workspace_count: candidates.value.length,
+      unjudged_returned_runs: runs.length,
+      oldest_unjudged_age_hours: age,
+      unjudged_warn_hours: cfg.value.unjudgedWarnHours ?? 24,
+    });
   }
   return good(summaries);
 }
@@ -163,12 +193,7 @@ export function doctorFindings(rows: DoctorWorkspaceRow[]): string[] {
       c.verdict === "land-temp"
     )
       continue;
-    if (
-      c.collect &&
-      c.verdict !== "abandoned" &&
-      row.recorded
-    )
-      continue;
+    if (c.collect && c.verdict !== "abandoned" && row.recorded) continue;
     const emit = (finding: string, fix: string) => {
       findings.push(
         ["agx-ws", row.repo, row.name, finding, fix]
@@ -182,14 +207,17 @@ export function doctorFindings(rows: DoctorWorkspaceRow[]): string[] {
       continue;
     }
     if (c.verdict === "abandoned") {
-      emit(
-        "abandoned",
-        `agx ws gc --apply --abandoned --repo ${row.repo}`,
-      );
+      emit("abandoned", `agx ws gc --apply --abandoned --repo ${row.repo}`);
     } else if (c.verdict === "empty") {
-      emit("empty", `agx ws gc --apply --include-unrecorded --repo ${row.repo}`);
+      emit(
+        "empty",
+        `agx ws gc --apply --include-unrecorded --repo ${row.repo}`,
+      );
     } else if (c.verdict === "landed") {
-      emit("collectable", `agx ws gc --apply --include-unrecorded --repo ${row.repo}`);
+      emit(
+        "collectable",
+        `agx ws gc --apply --include-unrecorded --repo ${row.repo}`,
+      );
     }
     if (
       c.verdict === "unlanded" &&

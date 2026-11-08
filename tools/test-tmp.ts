@@ -46,7 +46,10 @@ async function guardReasonNetwork(root: string): Promise<void> {
   const bin = join(root, "guard-bin");
   await mkdir(bin, { recursive: true });
   const stub = join(bin, "reason-network");
-  await Bun.write(stub, "#!/bin/sh\nprintf '%s\\n' 'agx tests must not run the real reason-network; put a fake on PATH' >&2\nexit 97\n");
+  await Bun.write(
+    stub,
+    "#!/bin/sh\nprintf '%s\\n' 'agx tests must not run the real reason-network; put a fake on PATH' >&2\nexit 97\n",
+  );
   await chmod(stub, 0o755);
   process.env.PATH = `${bin}${process.platform === "win32" ? ";" : ":"}${process.env.PATH ?? ""}`;
 }

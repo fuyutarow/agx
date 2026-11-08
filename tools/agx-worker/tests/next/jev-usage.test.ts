@@ -14,10 +14,16 @@ import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const roots: string[] = [];
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
+const repoRoot = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../../..",
+);
 const cliPath = join(repoRoot, "tools/agx/src/agx.ts");
 const workerCliPath = join(repoRoot, "tools/agx-worker/src/next/cli.ts");
-const policyPath = join(repoRoot, "tools/agx-worker/src/roster/policy.example.toml");
+const policyPath = join(
+  repoRoot,
+  "tools/agx-worker/src/roster/policy.example.toml",
+);
 afterEach(() => {
   for (const root of roots.splice(0))
     rmSync(root, { recursive: true, force: true });
@@ -27,14 +33,8 @@ function fixture() {
   roots.push(root);
   for (const dir of ["bin", "state", "home", "state/legacy-v1", "work"])
     mkdirSync(join(root, dir), { recursive: true });
-  symlinkSync(
-    workerCliPath,
-    join(root, "bin/agx-worker"),
-  );
-  writeFileSync(
-    join(root, "policy.toml"),
-    readFileSync(policyPath, "utf8"),
-  );
+  symlinkSync(workerCliPath, join(root, "bin/agx-worker"));
+  writeFileSync(join(root, "policy.toml"), readFileSync(policyPath, "utf8"));
   const env = {
     ...subprocessEnvironment(),
     AGX_STATE_DIR: join(root, "state"),
@@ -62,7 +62,11 @@ const stats = (
 ) => {
   const cwd = env.AGX_TEST_CWD!;
   expect(cwd).toContain("agx-jev-usage-");
-  return Bun.spawnSync([...args, "stats", ...extra], { env, cwd, timeout: 15_000 });
+  return Bun.spawnSync([...args, "stats", ...extra], {
+    env,
+    cwd,
+    timeout: 15_000,
+  });
 };
 const Report = jsonOf(
   z.object({
@@ -235,16 +239,19 @@ test("malformed complete records refuse JSON; incomplete tails and unknown dates
 }, 15000);
 
 test.each([
-    { extra: ["--usage", "other"] },
-    { extra: ["--usage", "jev", "--routing"] },
-    { extra: ["--usage", "jev", "--host", "here"] },
-    { extra: ["--usage", "jev", "--import-legacy"] },
-    { extra: ["--usage", "jev", "--window", "0d"] },
-    { extra: ["--usage", "jev", "extra"] },
-])("usage invocation rejects incompatible flags and bad windows: $extra", ({ extra }) => {
-  const { env } = fixture();
-  expect(stats(env, [...extra]).exitCode).toBe(2);
-});
+  { extra: ["--usage", "other"] },
+  { extra: ["--usage", "jev", "--routing"] },
+  { extra: ["--usage", "jev", "--host", "here"] },
+  { extra: ["--usage", "jev", "--import-legacy"] },
+  { extra: ["--usage", "jev", "--window", "0d"] },
+  { extra: ["--usage", "jev", "extra"] },
+])(
+  "usage invocation rejects incompatible flags and bad windows: $extra",
+  ({ extra }) => {
+    const { env } = fixture();
+    expect(stats(env, [...extra]).exitCode).toBe(2);
+  },
+);
 
 test("usage invocation defaults and help", () => {
   const { env } = fixture();

@@ -524,7 +524,9 @@ describe("capability constrained routing", () => {
     expect(classCriteria).toContain("localized");
     expect(classCriteria).toContain("cross_module");
     expect(request?.state.routes).toBeUndefined();
-    expect(JSON.stringify(request?.state)).not.toMatch(/windows|used_percent|elapsed_fraction|pace/);
+    expect(JSON.stringify(request?.state)).not.toMatch(
+      /windows|used_percent|elapsed_fraction|pace/,
+    );
     expect(request?.questions.worker.criteria["localized"]).toBeDefined();
     expect(request?.questions.worker.instructions).toContain(ROUTING_OBJECTIVE);
     expect(ROUTING_OBJECTIVE).not.toContain("Subscription health");
@@ -705,7 +707,9 @@ describe("capability constrained routing", () => {
     expect(selected.id).toBe(LOCALIZED_SELECTION);
     const request = server.request();
     expect(request?.state.routes).toBeUndefined();
-    expect(JSON.stringify(request?.state)).not.toMatch(/windows|used_percent|elapsed_fraction|pace/);
+    expect(JSON.stringify(request?.state)).not.toMatch(
+      /windows|used_percent|elapsed_fraction|pace/,
+    );
     expect(request?.questions.worker.criteria.localized).toBeDefined();
 
     const started = appendStarted(selected.id);
@@ -725,9 +729,7 @@ describe("capability constrained routing", () => {
 
     const selected = await route("exclude a capped route");
     expect(selected.route).toBe("codex");
-    expect(server.request()?.state.routes).toBe(
-      undefined,
-    );
+    expect(server.request()?.state.routes).toBe(undefined);
     expect(server.request()?.questions.worker.criteria.localized).toBeDefined();
     expect(
       Object.keys(server.request()?.questions.worker.criteria ?? {}).some(

@@ -185,7 +185,22 @@ test("gc modes preserve effects and JSON envelope", async () => {
       continue;
     }
     if (flags.length === 0 || (flags.length === 1 && flags[0] === "--json")) {
-      const explicit = await run(["bun", wsCli, "gc", "--include-unrecorded", "--grace-minutes", "0", "--repo", f.repo, "--dry-run", ...flags], f.repo, f.baseEnv);
+      const explicit = await run(
+        [
+          "bun",
+          wsCli,
+          "gc",
+          "--include-unrecorded",
+          "--grace-minutes",
+          "0",
+          "--repo",
+          f.repo,
+          "--dry-run",
+          ...flags,
+        ],
+        f.repo,
+        f.baseEnv,
+      );
       expect(explicit.code, explicit.err).toBe(0);
       if (flags.includes("--json")) {
         const actual = envelope(result.out);
@@ -196,8 +211,13 @@ test("gc modes preserve effects and JSON envelope", async () => {
         });
       } else {
         const rows = (out: string) =>
-          out.trimEnd().split("\n").map((line) => line.split("\t"));
-        expect(withoutAge(rows(result.out))).toEqual(withoutAge(rows(explicit.out)));
+          out
+            .trimEnd()
+            .split("\n")
+            .map((line) => line.split("\t"));
+        expect(withoutAge(rows(result.out))).toEqual(
+          withoutAge(rows(explicit.out)),
+        );
       }
     }
     if (flags.includes("--json")) {

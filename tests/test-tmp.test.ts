@@ -23,7 +23,11 @@ test("test preload guards reason-network on PATH", () => {
     "agx tests must not run the real reason-network; put a fake on PATH\n",
   );
   const child = Bun.spawnSync(
-    [process.execPath, "-e", 'process.stdout.write(Bun.which("reason-network") ?? "")'],
+    [
+      process.execPath,
+      "-e",
+      'process.stdout.write(Bun.which("reason-network") ?? "")',
+    ],
     { env: process.env },
   );
   expect(child.exitCode).toBe(0);

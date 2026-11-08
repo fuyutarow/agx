@@ -47,8 +47,12 @@ export async function forwardPath(
     stdout: "inherit",
     stderr: "inherit",
   });
-  const onTerm = () => { child.kill("SIGTERM"); };
-  const onInt = () => { child.kill("SIGINT"); };
+  const onTerm = () => {
+    child.kill("SIGTERM");
+  };
+  const onInt = () => {
+    child.kill("SIGINT");
+  };
   process.on("SIGTERM", onTerm);
   process.on("SIGINT", onInt);
   const code = await child.exited.finally(() => {

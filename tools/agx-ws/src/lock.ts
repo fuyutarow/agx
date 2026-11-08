@@ -74,10 +74,16 @@ export async function withWorkspaceLock<T>(
   let lastHolder: z.output<typeof Owner> | undefined;
   const cleanup = async (): Promise<void> => {
     rmSync(marker, { force: true });
-    await attempt(() => { rmdirSync(waiters); });
+    await attempt(() => {
+      rmdirSync(waiters);
+    });
   };
-  const onTerm = (): void => { void cleanup().finally(() => process.exit(143)); };
-  const onInt = (): void => { void cleanup().finally(() => process.exit(130)); };
+  const onTerm = (): void => {
+    void cleanup().finally(() => process.exit(143));
+  };
+  const onInt = (): void => {
+    void cleanup().finally(() => process.exit(130));
+  };
   const finishWaiting = async (): Promise<void> => {
     if (skipBusy !== undefined) return;
     process.off("SIGTERM", onTerm);

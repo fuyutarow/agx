@@ -1,4 +1,7 @@
-import { lookupAddress, parseProse } from "../../../reason-transport/src/index.ts";
+import {
+  lookupAddress,
+  parseProse,
+} from "../../../reason-transport/src/index.ts";
 import { z } from "../../../shared/src/zod.ts";
 import { fromThrowable } from "neverthrow";
 import { stableSelfCommand } from "../self-command.ts";
@@ -11,7 +14,14 @@ export type EndNotice = z.output<typeof EndNoticeResult>;
 const NOTICE_DEADLINE_MS = 120_000;
 
 export const EndNoticeRequest = z.object({
-  runDirSize: z.object({ bytes: z.number(), largest: z.object({ name: z.string(), bytes: z.number(), directory: z.boolean() }).optional() }).optional(),
+  runDirSize: z
+    .object({
+      bytes: z.number(),
+      largest: z
+        .object({ name: z.string(), bytes: z.number(), directory: z.boolean() })
+        .optional(),
+    })
+    .optional(),
   id: z.string(),
   ticket: z.string(),
   dispatcher: z.string().nullable(),
@@ -43,7 +53,9 @@ const pending: EndNotice = {
 };
 
 function targetFor(input: Pick<EndNoticeRequest, "dispatcher">) {
-  return input.dispatcher === null || input.dispatcher.trim() === "" ? null : input.dispatcher;
+  return input.dispatcher === null || input.dispatcher.trim() === ""
+    ? null
+    : input.dispatcher;
 }
 
 /** Queue the notice worker without keeping this run alive. */
@@ -212,23 +224,58 @@ async function sendEndNotice(
     `verify: ${input.verifyDetails ?? verifyText(input.verifyExits, input.verifyRound)}; ` +
     sizeNotice(input.runDirSize) +
     "\nNo reply needed; read: agx worker ls --json";
-  const executable = env.PATH === undefined ? Bun.which("reason-network") : Bun.which("reason-network", { PATH: env.PATH });
-  if (executable === null) return { status: "unreachable", exit: 127, receipt: "reason-network executable not found on PATH" };
-  const remaining = () => Math.max(1, Math.floor(deadlineAt - performance.now()));
+  const executable =
+    env.PATH === undefined
+      ? Bun.which("reason-network")
+      : Bun.which("reason-network", { PATH: env.PATH });
+  if (executable === null)
+    return {
+      status: "unreachable",
+      exit: 127,
+      receipt: "reason-network executable not found on PATH",
+    };
+  const remaining = () =>
+    Math.max(1, Math.floor(deadlineAt - performance.now()));
   const expired = () => performance.now() >= deadlineAt;
-  const deadline = (): EndNotice => ({ status: "deadline", exit: 4, receipt: `notice deadline exceeded after ${input.deadlineMs} ms` });
+  const deadline = (): EndNotice => ({
+    status: "deadline",
+    exit: 4,
+    receipt: `notice deadline exceeded after ${input.deadlineMs} ms`,
+  });
   const separator = target.indexOf(":");
   const vendor = separator < 0 ? "" : target.slice(0, separator);
   const dispatcherSession = separator < 0 ? "" : target.slice(separator + 1);
   if (expired()) return deadline();
-  const address = await lookupAddress({ binary: executable, vendor, session: dispatcherSession, deadlineMs: remaining() });
+  const address = await lookupAddress({
+    binary: executable,
+    vendor,
+    session: dispatcherSession,
+    deadlineMs: remaining(),
+  });
   if (address.kind !== "accepted") {
     if (expired()) return deadline();
-    if (address.kind === "refused") return { status: "unreachable", exit: 1, receipt: "dispatcher session is not registered with Reason Network or not live" };
-    return { status: address.kind === "unknown" ? "unknown" : "unreachable", exit: 1, receipt: address.text.slice(0, receiptLimit) };
+    if (address.kind === "refused")
+      return {
+        status: "unreachable",
+        exit: 1,
+        receipt:
+          "dispatcher session is not registered with Reason Network or not live",
+      };
+    return {
+      status: address.kind === "unknown" ? "unknown" : "unreachable",
+      exit: 1,
+      receipt: address.text.slice(0, receiptLimit),
+    };
   }
   if (expired()) return deadline();
-  return sendOnce(executable, terminalEnvironment(env), address.value, message, remaining, deadline);
+  return sendOnce(
+    executable,
+    terminalEnvironment(env),
+    address.value,
+    message,
+    remaining,
+    deadline,
+  );
 }
 
 /**
@@ -244,28 +291,69 @@ async function sendOnce(
   remaining: () => number,
   deadline: () => EndNotice,
 ): Promise<EndNotice> {
-  const started = fromThrowable(() => Bun.spawn([executable, "send", address, message], {
-    stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: true, env,
-  }), String)();
-  if (started.isErr()) return { status: "unknown", exit: 1, receipt: `send could not start: ${started.error}`.slice(0, receiptLimit) };
+  const started = fromThrowable(
+    () =>
+      Bun.spawn([executable, "send", address, message], {
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        detached: true,
+        env,
+      }),
+    String,
+  )();
+  if (started.isErr())
+    return {
+      status: "unknown",
+      exit: 1,
+      receipt: `send could not start: ${started.error}`.slice(0, receiptLimit),
+    };
   const child = started.value;
-  const kill = () => { fromThrowable(() => process.kill(-child.pid, "SIGKILL"), String)(); child.kill("SIGKILL"); };
+  const kill = () => {
+    fromThrowable(() => process.kill(-child.pid, "SIGKILL"), String)();
+    child.kill("SIGKILL");
+  };
   let timedOut = false;
-  const timer = setTimeout(() => { timedOut = true; kill(); }, remaining());
-  const output = Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);
+  const timer = setTimeout(() => {
+    timedOut = true;
+    kill();
+  }, remaining());
+  const output = Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
   const code = await child.exited;
   // A helper the sender left holding its pipes ends with the sender's process group.
   kill();
   clearTimeout(timer);
   let drainTimer: ReturnType<typeof setTimeout> | undefined;
-  const drained = await Promise.race([output, new Promise<[string, string]>((resolve) => { drainTimer = setTimeout(() => { resolve(["", ""]); }, pipeDrainMs); })]);
+  const drained = await Promise.race([
+    output,
+    new Promise<[string, string]>((resolve) => {
+      drainTimer = setTimeout(() => {
+        resolve(["", ""]);
+      }, pipeDrainMs);
+    }),
+  ]);
   clearTimeout(drainTimer);
   if (timedOut) return deadline();
   const [out, err] = drained;
   const ids = parseProse("send", out);
-  if (code === 0 && ids !== undefined) return { status: "accepted", exit: 0, receipt: `message id ${ids.join(", ")}` };
+  if (code === 0 && ids !== undefined)
+    return {
+      status: "accepted",
+      exit: 0,
+      receipt: `message id ${ids.join(", ")}`,
+    };
   const detail = (out + err).trim();
-  return { status: "unknown", exit: 1, receipt: (detail === "" ? `send exit ${code}` : detail).slice(0, receiptLimit) };
+  return {
+    status: "unknown",
+    exit: 1,
+    receipt: (detail === "" ? `send exit ${code}` : detail).slice(
+      0,
+      receiptLimit,
+    ),
+  };
 }
 
 /** Internal detached worker: deliver only after the run process has exited. */

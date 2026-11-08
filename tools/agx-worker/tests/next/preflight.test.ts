@@ -33,7 +33,8 @@ function localRouteStub() {
           }),
         }),
       ).safeParse(await request.text());
-      if (!parsed.success) return new Response("invalid request", { status: 400 });
+      if (!parsed.success)
+        return new Response("invalid request", { status: 400 });
       const choice = Object.keys(parsed.data.questions.worker.criteria)[0];
       if (choice === undefined)
         return new Response("no choices", { status: 400 });

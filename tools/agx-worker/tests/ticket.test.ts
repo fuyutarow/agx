@@ -74,23 +74,38 @@ test("verifyLine respects sandbox and ticket restrictions", () => {
   expect(line).toContain("tsc");
   expect(line).toContain("in the foreground");
   expect(line).toContain("do not background anything you need to see");
-  expect(line).toContain("Run commands your sandbox can run and the ticket permits");
+  expect(line).toContain(
+    "Run commands your sandbox can run and the ticket permits",
+  );
   expect(line).not.toContain("Run them yourself");
-  expect(line).toContain("GPU, user systemd, agent-resource-run, or writable paths");
+  expect(line).toContain(
+    "GPU, user systemd, agent-resource-run, or writable paths",
+  );
   expect(line).toContain("the ticket says not to run it");
-  expect(line).toContain("do not stop or refuse: finish the change and the router will run it outside the sandbox");
+  expect(line).toContain(
+    "do not stop or refuse: finish the change and the router will run it outside the sandbox",
+  );
   expect(verifyLine([])).toBe("");
 });
 
-const floorTicket = (fields: string) => `+++\nschema = 2\noutcome = "work"\nwrites = []\n${fields}\n[proposition]\nid = "P"\nclaim = "works"\nrefuted_by = "failure"\n+++\n`;
+const floorTicket = (fields: string) =>
+  `+++\nschema = 2\noutcome = "work"\nwrites = []\n${fields}\n[proposition]\nid = "P"\nclaim = "works"\nrefuted_by = "failure"\n+++\n`;
 test("ticket min_effort validates the floor and justification", () => {
   const parsed = parseNextTicket(floorTicket('min_effort = "high"'));
   expect(parsed.success && parsed.ticket.min_effort).toBe("high");
   const invalid = parseNextTicket(floorTicket('min_effort = "ultra"'));
   expect(invalid.success).toBe(false);
   if (!invalid.success) expect(invalid.reason).toContain("low");
-  expect(parseNextTicket(floorTicket('min_effort = "xhigh"')).success).toBe(false);
-  expect(parseNextTicket(floorTicket('min_effort = "max"\ncapabilities = [{ need = "reasoning", lower_effort_lacks = "depth" }]')).success).toBe(true);
+  expect(parseNextTicket(floorTicket('min_effort = "xhigh"')).success).toBe(
+    false,
+  );
+  expect(
+    parseNextTicket(
+      floorTicket(
+        'min_effort = "max"\ncapabilities = [{ need = "reasoning", lower_effort_lacks = "depth" }]',
+      ),
+    ).success,
+  ).toBe(true);
 });
 
 test("refused effort floors explain the capabilities form and unsupported keys", () => {
@@ -99,10 +114,16 @@ test("refused effort floors explain the capabilities form and unsupported keys",
   expect(missing.success).toBe(false);
   if (!missing.success) expect(missing.reasons?.join(" ")).toContain(form);
 
-  const misspelled = parseNextTicket(floorTicket('min_effort = "xhigh"\n[capability]\nneed = "reasoning"\nlower_effort_lacks = "depth"'));
+  const misspelled = parseNextTicket(
+    floorTicket(
+      'min_effort = "xhigh"\n[capability]\nneed = "reasoning"\nlower_effort_lacks = "depth"',
+    ),
+  );
   expect(misspelled.success).toBe(false);
   if (!misspelled.success) {
     expect(misspelled.reasons?.join(" ")).toContain(form);
-    expect(misspelled.reasons?.join(" ")).toContain("capability: unsupported key");
+    expect(misspelled.reasons?.join(" ")).toContain(
+      "capability: unsupported key",
+    );
   }
 });

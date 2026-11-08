@@ -135,12 +135,28 @@ export function measureRunDir(path: string) {
     const key = `${stat.dev}:${stat.ino}`;
     if (seen.has(key)) return 0;
     seen.add(key);
-    return stat.size + (stat.isDirectory() ? readdirSync(target).reduce((sum, name) => sum + walk(join(target, name)), 0) : 0);
+    return (
+      stat.size +
+      (stat.isDirectory()
+        ? readdirSync(target).reduce(
+            (sum, name) => sum + walk(join(target, name)),
+            0,
+          )
+        : 0)
+    );
   };
   const root = lstatSync(path);
   seen.add(`${root.dev}:${root.ino}`);
-  const children = readdirSync(path).map((name) => ({ name, bytes: walk(join(path, name)), directory: lstatSync(join(path, name)).isDirectory() }));
-  const largest = children.filter((child) => child.directory).toSorted((a, b) => b.bytes - a.bytes)[0];
-  return { bytes: root.size + children.reduce((sum, child) => sum + child.bytes, 0), largest };
+  const children = readdirSync(path).map((name) => ({
+    name,
+    bytes: walk(join(path, name)),
+    directory: lstatSync(join(path, name)).isDirectory(),
+  }));
+  const largest = children
+    .filter((child) => child.directory)
+    .toSorted((a, b) => b.bytes - a.bytes)[0];
+  return {
+    bytes: root.size + children.reduce((sum, child) => sum + child.bytes, 0),
+    largest,
+  };
 }
-

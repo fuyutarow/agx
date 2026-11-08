@@ -152,8 +152,12 @@ process.exitCode = code;`,
           .split("\n")
           .filter(Boolean);
         // The fixed jj version capability probe is a policy check, not a workspace operation.
-        expect(invocations.filter((line) => line.includes('"--version"'))).toHaveLength(1);
-        budgets.push(invocations.filter((line) => !line.includes('"--version"')).length);
+        expect(
+          invocations.filter((line) => line.includes('"--version"')),
+        ).toHaveLength(1);
+        budgets.push(
+          invocations.filter((line) => !line.includes('"--version"')).length,
+        );
         diffs.push(...invocations.filter((line) => line.includes('"diff"')));
       }
     }

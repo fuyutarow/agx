@@ -81,7 +81,9 @@ async function deliver(input: Case) {
     JSON.stringify({
       log: sent,
       mode,
-      delayMs: String(typeof input.senderDelayMs === "number" ? input.senderDelayMs : 0),
+      delayMs: String(
+        typeof input.senderDelayMs === "number" ? input.senderDelayMs : 0,
+      ),
     }),
   );
   const result = Bun.spawnSync(

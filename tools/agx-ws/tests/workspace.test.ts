@@ -215,11 +215,17 @@ test("ws contract: rm help names the discard-broken patch path and the landed ru
   expect(help.out).toContain("reachable from trunk or a remote bookmark");
   expect(help.out).toContain("content already landed on trunk");
   expect(help.out).toContain("commit need not be a trunk ancestor");
-  const removed = await ws(["rm", "--discard-broken", "help-patch"], fixture.path, fixture.env);
+  const removed = await ws(
+    ["rm", "--discard-broken", "help-patch"],
+    fixture.path,
+    fixture.env,
+  );
   expect(removed.code, removed.err).toBe(0);
   const patch = removed.err.match(/ws: saved patch ([^\n]+)/u)?.[1];
   expect(patch).toBeDefined();
-  expect(dirname(patch ?? "")).toBe(join(fixture.env.AGX_STATE_DIR ?? "", "ws-rm"));
+  expect(dirname(patch ?? "")).toBe(
+    join(fixture.env.AGX_STATE_DIR ?? "", "ws-rm"),
+  );
 });
 
 test("ws contract: rm --discard-broken saves the patch then removes a broken workspace", async () => {
@@ -257,13 +263,19 @@ test("ws contract: rm --discard-broken saves a patch for a broken workspace with
   const fixture = await brokenFixture("link-patch");
   await symlink("old-target", join(fixture.path, "link"));
   expect((await jj(["commit", "-m", "track link"], fixture.path)).code).toBe(0);
-  expect((await jj(["bookmark", "set", "main", "-r", "@-"], fixture.path)).code).toBe(0);
+  expect(
+    (await jj(["bookmark", "set", "main", "-r", "@-"], fixture.path)).code,
+  ).toBe(0);
   await symlink("missing-target", join(fixture.dir, "link"));
   const state = join(scratch, "link-patch-state", "nested");
-  const result = await ws(["rm", "--discard-broken", "link-patch"], fixture.path, {
-    ...fixture.env,
-    AGX_STATE_DIR: state,
-  });
+  const result = await ws(
+    ["rm", "--discard-broken", "link-patch"],
+    fixture.path,
+    {
+      ...fixture.env,
+      AGX_STATE_DIR: state,
+    },
+  );
   expect(result.code, result.err).toBe(0);
   const patch = result.err.match(/ws: saved patch ([^\n]+)/u)?.[1];
   expect(patch).toBeDefined();
@@ -306,9 +318,17 @@ for (const flag of [true, false]) {
 test("ws contract: rm --discard-broken accepts a landed copy and saves disk changes", async () => {
   const fixture = await brokenFixture("landed-copy", true);
   await Bun.write(join(fixture.path, "a.txt"), "revision change\n");
-  expect((await jj(["commit", "-m", "landed copy"], fixture.path)).code).toBe(0);
-  expect((await jj(["bookmark", "set", "main", "-r", "@-"], fixture.path)).code).toBe(0);
-  const result = await ws(["rm", "--discard-broken", "landed-copy"], fixture.path, fixture.env);
+  expect((await jj(["commit", "-m", "landed copy"], fixture.path)).code).toBe(
+    0,
+  );
+  expect(
+    (await jj(["bookmark", "set", "main", "-r", "@-"], fixture.path)).code,
+  ).toBe(0);
+  const result = await ws(
+    ["rm", "--discard-broken", "landed-copy"],
+    fixture.path,
+    fixture.env,
+  );
   expect(result.code, result.err).toBe(0);
   const patch = result.err.match(/ws: saved patch ([^\n]+)/u)?.[1];
   expect(patch).toBeDefined();
@@ -520,7 +540,10 @@ beforeAll(() => {
   mkdirSync(home, { recursive: true });
   shim("agx", `cat "${records}"`);
   shim("stat", `echo "$FAKE_FS"`);
-  shim("rip", `mkdir -p "$RIP_GRAVEYARD"; target=$(mktemp -d "$RIP_GRAVEYARD/rip-XXXXXXXX"); mv "$1" "$target/"`);
+  shim(
+    "rip",
+    `mkdir -p "$RIP_GRAVEYARD"; target=$(mktemp -d "$RIP_GRAVEYARD/rip-XXXXXXXX"); mv "$1" "$target/"`,
+  );
   setRecords([]);
 });
 afterAll(() => {
@@ -586,7 +609,11 @@ describe("AGX-GC-UNTRACKED-KEEP-1024", () => {
       await Bun.write(join(dir, artifact), "live artifact\n");
       for (const dry of [true, false]) {
         const result = await ws(
-          ["gc", "--include-unrecorded", ...(dry ? ["--dry-run"] : ["--apply"])],
+          [
+            "gc",
+            "--include-unrecorded",
+            ...(dry ? ["--dry-run"] : ["--apply"]),
+          ],
           path,
         );
         expect(result.code, result.err).toBe(0);
@@ -738,7 +765,10 @@ describe("ws contract: shared agx.toml [ws] policy", () => {
         path,
       );
       expect(spare.code, spare.err).toBe(0);
-      const collected = await ws(["gc", "--apply", "--include-unrecorded"], safe);
+      const collected = await ws(
+        ["gc", "--apply", "--include-unrecorded"],
+        safe,
+      );
       expect(collected.code, collected.err + collected.out).toBe(0);
       expect(collected.out).toContain(`${safe}\tws\tkeep\t`);
       expect(collected.out).toContain(
@@ -2013,7 +2043,10 @@ describe("agx ws gc", () => {
       ),
     ).toBe(true);
 
-    const real = await ws(["gc", "--apply", "--include-unrecorded", "--json"], path);
+    const real = await ws(
+      ["gc", "--apply", "--include-unrecorded", "--json"],
+      path,
+    );
     expect(real.code, real.err).toBe(1);
     const realResult = gcRows.safeParse(real.out);
     expect(realResult.success, real.out).toBe(true);
@@ -2085,7 +2118,10 @@ describe("agx ws gc", () => {
       ),
     ).toBe(true);
 
-    const real = await ws(["gc", "--apply", "--include-unrecorded", "--json"], path);
+    const real = await ws(
+      ["gc", "--apply", "--include-unrecorded", "--json"],
+      path,
+    );
     expect(real.code, real.err).toBe(1);
     const realResult = gcRows.safeParse(real.out);
     expect(realResult.success, real.out).toBe(true);
@@ -2136,7 +2172,10 @@ describe("agx ws gc", () => {
     expect((await jj(["commit", "-m", "unpushed"], missing)).code).toBe(0);
     rmSync(missing, { recursive: true, force: true });
 
-    const real = await ws(["gc", "--apply", "--include-unrecorded", "--json"], path);
+    const real = await ws(
+      ["gc", "--apply", "--include-unrecorded", "--json"],
+      path,
+    );
     expect(real.code, real.err).toBe(1);
     const result = gcRows.safeParse(real.out);
     expect(result.success, real.out).toBe(true);
@@ -2352,9 +2391,21 @@ describe("agx ws gc", () => {
   test("old layout is kept outside the workspace root even on apply", async () => {
     const path = await repo('trunk = "main"\n');
     const old = join(path, "..", "proj-ws-old");
-    expect((await jj(["workspace", "add", "--name", "old", old], path)).code).toBe(0);
+    expect(
+      (await jj(["workspace", "add", "--name", "old", old], path)).code,
+    ).toBe(0);
     for (const mode of ["--dry-run", "--apply"]) {
-      const result = await ws(["gc", mode, "--include-unrecorded", "--abandoned", "--grace-minutes", "0"], path);
+      const result = await ws(
+        [
+          "gc",
+          mode,
+          "--include-unrecorded",
+          "--abandoned",
+          "--grace-minutes",
+          "0",
+        ],
+        path,
+      );
       expect(result.code, result.err).toBe(0);
       expect(result.out).toContain(`${old}\toutside\tkeep\t`);
       expect(result.out).toContain(`${old} is outside workspace root`);
@@ -2388,7 +2439,9 @@ describe("agx ws gc", () => {
 
 describe("WS-GC-JJ-LIST", () => {
   test("enumerates six registered layouts, repairs stale, protects keep, forgets before rip", async () => {
-    const path = await repo('trunk = "main"\nkeep = ["precious", "landed", "ws_modern"]\n');
+    const path = await repo(
+      'trunk = "main"\nkeep = ["precious", "landed", "ws_modern"]\n',
+    );
     setRecords([]);
     expect((await ws(["add", "modern"], path)).code).toBe(0);
     const dirs = {
@@ -2441,7 +2494,10 @@ describe("WS-GC-JJ-LIST", () => {
       .split("\n")
       .map((line) => line.split("\t"));
     expect(rows).toHaveLength(7);
-    const machine = await ws(["gc", "--dry-run", "--include-unrecorded", "--json"], path);
+    const machine = await ws(
+      ["gc", "--dry-run", "--include-unrecorded", "--json"],
+      path,
+    );
     expect(machine.code, machine.err).toBe(0);
     expect(
       jsonOf(
@@ -2570,10 +2626,7 @@ const child = Bun.spawn([${JSON.stringify(rip)}, ...process.argv.slice(2)], {std
       `schema = 1\nroot = ${JSON.stringify(path)}\n[ws]\nkeep = ["ws_ancestor"]\n`,
     );
     localPolicyFiles.push(l2Path);
-    const dry = await ws(
-      ["gc", "--dry-run", "--include-unrecorded"],
-      path,
-    );
+    const dry = await ws(["gc", "--dry-run", "--include-unrecorded"], path);
     expect(dry.code, dry.err).toBe(0);
     expect(dry.out).toContain(`${wsDir(path, "safe")}\tws\tremovable\t`);
     expect(dry.out).toContain(`${wsDir(path, "ancestor")}\tws\tkeep\t`);
@@ -3518,10 +3571,7 @@ describe("gc integration branches", () => {
     // This test exercises the land lock; the staging residue must be restorable.
     expect((await jj(["status"], dir)).code).toBe(0);
     setRecords([]);
-    const dry = await ws(
-      ["gc", "--dry-run", "--include-unrecorded"],
-      path,
-    );
+    const dry = await ws(["gc", "--dry-run", "--include-unrecorded"], path);
     expect(dry.code, dry.err).toBe(0);
     expect(dry.out).toContain(`${dir}\tland\tkeep\t`);
     expect(dry.out).toContain("unlanded change");
@@ -3549,10 +3599,7 @@ describe("gc integration branches", () => {
         since: Temporal.Now.instant().toString(),
       }),
     );
-    const collected = await ws(
-      ["gc", "--apply", "--include-unrecorded"],
-      path,
-    );
+    const collected = await ws(["gc", "--apply", "--include-unrecorded"], path);
     expect(collected.code, collected.err).toBe(0);
     expect(collected.out).toContain(`${dir}\tland\tkeep\t`);
     expect(await Bun.file(join(dir, "a.txt")).exists()).toBe(true);
@@ -3672,7 +3719,7 @@ describe("gc integration branches", () => {
             total: z.number(),
             unlanded: z.number(),
             collectable: z.number(),
-                      }),
+          }),
         }),
       }),
     ).safeParse(result.out);
@@ -3692,7 +3739,10 @@ describe("gc integration branches", () => {
         true,
       );
     }
-    const conflict = await ws(["gc", "--apply", "--all", "--repo", primary], primary);
+    const conflict = await ws(
+      ["gc", "--apply", "--all", "--repo", primary],
+      primary,
+    );
     expect(conflict.code).toBe(1);
     expect(conflict.err).toContain("cannot be combined");
     const help = await ws(["gc", "--help"], primary);

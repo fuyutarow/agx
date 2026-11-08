@@ -1,4 +1,11 @@
-import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import {
+  afterAll,
+  beforeAll,
+  describe,
+  expect,
+  setDefaultTimeout,
+  test,
+} from "bun:test";
 import {
   chmodSync,
   existsSync,
@@ -111,7 +118,11 @@ async function fixture(
   writeFileSync(join(repo, "agx.toml"), `schema = 1\n[ws]\n${config}`);
   writeFileSync(join(repo, "tracked.txt"), "base\n");
   if (initialCommit) await jjRun(["commit", "-m", "base"], repo, baseEnv);
-  await jjRun(["bookmark", "create", "main", "-r", initialCommit ? "@-" : "@"], repo, baseEnv);
+  await jjRun(
+    ["bookmark", "create", "main", "-r", initialCommit ? "@-" : "@"],
+    repo,
+    baseEnv,
+  );
   const workspaces: string[] = [];
   for (let index = 1; index <= workspaceCount; index++) {
     const name = `ws_${index}`;
@@ -146,9 +157,32 @@ async function journalRun(interrupt: boolean) {
   const entered = join(f.parent, "rip-entered");
   const release = join(f.parent, "rip-release");
   const rip = join(f.bin, "rip");
-  writeFileSync(rip, `#!/usr/bin/env bun\nimport { existsSync, watch } from "node:fs";\nimport { dirname } from "node:path";\nconst release = ${JSON.stringify(release)};\nawait Bun.write(${JSON.stringify(entered)}, "entered");\nawait new Promise((resolve) => { const w = watch(dirname(release), () => { if (existsSync(release)) { w.close(); resolve(); } }); if (existsSync(release)) { w.close(); resolve(); } });\n`);
+  writeFileSync(
+    rip,
+    `#!/usr/bin/env bun\nimport { existsSync, watch } from "node:fs";\nimport { dirname } from "node:path";\nconst release = ${JSON.stringify(release)};\nawait Bun.write(${JSON.stringify(entered)}, "entered");\nawait new Promise((resolve) => { const w = watch(dirname(release), () => { if (existsSync(release)) { w.close(); resolve(); } }); if (existsSync(release)) { w.close(); resolve(); } });\n`,
+  );
   chmodSync(rip, 0o755);
-  const child = Bun.spawn(["bun", wsCli, "gc", "--apply", "--include-unrecorded", "--grace-minutes", "0", "--json", "--repo", f.repo], { cwd: f.repo, env: f.baseEnv, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  const child = Bun.spawn(
+    [
+      "bun",
+      wsCli,
+      "gc",
+      "--apply",
+      "--include-unrecorded",
+      "--grace-minutes",
+      "0",
+      "--json",
+      "--repo",
+      f.repo,
+    ],
+    {
+      cwd: f.repo,
+      env: f.baseEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
   const outPromise = new Response(child.stdout).text();
   const reader = child.stderr.getReader();
   const decoder = new TextDecoder();
@@ -161,15 +195,28 @@ async function journalRun(interrupt: boolean) {
   const beforeRelease = err;
   if (interrupt) child.kill("SIGTERM");
   await Bun.write(release, "release");
-  const errPromise = (async () => { for (;;) { const chunk = await reader.read(); if (chunk.done) break; err += decoder.decode(chunk.value, { stream: true }); } return err; })();
-  const [out, stderr, code] = await Promise.all([outPromise, errPromise, child.exited]);
+  const errPromise = (async () => {
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      err += decoder.decode(chunk.value, { stream: true });
+    }
+    return err;
+  })();
+  const [out, stderr, code] = await Promise.all([
+    outPromise,
+    errPromise,
+    child.exited,
+  ]);
   return { f, beforeRelease, out, err: stderr, code };
 }
 
 test("ws contract: a real gc prints each removal as it happens", async () => {
   const result = await journalRun(false);
   expect(result.code, result.err).toBe(0);
-  expect(result.beforeRelease).toContain(`gc removed ${result.f.workspaces[0]} reason=`);
+  expect(result.beforeRelease).toContain(
+    `gc removed ${result.f.workspaces[0]} reason=`,
+  );
   expect(result.err.match(/^gc removed /gmu)).toHaveLength(2);
 });
 
@@ -183,30 +230,76 @@ test("ws contract: gc removed count equals its removal lines on every removal pa
   expect(missing).toBeDefined();
   if (missing === undefined) return;
   rmSync(missing, { recursive: true, force: true });
-  const args = ["bun", wsCli, "gc", "--apply", "--include-unrecorded", "--grace-minutes", "0", "--json", "--repo", f.repo];
+  const args = [
+    "bun",
+    wsCli,
+    "gc",
+    "--apply",
+    "--include-unrecorded",
+    "--grace-minutes",
+    "0",
+    "--json",
+    "--repo",
+    f.repo,
+  ];
   const rip = join(failed.bin, "rip");
   writeFileSync(rip, "#!/bin/sh\nexit 1\n");
   chmodSync(rip, 0o755);
   const [result, cleanup] = await Promise.all([
     run(args, f.repo, f.baseEnv),
-    run(["bun", wsCli, "gc", "--apply", "--include-unrecorded", "--grace-minutes", "0", "--json", "--repo", failed.repo], failed.repo, failed.baseEnv),
+    run(
+      [
+        "bun",
+        wsCli,
+        "gc",
+        "--apply",
+        "--include-unrecorded",
+        "--grace-minutes",
+        "0",
+        "--json",
+        "--repo",
+        failed.repo,
+      ],
+      failed.repo,
+      failed.baseEnv,
+    ),
   ]);
-  const schema = jsonOf(z.object({ counts: z.object({ removed: z.number() }) }));
+  const schema = jsonOf(
+    z.object({ counts: z.object({ removed: z.number() }) }),
+  );
   const parsed = schema.safeParse(result.out);
   expect(parsed.success, result.err).toBe(true);
-  const removalLines = result.err.split("\n").filter((line) => line.startsWith("gc removed "));
+  const removalLines = result.err
+    .split("\n")
+    .filter((line) => line.startsWith("gc removed "));
   expect(removalLines).toHaveLength(2);
-  expect(removalLines.some((line) => line.startsWith(`gc removed ${f.workspaces[0]} reason=`))).toBe(true);
-  expect(removalLines.some((line) => line.startsWith(`gc removed ${land.dir} reason=`))).toBe(true);
-  expect(removalLines.some((line) => line.startsWith(`gc removed ${missing} reason=`))).toBe(false);
-  if (parsed.success) expect(parsed.data.counts.removed).toBe(removalLines.length);
+  expect(
+    removalLines.some((line) =>
+      line.startsWith(`gc removed ${f.workspaces[0]} reason=`),
+    ),
+  ).toBe(true);
+  expect(
+    removalLines.some((line) =>
+      line.startsWith(`gc removed ${land.dir} reason=`),
+    ),
+  ).toBe(true);
+  expect(
+    removalLines.some((line) =>
+      line.startsWith(`gc removed ${missing} reason=`),
+    ),
+  ).toBe(false);
+  if (parsed.success)
+    expect(parsed.data.counts.removed).toBe(removalLines.length);
 
   const cleanupParsed = schema.safeParse(cleanup.out);
   expect(cleanupParsed.success, cleanup.err).toBe(true);
-  const cleanupLines = cleanup.err.split("\n").filter((line) => line.startsWith("gc removed "));
+  const cleanupLines = cleanup.err
+    .split("\n")
+    .filter((line) => line.startsWith("gc removed "));
   expect(cleanupLines).toHaveLength(1);
   expect(cleanup.out).toContain("tombstone cleanup failed");
-  if (cleanupParsed.success) expect(cleanupParsed.data.counts.removed).toBe(cleanupLines.length);
+  if (cleanupParsed.success)
+    expect(cleanupParsed.data.counts.removed).toBe(cleanupLines.length);
 });
 
 test("ws contract: gc on SIGTERM prints what it removed and exits 143", async () => {
@@ -215,16 +308,28 @@ test("ws contract: gc on SIGTERM prints what it removed and exits 143", async ()
   expect(result.err).toContain(`gc removed ${result.f.workspaces[0]} reason=`);
   expect(result.err).toContain("gc interrupted removed=1 remaining=1");
   expect(existsSync(result.f.workspaces[1] ?? "")).toBe(true);
-  expect(parseOutput(result.out)?.rows.some((row) => row[0] === result.f.workspaces[0])).toBe(true);
+  expect(
+    parseOutput(result.out)?.rows.some(
+      (row) => row[0] === result.f.workspaces[0],
+    ),
+  ).toBe(true);
 });
 
 test("ws contract: progress lines reach a piped stderr before gc ends", async () => {
   const f = await fixture(1);
   const repos = join(f.baseEnv.XDG_CONFIG_HOME ?? "", "agx", "repos");
   mkdirSync(repos, { recursive: true });
-  writeFileSync(join(repos, "test.toml"), `schema = 1\nroot = ${JSON.stringify(f.repo)}\n`);
+  writeFileSync(
+    join(repos, "test.toml"),
+    `schema = 1\nroot = ${JSON.stringify(f.repo)}\n`,
+  );
   const child = Bun.spawn(["bun", wsCli, "gc", "--apply", "--all", "--json"], {
-    cwd: f.repo, env: f.baseEnv, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 15000,
+    cwd: f.repo,
+    env: f.baseEnv,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 15000,
   });
   const stdout = child.stdout.text();
   const reader = child.stderr.getReader();
@@ -301,60 +406,63 @@ async function gc(f: Fixture, extra: string[] = [], trace?: string) {
   );
 }
 
-test.each([{ format: [] }, { format: ["--json"] }])("ws contract: gc --all reports each repository on stderr as it goes %j", async ({ format }) => {
-  const first = await fixture(1);
-  const second = await fixture(1);
-  await jjRun(["workspace", "root"], second.repo, first.baseEnv);
-  const records = [first, second].map((f, index) => ({
-    id: `record-${index}`,
-    state: "ended",
-    cwd: f.repo,
-    workspace: f.workspaces[0],
-  }));
-  writeFileSync(
-    join(first.bin, "agx"),
-    `#!/bin/sh\ncat <<'EOF'\n${JSON.stringify(records)}\nEOF\n`,
-  );
-  {
-    const result = await run(
-      [
-        "bun",
-        wsCli,
-        "gc",
-        "--all",
-        "--dry-run",
-        "--include-unrecorded",
-        "--grace-minutes",
-        "0",
-        ...format,
-      ],
-      first.repo,
-      first.baseEnv,
+test.each([{ format: [] }, { format: ["--json"] }])(
+  "ws contract: gc --all reports each repository on stderr as it goes %j",
+  async ({ format }) => {
+    const first = await fixture(1);
+    const second = await fixture(1);
+    await jjRun(["workspace", "root"], second.repo, first.baseEnv);
+    const records = [first, second].map((f, index) => ({
+      id: `record-${index}`,
+      state: "ended",
+      cwd: f.repo,
+      workspace: f.workspaces[0],
+    }));
+    writeFileSync(
+      join(first.bin, "agx"),
+      `#!/bin/sh\ncat <<'EOF'\n${JSON.stringify(records)}\nEOF\n`,
     );
-    expect(result.code, result.err + result.out).toBe(0);
-    const progress = result.err
-      .split("\n")
-      .filter((line) => line.startsWith("gc --all "));
-    expect(progress).toHaveLength(4);
-    for (const [index, repo] of [first.repo, second.repo]
-      .toSorted()
-      .entries()) {
-      expect(progress[index * 2]).toBe(`gc --all start ${repo}`);
-      expect(progress[index * 2 + 1]).toMatch(
-        new RegExp(`^gc --all end .* elapsed=\\d+\\.\\d{3}s rows=\\d+$`, "u"),
+    {
+      const result = await run(
+        [
+          "bun",
+          wsCli,
+          "gc",
+          "--all",
+          "--dry-run",
+          "--include-unrecorded",
+          "--grace-minutes",
+          "0",
+          ...format,
+        ],
+        first.repo,
+        first.baseEnv,
       );
-      expect(progress[index * 2 + 1]).toContain(`end ${repo} `);
+      expect(result.code, result.err + result.out).toBe(0);
+      const progress = result.err
+        .split("\n")
+        .filter((line) => line.startsWith("gc --all "));
+      expect(progress).toHaveLength(4);
+      for (const [index, repo] of [first.repo, second.repo]
+        .toSorted()
+        .entries()) {
+        expect(progress[index * 2]).toBe(`gc --all start ${repo}`);
+        expect(progress[index * 2 + 1]).toMatch(
+          new RegExp(`^gc --all end .* elapsed=\\d+\\.\\d{3}s rows=\\d+$`, "u"),
+        );
+        expect(progress[index * 2 + 1]).toContain(`end ${repo} `);
+      }
+      expect(result.out).not.toContain("gc --all ");
+      if (format.length > 0) {
+        const parsed = jsonOf(
+          z.object({ repositories: z.array(z.unknown()) }),
+        ).safeParse(result.out);
+        expect(parsed.success).toBe(true);
+        expect(parsed.success && parsed.data.repositories).toHaveLength(2);
+      }
     }
-    expect(result.out).not.toContain("gc --all ");
-    if (format.length > 0) {
-      const parsed = jsonOf(
-        z.object({ repositories: z.array(z.unknown()) }),
-      ).safeParse(result.out);
-      expect(parsed.success).toBe(true);
-      expect(parsed.success && parsed.data.repositories).toHaveLength(2);
-    }
-  }
-});
+  },
+);
 
 async function addLandWorkspace(f: Fixture) {
   const stateRoot = f.baseEnv.AGX_STATE_DIR;
@@ -641,7 +749,10 @@ describe("gc call count fixture", () => {
     const first = await gc(five, [], trace);
     expect(first.code, `${first.err}\n${first.out}`).toBe(0);
     expect(parseOutput(first.out)?.complete).toBe(true);
-    firstCount = (await Bun.file(trace).text()).trim().split("\n").filter(Boolean).length;
+    firstCount = (await Bun.file(trace).text())
+      .trim()
+      .split("\n")
+      .filter(Boolean).length;
     rmSync(trace, { force: true });
   });
   function stageWorkspaces(from: number) {
@@ -654,7 +765,10 @@ describe("gc call count fixture", () => {
     const second = await gc(five, [], trace);
     expect(second.code, `${second.err}\n${second.out}`).toBe(0);
     expect(parseOutput(second.out)?.complete).toBe(true);
-    const secondCount = (await Bun.file(trace).text()).trim().split("\n").filter(Boolean).length;
+    const secondCount = (await Bun.file(trace).text())
+      .trim()
+      .split("\n")
+      .filter(Boolean).length;
     console.log(`gc contract: jj calls 5=${firstCount} 50=${secondCount}`);
     expect(firstCount).toBe(secondCount);
   });
@@ -668,12 +782,17 @@ test("gc usecase: an idle land workspace is collected, not broken", async () => 
 
   rmSync(land.dir, { recursive: true, force: true });
   const collected = await collectWorkspaces({
-    repo: f.repo, dryRun: false, includeUnrecorded: true,
-    graceMinutes: 0, inventorySeconds: 1, env: f.baseEnv,
+    repo: f.repo,
+    dryRun: false,
+    includeUnrecorded: true,
+    graceMinutes: 0,
+    inventorySeconds: 1,
+    env: f.baseEnv,
   });
   expect(collected.ok, collected.ok ? "" : String(collected.error)).toBe(true);
   if (!collected.ok) return;
-  const row = collected.value.lines.map((line) => line.split("\t"))
+  const row = collected.value.lines
+    .map((line) => line.split("\t"))
     .find((candidate) => candidate[0] === land.dir);
   expect(row?.[1]).toBe("land");
   expect(row?.[2], row?.join("\t")).toBe("collected");
@@ -757,7 +876,8 @@ test("gc contract: lock is available while a large tombstone is still being dele
     [
       "bun",
       wsCli,
-      "gc", "--apply",
+      "gc",
+      "--apply",
       "--include-unrecorded",
       "--grace-minutes",
       "0",
@@ -892,17 +1012,36 @@ await import(${JSON.stringify(wsCli)});
   expect(parsed?.complete).toBe(false);
 });
 
-
 test("ws contract: gc --json counts give every kept reason in the fixture its own key", () => {
   const reasons = [
-    ["unrecorded", "unrecorded workspace; pass --include-unrecorded to collect"],
-    ["unsnapshotted", "unsnapshotted working-copy changes: yes: bytes differ at README.md"],
-    ["abandoned", "all runs ended without acceptance over 24h ago: abc; pass --abandoned to collect"],
+    [
+      "unrecorded",
+      "unrecorded workspace; pass --include-unrecorded to collect",
+    ],
+    [
+      "unsnapshotted",
+      "unsnapshotted working-copy changes: yes: bytes differ at README.md",
+    ],
+    [
+      "abandoned",
+      "all runs ended without acceptance over 24h ago: abc; pass --abandoned to collect",
+    ],
     ["active_processes", "processes are working inside /workspace (pid 1)"],
     ["configured_keep", "declared in [ws].keep"],
   ] as const;
-  const rows = reasons.map(([, reason]) => ["path", "ws", "keep", "", "", reason].join("\t"));
-  rows.push(["path", "ws", "removable", "", "", "nothing unlanded; no untracked content"].join("\t"));
+  const rows = reasons.map(([, reason]) =>
+    ["path", "ws", "keep", "", "", reason].join("\t"),
+  );
+  rows.push(
+    [
+      "path",
+      "ws",
+      "removable",
+      "",
+      "",
+      "nothing unlanded; no untracked content",
+    ].join("\t"),
+  );
   const counts = gcCounts(rows).kept;
   for (const [key] of reasons) expect(counts[key]).toBe(1);
   expect(counts.removable).toBe(1);
@@ -919,48 +1058,128 @@ test("ws contract: gc summary counts removed and kept by reason", async () => {
     ["f", "ws", "broken", "", "", "missing"],
     ["g", "ws", "keep", "", "", "protected"],
   ].map((row) => row.join("\t"));
-  expect(gcCounts(rows)).toMatchObject({ removed: 1, kept: { unlanded: 1, unjudged_run: 1, untracked_content: 1, inventory_budget_exhausted: 1, broken: 1, other: 1 } });
+  expect(gcCounts(rows)).toMatchObject({
+    removed: 1,
+    kept: {
+      unlanded: 1,
+      unjudged_run: 1,
+      untracked_content: 1,
+      inventory_budget_exhausted: 1,
+      broken: 1,
+      other: 1,
+    },
+  });
   const f = await fixture(1);
   const repos = join(f.baseEnv.XDG_CONFIG_HOME ?? "", "agx", "repos");
   mkdirSync(repos, { recursive: true });
-  writeFileSync(join(repos, "test.toml"), `schema = 1\nroot = ${JSON.stringify(f.repo)}\n`);
-  const args = ["bun", wsCli, "gc", "--all", "--dry-run", "--include-unrecorded", "--grace-minutes", "0"];
+  writeFileSync(
+    join(repos, "test.toml"),
+    `schema = 1\nroot = ${JSON.stringify(f.repo)}\n`,
+  );
+  const args = [
+    "bun",
+    wsCli,
+    "gc",
+    "--all",
+    "--dry-run",
+    "--include-unrecorded",
+    "--grace-minutes",
+    "0",
+  ];
   const [result, all, plain] = await Promise.all([
     gc(f),
     run([...args, "--json"], f.repo, f.baseEnv),
     run(args, f.repo, f.baseEnv),
   ]);
   expect(result.code, result.err).toBe(0);
-  const parsed = jsonOf(z.object({ counts: z.object({ removed: z.number(), kept: z.object({ removable: z.number() }) }) })).safeParse(result.out);
+  const parsed = jsonOf(
+    z.object({
+      counts: z.object({
+        removed: z.number(),
+        kept: z.object({ removable: z.number() }),
+      }),
+    }),
+  ).safeParse(result.out);
   expect(result.err).toBe("");
   expect(parsed.success).toBe(true);
-  if (parsed.success) expect(parsed.data.counts.kept.removable + parsed.data.counts.removed).toBe(1);
+  if (parsed.success)
+    expect(parsed.data.counts.kept.removable + parsed.data.counts.removed).toBe(
+      1,
+    );
   expect(all.code, all.err).toBe(0);
-  const counts = z.object({ removed: z.number(), kept: z.object({ unlanded: z.number(), unjudged_run: z.number(), untracked_content: z.number(), inventory_budget_exhausted: z.number(), broken: z.number(), removable: z.number(), other: z.number() }) });
-  const allParsed = jsonOf(z.object({ counts, repositories: z.array(z.object({ root: z.string(), counts })) })).safeParse(all.out);
+  const counts = z.object({
+    removed: z.number(),
+    kept: z.object({
+      unlanded: z.number(),
+      unjudged_run: z.number(),
+      untracked_content: z.number(),
+      inventory_budget_exhausted: z.number(),
+      broken: z.number(),
+      removable: z.number(),
+      other: z.number(),
+    }),
+  });
+  const allParsed = jsonOf(
+    z.object({
+      counts,
+      repositories: z.array(z.object({ root: z.string(), counts })),
+    }),
+  ).safeParse(all.out);
   expect(allParsed.success).toBe(true);
   if (allParsed.success) {
-    const repo = allParsed.data.repositories.find((entry) => entry.root === f.repo);
+    const repo = allParsed.data.repositories.find(
+      (entry) => entry.root === f.repo,
+    );
     expect(repo?.counts).toEqual(allParsed.data.counts);
     expect(repo?.counts.kept.removable).toBe(1);
   }
   expect(plain.code, plain.err).toBe(0);
-  const repoLine = plain.out.split("\n").find((line) => line.startsWith(`${f.repo}\trepo\t`));
-  expect(repoLine?.split("\t")[4]).toMatch(/^\{"total":\d+,"unlanded":\d+,"collectable":\d+\}$/u);
+  const repoLine = plain.out
+    .split("\n")
+    .find((line) => line.startsWith(`${f.repo}\trepo\t`));
+  expect(repoLine?.split("\t")[4]).toMatch(
+    /^\{"total":\d+,"unlanded":\d+,"collectable":\d+\}$/u,
+  );
 });
 
 test("ws doctor inventories returned runs and warns by age", async () => {
   const f = await fixture(1);
   const repos = join(f.baseEnv.XDG_CONFIG_HOME ?? "", "agx", "repos");
   mkdirSync(repos, { recursive: true });
-  writeFileSync(join(repos, "test.toml"), `schema = 1\nroot = ${JSON.stringify(f.repo)}\n`);
+  writeFileSync(
+    join(repos, "test.toml"),
+    `schema = 1\nroot = ${JSON.stringify(f.repo)}\n`,
+  );
   const endedAt = Temporal.Now.instant().subtract({ hours: 30 }).toString();
-  const record = { id: "returned", state: "ended", returned: false, judgment: null, ended_at: endedAt, workspace: f.workspaces[0] };
-  writeFileSync(join(f.bin, "agx"), `#!/bin/sh\nprintf '%s\n' '${JSON.stringify([record])}'\n`);
-  const doctor = await run(["bun", wsCli, "doctor", "--quiet"], f.repo, f.baseEnv);
+  const record = {
+    id: "returned",
+    state: "ended",
+    returned: false,
+    judgment: null,
+    ended_at: endedAt,
+    workspace: f.workspaces[0],
+  };
+  writeFileSync(
+    join(f.bin, "agx"),
+    `#!/bin/sh\nprintf '%s\n' '${JSON.stringify([record])}'\n`,
+  );
+  const doctor = await run(
+    ["bun", wsCli, "doctor", "--quiet"],
+    f.repo,
+    f.baseEnv,
+  );
   expect(doctor.code, doctor.err).toBe(1);
-  const schema = z.object({ type: z.literal("workspace_summary"), workspace_count: z.number(), unjudged_returned_runs: z.number(), oldest_unjudged_age_hours: z.number(), unjudged_warn_hours: z.number() });
-  const summary = doctor.out.split("\n").map((line) => jsonOf(schema).safeParse(line)).find((item) => item.success);
+  const schema = z.object({
+    type: z.literal("workspace_summary"),
+    workspace_count: z.number(),
+    unjudged_returned_runs: z.number(),
+    oldest_unjudged_age_hours: z.number(),
+    unjudged_warn_hours: z.number(),
+  });
+  const summary = doctor.out
+    .split("\n")
+    .map((line) => jsonOf(schema).safeParse(line))
+    .find((item) => item.success);
   expect(summary?.success).toBe(true);
   if (summary?.success) {
     expect(summary.data.workspace_count).toBe(1);
@@ -976,11 +1195,30 @@ test("ws contract: a repository time budget defers the remaining candidates with
   const rip = join(f.bin, "rip");
   writeFileSync(rip, "#!/bin/sh\nsleep 1.2\nexit 0\n");
   chmodSync(rip, 0o755);
-  const result = await run(["bun", wsCli, "gc", "--apply", "--include-unrecorded", "--grace-minutes", "0", "--repo-budget-seconds", "1", "--json", "--repo", f.repo], f.repo, f.baseEnv);
+  const result = await run(
+    [
+      "bun",
+      wsCli,
+      "gc",
+      "--apply",
+      "--include-unrecorded",
+      "--grace-minutes",
+      "0",
+      "--repo-budget-seconds",
+      "1",
+      "--json",
+      "--repo",
+      f.repo,
+    ],
+    f.repo,
+    f.baseEnv,
+  );
   expect(result.code, result.err).toBe(0);
   const parsed = parseOutput(result.out);
   expect(parsed?.complete).toBe(false);
-  expect(parsed?.rows.some((row) => row[5] === "repository time budget exhausted")).toBe(true);
+  expect(
+    parsed?.rows.some((row) => row[5] === "repository time budget exhausted"),
+  ).toBe(true);
   expect(existsSync(f.workspaces[1] ?? "")).toBe(true);
 });
 
@@ -989,14 +1227,27 @@ test("ws contract: gc --all starts with the repository least recently started", 
   await jjRun(["workspace", "root"], second.repo, first.baseEnv);
   const repos = join(first.baseEnv.XDG_CONFIG_HOME ?? "", "agx", "repos");
   mkdirSync(repos, { recursive: true });
-  for (const [index, f] of [first, second].entries()) writeFileSync(join(repos, `${index}.toml`), `schema = 1\nroot = ${JSON.stringify(f.repo)}\n`);
+  for (const [index, f] of [first, second].entries())
+    writeFileSync(
+      join(repos, `${index}.toml`),
+      `schema = 1\nroot = ${JSON.stringify(f.repo)}\n`,
+    );
   const starts = join(first.baseEnv.AGX_STATE_DIR ?? "", "ws-gc-starts");
   mkdirSync(starts, { recursive: true });
   const hash = new Bun.CryptoHasher("sha256").update(first.repo).digest("hex");
-  writeFileSync(join(starts, hash), String(Temporal.Now.instant().epochMilliseconds));
-  const result = await run(["bun", wsCli, "gc", "--all", "--dry-run", "--json"], first.repo, first.baseEnv);
+  writeFileSync(
+    join(starts, hash),
+    String(Temporal.Now.instant().epochMilliseconds),
+  );
+  const result = await run(
+    ["bun", wsCli, "gc", "--all", "--dry-run", "--json"],
+    first.repo,
+    first.baseEnv,
+  );
   expect(result.code, result.err).toBe(0);
-  expect(result.err.indexOf(`gc --all start ${second.repo}`)).toBeLessThan(result.err.indexOf(`gc --all start ${first.repo}`));
+  expect(result.err.indexOf(`gc --all start ${second.repo}`)).toBeLessThan(
+    result.err.indexOf(`gc --all start ${first.repo}`),
+  );
 });
 
 test("ws contract: gc --all stops starting repositories after its run budget", async () => {
@@ -1004,15 +1255,38 @@ test("ws contract: gc --all stops starting repositories after its run budget", a
   await jjRun(["workspace", "root"], second.repo, first.baseEnv);
   const repos = join(first.baseEnv.XDG_CONFIG_HOME ?? "", "agx", "repos");
   mkdirSync(repos, { recursive: true });
-  for (const [index, f] of [first, second].entries()) writeFileSync(join(repos, `${index}.toml`), `schema = 1\nroot = ${JSON.stringify(f.repo)}\n`);
+  for (const [index, f] of [first, second].entries())
+    writeFileSync(
+      join(repos, `${index}.toml`),
+      `schema = 1\nroot = ${JSON.stringify(f.repo)}\n`,
+    );
   const starts = join(first.baseEnv.AGX_STATE_DIR ?? "", "ws-gc-starts");
   mkdirSync(starts, { recursive: true });
   const hash = new Bun.CryptoHasher("sha256").update(second.repo).digest("hex");
-  writeFileSync(join(starts, hash), String(Temporal.Now.instant().epochMilliseconds));
+  writeFileSync(
+    join(starts, hash),
+    String(Temporal.Now.instant().epochMilliseconds),
+  );
   const rip = join(first.bin, "rip");
   writeFileSync(rip, "#!/bin/sh\nsleep 1.2\nexit 0\n");
   chmodSync(rip, 0o755);
-  const result = await run(["bun", wsCli, "gc", "--apply", "--all", "--include-unrecorded", "--grace-minutes", "0", "--all-budget-seconds", "1", "--json"], first.repo, first.baseEnv);
+  const result = await run(
+    [
+      "bun",
+      wsCli,
+      "gc",
+      "--apply",
+      "--all",
+      "--include-unrecorded",
+      "--grace-minutes",
+      "0",
+      "--all-budget-seconds",
+      "1",
+      "--json",
+    ],
+    first.repo,
+    first.baseEnv,
+  );
   expect(result.code, result.err).toBe(0);
   expect(result.err).not.toContain(`gc --all start ${second.repo}`);
   expect(result.out).toContain("run time budget exhausted");
@@ -1020,7 +1294,12 @@ test("ws contract: gc --all stops starting repositories after its run budget", a
 
 test("ws contract: an unparseable workspace list line is reported with its raw text", () => {
   const raw = `not a workspace record ${"x".repeat(320)}`;
-  const repo = { backing: "/repo", name: "repo", parent: "/", wsRoot: "/repo.ws" };
+  const repo = {
+    backing: "/repo",
+    name: "repo",
+    parent: "/",
+    wsRoot: "/repo.ws",
+  };
   const row = parseWorkspaceList(repo, raw)[0];
   expect(row?.name).toContain("<invalid-workspace-");
   expect(row?.recordError).toContain(raw.slice(0, 300));
@@ -1028,57 +1307,120 @@ test("ws contract: an unparseable workspace list line is reported with its raw t
 });
 
 test("ws contract: a workspace list timestamp error preserves the workspace row", () => {
-  const repo = { backing: "/repo", name: "repo", parent: "/", wsRoot: "/repo.ws" };
-  const record = JSON.stringify({ name: "ws_1", root: "/repo.ws/ws_1", target: "abc", change: "def" });
-  const rows = parseWorkspaceList(repo, `${record}\t<Error: Out-of-range date>`);
-  expect(rows.some((row) => row.dir === "/repo.ws/ws_1" && row.age === "?")).toBe(true);
-  expect(rows.some((row) => row.name.includes("<invalid-workspace-"))).toBe(false);
+  const repo = {
+    backing: "/repo",
+    name: "repo",
+    parent: "/",
+    wsRoot: "/repo.ws",
+  };
+  const record = JSON.stringify({
+    name: "ws_1",
+    root: "/repo.ws/ws_1",
+    target: "abc",
+    change: "def",
+  });
+  const rows = parseWorkspaceList(
+    repo,
+    `${record}\t<Error: Out-of-range date>`,
+  );
+  expect(
+    rows.some((row) => row.dir === "/repo.ws/ws_1" && row.age === "?"),
+  ).toBe(true);
+  expect(rows.some((row) => row.name.includes("<invalid-workspace-"))).toBe(
+    false,
+  );
 });
 
 test("ws contract: a future workspace commit still produces a valid list row", async () => {
   const f = await fixture(0);
   const future = Temporal.Now.instant().add({ seconds: 60 }).toString();
-  const created = await run([jj, "new"], f.repo, { ...f.baseEnv, JJ_TIMESTAMP: future });
+  const created = await run([jj, "new"], f.repo, {
+    ...f.baseEnv,
+    JJ_TIMESTAMP: future,
+  });
   expect(created.code, created.err).toBe(0);
-  const listed = await jjRun(["workspace", "list", "-T", 'json({"name" => self.name(), "root" => self.root(), "target" => self.target().commit_id(), "change" => self.target().change_id().short(12)}) ++ "\\t" ++ self.target().committer().timestamp().format("%s") ++ "\\n"'], f.repo, f.baseEnv);
-  const repo = { backing: f.repo, name: "project", parent: f.parent, wsRoot: join(f.parent, "project.ws") };
+  const listed = await jjRun(
+    [
+      "workspace",
+      "list",
+      "-T",
+      'json({"name" => self.name(), "root" => self.root(), "target" => self.target().commit_id(), "change" => self.target().change_id().short(12)}) ++ "\\t" ++ self.target().committer().timestamp().format("%s") ++ "\\n"',
+    ],
+    f.repo,
+    f.baseEnv,
+  );
+  const repo = {
+    backing: f.repo,
+    name: "project",
+    parent: f.parent,
+    wsRoot: join(f.parent, "project.ws"),
+  };
   const rows = parseWorkspaceList(repo, listed.out, true);
-  expect(rows.some((row) => row.name.includes("<invalid-workspace-"))).toBe(false);
+  expect(rows.some((row) => row.name.includes("<invalid-workspace-"))).toBe(
+    false,
+  );
   expect(rows.some((row) => row.dir === f.repo)).toBe(true);
 });
 
-test.each(["ancestry", "content"])('gc and rm retain %s landed only on local trunk until push', async (mode) => {
-  const f = await fixture(1);
-  const workspace = f.workspaces[0];
-  if (workspace === undefined) throw new Error("missing workspace");
-  const bare = join(f.parent, "origin.git");
-  const init = await run(["git", "init", "--bare", bare], f.parent, f.baseEnv);
-  expect(init.code, init.err).toBe(0);
-  await jjRun(["git", "remote", "add", "origin", bare], f.repo, f.baseEnv);
-  await jjRun(["git", "push", "--remote", "origin", "--bookmark", "main"], f.repo, f.baseEnv);
-  writeFileSync(join(workspace, "payload.txt"), "payload\n");
-  await jjRun(["commit", "-m", "payload"], workspace, f.baseEnv);
-  if (mode === "ancestry") {
-    await jjRun(["bookmark", "set", "main", "-r", "@-", "--allow-backwards"], workspace, f.baseEnv);
-  } else {
-    writeFileSync(join(f.repo, "payload.txt"), "payload\n");
-    await jjRun(["commit", "-m", "same content"], f.repo, f.baseEnv);
-    await jjRun(["bookmark", "set", "main", "-r", "@-", "--allow-backwards"], f.repo, f.baseEnv);
-  }
-  const before = await gc(f);
-  expect(before.code, before.err).toBe(0);
-  expect(parseOutput(before.out)?.rows.find((row) => row[0] === workspace)?.[2]).toBe("keep");
-  if (mode === "ancestry") {
-    const removed = await wsCommand(f, ["rm", "ws_1"]);
-    expect(removed.code, removed.out + removed.err).not.toBe(0);
-  }
-  await jjRun(["git", "push", "--remote", "origin", "--bookmark", "main"], f.repo, f.baseEnv);
-  const after = await gc(f);
-  expect(after.code, after.err).toBe(0);
-  const row = parseOutput(after.out)?.rows.find((candidate) => candidate[0] === workspace);
-  expect(row?.[2], row?.join(" ")).toBe("removable");
-  expect(row?.[5]).toContain("main@origin");
-});
+test.each(["ancestry", "content"])(
+  "gc and rm retain %s landed only on local trunk until push",
+  async (mode) => {
+    const f = await fixture(1);
+    const workspace = f.workspaces[0];
+    if (workspace === undefined) throw new Error("missing workspace");
+    const bare = join(f.parent, "origin.git");
+    const init = await run(
+      ["git", "init", "--bare", bare],
+      f.parent,
+      f.baseEnv,
+    );
+    expect(init.code, init.err).toBe(0);
+    await jjRun(["git", "remote", "add", "origin", bare], f.repo, f.baseEnv);
+    await jjRun(
+      ["git", "push", "--remote", "origin", "--bookmark", "main"],
+      f.repo,
+      f.baseEnv,
+    );
+    writeFileSync(join(workspace, "payload.txt"), "payload\n");
+    await jjRun(["commit", "-m", "payload"], workspace, f.baseEnv);
+    if (mode === "ancestry") {
+      await jjRun(
+        ["bookmark", "set", "main", "-r", "@-", "--allow-backwards"],
+        workspace,
+        f.baseEnv,
+      );
+    } else {
+      writeFileSync(join(f.repo, "payload.txt"), "payload\n");
+      await jjRun(["commit", "-m", "same content"], f.repo, f.baseEnv);
+      await jjRun(
+        ["bookmark", "set", "main", "-r", "@-", "--allow-backwards"],
+        f.repo,
+        f.baseEnv,
+      );
+    }
+    const before = await gc(f);
+    expect(before.code, before.err).toBe(0);
+    expect(
+      parseOutput(before.out)?.rows.find((row) => row[0] === workspace)?.[2],
+    ).toBe("keep");
+    if (mode === "ancestry") {
+      const removed = await wsCommand(f, ["rm", "ws_1"]);
+      expect(removed.code, removed.out + removed.err).not.toBe(0);
+    }
+    await jjRun(
+      ["git", "push", "--remote", "origin", "--bookmark", "main"],
+      f.repo,
+      f.baseEnv,
+    );
+    const after = await gc(f);
+    expect(after.code, after.err).toBe(0);
+    const row = parseOutput(after.out)?.rows.find(
+      (candidate) => candidate[0] === workspace,
+    );
+    expect(row?.[2], row?.join(" ")).toBe("removable");
+    expect(row?.[5]).toContain("main@origin");
+  },
+);
 
 test("gc uses the local trunk when no remote-tracking trunk exists", async () => {
   const f = await fixture(1);
@@ -1086,10 +1428,16 @@ test("gc uses the local trunk when no remote-tracking trunk exists", async () =>
   if (workspace === undefined) throw new Error("missing workspace");
   writeFileSync(join(workspace, "local.txt"), "local\n");
   await jjRun(["commit", "-m", "local payload"], workspace, f.baseEnv);
-  await jjRun(["bookmark", "set", "main", "-r", "@-", "--allow-backwards"], workspace, f.baseEnv);
+  await jjRun(
+    ["bookmark", "set", "main", "-r", "@-", "--allow-backwards"],
+    workspace,
+    f.baseEnv,
+  );
   const result = await gc(f);
   expect(result.code, result.err).toBe(0);
-  const row = parseOutput(result.out)?.rows.find((candidate) => candidate[0] === workspace);
+  const row = parseOutput(result.out)?.rows.find(
+    (candidate) => candidate[0] === workspace,
+  );
   expect(row?.[2], row?.join(" ")).toBe("removable");
   expect(row?.[5]).toContain("main");
 });

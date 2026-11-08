@@ -90,7 +90,9 @@ await lock.release();
   });
   try {
     const reader = holder.stdout.getReader();
-    expect(new TextDecoder().decode((await reader.read()).value)).toBe("held\n");
+    expect(new TextDecoder().decode((await reader.read()).value)).toBe(
+      "held\n",
+    );
     reader.releaseLock();
     const result = await ls(state);
     expect(result.code).toBe(0);

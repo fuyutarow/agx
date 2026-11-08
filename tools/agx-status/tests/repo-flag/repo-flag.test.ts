@@ -11,24 +11,57 @@ const state = join(root, "state");
 const bin = join(root, "bin");
 await Promise.all([mkdir(repo), mkdir(state), mkdir(bin)]);
 const init = Bun.spawn(["git", "init", "--quiet", repo], {
-  stdout: "ignore", stderr: "pipe", timeout: 10000,
+  stdout: "ignore",
+  stderr: "pipe",
+  timeout: 10000,
 });
-const [initError, initExit] = await Promise.all([init.stderr.text(), init.exited]);
+const [initError, initExit] = await Promise.all([
+  init.stderr.text(),
+  init.exited,
+]);
 if (initExit !== 0) throw new Error(`git init failed: ${initError}`);
-await symlink(join(import.meta.dir, "../../src/status.ts"), join(bin, "agx-status"));
+await symlink(
+  join(import.meta.dir, "../../src/status.ts"),
+  join(bin, "agx-status"),
+);
 const counts = { total: 2, unlanded: 1, collectable: 0, legacy: 0 };
-await writeFile(join(state, "workspace-verdicts.json"), JSON.stringify({
-  counts, capturedAt: 1, complete: true,
-  repos: { [repo]: { counts, capturedAt: 1 } },
-}));
-const env: NodeJS.ProcessEnv = { ...subprocessEnvironment(), AGX_STATE_DIR: state, PATH: `${bin}:${process.env.PATH ?? ""}` };
+await writeFile(
+  join(state, "workspace-verdicts.json"),
+  JSON.stringify({
+    counts,
+    capturedAt: 1,
+    complete: true,
+    repos: { [repo]: { counts, capturedAt: 1 } },
+  }),
+);
+const env: NodeJS.ProcessEnv = {
+  ...subprocessEnvironment(),
+  AGX_STATE_DIR: state,
+  PATH: `${bin}:${process.env.PATH ?? ""}`,
+};
 delete env.AGX_NEXT_STATE_DIR;
 
 async function run(args: string[], overrides: Record<string, string> = {}) {
-  const child = Bun.spawn([process.execPath, join(import.meta.dir, "../../../agx/src/agx.ts"), "status", ...args], {
-    cwd: repo, env: { ...env, ...overrides }, stdout: "pipe", stderr: "pipe", timeout: 10000,
-  });
-  const [stdout, stderr, exit] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+  const child = Bun.spawn(
+    [
+      process.execPath,
+      join(import.meta.dir, "../../../agx/src/agx.ts"),
+      "status",
+      ...args,
+    ],
+    {
+      cwd: repo,
+      env: { ...env, ...overrides },
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 10000,
+    },
+  );
+  const [stdout, stderr, exit] = await Promise.all([
+    child.stdout.text(),
+    child.stderr.text(),
+    child.exited,
+  ]);
   return { stdout, stderr, exit };
 }
 
@@ -64,6 +97,8 @@ test("help identifies the preferred flag and its older name", async () => {
   const result = await run(["--help"]);
   expect(result.exit).toBe(0);
   expect(result.stdout).toContain("--repo");
-  expect(result.stdout).toContain("any workspace or the main checkout of the repository");
+  expect(result.stdout).toContain(
+    "any workspace or the main checkout of the repository",
+  );
   expect(result.stdout).toContain("older name for --repo");
 });

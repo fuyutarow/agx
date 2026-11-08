@@ -36,21 +36,45 @@ const scratch = () => {
 test("outcome contract: a complete return whose check result is not a string is not malformed", () => {
   const base = { summary: "done", changes: [], for_coordinator: [], open: [] };
   for (const result of [42, false, { passed: 3 }, null, [1, true], "ok"]) {
-    const report = parseReport(undefined, JSON.stringify({
-      ...base, checks: [{ cmd: "check", exit: 0, result }],
-    }));
+    const report = parseReport(
+      undefined,
+      JSON.stringify({
+        ...base,
+        checks: [{ cmd: "check", exit: 0, result }],
+      }),
+    );
     expect(report.ok).toBe(true);
     if (!report.ok) continue;
     expect(report.report.checks[0]?.result).toBe(
       typeof result === "string" ? result : JSON.stringify(result),
     );
-    expect(deriveOutcome({ timedOut: false, refused: false, verify: [], reportValid: report.ok, changed: 1 })).toBe("ok");
+    expect(
+      deriveOutcome({
+        timedOut: false,
+        refused: false,
+        verify: [],
+        reportValid: report.ok,
+        changed: 1,
+      }),
+    ).toBe("ok");
   }
-  const missing = parseReport(undefined, JSON.stringify({
-    ...base, checks: [{ cmd: "check", exit: 0 }],
-  }));
+  const missing = parseReport(
+    undefined,
+    JSON.stringify({
+      ...base,
+      checks: [{ cmd: "check", exit: 0 }],
+    }),
+  );
   expect(missing.ok).toBe(false);
-  expect(deriveOutcome({ timedOut: false, refused: false, verify: [], reportValid: missing.ok, changed: 1 })).toBe("malformed");
+  expect(
+    deriveOutcome({
+      timedOut: false,
+      refused: false,
+      verify: [],
+      reportValid: missing.ok,
+      changed: 1,
+    }),
+  ).toBe("malformed");
 });
 
 test("ended fixtures retain measured outcomes while routing omits ungraded raw history", async () => {
@@ -438,8 +462,10 @@ test("outcome contract: a capacity reroute that finds a row continues on that ro
         JEV_URL: `http://127.0.0.1:${server.port}/choice`,
         AGX_WORKER_BIN: join(import.meta.dir, "fixtures/outcome-worker.ts"),
         TYPESAFE_API_KEY: "test-key",
-        AGX_CONFIG: new URL("../../src/roster/policy.example.toml", import.meta.url)
-          .pathname,
+        AGX_CONFIG: new URL(
+          "../../src/roster/policy.example.toml",
+          import.meta.url,
+        ).pathname,
         AGX_OUTCOME_FIXTURE: "capacity-once",
       },
       stdout: "pipe",

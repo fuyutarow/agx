@@ -17,7 +17,11 @@ test("unset repository override reads strict L2 config; an override bypasses it"
   for (const root of [undefined, join(scratch, "empty")]) {
     const child = Bun.spawn([process.execPath, "-e", source, scratch], {
       env: {
-        ...subprocessEnvironment({ HOME: scratch, XDG_STATE_HOME: join(scratch, "state"), AGX_STATE_DIR: join(scratch, "state", "agx") }),
+        ...subprocessEnvironment({
+          HOME: scratch,
+          XDG_STATE_HOME: join(scratch, "state"),
+          AGX_STATE_DIR: join(scratch, "state", "agx"),
+        }),
         AGX_REPOS_ROOT: root,
         XDG_CONFIG_HOME: configHome,
       },
@@ -47,7 +51,11 @@ test("retired repository overrides fail with exit 2 even when empty or paired wi
     ]) {
       const child = Bun.spawn([process.execPath, cli, "doctor"], {
         env: {
-          ...subprocessEnvironment({ HOME: scratch, XDG_STATE_HOME: join(scratch, "state"), AGX_STATE_DIR: join(scratch, "state", "agx") }),
+          ...subprocessEnvironment({
+            HOME: scratch,
+            XDG_STATE_HOME: join(scratch, "state"),
+            AGX_STATE_DIR: join(scratch, "state", "agx"),
+          }),
           [name]: value,
           AGX_REPOS_ROOT: replacement,
         },
@@ -132,7 +140,6 @@ test("recent recorded workspaces cannot emit landing findings, but retain stale 
   for (const verdict of ["stale", "abandoned"])
     expect(doctorFindings([recent(verdict)])).toHaveLength(1);
   expect(doctorFindings([recent("empty", "ws", false)])).toHaveLength(1);
-
 });
 
 test("registered paths contain exactly L2 roots, independent of cwd and retired registry files", async () => {
@@ -144,7 +151,14 @@ test("registered paths contain exactly L2 roots, independent of cwd and retired 
   const read = async () => {
     const child = Bun.spawn([process.execPath, "-e", source], {
       cwd: scratch,
-      env: { ...subprocessEnvironment({ HOME: scratch, XDG_STATE_HOME: join(scratch, "state"), AGX_STATE_DIR: join(scratch, "state", "agx") }), XDG_CONFIG_HOME: configHome },
+      env: {
+        ...subprocessEnvironment({
+          HOME: scratch,
+          XDG_STATE_HOME: join(scratch, "state"),
+          AGX_STATE_DIR: join(scratch, "state", "agx"),
+        }),
+        XDG_CONFIG_HOME: configHome,
+      },
       stdout: "pipe",
       stderr: "pipe",
     });

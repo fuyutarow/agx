@@ -27,7 +27,6 @@ import {
 } from "../../src/next/store.ts";
 import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
-
 setDefaultTimeout(60_000);
 const temps = createTempTracker();
 afterAll(temps.assertRemoved);
@@ -257,9 +256,15 @@ console.log(JSON.stringify({ report: { summary: "done", changes: [], checks: [],
     for (const child of children) child.kill();
     await Promise.all(children.map((child) => child.exited));
     for (const pid of workerPids) {
-      const killed = fromThrowable(() => process.kill(pid, "SIGKILL"), (error) => error)();
+      const killed = fromThrowable(
+        () => process.kill(pid, "SIGKILL"),
+        (error) => error,
+      )();
       if (killed.isErr())
-        expect(z.object({ code: z.literal("ESRCH") }).safeParse(killed.error).success).toBe(true);
+        expect(
+          z.object({ code: z.literal("ESRCH") }).safeParse(killed.error)
+            .success,
+        ).toBe(true);
     }
     await jev.stop(true);
     rmSync(root, { recursive: true, force: true });
@@ -379,10 +384,7 @@ test("workspace ownership lasts through verification after the worker exits", as
   expect(ticketText).toContain(fixtureVerify);
   writeFileSync(
     f.ticket,
-    ticketText.replace(
-      fixtureVerify,
-      `verify = [${JSON.stringify(command)}]`,
-    ),
+    ticketText.replace(fixtureVerify, `verify = [${JSON.stringify(command)}]`),
   );
   // Register first so a failed assertion cannot strand the verifier during cleanup.
   cleanups.unshift(async () => {
@@ -491,7 +493,12 @@ for (const [signal, exit] of [
     const ended = f
       .records()
       .find((entry) => entry.id !== "prior" && entry.kind === "ended");
-    expect(ended).toMatchObject({ kind: "ended", outcome: "stopped", exit, signal });
+    expect(ended).toMatchObject({
+      kind: "ended",
+      outcome: "stopped",
+      exit,
+      signal,
+    });
     const row = (await f.listed()).find((entry) => entry.id !== "prior");
     expect(row).toMatchObject({ state: "ended", outcome: "stopped", signal });
     const before = f.records();
@@ -522,7 +529,11 @@ for (const [signal, exit] of [
     expect(stderr).toContain("no vendor session");
     expect(stderr).toContain("ended stopped");
     expect(stderr).toContain(`agx worker run ${f.ticket}`);
-    expect(f.records().filter((entry) => entry.kind !== "refusal")).toEqual(before);
-    expect(f.records().filter((entry) => entry.kind === "refusal")).toHaveLength(1);
+    expect(f.records().filter((entry) => entry.kind !== "refusal")).toEqual(
+      before,
+    );
+    expect(
+      f.records().filter((entry) => entry.kind === "refusal"),
+    ).toHaveLength(1);
   });
 }

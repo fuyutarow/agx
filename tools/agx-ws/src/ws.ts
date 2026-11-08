@@ -7,11 +7,7 @@ import { StepFailure } from "./subprocess.ts";
 import { enterStep, runAddCommand } from "./deadline.ts";
 import { errorMessage } from "../../shared/src/attempt.ts";
 import packageJson from "../package.json" with { type: "json" };
-import {
-  gc,
-  gcAll,
-  remove,
-} from "./workspace.ts";
+import { gc, gcAll, remove } from "./workspace.ts";
 import { add, refresh } from "./create.ts";
 import { LegacyWorkspaceConfigError } from "./config.ts";
 import { doctor as doctorWorkspaces, doctorSummaries } from "./doctor.ts";
@@ -25,7 +21,12 @@ if (process.argv[2] === "harvest" || process.argv[2] === "adopt") {
   process.exit(2);
 }
 
-if (process.argv[2] === "gc" && process.argv.slice(3).some((arg) => arg === "--legacy" || arg.startsWith("--legacy="))) {
+if (
+  process.argv[2] === "gc" &&
+  process.argv
+    .slice(3)
+    .some((arg) => arg === "--legacy" || arg.startsWith("--legacy="))
+) {
   process.stderr.write("ws: unknown option '--legacy'\n");
   process.exit(2);
 }
@@ -477,11 +478,5 @@ void cli({
   help: { description: "Create, inspect and collect repository workspaces." },
   strictFlags: true,
   ignoreArgv: rejectPrototypeFlag,
-  commands: [
-    addCommand,
-    refreshCommand,
-    rmCommand,
-    gcCommand,
-    doctorCommand,
-  ],
+  commands: [addCommand, refreshCommand, rmCommand, gcCommand, doctorCommand],
 });

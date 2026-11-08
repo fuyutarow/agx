@@ -9,22 +9,46 @@ const command = process.argv[2];
 const home = process.env.REASON_NETWORK_HOME;
 const settingsFile = home === undefined ? undefined : join(home, "fake.json");
 const settings: { log?: string; mode?: string; delayMs?: string } =
-  settingsFile !== undefined && existsSync(settingsFile) ? JSON.parse(readFileSync(settingsFile, "utf8")) : {};
+  settingsFile !== undefined && existsSync(settingsFile)
+    ? JSON.parse(readFileSync(settingsFile, "utf8"))
+    : {};
 const log = process.env.FAKE_LOG ?? settings.log ?? "";
 const mode = process.env.FAKE_MODE ?? settings.mode ?? "ok";
 const delayMs = process.env.FAKE_DELAY_MS ?? settings.delayMs;
-const record = (data: object) => appendFileSync(log, `${JSON.stringify(data)}\n`);
+const record = (data: object) =>
+  appendFileSync(log, `${JSON.stringify(data)}\n`);
 
 if (command === "who" && process.argv[3] === "--json") {
-  record({ command, agent: process.env.REASON_NETWORK_AGENT, session: process.env.REASON_NETWORK_SESSION });
-  process.stdout.write(JSON.stringify({ sessions: mode === "unregistered" ? [] : [{ address: "alice/dispatcher@host", is_me: true }] }));
+  record({
+    command,
+    agent: process.env.REASON_NETWORK_AGENT,
+    session: process.env.REASON_NETWORK_SESSION,
+  });
+  process.stdout.write(
+    JSON.stringify({
+      sessions:
+        mode === "unregistered"
+          ? []
+          : [{ address: "alice/dispatcher@host", is_me: true }],
+    }),
+  );
 } else if (command === "send") {
   const args = process.argv.slice(3);
   // The id carries the run's first character so concurrent notices can be told apart in their receipts.
   const runId = /^agx end-notice run (\S+)/u.exec(args[1] ?? "")?.[1] ?? "V";
-  record({ command, args, hasFrom: args.includes("--from"), envNames: Object.keys(process.env).sort(), cwd: process.cwd() });
+  record({
+    command,
+    args,
+    hasFrom: args.includes("--from"),
+    envNames: Object.keys(process.env).sort(),
+    cwd: process.cwd(),
+  });
   if (["hang", "hold-pipes"].includes(mode)) {
-    const helper = Bun.spawn(["/bin/sleep", "300"], { stdin: "ignore", stdout: "inherit", stderr: "inherit" });
+    const helper = Bun.spawn(["/bin/sleep", "300"], {
+      stdin: "ignore",
+      stdout: "inherit",
+      stderr: "inherit",
+    });
     helper.unref();
     record({ helper: helper.pid });
   }
@@ -36,10 +60,14 @@ if (command === "who" && process.argv[3] === "--json") {
   } else if (mode === "no-id") {
     process.stdout.write("→ alice/dispatcher@host: queued\n");
   } else if (mode === "two-ids") {
-    process.stdout.write("message id 01ARZ3NDEKTSV4RRFFQ69G5FAV\nmessage id 01ARZ3NDEKTSV4RRFFQ69G5FAW\n");
+    process.stdout.write(
+      "message id 01ARZ3NDEKTSV4RRFFQ69G5FAV\nmessage id 01ARZ3NDEKTSV4RRFFQ69G5FAW\n",
+    );
   } else {
     record({ delivery: runId });
-    process.stdout.write(`message id 01ARZ3NDEKTSV4RRFFQ69G5FA${runId.slice(0, 1).toUpperCase()}\n`);
+    process.stdout.write(
+      `message id 01ARZ3NDEKTSV4RRFFQ69G5FA${runId.slice(0, 1).toUpperCase()}\n`,
+    );
   }
 } else {
   record({ command, args: process.argv.slice(3) });

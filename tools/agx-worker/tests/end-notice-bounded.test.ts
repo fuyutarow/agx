@@ -34,7 +34,9 @@ async function script(path: string, body: string): Promise<void> {
 }
 
 const alive = async (pid: number): Promise<boolean> => {
-  const stat = await Bun.file(`/proc/${pid}/stat`).text().catch(() => "");
+  const stat = await Bun.file(`/proc/${pid}/stat`)
+    .text()
+    .catch(() => "");
   return stat !== "" && !/^\d+ \(.*\) Z /u.test(stat);
 };
 
@@ -43,7 +45,10 @@ async function deliver(input: { hangs: boolean; deadlineMs: number }) {
   const root = await tempRoot();
   const state = join(root, "state");
   const log = join(root, "calls.jsonl");
-  await script(join(root, "reason-network"), `import ${JSON.stringify(resolve("tools/agx-worker/tests/fixtures/reason-notice.ts"))};\n`);
+  await script(
+    join(root, "reason-network"),
+    `import ${JSON.stringify(resolve("tools/agx-worker/tests/fixtures/reason-notice.ts"))};\n`,
+  );
   const dead = Bun.spawnSync([process.execPath, "-e", "0"]);
   const request = {
     id: RunId,
@@ -59,7 +64,10 @@ async function deliver(input: { hangs: boolean; deadlineMs: number }) {
     deadlineMs: input.deadlineMs,
   };
   const home = join(root, "rn-home");
-  await Bun.write(join(home, "fake.json"), JSON.stringify({ log, mode: input.hangs ? "hang" : "hold-pipes" }));
+  await Bun.write(
+    join(home, "fake.json"),
+    JSON.stringify({ log, mode: input.hangs ? "hang" : "hold-pipes" }),
+  );
   const started = performance.now();
   const child = Bun.spawn(
     [
@@ -92,11 +100,18 @@ async function deliver(input: { hangs: boolean; deadlineMs: number }) {
       const parsed = jsonOf(NoticeEvent).safeParse(line);
       return parsed.success ? [parsed.data.notice] : [];
     });
-  const calls = (await Bun.file(log).text().catch(() => "")).trim().split("\n");
-  const helper = calls.flatMap((line) => {
-    const parsed = jsonOf(z.object({ helper: z.number() })).safeParse(line);
-    return parsed.success ? [parsed.data.helper] : [];
-  })[0] ?? 0;
+  const calls = (
+    await Bun.file(log)
+      .text()
+      .catch(() => "")
+  )
+    .trim()
+    .split("\n");
+  const helper =
+    calls.flatMap((line) => {
+      const parsed = jsonOf(z.object({ helper: z.number() })).safeParse(line);
+      return parsed.success ? [parsed.data.helper] : [];
+    })[0] ?? 0;
   return { exit, elapsedMs, notices, helper };
 }
 
@@ -145,7 +160,7 @@ function schedule(root: string, marker: string) {
       id: RunId,
       ticket: "bounded-ticket",
       dispatcher: "claude:dispatcher",
-        startedAt: "2026-11-03T00:00:00Z",
+      startedAt: "2026-11-03T00:00:00Z",
       endedAt: "2026-11-03T00:03:00Z",
       outcome: "ok",
       exit: 0,

@@ -1,5 +1,12 @@
 import { afterAll, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { jsonOf, z } from "../../shared/src/zod.ts";
@@ -11,11 +18,30 @@ const cli = join(import.meta.dir, "../src/ws.ts");
 const repo = join(scratch, "project");
 const bin = join(scratch, "bin");
 const home = join(scratch, "home");
-const env = { ...subprocessEnvironment(), HOME: home, XDG_CONFIG_HOME: join(home, ".config"), XDG_STATE_HOME: join(scratch, "state"), AGX_STATE_DIR: join(scratch, "state", "agx"), PATH: `${bin}:${process.env.PATH}`, JJ_USER: "test", JJ_EMAIL: "test@example.test" };
+const env = {
+  ...subprocessEnvironment(),
+  HOME: home,
+  XDG_CONFIG_HOME: join(home, ".config"),
+  XDG_STATE_HOME: join(scratch, "state"),
+  AGX_STATE_DIR: join(scratch, "state", "agx"),
+  PATH: `${bin}:${process.env.PATH}`,
+  JJ_USER: "test",
+  JJ_EMAIL: "test@example.test",
+};
 
 async function run(args: string[], cwd = repo) {
-  const child = Bun.spawn(args, { cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-  const [out, err, code] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+  const child = Bun.spawn(args, {
+    cwd,
+    env,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, err, code] = await Promise.all([
+    child.stdout.text(),
+    child.stderr.text(),
+    child.exited,
+  ]);
   return { out, err, code };
 }
 async function setupOnce() {
@@ -36,8 +62,24 @@ async function setupOnce() {
   writeFileSync(join(repo, "agx.toml"), 'schema = 1\n[ws]\ntrunk = "main"\n');
   const root = join(scratch, "project.ws");
   mkdirSync(root);
-  for (const name of ["slow", "broken", "ws_rm-slow", "ws_rm-dirty", "ws_rm-timeout"]) {
-    const result = await run([jj, "workspace", "add", "--name", name, "-r", "main", "--no-colocate", join(root, name)]);
+  for (const name of [
+    "slow",
+    "broken",
+    "ws_rm-slow",
+    "ws_rm-dirty",
+    "ws_rm-timeout",
+  ]) {
+    const result = await run([
+      jj,
+      "workspace",
+      "add",
+      "--name",
+      name,
+      "-r",
+      "main",
+      "--no-colocate",
+      join(root, name),
+    ]);
     expect(result.code, result.err).toBe(0);
   }
   return root;
@@ -49,13 +91,35 @@ test("gc keeps timed-out inventory unknown while reporting a broken working copy
   const root = await setupPromise;
   const slow = join(root, "slow");
   const broken = join(root, "broken");
-  for (let i = 0; i < 1000; i++) writeFileSync(join(slow, `untracked-${i}`), "x");
+  for (let i = 0; i < 1000; i++)
+    writeFileSync(join(slow, `untracked-${i}`), "x");
   rmSync(broken, { recursive: true });
   // Advance only the inventory's deadline clock, so the timeout is independent of host speed.
   const wrapper = join(scratch, "clock.ts");
-  writeFileSync(wrapper, `const now = performance.now.bind(performance);\nObject.defineProperty(performance, "now", { value: () => { const stack = new Error().stack ?? ""; return now() + (stack.includes("timedOut") ? 2000 : 0); } });\nawait import(${JSON.stringify(cli)});\n`);
-  const result = await run(["bun", wrapper, "gc", "--apply", "--include-unrecorded", "--grace-minutes", "0", "--inventory-seconds", "1", "--json", "--repo", repo]);
-  const parsed = jsonOf(z.object({ rows: z.array(z.array(z.string())), counts: z.object({ kept: z.object({ broken: z.number() }) }) })).safeParse(result.out);
+  writeFileSync(
+    wrapper,
+    `const now = performance.now.bind(performance);\nObject.defineProperty(performance, "now", { value: () => { const stack = new Error().stack ?? ""; return now() + (stack.includes("timedOut") ? 2000 : 0); } });\nawait import(${JSON.stringify(cli)});\n`,
+  );
+  const result = await run([
+    "bun",
+    wrapper,
+    "gc",
+    "--apply",
+    "--include-unrecorded",
+    "--grace-minutes",
+    "0",
+    "--inventory-seconds",
+    "1",
+    "--json",
+    "--repo",
+    repo,
+  ]);
+  const parsed = jsonOf(
+    z.object({
+      rows: z.array(z.array(z.string())),
+      counts: z.object({ kept: z.object({ broken: z.number() }) }),
+    }),
+  ).safeParse(result.out);
   expect(parsed.success, `${result.err}\n${result.out}`).toBe(true);
   if (!parsed.success) return;
   const slowRow = parsed.data.rows.find((row) => row[0] === slow);
@@ -71,10 +135,26 @@ test("gc keeps timed-out inventory unknown while reporting a broken working copy
 test("rm allows a slow inventory, refuses untracked content, and explains timeouts", async () => {
   const root = await setupPromise;
   const wrapper = join(scratch, "rm-clock.ts");
-  writeFileSync(wrapper, `const now = performance.now.bind(performance);\nObject.defineProperty(performance, "now", { value: () => { const stack = new Error().stack ?? ""; return now() + (stack.includes("timedOut") ? Number(process.env.INVENTORY_CLOCK_OFFSET) : 0); } });\nawait import(${JSON.stringify(cli)});\n`);
+  writeFileSync(
+    wrapper,
+    `const now = performance.now.bind(performance);\nObject.defineProperty(performance, "now", { value: () => { const stack = new Error().stack ?? ""; return now() + (stack.includes("timedOut") ? Number(process.env.INVENTORY_CLOCK_OFFSET) : 0); } });\nawait import(${JSON.stringify(cli)});\n`,
+  );
   async function remove(name: string, offset: number) {
-    const child = Bun.spawn(["bun", wrapper, "rm", name.slice(3), "--repo", repo], { cwd: repo, env: { ...env, INVENTORY_CLOCK_OFFSET: String(offset) }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-    const [out, err, code] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+    const child = Bun.spawn(
+      ["bun", wrapper, "rm", name.slice(3), "--repo", repo],
+      {
+        cwd: repo,
+        env: { ...env, INVENTORY_CLOCK_OFFSET: String(offset) },
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    const [out, err, code] = await Promise.all([
+      child.stdout.text(),
+      child.stderr.text(),
+      child.exited,
+    ]);
     return { out, err, code };
   }
   const slow = await remove("ws_rm-slow", 11_000);
@@ -93,4 +173,6 @@ test("rm allows a slow inventory, refuses untracked content, and explains timeou
   expect(existsSync(join(root, "ws_rm-timeout"))).toBe(true);
 }, 30000);
 
-afterAll(() => { rmSync(scratch, { recursive: true, force: true }); });
+afterAll(() => {
+  rmSync(scratch, { recursive: true, force: true });
+});

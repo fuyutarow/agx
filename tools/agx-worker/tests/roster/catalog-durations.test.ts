@@ -41,8 +41,9 @@ describe("claude catalog durations", () => {
     const claude = choices.filter(
       (row) => row.route === "claude" && /^(?:haiku|sonnet)-/u.test(row.id),
     );
-    expect(claude.map((row) => row.id).toSorted((a, b) => a.localeCompare(b)))
-      .toEqual([...expected.keys()].toSorted((a, b) => a.localeCompare(b)));
+    expect(
+      claude.map((row) => row.id).toSorted((a, b) => a.localeCompare(b)),
+    ).toEqual([...expected.keys()].toSorted((a, b) => a.localeCompare(b)));
     for (const row of claude) {
       expect(row.aa_time_per_task_s).toBe(expected.get(row.id));
     }

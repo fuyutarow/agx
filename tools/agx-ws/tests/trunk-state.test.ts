@@ -13,7 +13,7 @@ const home = join(scratch, "home");
 mkdirSync(bin);
 mkdirSync(home);
 for (const [name, body] of [
-  ["stat", 'echo ext4'],
+  ["stat", "echo ext4"],
   ["agx", 'echo "[]"'],
 ] as const) {
   writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`);
@@ -21,7 +21,9 @@ for (const [name, body] of [
 }
 
 const env = (): Record<string, string | undefined> => {
-  const base: Record<string, string | undefined> = { ...subprocessEnvironment() };
+  const base: Record<string, string | undefined> = {
+    ...subprocessEnvironment(),
+  };
   delete base.AGX_NEXT_STATE_DIR;
   return {
     ...base,
@@ -81,7 +83,10 @@ async function fixture(withRemote: boolean, localTrunk = false) {
     path,
   );
   if (localTrunk)
-    writeFileSync(join(path, "agx.toml"), 'schema = 1\n[ws]\ntrunk = "alpha"\n');
+    writeFileSync(
+      join(path, "agx.toml"),
+      'schema = 1\n[ws]\ntrunk = "alpha"\n',
+    );
   writeFileSync(join(path, "a.txt"), "a\n");
   await jj(["commit", "-m", "base"], path);
   await jj(["bookmark", "create", "alpha", "-r", "@-"], path);
@@ -90,7 +95,10 @@ async function fixture(withRemote: boolean, localTrunk = false) {
   expect(init.code).toBe(0);
   await jj(["git", "remote", "add", "origin", remote], path);
   if (withRemote)
-    await jj(["git", "push", "--remote", "origin", "--bookmark", "alpha"], path);
+    await jj(
+      ["git", "push", "--remote", "origin", "--bookmark", "alpha"],
+      path,
+    );
   return path;
 }
 async function advanceLocal(path: string, text: string) {

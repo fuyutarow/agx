@@ -52,8 +52,7 @@ async function fixture(tmpRoot?: (root: string) => string) {
     readFileSync(
       new URL("../src/roster/policy.example.toml", import.meta.url).pathname,
       "utf8",
-    )
-      .replace('allow = ["codex"]', 'allow = ["claude"]'),
+    ).replace('allow = ["codex"]', 'allow = ["claude"]'),
   );
   const worker = join(root, "fake-claude-worker.ts");
   writeFileSync(

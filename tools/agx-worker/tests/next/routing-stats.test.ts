@@ -17,10 +17,16 @@ import { writeUsageSnapshot } from "./usage-snapshot.fixture.ts";
 import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const roots: string[] = [];
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
+const repoRoot = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../../..",
+);
 const cliPath = join(repoRoot, "tools/agx/src/agx.ts");
 const workerCliPath = join(repoRoot, "tools/agx-worker/src/next/cli.ts");
-const policyPath = join(repoRoot, "tools/agx-worker/src/roster/policy.example.toml");
+const policyPath = join(
+  repoRoot,
+  "tools/agx-worker/src/roster/policy.example.toml",
+);
 const FIRST_NOW_MS = Temporal.Instant.from(
   "2026-10-26T00:00:00Z",
 ).epochMilliseconds;
@@ -37,20 +43,18 @@ afterEach(() => {
 const fixture = () => {
   const root = mkdtempSync(join(tmpdir(), "agx-routing-stats-"));
   roots.push(root);
-  for (const dir of ["bin", "state", "home", "work"]) mkdirSync(join(root, dir));
-  symlinkSync(
-    workerCliPath,
-    join(root, "bin/agx-worker"),
-  );
+  for (const dir of ["bin", "state", "home", "work"])
+    mkdirSync(join(root, dir));
+  symlinkSync(workerCliPath, join(root, "bin/agx-worker"));
   // Presence fixtures are never executed by stats.
   for (const name of ["codex", "claude"])
     writeFileSync(join(root, "bin", name), "", { mode: 0o700 });
   writeFileSync(
     join(root, "policy.toml"),
-    readFileSync(
-      policyPath,
-      "utf8",
-    ).replace('allow = ["codex"]', 'allow = ["codex", "claude"]'),
+    readFileSync(policyPath, "utf8").replace(
+      'allow = ["codex"]',
+      'allow = ["codex", "claude"]',
+    ),
   );
   const env = {
     ...subprocessEnvironment(),
@@ -113,7 +117,11 @@ const stats = (
 ) => {
   const cwd = env.AGX_TEST_CWD!;
   expect(cwd).toContain("agx-routing-stats-");
-  return Bun.spawnSync([...args, "stats", ...extra], { env, cwd, timeout: 15_000 });
+  return Bun.spawnSync([...args, "stats", ...extra], {
+    env,
+    cwd,
+    timeout: 15_000,
+  });
 };
 const Route = z.object({
   state: z.enum(["unknown", "unavailable"]),
@@ -176,24 +184,45 @@ const event = (
 
 test("stats contract: designed selections are not counted as fallback", () => {
   const { root, env } = fixture();
-  writeFileSync(join(root, "state/routing.jsonl"), [
-    { ...event(1, "codex", hostname(), "jev-classified"), audit: { selection_mode: "class" } },
-    { ...event(1, "codex", hostname(), "fallback-missing-answer"), audit: { selection_mode: "fallback" } },
-    { ...event(1, "codex", hostname(), "fallback-invalid-class"), audit: { selection_mode: "fallback" } },
-    { ...event(1), row: null, route: null, outcome: "refusal" },
-  ].map((row) => JSON.stringify(row)).join("\n") + "\n");
+  writeFileSync(
+    join(root, "state/routing.jsonl"),
+    [
+      {
+        ...event(1, "codex", hostname(), "jev-classified"),
+        audit: { selection_mode: "class" },
+      },
+      {
+        ...event(1, "codex", hostname(), "fallback-missing-answer"),
+        audit: { selection_mode: "fallback" },
+      },
+      {
+        ...event(1, "codex", hostname(), "fallback-invalid-class"),
+        audit: { selection_mode: "fallback" },
+      },
+      { ...event(1), row: null, route: null, outcome: "refusal" },
+    ]
+      .map((row) => JSON.stringify(row))
+      .join("\n") + "\n",
+  );
   const result = stats(env);
   expect(result.exitCode, result.stderr.toString()).toBe(0);
-  const parsed = jsonOf(z.object({
-    selection_count: z.number(),
-    selection_mode_counts: z.record(z.string(), z.number()),
-    fallback_count: z.number(),
-    per_row_pick_counts: z.record(z.string(), z.number()),
-  })).safeParse(result.stdout.toString());
+  const parsed = jsonOf(
+    z.object({
+      selection_count: z.number(),
+      selection_mode_counts: z.record(z.string(), z.number()),
+      fallback_count: z.number(),
+      per_row_pick_counts: z.record(z.string(), z.number()),
+    }),
+  ).safeParse(result.stdout.toString());
   expect(parsed.success).toBe(true);
   if (!parsed.success) return;
   expect(parsed.data.selection_count).toBe(4);
-  expect(parsed.data.selection_mode_counts).toEqual({ class: 1, "fallback-missing-answer": 1, "fallback-invalid-class": 1, refusal: 1 });
+  expect(parsed.data.selection_mode_counts).toEqual({
+    class: 1,
+    "fallback-missing-answer": 1,
+    "fallback-invalid-class": 1,
+    refusal: 1,
+  });
   expect(parsed.data.fallback_count).toBe(2);
   expect(parsed.data.per_row_pick_counts).toEqual({ fixture: 3 });
 });
@@ -378,7 +407,8 @@ test("real roster CLI selections are persisted before any worker starts", async 
   const { root, env } = fixture();
   const server = Bun.serve({
     port: 0,
-    fetch: () => Response.json({ answers: { worker: { choice: "mechanical" } } }),
+    fetch: () =>
+      Response.json({ answers: { worker: { choice: "mechanical" } } }),
   });
   await using _cleanup = { [Symbol.asyncDispose]: () => server.stop(true) };
   {

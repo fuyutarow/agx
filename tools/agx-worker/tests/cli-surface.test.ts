@@ -50,7 +50,7 @@ test("removed classify command is rejected", () => {
     );
     expect(result.exitCode).toBe(2);
     expect(result.stdout.toString()).toBe("");
-    expect(result.stderr.toString()).toContain("unknown command \"classify\"");
+    expect(result.stderr.toString()).toContain('unknown command "classify"');
   } finally {
     rmSync(state, { recursive: true, force: true });
   }

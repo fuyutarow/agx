@@ -137,12 +137,7 @@ async function stopOwnedRun(run: ListedRun): Promise<number> {
   process.stderr.write(`agx worker stop: stopping ${run.id}\n`);
   let systemctlFailure: string | undefined;
   if (lease.unit !== null && systemctl !== null) {
-    const result = await stopSystemdUnit(
-      run,
-      actor,
-      lease.unit,
-      systemctl,
-    );
+    const result = await stopSystemdUnit(run, actor, lease.unit, systemctl);
     systemctlFailure = result.failure;
     if (result.terminal !== undefined) return result.terminal;
   } else {
@@ -288,9 +283,16 @@ function recordStopped(run: ListedRun, actor: string) {
   const endedAt = now();
   const runDirSize = measureRunDir(runDir);
   const endNotice = scheduleEndNotice({
-    id: run.id, ticket: run.ticket, dispatcher: run.dispatcher_session,
-    startedAt: run.started_at, endedAt, outcome: "stopped", exit: 143,
-    resultPath: reportPath, verifyExits: verify.map((item) => item.exit), runDirSize,
+    id: run.id,
+    ticket: run.ticket,
+    dispatcher: run.dispatcher_session,
+    startedAt: run.started_at,
+    endedAt,
+    outcome: "stopped",
+    exit: 143,
+    resultPath: reportPath,
+    verifyExits: verify.map((item) => item.exit),
+    runDirSize,
   });
   const stopped = {
     kind: "ended",

@@ -209,24 +209,27 @@ test("a no-change run of a ticket with writes is still incomplete", () => {
 });
 
 test.each([
-    { name: "missing-verify", verify: [], changed_files: 0 },
-    {
-      name: "failed-verify",
-      verify: [{ cmd: "check", exit: 1, log_path: "unused" }],
-      changed_files: 0,
-    },
-    {
-      name: "unknown-diff",
-      verify: [{ cmd: "check", exit: 0, log_path: "unused" }],
-    },
-    {
-      name: "nonempty-diff",
-      verify: [{ cmd: "check", exit: 0, log_path: "unused" }],
-      changed_files: 1,
-    },
-])("completion contract: read-only no-change needs passing verify and a known empty diff: $name", (item) => {
-  const run = fixture(item.name, { outcome: "no-change", exit: 0, ...item });
-  const result = command(["judge", run.id, "accept"], run.state);
-  expect(result.exit).toBe(2);
-  expect(result.stderr).toContain("completion=incomplete");
-});
+  { name: "missing-verify", verify: [], changed_files: 0 },
+  {
+    name: "failed-verify",
+    verify: [{ cmd: "check", exit: 1, log_path: "unused" }],
+    changed_files: 0,
+  },
+  {
+    name: "unknown-diff",
+    verify: [{ cmd: "check", exit: 0, log_path: "unused" }],
+  },
+  {
+    name: "nonempty-diff",
+    verify: [{ cmd: "check", exit: 0, log_path: "unused" }],
+    changed_files: 1,
+  },
+])(
+  "completion contract: read-only no-change needs passing verify and a known empty diff: $name",
+  (item) => {
+    const run = fixture(item.name, { outcome: "no-change", exit: 0, ...item });
+    const result = command(["judge", run.id, "accept"], run.state);
+    expect(result.exit).toBe(2);
+    expect(result.stderr).toContain("completion=incomplete");
+  },
+);

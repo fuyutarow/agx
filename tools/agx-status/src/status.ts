@@ -16,7 +16,9 @@ if (
   options.some((arg) => arg === "--repo" || arg.startsWith("--repo=")) &&
   options.some((arg) => arg === "--cwd" || arg.startsWith("--cwd="))
 ) {
-  process.stderr.write("agx-status: --repo and --cwd cannot be used together\n");
+  process.stderr.write(
+    "agx-status: --repo and --cwd cannot be used together\n",
+  );
   process.exit(2);
 }
 await checkState();
@@ -362,7 +364,8 @@ else {
         json: { type: Boolean, description: "emit status as JSON" },
         repo: {
           type: String,
-          description: "any workspace or the main checkout of the repository (default: cwd)",
+          description:
+            "any workspace or the main checkout of the repository (default: cwd)",
         },
         cwd: {
           type: String,

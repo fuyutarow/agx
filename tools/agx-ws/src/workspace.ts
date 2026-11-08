@@ -41,7 +41,12 @@ import {
 import { acquire, pidAlive } from "../../shared/src/dir-lock.ts";
 import { stateDir } from "./state-dir.ts";
 import { xdgStateHome } from "../../shared/src/state-dir.ts";
-import { opStoreSize, orderGcCandidates, readGcOrder, writeGcOrder } from "./gc-order.ts";
+import {
+  opStoreSize,
+  orderGcCandidates,
+  readGcOrder,
+  writeGcOrder,
+} from "./gc-order.ts";
 import { indexedWorkspaces } from "./workspace-index.ts";
 import { fromThrowable, jsonOf, z } from "../../shared/src/zod.ts";
 import { jjWorkspace, refLocks } from "./jj-workspace.ts";
@@ -71,7 +76,8 @@ export const bad = (message: string): Attempt<never> => ({
   error: message,
 });
 export const good = <T>(value: T): Attempt<T> => ({ ok: true, value });
-export const msg = (failed: { error: unknown }): string => errorMessage(failed.error);
+export const msg = (failed: { error: unknown }): string =>
+  errorMessage(failed.error);
 type MissingWorkspaceForget = {
   name: string;
   dir: string;
@@ -210,10 +216,7 @@ export type Graveyard = { path: string };
 export async function checkGraveyard(): Promise<Attempt<Graveyard>> {
   const env = gcEnvironment.getStore() ?? process.env;
   const data = env.XDG_DATA_HOME ?? join(homedir(), ".local", "share");
-  const path =
-    env.RIP_GRAVEYARD ??
-    env.GRAVEYARD ??
-    join(data, "graveyard");
+  const path = env.RIP_GRAVEYARD ?? env.GRAVEYARD ?? join(data, "graveyard");
   const type = await fsType(path);
   if (!type.ok) return type;
   if (type.value === "tmpfs" || type.value === "ramfs")
@@ -271,13 +274,17 @@ async function symlinksWithin(
 }
 
 /** Remove only mise state links that point into the workspace being buried. */
-export async function untrackMiseWorkspace(dir: string, cwd: string): Promise<void> {
+export async function untrackMiseWorkspace(
+  dir: string,
+  cwd: string,
+): Promise<void> {
   const root = resolve(dir);
   const state = miseStateDir();
   const trusted = join(state, "trusted-configs");
   const mise = Bun.which("mise");
   if (mise === null)
-    writeSync(2,
+    writeSync(
+      2,
       "ws: mise command cleanup skipped (mise not on PATH); removing matching state links directly\n",
     );
   for (const link of await symlinksWithin(trusted, root)) {
@@ -442,7 +449,11 @@ export async function unlanded(
     tipRepo === repo.backing,
   );
   if (!tip.ok) return bad(`cannot judge ${dir}: ${msg(tip)}`);
-  const content = await outstanding(repo, tip.value.trim(), landing.value.commit);
+  const content = await outstanding(
+    repo,
+    tip.value.trim(),
+    landing.value.commit,
+  );
   if (!content.ok)
     return bad(`cannot compare ${dir} with trunk: ${msg(content)}`);
   if (content.value.differing.length === 0) return good([]);
@@ -747,7 +758,9 @@ export async function remove(options: {
           graceMinutes: 0,
           inventorySeconds: 60,
         },
-        undefined, undefined, trunk.value.ref,
+        undefined,
+        undefined,
+        trunk.value.ref,
       );
       if (!decision.collect && decision.reason.startsWith("unlanded change ")) {
         const pending = unlandedWorkspaceChange(current, graph.value);
@@ -756,7 +769,9 @@ export async function remove(options: {
         );
       }
       if (!decision.collect && decision.reason.includes("inventory timed out:"))
-        return bad(`${dir}: nothing found unlanded; untracked-content check did not finish (${decision.reason}); retry ws rm`);
+        return bad(
+          `${dir}: nothing found unlanded; untracked-content check did not finish (${decision.reason}); retry ws rm`,
+        );
       if (!decision.collect)
         return bad(`${dir}: unlanded or protected content: ${decision.reason}`);
       const done = await forgetAndTombstone(repo.value, name.value, dir);
@@ -1139,7 +1154,11 @@ export async function removalGuard(
         true,
       );
   if (!resolvedTip.ok) return resolvedTip;
-  const work = await outstanding(repo, resolvedTip.value.trim(), trunk.value.commit);
+  const work = await outstanding(
+    repo,
+    resolvedTip.value.trim(),
+    trunk.value.commit,
+  );
   if (!work.ok) return work;
   return work.value.differing.length === 0
     ? good(undefined)
@@ -1150,7 +1169,12 @@ export async function removalGuard(
 
 export async function agxRecords(cwd: string): Promise<Attempt<RunRecord[]>> {
   const agx = await resolveAgxBinary();
-  if (agx === "agx" && Bun.which("agx", { PATH: gcEnvironment.getStore()?.PATH ?? process.env.PATH ?? "" }) === null)
+  if (
+    agx === "agx" &&
+    Bun.which("agx", {
+      PATH: gcEnvironment.getStore()?.PATH ?? process.env.PATH ?? "",
+    }) === null
+  )
     return bad("agx is not on PATH: mise run deps");
   const ran = await exec([agx, "worker", "ls", "--all", "--json"], cwd);
   if (!ran.ok) return bad(`agx worker ls --json: ${msg(ran)}`);
@@ -1216,7 +1240,11 @@ export type GcOptions = {
   abandoned?: boolean;
   /** Nested all-repository inventories retain their historical main-row omission. */
   includeMain?: boolean;
-  journal?: { signal?: "SIGTERM" | "SIGINT"; removed: number; remaining: number };
+  journal?: {
+    signal?: "SIGTERM" | "SIGINT";
+    removed: number;
+    remaining: number;
+  };
 };
 
 export type Workspace = {
@@ -1340,9 +1368,19 @@ function workspaceAge(timestamp: string): string {
   if (!/^-?\d+$/u.test(timestamp)) return "?";
   const seconds = Number(timestamp);
   if (!Number.isFinite(seconds)) return "?";
-  const elapsed = Math.max(0, Math.floor(Temporal.Now.instant().epochMilliseconds / 1000 - seconds));
+  const elapsed = Math.max(
+    0,
+    Math.floor(Temporal.Now.instant().epochMilliseconds / 1000 - seconds),
+  );
   if (elapsed < 1) return "now";
-  for (const [unit, size] of [["year", 31536000], ["month", 2592000], ["day", 86400], ["hour", 3600], ["minute", 60], ["second", 1]] as const) {
+  for (const [unit, size] of [
+    ["year", 31536000],
+    ["month", 2592000],
+    ["day", 86400],
+    ["hour", 3600],
+    ["minute", 60],
+    ["second", 1],
+  ] as const) {
     if (elapsed >= size) {
       const count = Math.floor(elapsed / size);
       return `${count} ${unit}${count === 1 ? "" : "s"} ago`;
@@ -1372,7 +1410,11 @@ export async function workspaces(
   return good(parseWorkspaceList(repo, listed.value, includeMain));
 }
 
-export function parseWorkspaceList(repo: Repo, output: string, includeMain = false): Workspace[] {
+export function parseWorkspaceList(
+  repo: Repo,
+  output: string,
+  includeMain = false,
+): Workspace[] {
   const found: Workspace[] = [];
   const lines = output.trim().split("\n").filter(Boolean);
   for (const [index, line] of lines.entries()) {
@@ -1489,7 +1531,11 @@ async function gcCommitGraph(
     commits.set(row.id, {
       ...row,
       parents: row.parents.split(",").filter(Boolean),
-      remoteBookmarks: row.remoteBookmarks.split(",").filter((bookmark) => bookmark.length > 0 && !bookmark.endsWith("@git")),
+      remoteBookmarks: row.remoteBookmarks
+        .split(",")
+        .filter(
+          (bookmark) => bookmark.length > 0 && !bookmark.endsWith("@git"),
+        ),
       files: files.value,
       changedPaths: row.changedPaths.split("\0").filter(Boolean),
     });
@@ -1670,7 +1716,12 @@ export async function trunkCommit(
 }
 
 /** Freeze the remote copy of the trunk bookmark when one exists. */
-async function landingTrunk(repo: Repo, cfg: Config): Promise<Attempt<{ commit: string | null; ref: string; unresolved?: string }>> {
+async function landingTrunk(
+  repo: Repo,
+  cfg: Config,
+): Promise<
+  Attempt<{ commit: string | null; ref: string; unresolved?: string }>
+> {
   const local = await resolveTrunk(repo, cfg);
   if (!local.ok) return local;
   // Unconfigured root with zero or several local candidates: carry resolveTrunk's diagnostic (names the candidates and the missing [ws].trunk setting) for the dry-run reason.
@@ -1681,8 +1732,16 @@ async function landingTrunk(repo: Repo, cfg: Config): Promise<Attempt<{ commit: 
       ...(cfg.trunkConfigured ? {} : { unresolved: local.value.source }),
     });
   const names = await jjOut(
-    ["log", "--no-graph", "-r", local.value.commit, "-T", 'self.local_bookmarks().map(|b| b.name()).join("\\n")'],
-    repo.backing, true,
+    [
+      "log",
+      "--no-graph",
+      "-r",
+      local.value.commit,
+      "-T",
+      'self.local_bookmarks().map(|b| b.name()).join("\\n")',
+    ],
+    repo.backing,
+    true,
   );
   if (!names.ok) return names;
   const localNames = names.value.split("\n").filter(Boolean);
@@ -1690,19 +1749,40 @@ async function landingTrunk(repo: Repo, cfg: Config): Promise<Attempt<{ commit: 
   let name: string | undefined;
   if (localNames.includes(configuredName)) name = configuredName;
   else if (localNames.length === 1) name = localNames[0];
-  if (name === undefined) return good({ commit: local.value.commit, ref: cfg.trunk });
+  if (name === undefined)
+    return good({ commit: local.value.commit, ref: cfg.trunk });
   const remote = await jjOut(
-    ["log", "--no-graph", "-r", "remote_bookmarks(exact:" + JSON.stringify(name) + ")", "-T", 'self.remote_bookmarks().map(|b| if(b.remote() && b.remote() != "git", json({"ref" => stringify(b.name() ++ "@" ++ b.remote()), "id" => commit_id}) ++ "\\n", "")).join("")'],
-    repo.backing, true,
+    [
+      "log",
+      "--no-graph",
+      "-r",
+      "remote_bookmarks(exact:" + JSON.stringify(name) + ")",
+      "-T",
+      'self.remote_bookmarks().map(|b| if(b.remote() && b.remote() != "git", json({"ref" => stringify(b.name() ++ "@" ++ b.remote()), "id" => commit_id}) ++ "\\n", "")).join("")',
+    ],
+    repo.backing,
+    true,
   );
   if (!remote.ok) return remote;
-  const rows = remote.value.split("\n").filter(Boolean).map((line) => jsonOf(z.object({ ref: z.string(), id: z.string() })).safeParse(line));
-  if (rows.some((row) => !row.success)) return bad("cannot parse remote trunk bookmarks");
-  const candidates = rows.flatMap((row) => row.success && row.data.ref.startsWith(name + "@") ? [row.data] : []);
+  const rows = remote.value
+    .split("\n")
+    .filter(Boolean)
+    .map((line) =>
+      jsonOf(z.object({ ref: z.string(), id: z.string() })).safeParse(line),
+    );
+  if (rows.some((row) => !row.success))
+    return bad("cannot parse remote trunk bookmarks");
+  const candidates = rows.flatMap((row) =>
+    row.success && row.data.ref.startsWith(name + "@") ? [row.data] : [],
+  );
   const origin = candidates.filter((row) => row.ref === name + "@origin");
   const selected = origin.length > 0 ? origin : candidates;
-  if (selected.length === 0) return good({ commit: local.value.commit, ref: name });
-  if (selected.length !== 1) return bad("remote trunk " + name + " must resolve to exactly one ref and commit");
+  if (selected.length === 0)
+    return good({ commit: local.value.commit, ref: name });
+  if (selected.length !== 1)
+    return bad(
+      "remote trunk " + name + " must resolve to exactly one ref and commit",
+    );
   const target = selected[0];
   if (target === undefined) return bad("remote trunk disappeared");
   return good({ commit: target.id, ref: target.ref });
@@ -2219,7 +2299,11 @@ async function classifyGc(
     collect = false,
   ): Classification => ({ verdict: label, change, age, reason, collect });
   if (ws.main) return verdict("keep", "main checkout is not removable");
-  if (kind === "outside") return verdict("keep", `${ws.dir} is outside workspace root ${repo.wsRoot}`);
+  if (kind === "outside")
+    return verdict(
+      "keep",
+      `${ws.dir} is outside workspace root ${repo.wsRoot}`,
+    );
   if (ws.recordError !== undefined) return verdict("broken", ws.recordError);
   if (ws.rootMissing === true)
     return verdict("broken", `workspace ${ws.name} has no recorded root path`);
@@ -2286,7 +2370,10 @@ async function classifyGc(
   const abandonedReason = `all runs ended without acceptance over 24h ago: ${localRuns.map((record) => `${record.id} (${record.outcome})`).join(", ")}`;
   const recorded = lineage.length > 0;
   if (!recorded && !options.includeUnrecorded)
-    return verdict("keep", "unrecorded workspace; pass --include-unrecorded to collect");
+    return verdict(
+      "keep",
+      "unrecorded workspace; pass --include-unrecorded to collect",
+    );
   if (endedWithoutAcceptanceFor24h && options.abandoned !== true)
     return verdict("keep", `${abandonedReason}; pass --abandoned to collect`);
   if (trunk === null)
@@ -2381,7 +2468,9 @@ async function classifyGc(
   const resultDirs = allRejected
     ? lineage
         .filter((record) => /^[a-zA-Z0-9_-]+$/u.test(record.id))
-        .map((record) => join(stateDir(gcEnvironment.getStore()), "runs", record.id))
+        .map((record) =>
+          join(stateDir(gcEnvironment.getStore()), "runs", record.id),
+        )
     : [];
   if (budget !== undefined && budget.remainingMs <= 0) {
     budget.exhausted = true;
@@ -2437,7 +2526,6 @@ async function classifyGc(
     abandon: allRejected || endedWithoutAcceptanceFor24h,
   };
 }
-
 
 async function classifyGcSafely(
   ...args: Parameters<typeof classifyGc>
@@ -2691,27 +2779,60 @@ export async function classify(
 }
 
 export function gcCounts(lines: string[]) {
-  const rows = lines.map((line) => line.split("\t")).filter((row) => row[1] !== "repo" && row[1] !== "main");
-  const kept = { unlanded: 0, unjudged_run: 0, untracked_content: 0, inventory_budget_exhausted: 0, broken: 0, removable: 0, unrecorded: 0, unsnapshotted: 0, abandoned: 0, active_processes: 0, configured_keep: 0, other: 0 };
+  const rows = lines
+    .map((line) => line.split("\t"))
+    .filter((row) => row[1] !== "repo" && row[1] !== "main");
+  const kept = {
+    unlanded: 0,
+    unjudged_run: 0,
+    untracked_content: 0,
+    inventory_budget_exhausted: 0,
+    broken: 0,
+    removable: 0,
+    unrecorded: 0,
+    unsnapshotted: 0,
+    abandoned: 0,
+    active_processes: 0,
+    configured_keep: 0,
+    other: 0,
+  };
   let removed = 0;
   for (const row of rows) {
     const reason = row[5] ?? "";
-    if (row[2] === "collected" || reason.endsWith("; removed")) { removed++; continue; }
+    if (row[2] === "collected" || reason.endsWith("; removed")) {
+      removed++;
+      continue;
+    }
     if (row[2] === "broken") kept.broken++;
     else if (reason.includes("unlanded change ")) kept.unlanded++;
     else if (reason.includes(" is unjudged; keep")) kept.unjudged_run++;
     else if (reason.includes("untracked content:")) kept.untracked_content++;
-    else if (reason.includes("inventory budget exhausted")) kept.inventory_budget_exhausted++;
+    else if (reason.includes("inventory budget exhausted"))
+      kept.inventory_budget_exhausted++;
     else if (row[2] === "removable") kept.removable++;
     else if (reason.includes("unrecorded workspace;")) kept.unrecorded++;
-    else if (reason.includes("unsnapshotted working-copy changes:")) kept.unsnapshotted++;
-    else if (reason.includes("all runs ended without acceptance over 24h ago:")) kept.abandoned++;
-    else if (reason.includes("processes are working inside ")) kept.active_processes++;
+    else if (reason.includes("unsnapshotted working-copy changes:"))
+      kept.unsnapshotted++;
+    else if (reason.includes("all runs ended without acceptance over 24h ago:"))
+      kept.abandoned++;
+    else if (reason.includes("processes are working inside "))
+      kept.active_processes++;
     else if (reason.includes("declared in [ws].keep")) kept.configured_keep++;
     else kept.other++;
   }
-  const originalRows = lines.map((line) => line.split("\t")).filter((row) => row[1] !== "repo" && row[2] !== "collected");
-  return { total: originalRows.length, unlanded: originalRows.filter((row) => row[2] === "keep" && row[5]?.includes("unlanded change ") === true).length, collectable: originalRows.filter((row) => row[2] === "removable").length, removed, kept };
+  const originalRows = lines
+    .map((line) => line.split("\t"))
+    .filter((row) => row[1] !== "repo" && row[2] !== "collected");
+  return {
+    total: originalRows.length,
+    unlanded: originalRows.filter(
+      (row) =>
+        row[2] === "keep" && row[5]?.includes("unlanded change ") === true,
+    ).length,
+    collectable: originalRows.filter((row) => row[2] === "removable").length,
+    removed,
+    kept,
+  };
 }
 
 type GcResult = {
@@ -2924,7 +3045,9 @@ export async function untrackedContent(
     const target = join(dir, path);
     const actual = await attempt(() => lstat(target));
     const inspectionError = (failed: { error: unknown }): string => {
-      const missing = z.object({ code: z.literal("ENOENT") }).safeParse(failed.error);
+      const missing = z
+        .object({ code: z.literal("ENOENT") })
+        .safeParse(failed.error);
       return missing.success
         ? `sparse or missing tracked file: ${path}`
         : `cannot inspect tracked file ${path}: ${msg(failed)}`;
@@ -3063,7 +3186,12 @@ async function finishGcRemoval(
     ...classification,
     verdict: "broken",
     collect: false,
-    reason: "tombstone cleanup failed at " + tombstone + ": " + msg(deleted) + "; removed",
+    reason:
+      "tombstone cleanup failed at " +
+      tombstone +
+      ": " +
+      msg(deleted) +
+      "; removed",
   };
 }
 
@@ -3108,39 +3236,63 @@ async function accountForMissingWorkspaceForget(
 
 /** TSV columns: path, kind, verdict, change id, age, reason. */
 function reportRemoval(enabled: boolean, path: string, ms: number): void {
-  if (enabled) writeSync(2, `gc trace: removal ${JSON.stringify(path)}: ${ms.toFixed(3)} ms\n`);
+  if (enabled)
+    writeSync(
+      2,
+      `gc trace: removal ${JSON.stringify(path)}: ${ms.toFixed(3)} ms\n`,
+    );
 }
 
 function decrementGcRemaining(journal: GcOptions["journal"]): void {
   if (journal !== undefined) journal.remaining--;
 }
 
-function recordGcRemoval(path: string, reason: string, journal: GcOptions["journal"]): void {
-  writeSync(2, `gc removed ${path.replaceAll("\n", "\\n")} reason=${reason.replaceAll("\n", "\\n")}\n`);
+function recordGcRemoval(
+  path: string,
+  reason: string,
+  journal: GcOptions["journal"],
+): void {
+  writeSync(
+    2,
+    `gc removed ${path.replaceAll("\n", "\\n")} reason=${reason.replaceAll("\n", "\\n")}\n`,
+  );
   if (journal !== undefined) journal.removed++;
 }
 
-function recordMissingGcRemoval(classification: Classification, path: string, journal: GcOptions["journal"]): void {
-  if (classification.verdict === "collected") recordGcRemoval(path, classification.reason, journal);
+function recordMissingGcRemoval(
+  classification: Classification,
+  path: string,
+  journal: GcOptions["journal"],
+): void {
+  if (classification.verdict === "collected")
+    recordGcRemoval(path, classification.reason, journal);
 }
 
 function deferredGcRow(ws: Workspace, repo: Repo): string {
   let kind = "outside";
   if (ws.main) kind = "main";
   else if (within(realOr(ws.dir), realOr(repo.wsRoot))) kind = "ws";
-  const reason = kind === "outside" ? `${ws.dir} is outside workspace root ${repo.wsRoot}` : "repository time budget exhausted";
+  const reason =
+    kind === "outside"
+      ? `${ws.dir} is outside workspace root ${repo.wsRoot}`
+      : "repository time budget exhausted";
   return [ws.dir, kind, "keep", ws.change, ws.age, reason].join("\t");
 }
 
 export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
   if (options.env !== undefined && gcEnvironment.getStore() === undefined)
-    return gcEnvironment.run({ ...process.env, ...options.env }, () => gc(options));
+    return gcEnvironment.run({ ...process.env, ...options.env }, () =>
+      gc(options),
+    );
   const resolved = resolveRepo(options.repo);
   if (!resolved.ok) return resolved;
   const repo = resolved.value;
   const storeSize = await opStoreSize(repo.backing);
   if (storeSize > 1024 ** 3)
-    writeSync(2, `gc: jj op_store is at least ${(storeSize / 1024 ** 3).toFixed(2)} GiB; jj operations in this repository are slowed by it\n`);
+    writeSync(
+      2,
+      `gc: jj op_store is at least ${(storeSize / 1024 ** 3).toFixed(2)} GiB; jj operations in this repository are slowed by it\n`,
+    );
   const repoStarted = performance.now();
   const initialConfig = await readConfig(repo);
   if (!initialConfig.ok) return initialConfig;
@@ -3158,7 +3310,8 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
     const tracing = process.env.AGX_WS_GC_TRACE === "1";
     const report = (step: string, ms: number, count?: number) => {
       if (tracing)
-        writeSync(2,
+        writeSync(
+          2,
           `gc trace: ${step}: ${ms.toFixed(3)} ms${count === undefined ? "" : ` count=${count}`}\n`,
         );
     };
@@ -3198,13 +3351,17 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
     let slowest: { workspace: string; ms: number; step: string } | undefined;
     const reportProgress = () => {
       if (!tracing) return;
-      writeSync(2,
+      writeSync(
+        2,
         `gc trace: cumulative: workspaces=${completed}/${candidates.value.length} classification=${Math.max(0, classificationMs - trace.inventoryMs - trace.comparisonMs).toFixed(3)} ms inventory=${trace.inventoryMs.toFixed(3)} ms count=${trace.inventoryCount} comparison=${trace.comparisonMs.toFixed(3)} ms removal=${removalMs.toFixed(3)} ms slowest=${JSON.stringify(slowest?.workspace ?? null)} ms=${(slowest?.ms ?? 0).toFixed(3)} step=${slowest?.step ?? "none"}\n`,
       );
     };
     for (const ws of orderGcCandidates(candidates.value, classified)) {
       if (options.journal?.signal !== undefined) break;
-      if (performance.now() - repoStarted >= (options.repoBudgetSeconds ?? 180) * 1000) {
+      if (
+        performance.now() - repoStarted >=
+        (options.repoBudgetSeconds ?? 180) * 1000
+      ) {
         repoBudgetExhausted = true;
         deferred++;
         lines.push(deferredGcRow(ws, repo));
@@ -3218,10 +3375,7 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
       let kind = "outside";
       if (ws.main) kind = "main";
       else if (land !== undefined) kind = "land";
-      else if (
-        within(realOr(ws.dir), realOr(repo.wsRoot))
-      )
-        kind = "ws";
+      else if (within(realOr(ws.dir), realOr(repo.wsRoot))) kind = "ws";
       const directoryInfo =
         ws.rootMissing === true
           ? undefined
@@ -3237,9 +3391,21 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
           : undefined;
       let c: Classification;
       if (kind === "outside" && directoryInfo?.ok === true) {
-        c = { verdict: "keep", change: ws.change, age: ws.age, reason: `${ws.dir} is outside workspace root ${repo.wsRoot}`, collect: false };
+        c = {
+          verdict: "keep",
+          change: ws.change,
+          age: ws.age,
+          reason: `${ws.dir} is outside workspace root ${repo.wsRoot}`,
+          collect: false,
+        };
       } else if (ws.recordError !== undefined) {
-        c = { verdict: "broken", change: ws.change, age: ws.age, reason: ws.recordError, collect: false };
+        c = {
+          verdict: "broken",
+          change: ws.change,
+          age: ws.age,
+          reason: ws.recordError,
+          collect: false,
+        };
       } else if (missingDirectory && land !== undefined) {
         c =
           landLock?.held === true
@@ -3391,7 +3557,11 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
         reason = outcome.reason;
         recordMissingGcRemoval(c, ws.dir, options.journal);
       }
-      if (c.collect && !options.dryRun && options.journal?.signal === undefined) {
+      if (
+        c.collect &&
+        !options.dryRun &&
+        options.journal?.signal === undefined
+      ) {
         const removalStart = performance.now();
         const done = await withLock<GcRemovalResult>(
           repo,
@@ -3453,7 +3623,10 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
                   reason: msg(currentRecords),
                 },
               });
-            const currentGraph = await gcCommitGraph(repo, currentTrunk.value.commit);
+            const currentGraph = await gcCommitGraph(
+              repo,
+              currentTrunk.value.commit,
+            );
             if (!currentGraph.ok)
               return good({
                 classification: {
@@ -3573,7 +3746,8 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
         failed.push(...(c.verdict === "broken" ? [ws.dir] : []));
       }
       // Escape control characters without breaking the column contract.
-      if (options.dryRun) reason += `; trunk source: ${trunk.value.unresolved ?? trunk.value.ref}`;
+      if (options.dryRun)
+        reason += `; trunk source: ${trunk.value.unresolved ?? trunk.value.ref}`;
       lines.push(
         [ws.dir, kind, c.verdict, c.change, c.age, reason]
           .map((field) => field.replaceAll("\t", "\\t").replaceAll("\n", "\\n"))
@@ -3583,7 +3757,11 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
       if (options.journal !== undefined) options.journal.remaining--;
       if (completed % 50 === 0) reportProgress();
     }
-    if (deferred > 0) writeSync(2, `gc: ${deferred} workspaces deferred by the repository budget; the next run starts with them\n`);
+    if (deferred > 0)
+      writeSync(
+        2,
+        `gc: ${deferred} workspaces deferred by the repository budget; the next run starts with them\n`,
+      );
     if (completed % 50 !== 0 || completed === 0) reportProgress();
     report(
       "per-workspace classification",
@@ -3605,7 +3783,11 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
         options.journal?.signal === undefined &&
         !lines.some((line) => line.split("\t")[2] === "broken"),
     };
-    if (!options.dryRun && failed.length === 0 && options.journal?.signal === undefined)
+    if (
+      !options.dryRun &&
+      failed.length === 0 &&
+      options.journal?.signal === undefined
+    )
       await publishVerdicts(repo.backing, result);
     return good(result);
   };
@@ -3628,12 +3810,19 @@ export async function gcAll(
   if (!discovered.ok) return discovered;
   const roots = discovered.value;
   const startsDir = join(stateDir(), "ws-gc-starts");
-  const startPath = (path: string) => join(startsDir, createHash("sha256").update(path).digest("hex"));
-  const ordered = await Promise.all([...roots].map(async ([path, sources]) => {
-    const recorded = await readFile(startPath(path), "utf8").catch(() => "0");
-    return { path, sources, started: Number(recorded) };
-  }));
-  ordered.sort((a, b) => a.started === b.started ? a.path.localeCompare(b.path) : a.started - b.started);
+  const startPath = (path: string) =>
+    join(startsDir, createHash("sha256").update(path).digest("hex"));
+  const ordered = await Promise.all(
+    [...roots].map(async ([path, sources]) => {
+      const recorded = await readFile(startPath(path), "utf8").catch(() => "0");
+      return { path, sources, started: Number(recorded) };
+    }),
+  );
+  ordered.sort((a, b) =>
+    a.started === b.started
+      ? a.path.localeCompare(b.path)
+      : a.started - b.started,
+  );
   const lines: string[] = [];
   const failed: string[] = [];
   const refused: string[] = [];
@@ -3642,14 +3831,25 @@ export async function gcAll(
   const broken: string[] = [];
   for (const { path, sources } of ordered) {
     if (options.journal?.signal !== undefined) break;
-    if (performance.now() - allStarted >= (options.allBudgetSeconds ?? 1500) * 1000) {
-      repositories.push({ root: path, sources: [...sources].toSorted(), status: "skipped", counts: gcCounts([]) });
+    if (
+      performance.now() - allStarted >=
+      (options.allBudgetSeconds ?? 1500) * 1000
+    ) {
+      repositories.push({
+        root: path,
+        sources: [...sources].toSorted(),
+        status: "skipped",
+        counts: gcCounts([]),
+      });
       lines.push(`${path}\trepo\tkeep\t?\t?\trun time budget exhausted`);
       continue;
     }
     if (!options.dryRun) {
       await mkdir(startsDir, { recursive: true });
-      await writeFile(startPath(path), String(Temporal.Now.instant().epochMilliseconds));
+      await writeFile(
+        startPath(path),
+        String(Temporal.Now.instant().epochMilliseconds),
+      );
     }
     const started = performance.now();
     const repo = resolveRepo(path);
@@ -3657,9 +3857,7 @@ export async function gcAll(
     writeSync(2, `gc --all start ${path}\n`);
     const report = (outcome: string) => {
       const seconds = ((performance.now() - started) / 1000).toFixed(3);
-      writeSync(2,
-        `gc --all end ${path} elapsed=${seconds}s ${outcome}\n`,
-      );
+      writeSync(2, `gc --all end ${path} elapsed=${seconds}s ${outcome}\n`);
     };
     if (!repo.ok) {
       report("failure=unreachable");
@@ -3740,7 +3938,12 @@ export async function gcAll(
         ["unknown", "broken"].includes(line.split("\t")[2] ?? ""),
       ),
   };
-  if (!options.dryRun && failed.length === 0 && refused.length === 0 && options.journal?.signal === undefined)
+  if (
+    !options.dryRun &&
+    failed.length === 0 &&
+    refused.length === 0 &&
+    options.journal?.signal === undefined
+  )
     await publishVerdicts(undefined, result, seen);
   return good(result);
 }
