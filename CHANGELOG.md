@@ -1,5 +1,9 @@
 # Changelog
 
+## 5.6.0 — 2026-11-08
+
+- Rotate routing journals by UTC day while retaining legacy history.
+
 ## 5.5.0 — 2026-11-08
 
 - Require an explicit pin decision and report graveyard moves and recovery.
