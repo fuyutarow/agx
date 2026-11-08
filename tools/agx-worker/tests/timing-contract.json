@@ -430,6 +430,16 @@
     "timeout": 30000
   },
   {
+    "file": "tools/agx-worker/tests/next/run.test.ts",
+    "name": "dispatch contract: a Jev split reply is recorded as refused with its reason",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/run.test.ts",
+    "name": "refuses dispatch when the target has an ownerless ref lock",
+    "timeout": 30000
+  },
+  {
     "file": "tools/agx-worker/tests/next/scratch-cd.test.ts",
     "name": "repository ticket with %s --cd records worker provenance (failed check: %s)",
     "timeout": 30000

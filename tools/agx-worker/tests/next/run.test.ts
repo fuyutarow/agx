@@ -161,7 +161,8 @@ describe("agx-worker run", () => {
       ),
     ).toBe(true);
     expect(records.some((record) => record.kind === "started")).toBe(false);
-  });
+    // One cold start alone passed 5 s (5152 ms against the bun default); warm runs took 1.6-3 s.
+  }, 30_000);
 
   test.each(["passed", "failed", "absent", "missing-result"])(
     "real run orders and records verify.always: %s",
@@ -392,7 +393,8 @@ describe("agx-worker run", () => {
       {
         cwd: process.cwd(),
         env: { ...subprocessEnvironment(), AGX_STATE_DIR: state },
-        timeout: 5_000,
+        // A cold CLI start alone takes ~4 s; under gate load it passes 5 s. The test's registered budget is 30 s.
+        timeout: 20_000,
       },
     );
 
@@ -404,7 +406,7 @@ describe("agx-worker run", () => {
     expect(readFileSync(join(state, "records.jsonl"), "utf8")).toContain(
       '"kind":"refusal"',
     );
-  });
+  }, 30_000);
 
   test("a sub-two-minute zero-change exit without RETURN fails its lineage", async () => {
     const root = await scratch("early-quit-");
@@ -630,10 +632,10 @@ describe("agx-worker run", () => {
       },
     );
 
-    expect(result.stderr.toString().trim().split("\n")).toEqual([
-      expect.stringContaining("WARN ignored legacy ticket fields:"),
-      expect.stringContaining(`WARN overlap run=${binding.id}`),
-    ]);
+    const warnings = result.stderr.toString().trim().split("\n");
+    expect(warnings).toHaveLength(2);
+    expect(warnings[0]).toContain("WARN ignored legacy ticket fields:");
+    expect(warnings[1]).toContain(`WARN overlap run=${binding.id}`);
     expect(result.stderr.toString()).toStartWith(
       "WARN ignored legacy ticket fields:",
     );

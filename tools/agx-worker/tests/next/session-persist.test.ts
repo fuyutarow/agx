@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fromThrowable } from "neverthrow";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { foldedRuns } from "../../src/next/store.ts";
 import { createTempTracker } from "../temp.ts";
@@ -30,11 +31,9 @@ const cleanup = async () => {
     if (child.exitCode === null) child.kill("SIGKILL");
   await Promise.all(children.map((child) => child.exited));
   for (const server of servers.splice(0)) await server.stop(true);
-  for (const pid of vendorPids) {
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {}
-  }
+  // A pid that already exited makes kill fail; that is the outcome wanted here.
+  for (const pid of vendorPids)
+    void fromThrowable(() => process.kill(pid, "SIGKILL"))();
   vendorPids.clear();
   for (const root of roots) rmSync(root, { recursive: true, force: true });
 };
@@ -65,7 +64,8 @@ const waitFor = async <T>(
   read: () => T | undefined | Promise<T | undefined>,
   description: string,
 ): Promise<T> => {
-  const deadline = performance.now() + 5_000;
+  // Load-tolerant bound on a run's own record; the test's registered budget is 30 s (timing-contract.json).
+  const deadline = performance.now() + 10_000;
   while (performance.now() < deadline) {
     const value = await read();
     if (value !== undefined) return value;
@@ -190,11 +190,8 @@ process.stdout.write(JSON.stringify({ exit: 0, report: { summary: "done", change
 };
 
 const killProcess = (pid: number): void => {
-  try {
-    process.kill(pid, "SIGKILL");
-  } catch {
-    assert.fail(`could not kill fixture process ${pid}`);
-  }
+  const killed = fromThrowable(() => process.kill(pid, "SIGKILL"))();
+  if (killed.isErr()) assert.fail(`could not kill fixture process ${pid}`);
 };
 
 const killRunAfterStart = async (

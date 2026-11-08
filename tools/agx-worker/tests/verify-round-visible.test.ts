@@ -1,6 +1,8 @@
 import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
+import assert from "node:assert/strict";
 import {
   chmod,
+  mkdir,
   mkdtemp,
   readFile,
   readdir,
@@ -11,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { jsonOf, z } from "../../shared/src/zod.ts";
 import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
+import { startFakeJev } from "./fake-jev.ts";
 import { prepareTicketRepo } from "./ticket-repo.ts";
 
 setDefaultTimeout(60000);
@@ -33,6 +36,10 @@ const Ended = z.looseObject({
   verify: z.array(z.looseObject({ exit: z.number(), log_path: z.string() })),
   verify_round: Round.optional(),
 });
+const Send = z.looseObject({
+  command: z.literal("send"),
+  args: z.array(z.string()),
+});
 const ListedRun = z.looseObject({
   id: z.string(),
   verify: z.array(z.looseObject({ exit: z.number() })),
@@ -54,34 +61,29 @@ if (resume && process.env.SECOND_ROUND === "pass") writeFileSync("fixed", "yes")
 process.stdout.write(JSON.stringify({report: {summary: "done", changes: [], checks: [], for_coordinator: [], open: []}, vendor_session: "test-session"}) + "\\n");
 `,
   );
+  // The run-end notice is one `reason-network send <address> <message>` (src/next/end-notice.ts).
   const noticesPath = join(root, "notices.jsonl");
-  const agx = join(root, "agx");
+  const reasonHome = join(root, "rn-home");
+  await mkdir(reasonHome, { recursive: true });
   await writeFile(
-    agx,
-    `#!${process.execPath}
-import { appendFileSync } from "node:fs";
-appendFileSync(process.env.NOTICES_PATH, JSON.stringify(process.argv.slice(2)) + "\\n");
-process.stdout.write("fake transport accepted\\n");
-`,
+    join(reasonHome, "fake.json"),
+    JSON.stringify({ log: noticesPath, mode: "ok" }),
   );
-  await chmod(agx, 0o755);
+  const reason = join(root, "reason-network");
+  await writeFile(
+    reason,
+    `#!${process.execPath}\nimport ${JSON.stringify(new URL("fixtures/reason-notice.ts", import.meta.url).pathname)};\n`,
+  );
+  await chmod(reason, 0o755);
   const ticket = join(root, "ticket.md");
   await writeFile(
     ticket,
     `+++\nschema = 2\nname = "round-visible"\ntimeout_s = 60\nwrites = ["changed.txt", "fixed"]\ncapabilities = ["long-tool-loop"]\noutcome = "round visible"\nverify = ["test -f fixed"]\n[proposition]\nid = "ROUND"\nclaim = "the round is named"\nrefuted_by = "a round-2 pass reads like round 1"\n+++\nWork.\n`,
   );
-  const server = Bun.serve({
-    port: 0,
-    fetch: () =>
-      Response.json({
-        answers: {
-          worker: { choice: "sol-medium", probabilities: { "sol-medium": 1 } },
-        },
-      }),
-  });
-  await using _server = {
+  const jev = startFakeJev();
+  await using _jev = {
     [Symbol.asyncDispose]: async () => {
-      await server.stop(true);
+      await jev.stop();
     },
   };
   const env = {
@@ -92,12 +94,12 @@ process.stdout.write("fake transport accepted\\n");
     XDG_STATE_HOME: join(root, "tmp"),
     AGX_CONFIG: new URL("../src/roster/policy.example.toml", import.meta.url)
       .pathname,
-    JEV_URL: `http://127.0.0.1:${server.port}/`,
+    JEV_URL: jev.url,
     TYPESAFE_API_KEY: "test-key",
     AGX_WORKER_BIN: join(root, "worker.ts"),
     AGX_WORKER_PATH_SOURCE: "dispatcher",
     AGX_DISPATCHER_SESSION: "claude:dispatcher-fixture",
-    NOTICES_PATH: noticesPath,
+    REASON_NETWORK_HOME: reasonHome,
     SECOND_ROUND: second,
   };
   const cli = ["tools/agx-worker/src/next/cli.ts"];
@@ -119,7 +121,9 @@ process.stdout.write("fake transport accepted\\n");
     new Response(run.stdout).text(),
     new Response(run.stderr).text(),
   ]);
-  const receipt = jsonOf(Receipt).parse(stdout);
+  const parsedReceipt = jsonOf(Receipt).safeParse(stdout);
+  assert.ok(parsedReceipt.success, `receipt is not JSON: ${stderr}`);
+  const receipt = parsedReceipt.data;
   const records = (await readFile(join(state, "records.jsonl"), "utf8"))
     .trim()
     .split("\n")
@@ -132,17 +136,24 @@ process.stdout.write("fake transport accepted\\n");
   const deadline = performance.now() + 10_000;
   while (performance.now() < deadline && message === "") {
     const text = await readFile(noticesPath, "utf8").catch(() => "");
-    const line = text.trim().split("\n").at(0);
-    if (line !== undefined && line !== "") {
-      const argv = jsonOf(z.array(z.string())).parse(line);
-      message = argv[argv.indexOf("--message") + 1] ?? "";
-    } else await Bun.sleep(20);
+    const send = text
+      .trim()
+      .split("\n")
+      .flatMap((line) => {
+        const parsed = jsonOf(Send).safeParse(line);
+        return parsed.success ? [parsed.data] : [];
+      })
+      .at(0);
+    if (send !== undefined) message = send.args[1] ?? "";
+    else await Bun.sleep(20);
   }
   const list = (args: string[]) =>
     Bun.spawnSync([process.execPath, ...cli, "ls", ...args], { env });
-  const listJson = jsonOf(z.array(ListedRun)).parse(
+  const parsedList = jsonOf(z.array(ListedRun)).safeParse(
     list([receipt.id, "--json"]).stdout.toString(),
   );
+  assert.ok(parsedList.success, "ls --json is not a JSON array");
+  const listJson = parsedList.data;
   const latest = list(["--ticket", "round-visible", "--latest", "--json"]);
   const latestHuman = list(["--ticket", "round-visible", "--latest"]);
   const runFiles = (await readdir(join(state, "runs", receipt.id))).toSorted();
@@ -164,7 +175,10 @@ test("a round-2 pass names its round and round 1's failure everywhere a consumer
   expect(result.exit, result.stderr).toBe(0);
   expect(result.receipt.outcome).toBe("ok");
   // Every round's logs follow one naming: verify-round-K-NN.log.
-  const logs = result.runFiles.filter((name) => name.startsWith("verify"));
+  // verify-progress.json is the run's progress record (src/next/run.ts), not a round log.
+  const logs = result.runFiles.filter((name) =>
+    /^verify-round-\d+-\d+\.log$/u.test(name),
+  );
   expect(logs).toEqual(["verify-round-1-01.log", "verify-round-2-01.log"]);
   // The recorded verify field keeps its shape; the round is a new field.
   expect(result.ended?.verify.map((check) => check.exit)).toEqual([0]);
@@ -193,7 +207,9 @@ test("a round-2 pass names its round and round 1's failure everywhere a consumer
 test("persistent failure names round 3 and both earlier failures", async () => {
   const result = await exercise("fail");
   expect(result.receipt.outcome).toBe("verify-failed");
-  expect(result.runFiles.filter((name) => name.startsWith("verify"))).toEqual([
+  expect(
+    result.runFiles.filter((name) => /^verify-round-\d+-\d+\.log$/u.test(name)),
+  ).toEqual([
     "verify-round-1-01.log",
     "verify-round-2-01.log",
     "verify-round-3-01.log",
