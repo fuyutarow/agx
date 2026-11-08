@@ -585,7 +585,7 @@ describe("AGX-GC-UNTRACKED-KEEP-1024", () => {
       await Bun.write(join(dir, artifact), "live artifact\n");
       for (const dry of [true, false]) {
         const result = await ws(
-          ["gc", "--include-unrecorded", ...(dry ? ["--dry-run"] : [])],
+          ["gc", "--include-unrecorded", ...(dry ? ["--dry-run"] : ["--apply"])],
           path,
         );
         expect(result.code, result.err).toBe(0);
@@ -737,7 +737,7 @@ describe("ws contract: shared agx.toml [ws] policy", () => {
         path,
       );
       expect(spare.code, spare.err).toBe(0);
-      const collected = await ws(["gc", "--include-unrecorded"], safe);
+      const collected = await ws(["gc", "--apply", "--include-unrecorded"], safe);
       expect(collected.code, collected.err + collected.out).toBe(0);
       expect(collected.out).toContain(`${safe}\tws\tkeep\t`);
       expect(collected.out).toContain(
@@ -767,7 +767,7 @@ describe("ws contract: shared agx.toml [ws] policy", () => {
     for (const args of [
       ["add", "other"],
       ["rm", "safe"],
-      ["gc", "--include-unrecorded"],
+      ["gc", "--apply", "--include-unrecorded"],
     ]) {
       const result = await ws(args, path);
       expect(result.code, result.err).toBe(1);
@@ -1781,7 +1781,7 @@ describe("agx ws add", () => {
     const observed = await ws(["gc", "--dry-run"], path, env);
     expect(observed.code, observed.err).toBe(0);
     expect(await Bun.file(verdictPath).exists()).toBe(false);
-    const collected = await ws(["gc"], path, env);
+    const collected = await ws(["gc", "--apply"], path, env);
     expect(collected.code, collected.err).toBe(0);
     expect(await Bun.file(verdictPath).exists()).toBe(true);
     const observation = jsonOf(
@@ -2364,7 +2364,7 @@ describe("agx ws gc", () => {
       ),
     ).toBe(true);
 
-    const real = await ws(["gc", "--include-unrecorded", "--json"], path);
+    const real = await ws(["gc", "--apply", "--include-unrecorded", "--json"], path);
     expect(real.code, real.err).toBe(1);
     const realResult = gcRows.safeParse(real.out);
     expect(realResult.success, real.out).toBe(true);
@@ -2436,7 +2436,7 @@ describe("agx ws gc", () => {
       ),
     ).toBe(true);
 
-    const real = await ws(["gc", "--include-unrecorded", "--json"], path);
+    const real = await ws(["gc", "--apply", "--include-unrecorded", "--json"], path);
     expect(real.code, real.err).toBe(1);
     const realResult = gcRows.safeParse(real.out);
     expect(realResult.success, real.out).toBe(true);
@@ -2487,7 +2487,7 @@ describe("agx ws gc", () => {
     expect((await jj(["commit", "-m", "unpushed"], missing)).code).toBe(0);
     rmSync(missing, { recursive: true, force: true });
 
-    const real = await ws(["gc", "--include-unrecorded", "--json"], path);
+    const real = await ws(["gc", "--apply", "--include-unrecorded", "--json"], path);
     expect(real.code, real.err).toBe(1);
     const result = gcRows.safeParse(real.out);
     expect(result.success, real.out).toBe(true);
@@ -2515,7 +2515,7 @@ describe("agx ws gc", () => {
     expect(dry.code, dry.err).toBe(0);
     expect(dry.out).toContain(`${dir}\tws\tremovable\t`);
     expect(dry.out).toContain("feature-gc-pushed@origin");
-    const collected = await ws(["gc", "--include-unrecorded"], path);
+    const collected = await ws(["gc", "--apply", "--include-unrecorded"], path);
     expect(collected.code, collected.err).toBe(0);
     expect(existsSync(dir)).toBe(false);
   });
@@ -2609,7 +2609,7 @@ describe("agx ws gc", () => {
     });
     for (const s of ["done", "live", "cont", "dirty", "orph"])
       expect(existsSync(wsDir(path, s))).toBe(true);
-    const real = await ws(["gc"], path);
+    const real = await ws(["gc", "--apply"], path);
     expect(real.code).toBe(0);
     expect(existsSync(wsDir(path, "done"))).toBe(false);
     expect(existsSync(wsDir(path, "orph"))).toBe(false);
@@ -2634,7 +2634,7 @@ describe("agx ws gc", () => {
     ).out.trim();
     await jj(["new", "main"], dir);
     setRecords([rec(path, "ended", { end_commit: end })]);
-    const r = await ws(["gc"], path);
+    const r = await ws(["gc", "--apply"], path);
     expect(r.code).toBe(0);
     expect(r.out).toContain(`${dir}\tws\tremovable\t`);
     expect(existsSync(dir)).toBe(false);
@@ -2649,10 +2649,10 @@ describe("agx ws gc", () => {
     const dry = await ws(["gc", "--dry-run"], path);
     expect(dry.out).toContain("unrecorded");
     expect(dry.out).not.toContain("would-collect");
-    const plain = await ws(["gc"], path);
+    const plain = await ws(["gc", "--apply"], path);
     expect(plain.code).toBe(0);
     expect(existsSync(wsDir(path, "clean"))).toBe(true);
-    const wide = await ws(["gc", "--include-unrecorded"], path);
+    const wide = await ws(["gc", "--apply", "--include-unrecorded"], path);
     expect(wide.code).toBe(0);
     expect(existsSync(wsDir(path, "clean"))).toBe(false);
     expect(existsSync(wsDir(path, "diff"))).toBe(true);
@@ -2675,7 +2675,7 @@ describe("agx ws gc", () => {
     expect(protectedRun.out).toContain("; grace 30 min");
 
     const retained = await run(
-      ["bun", WS, "gc", "--include-unrecorded"],
+      ["bun", WS, "gc", "--apply", "--include-unrecorded"],
       path,
       baseEnv(),
     );
@@ -2684,7 +2684,7 @@ describe("agx ws gc", () => {
     expect(existsSync(young)).toBe(true);
 
     const disabled = await ws(
-      ["gc", "--include-unrecorded", "--grace-minutes", "0"],
+      ["gc", "--apply", "--include-unrecorded", "--grace-minutes", "0"],
       path,
     );
     expect(disabled.code, disabled.err).toBe(0);
@@ -2709,9 +2709,9 @@ describe("agx ws gc", () => {
     const dry = await ws(["gc", "--dry-run"], path);
     expect(dry.out).toContain(`${legacy}\tlegacy\tkeep\t`);
     expect(dry.out).toContain("pass --legacy to collect");
-    expect((await ws(["gc", "--include-unrecorded"], path)).code).toBe(0);
+    expect((await ws(["gc", "--apply", "--include-unrecorded"], path)).code).toBe(0);
     expect(existsSync(legacy)).toBe(true);
-    expect((await ws(["gc", "--legacy"], path)).code).toBe(0);
+    expect((await ws(["gc", "--apply", "--legacy"], path)).code).toBe(0);
     expect(existsSync(legacy)).toBe(false);
   });
 
@@ -2831,7 +2831,7 @@ describe("WS-GC-JJ-LIST", () => {
     expect((await jj(["workspace", "update-stale"], dirs.stale)).code).toBe(0);
     for (const dir of Object.values(dirs))
       expect(await Bun.file(join(dir, "a.txt")).exists()).toBe(true);
-    const plain = await ws(["gc"], path);
+    const plain = await ws(["gc", "--apply"], path);
     expect(plain.code, plain.err).toBe(0);
     expect(await Bun.file(join(dirs.empty, "a.txt")).exists()).toBe(true);
 
@@ -2854,7 +2854,7 @@ const child = Bun.spawn([${JSON.stringify(rip)}, ...process.argv.slice(2)], {std
     );
     await chmod(wrapper, 0o755);
     const collected = await ws(
-      ["gc", "--legacy"],
+      ["gc", "--apply", "--legacy"],
       path,
       baseEnv({ PATH: `${tracedBin}:${bin}:${process.env.PATH}` }),
     );
@@ -2935,7 +2935,7 @@ const child = Bun.spawn([${JSON.stringify(rip)}, ...process.argv.slice(2)], {std
       ).code,
     ).toBe(0);
     expect((await jj(["bookmark", "delete", "main"], path)).code).toBe(0);
-    const noTrunk = await ws(["gc", "--include-unrecorded", "--legacy"], path);
+    const noTrunk = await ws(["gc", "--apply", "--include-unrecorded", "--legacy"], path);
     expect(noTrunk.code, noTrunk.err).toBe(0);
     expect(noTrunk.out).toContain("trunk resolves to root");
     expect(
@@ -3118,7 +3118,7 @@ describe("gc integration branches", () => {
       "changed result",
     );
     await Bun.write(join(dir, "worker.result.md"), "measurement");
-    const collected = await fixtureWs(["gc"], path);
+    const collected = await fixtureWs(["gc", "--apply"], path);
     expect(collected.code, collected.err).toBe(0);
     expect(existsSync(dir)).toBe(false);
     expect(await Bun.file(join(live, "worker.result.md")).text()).toBe(
@@ -3152,7 +3152,7 @@ describe("gc integration branches", () => {
     expect(dry.out).toContain(
       "unsnapshotted working-copy changes: yes: bytes differ at a.txt",
     );
-    const collected = await ws(["gc", "--include-unrecorded"], path);
+    const collected = await ws(["gc", "--apply", "--include-unrecorded"], path);
     expect(collected.code, collected.err).toBe(0);
     expect(collected.out).toContain(`${dir}\tws\tkeep\t`);
     expect(collected.out).toContain(
@@ -3303,7 +3303,7 @@ describe("gc integration branches", () => {
     expect(dry.out).toContain(wsDir(path, "reject-other") + "\tws\tkeep\t");
     expect(dry.out).toContain(wsDir(path, "reject-edit") + "\tws\tkeep\t");
     expect(dry.out).toContain("unjudged; keep");
-    const collected = await ws(["gc"], path);
+    const collected = await ws(["gc", "--apply"], path);
     expect(collected.code, collected.err).toBe(0);
     for (const slug of ["reject-clean", "reject-copy"])
       expect(existsSync(wsDir(path, slug))).toBe(false);
@@ -3439,7 +3439,7 @@ describe("gc integration branches", () => {
       expect(dry.out).toContain(`${dir}\tws\tremovable\t`);
       // A locked recheck must see disk edits without recording them into jj.
       await Bun.write(join(dir, changedFile), "still unlanded\n");
-      const kept = await ws(["gc"], path);
+      const kept = await ws(["gc", "--apply"], path);
       expect(kept.code, kept.err).toBe(0);
       expect(kept.out).toContain(`${dir}\tws\tkeep\t`);
       expect(kept.out).toContain(
@@ -3451,7 +3451,7 @@ describe("gc integration branches", () => {
       );
       await Bun.write(join(dir, changedFile), "accepted\n");
       expect((await jj(["status"], dir)).code).toBe(0);
-      const collected = await ws(["gc"], path);
+      const collected = await ws(["gc", "--apply"], path);
       expect(collected.code, collected.err).toBe(0);
       expect(collected.out).toContain(`${dir}\tws\tremovable\t`);
       expect(existsSync(dir)).toBe(false);
@@ -3547,7 +3547,7 @@ describe("gc integration branches", () => {
         .map((event) => JSON.stringify(event))
         .join("\n")}\n`,
     );
-    const collected = await ws(["gc", "--abandoned"], path, env);
+    const collected = await ws(["gc", "--apply", "--abandoned"], path, env);
     expect(collected.code, collected.err).toBe(0);
     expect(collected.out).toContain(`${dir}\tws\tremovable\t`);
     expect(await Bun.file(join(dir, "a.txt")).exists()).toBe(false);
@@ -3689,14 +3689,14 @@ describe("gc integration branches", () => {
       "abandoned-first (verify-failed), abandoned-second (malformed)",
     );
     const plain = await ws(
-      ["gc", "--legacy", "--include-unrecorded"],
+      ["gc", "--apply", "--legacy", "--include-unrecorded"],
       path,
       env,
     );
     expect(plain.code, plain.err).toBe(0);
     expect(plain.out).toContain("pass --abandoned");
     expect(await Bun.file(join(abandoned, "attempt.txt")).exists()).toBe(true);
-    const collected = await ws(["gc", "--abandoned"], path, env);
+    const collected = await ws(["gc", "--apply", "--abandoned"], path, env);
     expect(collected.code, collected.err).toBe(0);
     expect(collected.out).toContain(`${abandoned}\tws\tremovable\t`);
     expect(await Bun.file(join(abandoned, "attempt.txt")).exists()).toBe(false);
@@ -3767,7 +3767,7 @@ describe("gc integration branches", () => {
     expect(dry.code, dry.err).toBe(0);
     expect(dry.out).toContain(`${landed}\tws\tkeep\t`);
     expect(dry.out).toContain("unlanded change");
-    const collected = await ws(["gc"], path, env);
+    const collected = await ws(["gc", "--apply"], path, env);
     expect(collected.code, collected.err).toBe(0);
     expect(await Bun.file(join(landed, "a.txt")).exists()).toBe(true);
     expect(await Bun.file(join(partial, "second.txt")).text()).toBe(
@@ -3836,7 +3836,7 @@ describe("gc integration branches", () => {
     expect(dry.out).toContain(`${dir}\tws\tkeep\t`);
     expect(dry.out).toContain("unlanded change");
     await Bun.write(join(dir, "feature.txt"), "unreleased work\n");
-    const partial = await ws(["gc"], path);
+    const partial = await ws(["gc", "--apply"], path);
     expect(partial.code, partial.err).toBe(0);
     expect(partial.out).toContain(`${dir}\tws\tkeep\t`);
     expect(partial.out).toContain("unlanded change");
@@ -3847,7 +3847,7 @@ describe("gc integration branches", () => {
       "---\nbump: patch\n---\n\nNever released\n",
     );
     expect((await jj(["status"], dir)).code).toBe(0);
-    const missing = await ws(["gc"], path);
+    const missing = await ws(["gc", "--apply"], path);
     expect(missing.out).toContain(`${dir}\tws\tkeep\t`);
     expect(missing.out).toContain("unlanded change");
     expect(await Bun.file(join(dir, note)).exists()).toBe(true);
@@ -3877,7 +3877,7 @@ describe("gc integration branches", () => {
     expect(dry.code, dry.err).toBe(0);
     expect(dry.out).toContain(`${dir}\tland\tkeep\t`);
     expect(dry.out).toContain("unlanded change");
-    expect((await ws(["gc"], path)).code).toBe(0);
+    expect((await ws(["gc", "--apply"], path)).code).toBe(0);
     expect(await Bun.file(join(dir, "a.txt")).exists()).toBe(true);
     await Bun.write(
       join(state, "land.lock/owner.json"),
@@ -3888,7 +3888,7 @@ describe("gc integration branches", () => {
         since: Temporal.Now.instant().toString(),
       }),
     );
-    const held = await ws(["gc", "--legacy", "--include-unrecorded"], path);
+    const held = await ws(["gc", "--apply", "--legacy", "--include-unrecorded"], path);
     expect(held.code, held.err).toBe(0);
     expect(held.out).toContain("land lock is held");
     expect(await Bun.file(join(dir, "a.txt")).exists()).toBe(true);
@@ -3902,7 +3902,7 @@ describe("gc integration branches", () => {
       }),
     );
     const collected = await ws(
-      ["gc", "--legacy", "--include-unrecorded"],
+      ["gc", "--apply", "--legacy", "--include-unrecorded"],
       path,
     );
     expect(collected.code, collected.err).toBe(0);
@@ -3946,7 +3946,7 @@ describe("gc integration branches", () => {
     expect(dry.out).toContain("unlanded change");
     // An additional on-disk edit must prevent deletion without being snapshotted.
     await Bun.write(join(dir, "a.txt"), "a\nB\nc\nD\ne\nf\ng\n");
-    const partial = await ws(["gc", "--legacy"], path);
+    const partial = await ws(["gc", "--apply", "--legacy"], path);
     expect(partial.code, partial.err).toBe(0);
     expect(partial.out).toContain(`${dir}\tlegacy\tkeep\t`);
     expect(partial.out).toContain("unlanded change");
@@ -4044,7 +4044,7 @@ describe("gc integration branches", () => {
         true,
       );
     }
-    const conflict = await ws(["gc", "--all", "--repo", primary], primary);
+    const conflict = await ws(["gc", "--apply", "--all", "--repo", primary], primary);
     expect(conflict.code).toBe(1);
     expect(conflict.err).toContain("cannot be combined");
     const help = await ws(["gc", "--help"], primary);
@@ -4098,7 +4098,7 @@ describe("SEP-WS-FORGET-UNJUDGED-1023", () => {
         let args = ["rm", "guarded"];
         if (caller === "adopt") args = ["adopt", dir, "--slug", "moved"];
         if (caller === "gc")
-          args = ["gc", "--abandoned", "--legacy", "--include-unrecorded"];
+          args = ["gc", "--apply", "--abandoned", "--legacy", "--include-unrecorded"];
         const result = await ws(args, path);
         expect(result.code, result.out + result.err).toBe(
           allowed || caller === "gc" ? 0 : 1,
@@ -4141,7 +4141,7 @@ describe("SEP-WS-FORGET-UNJUDGED-1023", () => {
       [fresh, old],
     ]) {
       setRecords(rows);
-      const result = await ws(["gc", "--abandoned"], path);
+      const result = await ws(["gc", "--apply", "--abandoned"], path);
       expect(result.out).toContain("run new is unjudged");
       expect(existsSync(dir)).toBe(true);
     }
@@ -4408,7 +4408,7 @@ describe("AGX-GC-DISCOVER-REPOS-1025", () => {
     });
     expect(existsSync(wsDir(missingRepo, "missing"))).toBe(true);
     const real = await ws(
-      ["gc", "--all", "--include-unrecorded", "--json"],
+      ["gc", "--apply", "--all", "--include-unrecorded", "--json"],
       stateRepo,
       env,
     );

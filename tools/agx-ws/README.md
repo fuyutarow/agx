@@ -34,7 +34,7 @@ parts, agx-worker consumes a tree through `--cd`, and `agx ws gc` reads `agx wor
 agx ws add <slug> [--rev R] [--repo P] [--reuse] [--json]
 agx ws refresh <slug> [--repo P]
 agx ws rm  <slug> [--repo P]
-agx ws gc  [--dry-run] [--include-unrecorded] [--legacy] [--abandoned] [--json] [--repo P | --all]
+agx ws gc  [--apply | --dry-run] [--include-unrecorded] [--legacy] [--abandoned] [--json] [--repo P | --all]
 ```
 
 - **add** — resolves `--rev` (exactly one commit), updates stale source/backing workspaces with

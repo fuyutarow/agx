@@ -149,11 +149,12 @@ afterAll(() => {
 });
 test("gc modes preserve effects and JSON envelope", async () => {
   for (const [flags, removes] of [
-    [[], true],
+    [[], false],
     [["--apply"], true],
     [["--dry-run"], false],
     [["--apply", "--dry-run", "--json"], false],
     [["--dry-run", "--json"], false],
+    [["--json"], false],
   ] satisfies [string[], boolean][]) {
     const f = await fixture(1);
     const rip = join(f.bin, "rip");
@@ -183,6 +184,22 @@ test("gc modes preserve effects and JSON envelope", async () => {
       expect(result.err).toContain("--apply");
       expect(result.err).toContain("--dry-run");
       continue;
+    }
+    if (flags.length === 0 || (flags.length === 1 && flags[0] === "--json")) {
+      const explicit = await run(["bun", wsCli, "gc", "--include-unrecorded", "--grace-minutes", "0", "--repo", f.repo, "--dry-run", ...flags], f.repo, f.baseEnv);
+      expect(explicit.code, explicit.err).toBe(0);
+      if (flags.includes("--json")) {
+        const actual = envelope(result.out);
+        const expected = envelope(explicit.out);
+        expect({ ...actual, rows: withoutAge(actual.rows) }).toEqual({
+          ...expected,
+          rows: withoutAge(expected.rows),
+        });
+      } else {
+        const rows = (out: string) =>
+          out.trimEnd().split("\n").map((line) => line.split("\t"));
+        expect(withoutAge(rows(result.out))).toEqual(withoutAge(rows(explicit.out)));
+      }
     }
     if (flags.includes("--json")) {
       const human = await run(
@@ -274,6 +291,25 @@ test("gc modes preserve effects and JSON envelope", async () => {
       expect(value.complete).toBe(true);
     }
   }
+});
+
+function withoutAge(rows: string[][]) {
+  return rows.map((row) =>
+    row.map((value, index) => (index === 4 ? "AGE" : value)),
+  );
+}
+
+test("report comparison ignores only the changing age column", () => {
+  const row = ["/workspace", "ws", "removable", "change", "now", "reason"];
+  expect(withoutAge([row])).toEqual(
+    withoutAge([[...row.slice(0, 4), "1 second ago", "reason"]]),
+  );
+  expect(withoutAge([row])).toEqual(
+    withoutAge([[...row.slice(0, 4), "2 minutes ago", "reason"]]),
+  );
+  expect(withoutAge([row])).not.toEqual(
+    withoutAge([[...row.slice(0, 2), "keep", ...row.slice(3)]]),
+  );
 });
 
 function envelope(text: string) {

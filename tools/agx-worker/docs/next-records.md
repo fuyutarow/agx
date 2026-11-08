@@ -192,8 +192,8 @@ Each finding includes its one-line action:
 | `orphaned`                | Review the lost run and run `agx worker judge RUN_ID accept\|reject`.      |
 | `unjudged`                | Review the completed run and run `agx worker judge RUN_ID accept\|reject`. |
 | `outside-home`            | Move the ticket to the ticket home printed in the finding.                 |
-| `accepted-landed-present` | Run the printed `agx ticket gc --repo REPO` to collect the ticket.         |
-| `collectable`             | Run the printed `agx ws gc --include-unrecorded --repo REPO`.              |
+| `accepted-landed-present` | Run the printed `agx ticket gc --apply --repo REPO` to collect the ticket.         |
+| `collectable`             | Run the printed `agx ws gc --apply --include-unrecorded --repo REPO`.              |
 | `unlanded-72h`            | Enter the printed workspace and run `mise run land`.                       |
 | `stale`                   | Run the printed `agx ws refresh NAME --repo REPO`.                         |
 

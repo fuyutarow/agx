@@ -65,7 +65,7 @@ let thrown = false;
 Object.defineProperty(performance, "now", { value: () => { if (!thrown && (new Error().stack ?? "").includes("classifyGc")) { thrown = true; throw new Error("injected unexpected classification error"); } return now(); } });
 await import(${JSON.stringify(cli)});
 `);
-  result = await run(["bun", wrapper, "gc", "--include-unrecorded", "--legacy", "--grace-minutes", "0", "--json", "--repo", repo]);
+  result = await run(["bun", wrapper, "gc", "--apply", "--include-unrecorded", "--legacy", "--grace-minutes", "0", "--json", "--repo", repo]);
   const parsed = jsonOf(z.object({ rows: z.array(z.array(z.string())) })).safeParse(result.out);
   expect(parsed.success, `${result.err}\n${result.out}`).toBe(true);
   if (!parsed.success) return;

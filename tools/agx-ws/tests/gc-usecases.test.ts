@@ -178,7 +178,7 @@ async function setRecords(f: Fixture, records: object[]): Promise<void> {
 }
 
 async function gc(f: Fixture, args: string[]): Promise<RunResult> {
-  return run(["bun", WS, "gc", ...args, "--repo", f.repo], f.repo, f.env);
+  return run(["bun", WS, "gc", ...(!args.includes("--dry-run") ? ["--apply"] : []), ...args, "--repo", f.repo], f.repo, f.env);
 }
 
 function rowFor(result: RunResult, path: string): string[] {

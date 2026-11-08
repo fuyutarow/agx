@@ -245,7 +245,7 @@ const gcCommand = command(
     ignoreArgv: rejectPrototypeFlag,
     help: {
       description:
-        'Default: remove; --dry-run reports only. Shared reclaim grammar: tools/agx-worker/contract.md. Enumerate jj workspaces. Print TSV: path, kind, verdict, change id, age, reason. Exit 1 for failed collection or broken workspaces; refused repositories exit 2. Legacy workspaces are report-only until --legacy. Keep a workspace by setting `keep = ["ws_<name>"]` under `[ws]` in the main checkout root `agx.toml` (example: `keep = ["ws_reference"]`). Machine-local keep entries live under `[ws]` in `$XDG_CONFIG_HOME/agx/repos/<name>.toml`. agx ws add is the only creator.',
+        'default: report; --apply removes. Shared reclaim grammar: tools/agx-worker/contract.md. Enumerate jj workspaces. Print TSV: path, kind, verdict, change id, age, reason. Exit 1 for failed collection or broken workspaces; refused repositories exit 2. Legacy workspaces are report-only until --legacy. Keep a workspace by setting `keep = ["ws_<name>"]` under `[ws]` in the main checkout root `agx.toml` (example: `keep = ["ws_reference"]`). Machine-local keep entries live under `[ws]` in `$XDG_CONFIG_HOME/agx/repos/<name>.toml`. agx ws add is the only creator.',
     },
     flags: {
       dryRun: { type: Boolean, description: "report only; remove nothing" },
@@ -378,7 +378,7 @@ const gcCommand = command(
     process.on("SIGTERM", onTerm);
     process.on("SIGINT", onInt);
     const options = {
-      dryRun: argv.flags.dryRun === true,
+      dryRun: argv.flags.apply !== true,
       includeUnrecorded: argv.flags.includeUnrecorded === true,
       legacy: argv.flags.legacy === true,
       abandoned: argv.flags.abandoned === true,

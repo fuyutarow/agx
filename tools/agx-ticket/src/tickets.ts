@@ -601,7 +601,7 @@ function acceptedLandedFindings(backing: string, rows: TicketRow[]): string[] {
         backing,
         row.ticket,
         "accepted-landed-present",
-        `agx ticket gc --repo ${backing}`,
+        `agx ticket gc --apply --repo ${backing}`,
       ]
         .map((value) => doctorClean(value))
         .join("\t"),

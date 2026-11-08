@@ -327,7 +327,7 @@ if (args.includes("log") && args.some(arg => arg.includes("::working_copies()"))
 }
 ${delegateJj}`,
   );
-  const gc = f.commandWithEnv(["gc", "--include-unrecorded"]);
+  const gc = f.commandWithEnv(["gc", "--apply", "--include-unrecorded"]);
   await waitFor(gate);
   const started = performance.now();
   const added = await f.commandWithEnv(["add", "admitted"]);
@@ -370,7 +370,7 @@ if (args.includes("forget") && args.includes("ws_a")) {
 }
 ${delegateJj}`,
   );
-  const gc = f.command(["gc", "--include-unrecorded"]);
+  const gc = f.command(["gc", "--apply", "--include-unrecorded"]);
   await waitFor(gate);
   const started = performance.now();
   const added = await f.command(["add", "admitted"]);
@@ -437,7 +437,7 @@ if (args.includes("log") && args.some(arg => arg.includes("::working_copies()"))
 ${delegateJj}`,
       );
     }
-    const collected = await f.commandWithEnv(["gc", "--include-unrecorded"]);
+    const collected = await f.commandWithEnv(["gc", "--apply", "--include-unrecorded"]);
     expect(collected.code, collected.err).toBe(0);
     expect(await Bun.file(gate).text()).toBe("under lock");
     const reason = {
@@ -465,7 +465,7 @@ test("WS-GC-LOCK-SCOPE: gc skips a repository locked by add", async () => {
       since: Temporal.Now.instant().toString(),
     }),
   );
-    const collected = await f.commandWithEnv(["gc", "--include-unrecorded"]);
+    const collected = await f.commandWithEnv(["gc", "--apply", "--include-unrecorded"]);
   expect(collected.code, collected.err).toBe(0);
   expect(collected.out).toContain("agx ws add owner");
   expect(collected.out).toContain("collection skipped");

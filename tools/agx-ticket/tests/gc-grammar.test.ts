@@ -129,11 +129,12 @@ async function fixture(custom?: string) {
 }
 test("gc modes preserve effects and JSON uses the workspace envelope", async () => {
   for (const [flags, removes] of [
-    [[], true],
+    [[], false],
     [["--apply"], true],
     [["--dry-run"], false],
     [["--apply", "--dry-run", "--json"], false],
     [["--dry-run", "--json"], false],
+    [["--json"], false],
   ] satisfies [string[], boolean][]) {
     const f = await fixture();
     const created = await f.tkt(["new", "eligible"]);
@@ -155,6 +156,11 @@ test("gc modes preserve effects and JSON uses the workspace envelope", async () 
       expect(result.err).toContain("--apply");
       expect(result.err).toContain("--dry-run");
       continue;
+    }
+    if (flags.length === 0 || (flags.length === 1 && flags[0] === "--json")) {
+      const explicit = await f.tkt(["gc", "--dry-run", ...flags]);
+      expect(explicit.code, explicit.err).toBe(0);
+      expect(result.out).toBe(explicit.out);
     }
     if (flags.includes("--json")) {
       const human = await f.tkt(["gc", "--dry-run"]);

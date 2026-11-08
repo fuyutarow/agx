@@ -4810,7 +4810,7 @@ export async function doctor(): Promise<Attempt<string[]>> {
   return good(doctorFindings(inventory.value));
 }
 
-/** Findings count workspaces that the unattended `agx ws gc --all --legacy` cannot collect. */
+/** Findings count workspaces that the unattended `agx ws gc --apply --all --legacy` cannot collect. */
 export function doctorFindings(rows: DoctorWorkspaceRow[]): string[] {
   const findings: string[] = [];
   for (const row of rows) {
@@ -4842,17 +4842,17 @@ export function doctorFindings(rows: DoctorWorkspaceRow[]): string[] {
     if (c.verdict === "abandoned") {
       emit(
         "abandoned",
-        `agx ws gc --abandoned${row.kind === "legacy" ? " --legacy" : ""} --repo ${row.repo}`,
+        `agx ws gc --apply --abandoned${row.kind === "legacy" ? " --legacy" : ""} --repo ${row.repo}`,
       );
     } else if (row.kind === "legacy") {
       emit(
         c.verdict === "empty" ? "legacy-empty" : "legacy-layout",
-        `agx ws gc --legacy --repo ${row.repo}`,
+        `agx ws gc --apply --legacy --repo ${row.repo}`,
       );
     } else if (c.verdict === "empty") {
-      emit("empty", `agx ws gc --include-unrecorded --repo ${row.repo}`);
+      emit("empty", `agx ws gc --apply --include-unrecorded --repo ${row.repo}`);
     } else if (c.verdict === "landed") {
-      emit("collectable", `agx ws gc --include-unrecorded --repo ${row.repo}`);
+      emit("collectable", `agx ws gc --apply --include-unrecorded --repo ${row.repo}`);
     }
     if (
       c.verdict === "unlanded" &&

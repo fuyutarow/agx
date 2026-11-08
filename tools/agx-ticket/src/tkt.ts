@@ -135,7 +135,7 @@ const gcCommand = command(
     },
     help: {
       description:
-        "Default: remove; --dry-run reports only. Shared reclaim grammar: tools/agx-worker/contract.md. Remove only accepted tickets with landed workspaces.",
+        "default: report; --apply removes. Shared reclaim grammar: tools/agx-worker/contract.md. Remove only accepted tickets with landed workspaces.",
     },
   },
   async (args) => {
@@ -146,11 +146,11 @@ const gcCommand = command(
     }
     await show(
       () =>
-        collect(args.flags.repo ?? process.cwd(), args.flags.dryRun === true),
+        collect(args.flags.repo ?? process.cwd(), args.flags.apply !== true),
       (items) => {
         if (args.flags.json === true) {
           const verdict =
-            args.flags.dryRun === true ? "would-collect" : "collected";
+            args.flags.apply !== true ? "would-collect" : "collected";
           process.stdout.write(
             JSON.stringify({
               rows: items.map((item) => item.split("\t")),

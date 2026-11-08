@@ -148,7 +148,7 @@ async function journalRun(interrupt: boolean) {
   const rip = join(f.bin, "rip");
   writeFileSync(rip, `#!/usr/bin/env bun\nimport { existsSync, watch } from "node:fs";\nimport { dirname } from "node:path";\nconst release = ${JSON.stringify(release)};\nawait Bun.write(${JSON.stringify(entered)}, "entered");\nawait new Promise((resolve) => { const w = watch(dirname(release), () => { if (existsSync(release)) { w.close(); resolve(); } }); if (existsSync(release)) { w.close(); resolve(); } });\n`);
   chmodSync(rip, 0o755);
-  const child = Bun.spawn(["bun", wsCli, "gc", "--include-unrecorded", "--grace-minutes", "0", "--json", "--repo", f.repo], { cwd: f.repo, env: f.baseEnv, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  const child = Bun.spawn(["bun", wsCli, "gc", "--apply", "--include-unrecorded", "--grace-minutes", "0", "--json", "--repo", f.repo], { cwd: f.repo, env: f.baseEnv, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
   const outPromise = new Response(child.stdout).text();
   const reader = child.stderr.getReader();
   const decoder = new TextDecoder();
@@ -183,13 +183,13 @@ test("ws contract: gc removed count equals its removal lines on every removal pa
   expect(missing).toBeDefined();
   if (missing === undefined) return;
   rmSync(missing, { recursive: true, force: true });
-  const args = ["bun", wsCli, "gc", "--include-unrecorded", "--grace-minutes", "0", "--json", "--repo", f.repo];
+  const args = ["bun", wsCli, "gc", "--apply", "--include-unrecorded", "--grace-minutes", "0", "--json", "--repo", f.repo];
   const rip = join(failed.bin, "rip");
   writeFileSync(rip, "#!/bin/sh\nexit 1\n");
   chmodSync(rip, 0o755);
   const [result, cleanup] = await Promise.all([
     run(args, f.repo, f.baseEnv),
-    run(["bun", wsCli, "gc", "--include-unrecorded", "--grace-minutes", "0", "--json", "--repo", failed.repo], failed.repo, failed.baseEnv),
+    run(["bun", wsCli, "gc", "--apply", "--include-unrecorded", "--grace-minutes", "0", "--json", "--repo", failed.repo], failed.repo, failed.baseEnv),
   ]);
   const schema = jsonOf(z.object({ counts: z.object({ removed: z.number() }) }));
   const parsed = schema.safeParse(result.out);
@@ -223,7 +223,7 @@ test("ws contract: progress lines reach a piped stderr before gc ends", async ()
   const repos = join(f.baseEnv.XDG_CONFIG_HOME ?? "", "agx", "repos");
   mkdirSync(repos, { recursive: true });
   writeFileSync(join(repos, "test.toml"), `schema = 1\nroot = ${JSON.stringify(f.repo)}\n`);
-  const child = Bun.spawn(["bun", wsCli, "gc", "--all", "--json"], {
+  const child = Bun.spawn(["bun", wsCli, "gc", "--apply", "--all", "--json"], {
     cwd: f.repo, env: f.baseEnv, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 15000,
   });
   const stdout = child.stdout.text();
@@ -757,7 +757,7 @@ test("gc contract: lock is available while a large tombstone is still being dele
     [
       "bun",
       wsCli,
-      "gc",
+      "gc", "--apply",
       "--include-unrecorded",
       "--grace-minutes",
       "0",
@@ -976,7 +976,7 @@ test("ws contract: a repository time budget defers the remaining candidates with
   const rip = join(f.bin, "rip");
   writeFileSync(rip, "#!/bin/sh\nsleep 1.2\nexit 0\n");
   chmodSync(rip, 0o755);
-  const result = await run(["bun", wsCli, "gc", "--include-unrecorded", "--grace-minutes", "0", "--repo-budget-seconds", "1", "--json", "--repo", f.repo], f.repo, f.baseEnv);
+  const result = await run(["bun", wsCli, "gc", "--apply", "--include-unrecorded", "--grace-minutes", "0", "--repo-budget-seconds", "1", "--json", "--repo", f.repo], f.repo, f.baseEnv);
   expect(result.code, result.err).toBe(0);
   const parsed = parseOutput(result.out);
   expect(parsed?.complete).toBe(false);
@@ -1012,7 +1012,7 @@ test("ws contract: gc --all stops starting repositories after its run budget", a
   const rip = join(first.bin, "rip");
   writeFileSync(rip, "#!/bin/sh\nsleep 1.2\nexit 0\n");
   chmodSync(rip, 0o755);
-  const result = await run(["bun", wsCli, "gc", "--all", "--include-unrecorded", "--grace-minutes", "0", "--all-budget-seconds", "1", "--json"], first.repo, first.baseEnv);
+  const result = await run(["bun", wsCli, "gc", "--apply", "--all", "--include-unrecorded", "--grace-minutes", "0", "--all-budget-seconds", "1", "--json"], first.repo, first.baseEnv);
   expect(result.code, result.err).toBe(0);
   expect(result.err).not.toContain(`gc --all start ${second.repo}`);
   expect(result.out).toContain("run time budget exhausted");

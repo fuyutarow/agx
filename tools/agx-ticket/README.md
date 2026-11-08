@@ -21,7 +21,7 @@ arguments. `--help` and `--version` are read-only. Repeat `--set` to supply mult
 ```text
 agx ticket new <slug> [--from <template>] [--set k=v]... [--each <inputs-file>] [--repo P]
 agx ticket ls [--repo P] [--json]
-agx ticket gc [--dry-run] [--repo P]
+agx ticket gc [--apply | --dry-run] [--repo P]
 ```
 
 `--repo` defaults to cwd. Repository discovery walks upward to jj metadata or a Git root.

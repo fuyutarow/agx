@@ -288,7 +288,7 @@ test("declared directory, all five states, dry-run exactly eligible and GC only 
   expect(await readdir(join(f.repo, "work/tickets"))).toHaveLength(
     names.length,
   );
-  const collected = await f.tkt(["gc"]);
+  const collected = await f.tkt(["gc", "--apply"]);
   expect(collected.code, collected.err).toBe(0);
   expect(collected.out).toContain("collected\t");
   expect((await readdir(join(f.repo, "work/tickets"))).toSorted()).toEqual(

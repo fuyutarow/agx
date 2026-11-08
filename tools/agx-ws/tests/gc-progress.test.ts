@@ -38,7 +38,7 @@ test("budget-limited runs advance and never remove deferred workspaces", async (
   // Slow removal consumes the budget after the first classified candidate.
   writeFileSync(join(bin, "rip"), "#!/bin/sh\nsleep 3.2\nexit 0\n");
   chmodSync(join(bin, "rip"), 0o755);
-  const args = ["bun", cli, "gc", "--include-unrecorded", "--grace-minutes", "0", "--repo-budget-seconds", "3", "--json", "--repo", repo];
+  const args = ["bun", cli, "gc", "--apply", "--include-unrecorded", "--grace-minutes", "0", "--repo-budget-seconds", "3", "--json", "--repo", repo];
   const first = await run(args);
   expect(first.code, first.err).toBe(0);
   const rows1: string[][] = JSON.parse(first.out).rows;

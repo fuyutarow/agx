@@ -1095,7 +1095,7 @@ measured command exit. Stopping kills the active verification process group.
 
 The shared reclaim grammar for `agx ws gc`, `agx ticket gc`, and
 `agx worker reclaim-runs` accepts `--apply`, `--dry-run`, and `--json`.
-Workspace and ticket GC remove by default; reclaim-runs reports only by default.
+All three commands report only by default.
 `--apply` selects removal and `--dry-run` selects reporting; combining them
 refuses with exit 2 before any removal. JSON output is one value with `rows`,
 `counts`, `broken`, and `complete`, using per-item verdicts and counts.
