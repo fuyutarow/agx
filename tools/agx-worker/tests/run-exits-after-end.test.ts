@@ -4,12 +4,13 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  rmSync,
   writeFileSync,
 } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { jsonOf, z } from "../../shared/src/zod.ts";
+import { decodedJson } from "./decode.ts";
 import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 import { judgeRun } from "../src/next/run.ts";
 import { prepareTicketRepo } from "./ticket-repo.ts";
@@ -71,9 +72,7 @@ async function fixture() {
   const root = temps.register(
     mkdtempSync(join(tmpdir(), `agx-test-${process.pid}-run-exits-`)),
   );
-  cleanups.push(async () => {
-    rmSync(root, { recursive: true, force: true });
-  });
+  cleanups.push(() => rm(root, { recursive: true, force: true }));
   await prepareTicketRepo(root);
   const state = join(root, "state");
   mkdirSync(state);
@@ -82,7 +81,7 @@ async function fixture() {
   const worker = join(root, "worker.ts");
   writeFileSync(
     ticket,
-    `+++\nschema = 2\nname = "exits-after-end"\nwrites = []\noutcome = "exit with the run"\nverify = []\n[proposition]\nid = "EXIT"\nclaim = "a run process exits once its run has ended"\nrefuted_by = "a process alive after the ended record"\n+++\nFixture.\n`,
+    `+++\nschema = 2\nname = "exits-after-end"\nwrites = []\noutcome = "exit with the run"\nverify = ["true"]\n[proposition]\nid = "EXIT"\nclaim = "a run process exits once its run has ended"\nrefuted_by = "a process alive after the ended record"\n+++\nFixture.\n`,
   );
   writeFileSync(
     worker,
@@ -119,7 +118,8 @@ async function fixture() {
           .split("\n")
           .flatMap((line) => {
             const row = jsonOf(Row).safeParse(line);
-            return row.success ? [row.data] : [];
+            if (!row.success) return [];
+            return [row.data];
           })
       : [];
   return { root, state, ticket, env, records, log };
@@ -154,10 +154,11 @@ test("a run process exits within seconds of its ended record while another proce
   // The holder keeps the lock for 30 s in the report; the run must not wait for it.
   expect(afterEnd).toBeLessThan(8_000);
   expect(
-    JSON.parse((await out).trim().split("\n").at(-1) ?? "{}"),
-  ).toMatchObject({
-    exit: 0,
-  });
+    decodedJson(
+      z.looseObject({ exit: z.number() }),
+      (await out).trim().split("\n").at(-1) ?? "{}",
+    ),
+  ).toMatchObject({ exit: 0 });
   expect(f.records().filter((row) => row.kind === "ended")).toHaveLength(1);
   // The workspace lock is released: the next run in this workspace is not refused.
   await holder.release();
@@ -204,7 +205,7 @@ test("judge returns within its bound while the publication lock is held, naming 
     {
       root: f.state,
       lockWaitMs: 1_000,
-      writeStdout: () => undefined,
+      writeStdout: () => {},
       onLockFailure: (message, exitCode) => {
         failures.push(message);
         return exitCode;

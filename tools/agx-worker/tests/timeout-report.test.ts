@@ -1,6 +1,6 @@
 // A run whose worker ends without a final message (killed at the time box) gets a manager-written
 // report from what the manager observed; a worker's own report keeps precedence.
-import { afterEach, expect, test } from "bun:test";
+import { afterAll, afterEach, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,7 +9,11 @@ import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 import { loadRoster } from "../src/roster/index.ts";
 import { decodedJson } from "./decode.ts";
 import { prepareTicketRepo } from "./ticket-repo.ts";
+import { startFakeJev } from "./fake-jev.ts";
 
+// Routed runs call Jev; the loopback fake keeps them hermetic.
+const jev = startFakeJev();
+afterAll(() => jev.stop());
 const roots: string[] = [];
 afterEach(async () => {
   for (const root of roots.splice(0))
@@ -46,7 +50,7 @@ const dispatch = async (mode: "hang" | "kill" | "report") => {
   const ticket = join(root, "timeout-report.md");
   await writeFile(
     ticket,
-    '+++\nschema = 2\nname = "timeout-report"\ntimeout_s = 60\nwrites = ["out.txt"]\ncapabilities = ["long-tool-loop"]\noutcome = "test manager report"\nverify = ["true"]\n[proposition]\nid = "TIMEOUT-REPORT"\nclaim = "a timed-out run has a report"\nrefuted_by = "empty report"\n+++\nWork.\n',
+    '+++\nschema = 2\nname = "timeout-report"\ntimeout_s = 60\nwrites = ["out.txt"]\noutcome = "test manager report"\nverify = ["true"]\n[proposition]\nid = "TIMEOUT-REPORT"\nclaim = "a timed-out run has a report"\nrefuted_by = "empty report"\n+++\nWork.\n',
   );
   const policyExample = new URL(
     "../src/roster/policy.example.toml",
@@ -54,76 +58,60 @@ const dispatch = async (mode: "hang" | "kill" | "report") => {
   ).pathname;
   const loaded = await loadRoster({ policyPath: policyExample });
   if (!loaded.ok) expect.unreachable(loaded.error);
+  // A 60 s box refuses rows whose published duration exceeds 60% of it (sol-medium: 231 s), so the
+  // fixture keeps the one codex row that fits (luna-low: 28 s) and the fake Jev answers with a class.
+  // The ticket declares no capability: long-tool-loop would demand TB4 >= 30, which no codex row under 36 s meets.
   const excluded = loaded.value.choice
-    .filter((row) => row.id !== "sol-medium")
+    .filter((row) => row.id !== "luna-low")
     .map((row) => row.id);
   const policyPath = join(root, "policy.toml");
   await writeFile(
     policyPath,
     (await readFile(policyExample, "utf8"))
-      .replace('default = "luna-high"', 'default = "sol-medium"')
+      .replace('default = "luna-high"', 'default = "luna-low"')
       .replace("exclude = []", `exclude = ${JSON.stringify(excluded)}`),
   );
-  const server = Bun.serve({
-    port: 0,
-    fetch: () =>
-      Response.json({
-        answers: {
-          worker: {
-            choice: "sol-medium",
-            probabilities: { "sol-medium": 1 },
-          },
-        },
-      }),
-  });
-  try {
-    const child = Bun.spawn(
-      [
-        process.execPath,
-        "tools/agx-worker/src/next/cli.ts",
-        "run",
-        ticket,
-        "--cd",
-        root,
-        "--sandbox",
-        "none",
-      ],
-      {
-        env: {
-          ...subprocessEnvironment(),
-          AGX_STATE_DIR: join(root, "state"),
-          JEV_URL: `http://127.0.0.1:${server.port}/`,
-          TYPESAFE_API_KEY: "test-key",
-          AGX_WORKER_BIN: worker,
-          AGX_FAKE_MODE: mode,
-          XDG_STATE_HOME: join(root, "tmp"),
-          AGX_CONFIG: policyPath,
-          AGX_DISPATCHER_SESSION: "test-dispatcher",
-          HOME: root,
-        },
-        stdout: "pipe",
-        stderr: "pipe",
-        timeout: 90_000,
+  const child = Bun.spawn(
+    [
+      process.execPath,
+      "tools/agx-worker/src/next/cli.ts",
+      "run",
+      ticket,
+      "--cd",
+      root,
+      "--sandbox",
+      "none",
+    ],
+    {
+      env: {
+        ...subprocessEnvironment(),
+        AGX_STATE_DIR: join(root, "state"),
+        JEV_URL: jev.url,
+        TYPESAFE_API_KEY: "test-key",
+        AGX_WORKER_BIN: worker,
+        AGX_FAKE_MODE: mode,
+        XDG_STATE_HOME: join(root, "tmp"),
+        AGX_CONFIG: policyPath,
+        AGX_DISPATCHER_SESSION: "test-dispatcher",
+        HOME: root,
       },
-    );
-    const [exit, stdout, stderr] = await Promise.all([
-      child.exited,
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-    ]);
-    expect(stdout.trim(), `exit ${exit}: ${stderr}`).not.toBe("");
-    const receipt = decodedJson(
-      Receipt,
-      stdout.trim().split("\n").at(-1) ?? "",
-    );
-    const report = decodedJson(
-      z.looseObject({}),
-      await readFile(receipt.report_path, "utf8"),
-    );
-    return { exit, stderr, receipt, report };
-  } finally {
-    await server.stop(true);
-  }
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 90_000,
+    },
+  );
+  const [exit, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+  expect(stdout.trim(), `exit ${exit}: ${stderr}`).not.toBe("");
+  const receipt = decodedJson(Receipt, stdout.trim().split("\n").at(-1) ?? "");
+  const report = decodedJson(
+    z.looseObject({}),
+    await readFile(receipt.report_path, "utf8"),
+  );
+  return { exit, stderr, receipt, report };
 };
 
 test.each(["hang", "kill"] as const)(

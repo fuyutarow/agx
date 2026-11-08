@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterAll, afterEach, expect, test } from "bun:test";
 import {
   chmodSync,
   existsSync,
@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { acquireWorkspaceLock } from "../src/next/store.ts";
 import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
+import { startFakeJev } from "./fake-jev.ts";
 
 // Real entry point: `agx-worker dispatch` runs through next/cli.ts, which flushes run
 // publications after dispatchMain returns. The worker is a fake that runs for 60 s.
@@ -21,6 +22,9 @@ const WORKER_SECONDS = 60;
 const EXIT_AFTER_RECEIPT_MS = 5_000;
 /** Another process (a sibling dispatch, a judge) holds the publication lock this long. */
 const PUBLICATION_LOCK_HELD_MS = 15_000;
+// Dispatch routes the ticket through Jev; the loopback fake keeps it hermetic.
+const jev = startFakeJev();
+afterAll(() => jev.stop());
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0))
@@ -48,7 +52,7 @@ function fixture() {
   const ticket = join(tickets, "exit-probe.md");
   writeFileSync(
     ticket,
-    `+++\nschema = 2\nwrites = []\nname = "exit-probe"\noutcome = "fixture"\n[proposition]\nid = "P1"\nclaim = "fixture"\nrefuted_by = "fixture"\n+++\n`,
+    `+++\nschema = 2\nwrites = []\nname = "exit-probe"\noutcome = "fixture"\nverify = ["true"]\n[proposition]\nid = "P1"\nclaim = "fixture"\nrefuted_by = "fixture"\n+++\n`,
   );
   const marker = join(root, "worker-completed");
   const started = join(root, "worker-started");
@@ -89,6 +93,8 @@ function fixture() {
     XDG_STATE_HOME: join(home, "state"),
     AGX_STATE_DIR: state,
     FAKE_REPO: repo,
+    JEV_URL: jev.url,
+    TYPESAFE_API_KEY: "test-key",
   };
   Reflect.deleteProperty(env, "CLAUDE_CODE_SESSION_ID");
   Reflect.deleteProperty(env, "CODEX_SESSION_ID");
