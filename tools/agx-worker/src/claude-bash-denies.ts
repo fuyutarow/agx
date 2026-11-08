@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fromThrowable } from "neverthrow";
-import { z } from "../../shared/src/zod.ts";
+import { jsonOf, z } from "../../shared/src/zod.ts";
 
 const SettingsSchema = z.object({
   permissions: z.object({ deny: z.array(z.unknown()).optional() }).optional(),
@@ -24,9 +24,9 @@ function settingsFiles(cwd: string, home: string): string[] {
 function denyEntries(file: string): unknown[] {
   const text = fromThrowable(() => readFileSync(file, "utf8"))();
   if (text.isErr()) return [];
-  const json = fromThrowable(() => JSON.parse(text.value))();
-  if (json.isErr()) return [];
-  const parsed = SettingsSchema.safeParse(json.value);
+  const json = jsonOf(z.unknown()).safeParse(text.value);
+  if (!json.success) return [];
+  const parsed = SettingsSchema.safeParse(json.data);
   if (!parsed.success) return [];
   return parsed.data.permissions?.deny ?? [];
 }
@@ -36,7 +36,7 @@ function bashPattern(rule: unknown): string | undefined {
   if (typeof rule !== "string") return undefined;
   const trimmed = rule.trim();
   if (trimmed === "Bash") return "all Bash";
-  const match = /^Bash\((.*)\)$/s.exec(trimmed);
+  const match = /^Bash\((.*)\)$/su.exec(trimmed);
   if (match === null) return undefined;
   const spec = (match[1] ?? "").trim();
   if (spec === "") return "all Bash";
@@ -52,9 +52,9 @@ export function claudeBashDenies(
   home: string = process.env.HOME ?? homedir(),
 ): string[] {
   const patterns = settingsFiles(cwd, home)
-    .flatMap(denyEntries)
-    .map(bashPattern)
-    .filter((pattern): pattern is string => pattern !== undefined);
+    .flatMap((file) => denyEntries(file))
+    .map((rule) => bashPattern(rule))
+    .filter((pattern) => pattern !== undefined);
   return [...new Set(patterns)];
 }
 

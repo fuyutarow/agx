@@ -42,7 +42,9 @@ const build = (pkg: string, target: string | undefined, root: string) =>
   productionBuild(pkg, target, root, run);
 const roots: string[] = [];
 const servers: Bun.Server<unknown>[] = [];
+const cleanups: (() => void)[] = [];
 afterEach(async () => {
+  for (const cleanup of cleanups.splice(0)) cleanup();
   await Promise.all(servers.splice(0).map((server) => server.stop()));
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
@@ -402,13 +404,12 @@ test("brew update exceeding the old limit completes under the new limit", async 
     limits.push(ms);
     return original(Math.ceil(ms / 1000));
   });
-  try {
-    const result = await productionRun([brew, "update"], f.root);
-    expect(limits).toEqual([900_000]);
-    expect(result.exit, result.stderr).toBe(0);
-  } finally {
+  cleanups.push(() => {
     clock.mockRestore();
-  }
+  });
+  const result = await productionRun([brew, "update"], f.root);
+  expect(limits).toEqual([900_000]);
+  expect(result.exit, result.stderr).toBe(0);
 });
 
 test("runner passes environment overrides to the child", async () => {
@@ -443,32 +444,31 @@ test("post-push failure reports recovery and rerun does not republish", async ()
         stderr: "",
       };
     if (cmd[0] === "git" && cmd[1] === "push") pushed = true;
-    if (cmd[0]?.endsWith("/brew") && cmd[1] === "update" && fail)
+    if (cmd[0]?.endsWith("/brew") === true && cmd[1] === "update" && fail)
       return { exit: 1, stdout: "", stderr: "fixture failure" };
     return installProductionRun(cmd, cwd, options);
   };
   const oldMode = process.env.RELEASE_TEST_GH_MODE;
   process.env.RELEASE_TEST_GH_MODE = "success";
-  try {
-    const first = await publish("suite", true, undefined, f.root, runner);
-    expect(first.isErr()).toBe(true);
-    if (first.isErr()) {
-      expect(first.error).toContain("Published v2.3.4 and usehooks-v2.3.4");
-      expect(first.error).toContain("mise run release:publish -- suite --yes");
-    }
-    fail = false;
-    const second = await publish("suite", true, undefined, f.root, runner);
-    expect(second.isOk(), second.isErr() ? second.error : "").toBe(true);
-    expect(
-      calls.filter((cmd) => cmd[0] === "git" && cmd[1] === "push"),
-    ).toHaveLength(1);
-    expect(
-      calls.filter((cmd) => cmd[0] === "git" && cmd[1] === "tag"),
-    ).toHaveLength(2);
-  } finally {
+  cleanups.push(() => {
     if (oldMode === undefined) delete process.env.RELEASE_TEST_GH_MODE;
     else process.env.RELEASE_TEST_GH_MODE = oldMode;
+  });
+  const first = await publish("suite", true, undefined, f.root, runner);
+  expect(first.isErr()).toBe(true);
+  if (first.isErr()) {
+    expect(first.error).toContain("Published v2.3.4 and usehooks-v2.3.4");
+    expect(first.error).toContain("mise run release:publish -- suite --yes");
   }
+  fail = false;
+  const second = await publish("suite", true, undefined, f.root, runner);
+  expect(second.isOk(), second.isErr() ? second.error : "").toBe(true);
+  expect(
+    calls.filter((cmd) => cmd[0] === "git" && cmd[1] === "push"),
+  ).toHaveLength(1);
+  expect(
+    calls.filter((cmd) => cmd[0] === "git" && cmd[1] === "tag"),
+  ).toHaveLength(2);
 });
 
 test("formula timeout reports the target version before Homebrew", async () => {
@@ -561,7 +561,7 @@ test("fake gh starts the tap formula workflow before brew and PATH checks", asyn
   await mkdir(consumer);
   const brewEnvironments: (NodeJS.ProcessEnv | undefined)[] = [];
   const runner: typeof productionRun = (cmd, cwd, options) => {
-    if (cmd[0]?.endsWith("/brew") && cmd[1] === "upgrade")
+    if (cmd[0]?.endsWith("/brew") === true && cmd[1] === "upgrade")
       brewEnvironments.push(options?.env);
     return installProductionRun(cmd, cwd, options);
   };
@@ -689,11 +689,13 @@ test("the suite package set has no messaging member", async () => {
   expect(info.isErr()).toBe(true);
   const agx = await packageInfo("agx");
   expect(agx.isOk()).toBe(true);
-  const root = JSON.parse(
-    await Bun.file(join(repository, "package.json")).text(),
-  ) as { bin: Record<string, string> };
-  expect(Object.keys(root.bin)).not.toContain("agx-msg");
-  expect(Object.keys(root.bin)).not.toContain("xmsg");
+  const root = jsonOf(
+    z.object({ bin: z.record(z.string(), z.string()) }),
+  ).safeParse(await Bun.file(join(repository, "package.json")).text());
+  expect(root.success).toBe(true);
+  if (!root.success) return;
+  expect(Object.keys(root.data.bin)).not.toContain("agx-msg");
+  expect(Object.keys(root.data.bin)).not.toContain("xmsg");
   expect(
     await Bun.file(join(repository, "tools/xmsg/package.json")).exists(),
   ).toBe(false);

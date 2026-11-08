@@ -23,6 +23,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { jsonOf, z } from "../../shared/src/zod.ts";
 import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
+
+const tabRows = (out: string) =>
+  out
+    .trimEnd()
+    .split("\n")
+    .map((line) => line.split("\t"));
 setDefaultTimeout(120_000);
 const scratch = mkdtempSync(join(tmpdir(), "agx-ws-gc-contract-"));
 const wsCli = process.env.GC_WS_CLI ?? join(import.meta.dir, "../src/ws.ts");
@@ -143,6 +149,42 @@ async function fixture(
   return { repo, parent, workspaces, bin, baseEnv };
 }
 
+async function expectMatchesExplicit(
+  f: Fixture,
+  flags: string[],
+  result: Awaited<ReturnType<typeof run>>,
+) {
+  const explicit = await run(
+    [
+      "bun",
+      wsCli,
+      "gc",
+      "--include-unrecorded",
+      "--grace-minutes",
+      "0",
+      "--repo",
+      f.repo,
+      "--dry-run",
+      ...flags,
+    ],
+    f.repo,
+    f.baseEnv,
+  );
+  expect(explicit.code, explicit.err).toBe(0);
+  if (flags.includes("--json")) {
+    const actual = envelope(result.out);
+    const expected = envelope(explicit.out);
+    expect({ ...actual, rows: withoutAge(actual.rows) }).toEqual({
+      ...expected,
+      rows: withoutAge(expected.rows),
+    });
+    return;
+  }
+  expect(withoutAge(tabRows(result.out))).toEqual(
+    withoutAge(tabRows(explicit.out)),
+  );
+}
+
 afterAll(() => {
   rmSync(scratch, { recursive: true, force: true });
 });
@@ -184,42 +226,8 @@ test("gc modes preserve effects and JSON envelope", async () => {
       expect(result.err).toContain("--dry-run");
       continue;
     }
-    if (flags.length === 0 || (flags.length === 1 && flags[0] === "--json")) {
-      const explicit = await run(
-        [
-          "bun",
-          wsCli,
-          "gc",
-          "--include-unrecorded",
-          "--grace-minutes",
-          "0",
-          "--repo",
-          f.repo,
-          "--dry-run",
-          ...flags,
-        ],
-        f.repo,
-        f.baseEnv,
-      );
-      expect(explicit.code, explicit.err).toBe(0);
-      if (flags.includes("--json")) {
-        const actual = envelope(result.out);
-        const expected = envelope(explicit.out);
-        expect({ ...actual, rows: withoutAge(actual.rows) }).toEqual({
-          ...expected,
-          rows: withoutAge(expected.rows),
-        });
-      } else {
-        const rows = (out: string) =>
-          out
-            .trimEnd()
-            .split("\n")
-            .map((line) => line.split("\t"));
-        expect(withoutAge(rows(result.out))).toEqual(
-          withoutAge(rows(explicit.out)),
-        );
-      }
-    }
+    if (flags.length === 0 || (flags.length === 1 && flags[0] === "--json"))
+      await expectMatchesExplicit(f, flags, result);
     if (flags.includes("--json")) {
       const human = await run(
         [
@@ -237,14 +245,11 @@ test("gc modes preserve effects and JSON envelope", async () => {
         f.baseEnv,
       );
       expect(human.code, human.err).toBe(0);
-      const rows = human.out
-        .trimEnd()
-        .split("\n")
-        .map((line) => line.split("\t"));
-      const original = rows.filter(
+      const humanRows = tabRows(human.out);
+      const original = humanRows.filter(
         (row) => row[1] !== "repo" && row[2] !== "collected",
       );
-      const workspaces = rows.filter(
+      const workspaces = humanRows.filter(
         (row) => row[1] !== "repo" && row[1] !== "main",
       );
       const value = envelope(result.out);

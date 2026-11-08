@@ -146,7 +146,7 @@ describe("AGX-WS-TRUNK-AHEAD-MESSAGE-1103", () => {
       await advanceLocal(path, `ahead-3 ${trunk}\n`);
       const local = await commitOf("alpha", path);
       expect(local).not.toBe(remote);
-      const r = await add(path, `ahead3-${trunk.replace(/\W/gu, "")}`);
+      const r = await add(path, `ahead3-${trunk.replaceAll(/\W/gu, "")}`);
       expect(r.err).not.toContain("no remote-tracking trunk bookmark");
       expect(r.code, r.err).toBe(0);
       expect(r.out + r.err).toContain(local.slice(0, 12));

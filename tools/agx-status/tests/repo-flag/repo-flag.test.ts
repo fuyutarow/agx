@@ -3,6 +3,9 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
+import { jsonOf, z } from "../../../shared/src/zod.ts";
+
+const StatusSchema = z.object({ workspaces: z.object({ here: z.number() }) });
 
 const root = await mkdtemp(join(tmpdir(), "agx-status-repo-flag-"));
 afterAll(() => rm(root, { recursive: true, force: true }));
@@ -19,7 +22,7 @@ const [initError, initExit] = await Promise.all([
   init.stderr.text(),
   init.exited,
 ]);
-if (initExit !== 0) throw new Error(`git init failed: ${initError}`);
+expect(initExit, initError).toBe(0);
 await symlink(
   join(import.meta.dir, "../../src/status.ts"),
   join(bin, "agx-status"),
@@ -74,8 +77,13 @@ test("repo and cwd identify the same repository and default to the current direc
   for (const result of [old, alias, reverse, equals, implicit]) {
     expect(result.exit).toBe(0);
     expect(result.stderr).toBe("");
-    expect(JSON.parse(result.stdout)).toEqual(JSON.parse(old.stdout));
-    expect(JSON.parse(result.stdout).workspaces.here).toBe(2);
+    const actual = jsonOf(StatusSchema).safeParse(result.stdout);
+    const expected = jsonOf(StatusSchema).safeParse(old.stdout);
+    expect(actual.success).toBe(true);
+    expect(expected.success).toBe(true);
+    if (!actual.success || !expected.success) continue;
+    expect(actual.data).toEqual(expected.data);
+    expect(actual.data.workspaces.here).toBe(2);
   }
 });
 

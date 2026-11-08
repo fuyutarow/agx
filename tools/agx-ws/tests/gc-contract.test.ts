@@ -1367,7 +1367,8 @@ test.each(["ancestry", "content"])(
   async (mode) => {
     const f = await fixture(1);
     const workspace = f.workspaces[0];
-    if (workspace === undefined) throw new Error("missing workspace");
+    expect(workspace).toBeDefined();
+    if (workspace === undefined) return;
     const bare = join(f.parent, "origin.git");
     const init = await run(
       ["git", "init", "--bare", bare],
@@ -1425,7 +1426,8 @@ test.each(["ancestry", "content"])(
 test("gc uses the local trunk when no remote-tracking trunk exists", async () => {
   const f = await fixture(1);
   const workspace = f.workspaces[0];
-  if (workspace === undefined) throw new Error("missing workspace");
+  expect(workspace).toBeDefined();
+  if (workspace === undefined) return;
   writeFileSync(join(workspace, "local.txt"), "local\n");
   await jjRun(["commit", "-m", "local payload"], workspace, f.baseEnv);
   await jjRun(

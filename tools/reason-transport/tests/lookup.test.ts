@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +11,10 @@ const input = {
   session: "thread-id",
   deadlineMs: 3000,
 };
+const cleanups: (() => Promise<void> | void)[] = [];
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0)) await cleanup();
+});
 
 test("maps both vendors and selects the is_me address", async () => {
   expect(await lookupAddress(input)).toEqual({
@@ -49,29 +53,26 @@ test("usage errors do not start a process", async () => {
   const marker = join(dir, "started");
   const previous = process.env.WHO_MARKER;
   process.env.WHO_MARKER = marker;
-  try {
-    for (const options of [
-      { ...input, binary: "" },
-      { ...input, vendor: "" },
-      { ...input, vendor: "other" },
-      { ...input, session: "" },
-      ...[undefined, 0, -1, Infinity, NaN, 2_147_483_648].map((deadlineMs) => ({
-        ...input,
-        deadlineMs,
-      })),
-    ]) {
-      // @ts-expect-error exercise missing deadline from untyped callers
-      expect((await lookupAddress(options)).kind).toBe("usage");
-    }
-    expect(
-      await readFile(marker).then(
-        () => true,
-        () => false,
-      ),
-    ).toBe(false);
-  } finally {
+  cleanups.push(async () => {
     if (previous === undefined) delete process.env.WHO_MARKER;
     else process.env.WHO_MARKER = previous;
     await rm(dir, { recursive: true, force: true });
+  });
+  for (const options of [
+    { ...input, binary: "" },
+    { ...input, vendor: "" },
+    { ...input, vendor: "other" },
+    { ...input, session: "" },
+    ...[undefined, 0, -1, Infinity, NaN, 2_147_483_648].map((deadlineMs) =>
+      Object.assign({}, input, { deadlineMs }),
+    ),
+  ]) {
+    expect((await lookupAddress(options)).kind).toBe("usage");
   }
+  expect(
+    await readFile(marker).then(
+      () => true,
+      () => false,
+    ),
+  ).toBe(false);
 });

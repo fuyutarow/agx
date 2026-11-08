@@ -73,7 +73,10 @@ export function stateDir(env: NodeJS.ProcessEnv = process.env): string {
 export async function stateRefusal(
   _env: NodeJS.ProcessEnv = process.env,
 ): Promise<string | undefined> {
+  await Promise.resolve();
   return undefined;
 }
 
-export async function checkState(): Promise<void> {}
+export function checkState(): Promise<void> {
+  return Promise.resolve();
+}

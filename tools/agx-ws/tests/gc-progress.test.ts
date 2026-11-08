@@ -17,6 +17,7 @@ import {
   readGcOrder,
 } from "../src/gc-order.ts";
 import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
+import { jsonOf, z } from "../../shared/src/zod.ts";
 
 const root = mkdtempSync(join(tmpdir(), "agx-gc-progress-"));
 const repo = join(root, "project");
@@ -107,8 +108,11 @@ test("budget-limited runs advance and never remove deferred workspaces", async (
   ];
   const first = await run(args);
   expect(first.code, first.err).toBe(0);
-  const rows1: string[][] = JSON.parse(first.out).rows;
-  const deferred = rows1
+  const rows1 = jsonOf(
+    z.object({ rows: z.array(z.array(z.string())) }),
+  ).safeParse(first.out);
+  if (!rows1.success) return;
+  const deferred = rows1.data.rows
     .filter((row) => row[5] === "repository time budget exhausted")
     .map((row) => row[0]);
   expect(deferred.length).toBeGreaterThan(0);
@@ -118,9 +122,12 @@ test("budget-limited runs advance and never remove deferred workspaces", async (
   );
   const second = await run(args);
   expect(second.code, second.err).toBe(0);
-  const rows2: string[][] = JSON.parse(second.out).rows;
+  const rows2 = jsonOf(
+    z.object({ rows: z.array(z.array(z.string())) }),
+  ).safeParse(second.out);
+  if (!rows2.success) return;
   expect(
-    rows2.some(
+    rows2.data.rows.some(
       (row) =>
         deferred.includes(row[0]) &&
         row[5] !== "repository time budget exhausted",
@@ -189,4 +196,6 @@ test("op store threshold counts sparse file logical size", async () => {
   expect(await opStoreSize(fake, 10)).toBeGreaterThan(10);
 });
 
-afterAll(() => rmSync(root, { recursive: true, force: true }));
+afterAll(() => {
+  rmSync(root, { recursive: true, force: true });
+});

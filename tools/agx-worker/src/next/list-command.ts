@@ -45,11 +45,12 @@ const selectedRuns = (
 import { runningSummary, listingRows } from "./listing.ts";
 import { listingProgress } from "./listing-progress.ts";
 
+async function visibleHistory(workspace?: string) {
+  const history = await listingHistory(workspace);
+  return { runs: history.runs, hidden: history.malformed.length };
+}
+
 export async function list(flags: Flags): Promise<number> {
-  const visibleHistory = async (workspace?: string) => {
-    const history = await listingHistory(workspace);
-    return { runs: history.runs, hidden: history.malformed.length };
-  };
   const workspacePath = value(flags, "workspace");
   const workspace =
     workspacePath === undefined

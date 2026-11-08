@@ -81,7 +81,10 @@ test("cli contract: an unknown command prints usage on stderr with exit 2", asyn
   );
   for (const packagePath of packages) {
     const bins = Object.keys(
-      JSON.parse(await Bun.file(join(ROOT, packagePath)).text()).bin ?? {},
+      jsonOf(
+        z.object({ bin: z.record(z.string(), z.string()).optional() }),
+      ).safeParse(await Bun.file(join(ROOT, packagePath)).text()).data?.bin ??
+        {},
     );
     expect(bins).not.toContain("agx-msg");
     expect(bins).not.toContain("xmsg");

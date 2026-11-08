@@ -13,6 +13,7 @@ import {
   workspaces,
   type Classification,
   type RunRecord,
+  type Workspace,
 } from "./workspace.ts";
 import { readConfig } from "./config.ts";
 import { fromThrowable } from "../../shared/src/zod.ts";
@@ -52,6 +53,48 @@ export type DoctorWorkspaceRow = {
   ageMs: number | undefined;
 };
 
+async function appendWorkspaceRows(
+  repo: Parameters<typeof workspaces>[0],
+  candidates: Workspace[],
+  config: Parameters<typeof classify>[1],
+  records: RunRecord[],
+  trunk: Parameters<typeof classify>[4],
+  findingsOnly: boolean,
+  rows: DoctorWorkspaceRow[],
+): Promise<void> {
+  const inRepo = candidates.filter((ws) =>
+    within(realOr(ws.dir), realOr(repo.wsRoot)),
+  );
+  for (const ws of inRepo) {
+    const info = await attempt(() => stat(ws.dir));
+    const ageMs = info.ok
+      ? Temporal.Now.instant().epochMilliseconds - info.value.mtimeMs
+      : undefined;
+    const recorded = lineageOf(records, realOr(ws.dir)).length > 0;
+    const classification = await classify(
+      repo,
+      config,
+      ws,
+      records,
+      trunk,
+      true,
+      findingsOnly &&
+        recorded &&
+        ageMs !== undefined &&
+        ageMs <= 72 * 60 * 60 * 1000,
+    );
+    rows.push({
+      repo: repo.backing,
+      dir: ws.dir,
+      name: ws.name,
+      kind: "ws",
+      recorded,
+      classification,
+      ageMs,
+    });
+  }
+}
+
 /** Read-only inventory built from the same workspaces and classifier as `agx ws gc --dry-run`. */
 export async function doctorInventory(
   _root?: string,
@@ -81,39 +124,15 @@ export async function doctorInventory(
     // agx worker ls is a global run inventory, independent of repository cwd.
     records ??= await agxRecords(repo.backing);
     if (!records.ok) return records;
-    for (const ws of candidates.value) {
-      const kind = within(realOr(ws.dir), realOr(repo.wsRoot))
-        ? "ws"
-        : "outside";
-      if (kind === "outside") continue;
-      const info = await attempt(() => stat(ws.dir));
-      const ageMs = info.ok
-        ? Temporal.Now.instant().epochMilliseconds - info.value.mtimeMs
-        : undefined;
-      const recorded = lineageOf(records.value, realOr(ws.dir)).length > 0;
-      const classification = await classify(
-        repo,
-        cfg.value,
-        ws,
-        records.value,
-        trunk.value,
-        true,
-        findingsOnly &&
-          kind === "ws" &&
-          recorded &&
-          ageMs !== undefined &&
-          ageMs <= 72 * 60 * 60 * 1000,
-      );
-      rows.push({
-        repo: repo.backing,
-        dir: ws.dir,
-        name: ws.name,
-        kind,
-        recorded,
-        classification,
-        ageMs,
-      });
-    }
+    await appendWorkspaceRows(
+      repo,
+      candidates.value,
+      cfg.value,
+      records.value,
+      trunk.value,
+      findingsOnly,
+      rows,
+    );
   }
   return good(rows);
 }

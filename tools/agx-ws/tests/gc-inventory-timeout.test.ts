@@ -85,10 +85,10 @@ async function setupOnce() {
   return root;
 }
 
-const setupPromise = setupOnce();
+const sharedRoot = await setupOnce();
 
 test("gc keeps timed-out inventory unknown while reporting a broken working copy", async () => {
-  const root = await setupPromise;
+  const root = sharedRoot;
   const slow = join(root, "slow");
   const broken = join(root, "broken");
   for (let i = 0; i < 1000; i++)
@@ -133,7 +133,7 @@ test("gc keeps timed-out inventory unknown while reporting a broken working copy
 }, 30000);
 
 test("rm allows a slow inventory, refuses untracked content, and explains timeouts", async () => {
-  const root = await setupPromise;
+  const root = sharedRoot;
   const wrapper = join(scratch, "rm-clock.ts");
   writeFileSync(
     wrapper,

@@ -72,7 +72,7 @@ async function main(): Promise<void> {
     return;
   }
   const retiredFlag = rawArgs
-    .slice(1, rawArgs.indexOf("--") < 0 ? undefined : rawArgs.indexOf("--"))
+    .slice(1, rawArgs.includes("--") ? rawArgs.indexOf("--") : undefined)
     .find(
       (arg) =>
         (rawArgs[0] === "ls" && /^--include-legacy(?:[=:.]|$)/u.test(arg)) ||
@@ -80,7 +80,8 @@ async function main(): Promise<void> {
     );
   if (retiredFlag !== undefined)
     exitWithError(`agx: unknown option '${retiredFlag}'\n`, 2);
-  if (ALL_COMMANDS.some((name) => name === rawArgs[0])) stateDir();
+  if (rawArgs[0] !== undefined && ALL_COMMANDS.map(String).includes(rawArgs[0]))
+    stateDir();
   const root = cli(
     {
       name: "agx-worker",
