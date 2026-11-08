@@ -15,8 +15,7 @@ export function change(argv: string[]): void {
     {
       name: "agx change",
       help: {
-        description:
-          "Coordinate changes and reserve alpha pushes for agx change land.",
+        description: "Run Git hook checks for the trunk push path.",
       },
       parameters: [],
       strictFlags: true,

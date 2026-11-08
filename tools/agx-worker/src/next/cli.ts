@@ -4,6 +4,7 @@ import { stopRun } from "./stop.ts";
 import { waitRun } from "./wait.ts";
 import { COMMAND_NAMES } from "./commands.ts";
 import { cli as cleyeCli, command } from "cleye";
+import { getFlag } from "type-flag";
 import { standardCli } from "../../../shared/src/cli.ts";
 import { exitWithError } from "./exit.ts";
 import { flushRunPublications, stateDir } from "./store.ts";
@@ -22,10 +23,26 @@ const rejectPrototypeFlag = (type: string, flag: string): void => {
   }
 };
 const ALL_COMMANDS = [...COMMAND_NAMES, "reclaim-runs"] as const;
+const COMMAND_DESCRIPTIONS = {
+  dispatch: "Select and dispatch a worker for a ticket.",
+  run: "Run a worker for a ticket.",
+  stop: "Stop a worker run.",
+  check: "Check a ticket and its launch preflights.",
+  ls: "List worker runs.",
+  classify: "Classify a worker run.",
+  judge: "Record judgments on worker runs.",
+  stats: "Show worker usage and routing statistics.",
+  doctor: "Diagnose worker records.",
+  roster: "Show worker routing selections or the roster.",
+  host: "Check or declare host isolation.",
+  probe: "Run a bounded Codex diagnostic.",
+  "reclaim-runs": "Reclaim eligible old run files.",
+} satisfies Record<(typeof ALL_COMMANDS)[number], string>;
 export const COMMANDS = ALL_COMMANDS.map((name) => ({
   name,
   definition: command({
     name,
+    help: { description: COMMAND_DESCRIPTIONS[name] },
     strictFlags: true,
     ignoreArgv: rejectPrototypeFlag,
   }),
@@ -163,10 +180,21 @@ async function main(): Promise<void> {
             type: String,
             description: "none | read-only | workspace-write",
           },
-          sandboxSource: {
-            type: String,
-            description: "internal sandbox provenance supplied by dispatch",
-          },
+          // Cleye has no hidden flag facility; help exits before these values are read.
+          ...Object.defineProperty(
+            {
+              sandboxSource: {
+                type: String,
+                description: "internal sandbox provenance supplied by dispatch",
+              },
+            },
+            "sandboxSource",
+            {
+              enumerable:
+                getFlag("--help,-h", [Boolean], [...commandArgs]).at(-1) !==
+                true,
+            },
+          ),
           continue: {
             type: String,
             description: "previous agx worker run id to continue",
@@ -179,10 +207,20 @@ async function main(): Promise<void> {
             type: String,
             description: "dispatching Claude Code or Codex session id",
           },
-          dispatchBinding: {
-            type: String,
-            description: "internal binding supplied by agx worker dispatch",
-          },
+          ...Object.defineProperty(
+            {
+              dispatchBinding: {
+                type: String,
+                description: "internal binding supplied by agx worker dispatch",
+              },
+            },
+            "dispatchBinding",
+            {
+              enumerable:
+                getFlag("--help,-h", [Boolean], [...commandArgs]).at(-1) !==
+                true,
+            },
+          ),
         },
         strictFlags: true,
         ignoreArgv: rejectPrototypeFlag,
@@ -237,11 +275,21 @@ Ticket min_effort = "low" | "medium" | "high" | "xhigh" | "max" sets a routing f
             description: "previous run to validate for continuation",
           },
           supersedes: { type: String, description: "previous run to replace" },
-          skipRouting: {
-            type: Boolean,
-            description:
-              "internal dispatch preflight; routing occurs in the run",
-          },
+          ...Object.defineProperty(
+            {
+              skipRouting: {
+                type: Boolean,
+                description:
+                  "internal dispatch preflight; routing occurs in the run",
+              },
+            },
+            "skipRouting",
+            {
+              enumerable:
+                getFlag("--help,-h", [Boolean], [...commandArgs]).at(-1) !==
+                true,
+            },
+          ),
         },
         strictFlags: true,
         ignoreArgv: rejectPrototypeFlag,
