@@ -1,4 +1,5 @@
-import { mkdir } from "node:fs/promises";
+import { afterEach, beforeEach } from "bun:test";
+import { chmod, mkdir } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, relative, sep } from "node:path";
 
@@ -40,6 +41,26 @@ if (process.platform !== "win32" && tempRootIsInHome)
 await import("./shared/src/test-tmp.ts");
 
 const tempRoot = process.env.TMPDIR ?? tmpdir();
+
+async function guardReasonNetwork(root: string): Promise<void> {
+  const bin = join(root, "guard-bin");
+  await mkdir(bin, { recursive: true });
+  const stub = join(bin, "reason-network");
+  await Bun.write(stub, "#!/bin/sh\nprintf '%s\\n' 'agx tests must not run the real reason-network; put a fake on PATH' >&2\nexit 97\n");
+  await chmod(stub, 0o755);
+  process.env.PATH = `${bin}${process.platform === "win32" ? ";" : ":"}${process.env.PATH ?? ""}`;
+}
+
+await guardReasonNetwork(tempRoot);
+let previousPath: string | undefined;
+beforeEach(async () => {
+  previousPath = process.env.PATH;
+  await guardReasonNetwork(tmpdir());
+});
+afterEach(() => {
+  if (previousPath === undefined) delete process.env.PATH;
+  else process.env.PATH = previousPath;
+});
 
 // Give agx a temporary default; fixtures can override it in their own child env.
 const agxConfigDir = join(tempRoot, "agx-config");

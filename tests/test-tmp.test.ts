@@ -12,3 +12,20 @@ test("test preload confines temporary files to the process directory", () => {
   expect(dirname(child)).toBe(tmpdir());
   expect(existsSync(child)).toBe(true);
 });
+
+test("test preload guards reason-network on PATH", () => {
+  const binary = Bun.which("reason-network", { PATH: process.env.PATH ?? "" });
+  expect(binary).toBe(join(tmpdir(), "guard-bin", "reason-network"));
+  if (binary === null) return;
+  const result = Bun.spawnSync([binary]);
+  expect(result.exitCode).toBe(97);
+  expect(result.stderr.toString()).toBe(
+    "agx tests must not run the real reason-network; put a fake on PATH\n",
+  );
+  const child = Bun.spawnSync(
+    [process.execPath, "-e", 'process.stdout.write(Bun.which("reason-network") ?? "")'],
+    { env: process.env },
+  );
+  expect(child.exitCode).toBe(0);
+  expect(child.stdout.toString()).toBe(binary);
+});
