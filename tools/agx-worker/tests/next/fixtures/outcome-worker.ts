@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const mode = process.env.AGX_OUTCOME_FIXTURE;
@@ -27,6 +27,15 @@ if (mode === "timeout") {
   receipt = { timed_out: child.signalCode === "SIGTERM", exit_code: 0, report };
 }
 if (mode === "capacity") receipt = { outcome: "capacity", report };
+// The first attempt reports capacity; the reroute to another row then returns the normal report.
+if (mode === "capacity-once") {
+  const marker = join(process.env.AGX_RUN_DIR ?? ".", "capacity-once.marker");
+  if (existsSync(marker)) receipt = report;
+  else {
+    writeFileSync(marker, "first attempt\n");
+    receipt = { outcome: "capacity", report };
+  }
+}
 if (mode === "refused") receipt = { outcome: "refused", report };
 if (mode === "structured") receipt = { structured_output: report };
 if (mode === "last-message") receipt = { last_message: JSON.stringify(report) };

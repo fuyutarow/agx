@@ -127,7 +127,8 @@ AbortSignal.timeout = (ms) => {
   ]);
   let expectedExit = 0;
   if (mode === "refused-exit") expectedExit = 1;
-  if (mode === "capacity-refused") expectedExit = 2;
+  // contract.md: vendor capacity ends the run with exit 75, whatever stops the reroute.
+  if (mode === "capacity-refused") expectedExit = 75;
   expect(exit, stderr).toBe(expectedExit);
   const receipt = decodedJson(Receipt, stdout);
   const report = decodedJson(
@@ -236,7 +237,8 @@ test("refused capacity reroute does not verify or resume", async () => {
   const { receipt, report, calls, ended, routeCalls, runFiles } =
     await exercise("capacity-refused");
   expect(routeCalls).toBe(2);
-  expect(receipt.outcome).toBe("refused");
+  // contract.md: capacity is the worker reporting vendor capacity; refused does not mean capacity.
+  expect(receipt.outcome).toBe("capacity");
   expect(calls).toHaveLength(1);
   expect(calls[0]?.args).not.toContain("--resume");
   expect(report.verify_rounds).toHaveLength(0);

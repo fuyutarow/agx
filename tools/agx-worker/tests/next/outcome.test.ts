@@ -75,12 +75,16 @@ test("ended fixtures retain measured outcomes while routing omits ungraded raw h
     },
   });
   servers.push(server);
+  // string-wrapped: a claude receipt carries the worker's final message in `result`
+  // (src/report.ts receiptReportInput: "the claude receipt carries the worker's final
+  // message in result"), and tests/claude-report-parse.test.ts "a valid report in result
+  // is the report". A valid report JSON there is therefore a returned report, not malformed.
   const cases: [string, string][] = [
     ["no-change", "no-change"],
     ["verify-failed", "verify-failed"],
     ["timeout", "timeout"],
     ["killed-bound", "timeout"],
-    ["string-wrapped", "malformed"],
+    ["string-wrapped", "ok"],
     ["ok", "ok"],
     ["malformed", "malformed"],
     ["refused", "refused"],
@@ -128,7 +132,10 @@ test("ended fixtures retain measured outcomes while routing omits ungraded raw h
       new Response(child.stderr).text(),
       child.exited,
     ]);
-    expect(exit, stderr).toBe(mode === "killed-bound" ? 143 : 0);
+    // contract.md: vendor capacity ends the run with exit 75; killed runs exit 143.
+    const expectedExit =
+      mode === "killed-bound" ? 143 : mode === "capacity" ? 75 : 0;
+    expect(exit, `${mode}: ${stderr}\n${stdout}`).toBe(expectedExit);
     const receipt = jsonOf(z.looseObject({ outcome: z.string() })).safeParse(
       stdout,
     );
@@ -393,4 +400,66 @@ test("outcome contract: malformed only when the returned report is unreadable", 
       );
     }
   }
+}, 180_000);
+
+test("outcome contract: a capacity reroute that finds a row continues on that row", async () => {
+  const root = scratch();
+  const workspace = join(root, "workspace");
+  mkdirSync(workspace, { recursive: true });
+  await prepareTicketRepo(workspace);
+  const state = join(root, "state");
+  const server = Bun.serve({
+    port: 0,
+    fetch: () =>
+      Response.json({ answers: { worker: { choice: "mechanical" } } }),
+  });
+  servers.push(server);
+  const ticket = join(workspace, "capacity-once.md");
+  writeFileSync(
+    ticket,
+    // A 600 s box leaves rows whose published duration fits the reroute's 60% limit; a 60 s box refuses every row.
+    `+++\nschema = 2\ntimeout_s = 600\nname = "capacity-once"\nwrites = ["work.txt"]\noutcome = "fixture"\nverify = ["true"]\n[proposition]\nid = "OUTCOME"\nclaim = "capacity reroute finds a row"\nrefuted_by = "incorrect classification"\n+++\nFixture.\n`,
+  );
+  const child = Bun.spawn(
+    [
+      process.execPath,
+      "tools/agx-worker/src/next/cli.ts",
+      "run",
+      ticket,
+      "--cd",
+      workspace,
+    ],
+    {
+      env: {
+        ...subprocessEnvironment(),
+        AGX_STATE_DIR: state,
+        XDG_STATE_HOME: join(root, "xdg-state"),
+        AGX_CODEX_HOST_FILE: join(root, "absent-host.toml"),
+        JEV_URL: `http://127.0.0.1:${server.port}/choice`,
+        AGX_WORKER_BIN: join(import.meta.dir, "fixtures/outcome-worker.ts"),
+        TYPESAFE_API_KEY: "test-key",
+        AGX_CONFIG: new URL("../../src/roster/policy.example.toml", import.meta.url)
+          .pathname,
+        AGX_OUTCOME_FIXTURE: "capacity-once",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
+  const [stdout, stderr, exit] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ]);
+  expect(exit, `${stderr}\n${stdout}`).toBe(0);
+  const receipt = jsonOf(
+    z.looseObject({
+      outcome: z.string(),
+      rows: z.array(z.string()).optional(),
+    }),
+  ).safeParse(stdout);
+  expect(receipt.success).toBe(true);
+  if (!receipt.success) return;
+  expect(receipt.data.rows).toHaveLength(2);
+  expect(receipt.data.outcome).toBe("ok");
 }, 180_000);

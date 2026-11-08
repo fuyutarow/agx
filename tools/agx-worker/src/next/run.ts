@@ -1153,6 +1153,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
   let exit = 0;
   let timedOut = false;
   let capacityExhausted = false;
+  let capacityRerouteRefusal: string | undefined;
   let endedOnCapacity = false;
   let routeFailure:
     | Extract<CapacityRetryRouteResult, { kind: "refused" }>
@@ -1376,6 +1377,17 @@ async function runUnguarded(flags: Flags): Promise<number> {
       capacityExhausted = true;
       break;
     }
+    // The worker reported vendor capacity and no further row is usable for any reason:
+    // contract.md "Vendor capacity ends a run with outcome `capacity` and temporary-unavailability exit 75."
+    // The refusal reason is kept on stderr and in the report so it is not lost.
+    if (next.kind === "refused" && endedOnCapacity) {
+      capacityExhausted = true;
+      capacityRerouteRefusal = next.message.trim();
+      process.stderr.write(
+        `WARN capacity reroute found no row: ${capacityRerouteRefusal}\n`,
+      );
+      break;
+    }
     if (next.kind === "refused") {
       routeFailure = next;
       exit = next.exitCode;
@@ -1410,6 +1422,8 @@ async function runUnguarded(flags: Flags): Promise<number> {
   clearInterval(progressWatcher);
   // A capacity receipt is terminal only after the active run exhausted its eligible rows.
   const capacity = capacityExhausted && endedOnCapacity;
+  // contract.md: a capacity run exits with temporary-unavailability status 75.
+  if (capacity) exit = 75;
   // A killed claude sandbox leaves empty read-only placeholders; remove them before measuring.
   const beforeSnapshot = before.isOk() ? before.value : undefined;
   const sandboxStubsRemoved = claudeRouteRan
@@ -1456,7 +1470,11 @@ async function runUnguarded(flags: Flags): Promise<number> {
       summary: `Vendor capacity on ${attemptedRows.join(" → ")}: ${workerReceipt.cause ?? "model unavailable"}`,
       changes: [],
       checks: [],
-      for_coordinator: ["Every eligible roster row answered capacity."],
+      for_coordinator: [
+        capacityRerouteRefusal === undefined
+          ? "Every eligible roster row answered capacity."
+          : `No further roster row was usable after capacity: ${capacityRerouteRefusal}`,
+      ],
       open: [
         "The vendor did not complete this ticket; this is not a worker failure.",
       ],
