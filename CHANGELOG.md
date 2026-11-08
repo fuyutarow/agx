@@ -1,5 +1,9 @@
 # Changelog
 
+## 8.0.0 — 2026-11-08
+
+- Remove ws harvest and preserve ended-run results before garbage collection.
+
 ## 7.0.0 — 2026-11-08
 
 - Remove the unused agx change command and its pre-push hook.
