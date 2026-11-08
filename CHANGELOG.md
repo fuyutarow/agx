@@ -1,5 +1,9 @@
 # Changelog
 
+## 6.0.1 — 2026-11-08
+
+- Vendor capacity whose reroute finds no usable row now ends as outcome capacity with exit 75, keeping the refusal reason on stderr and in the report; a reroute that finds a row is unchanged.
+
 ## 6.0.0 — 2026-11-08
 
 - Bare gc now only reports; removing calls must add --apply.
