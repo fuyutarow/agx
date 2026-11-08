@@ -10,17 +10,13 @@ import {
 } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { statsWindow } from "../../src/next/stats-window.ts";
 import { writeUsageSnapshot } from "./usage-snapshot.fixture.ts";
 import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const roots: string[] = [];
-const repoRoot = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "../../../..",
-);
+const repoRoot = resolve(import.meta.dirname, "../../../..");
 const cliPath = join(repoRoot, "tools/agx/src/agx.ts");
 const workerCliPath = join(repoRoot, "tools/agx-worker/src/next/cli.ts");
 const policyPath = join(
@@ -33,9 +29,10 @@ const FIRST_NOW_MS = Temporal.Instant.from(
 const SECOND_NOW_MS = Temporal.Instant.from(
   "2026-10-26T00:01:00Z",
 ).epochMilliseconds;
-const usageReader = fileURLToPath(
-  new URL("./fixtures/subscription-usage-reader.ts", import.meta.url),
-);
+const usageReader = new URL(
+  "./fixtures/subscription-usage-reader.ts",
+  import.meta.url,
+).pathname;
 afterEach(() => {
   for (const root of roots.splice(0))
     rmSync(root, { recursive: true, force: true });

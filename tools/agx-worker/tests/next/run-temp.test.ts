@@ -142,7 +142,8 @@ describe("agx worker run owns its temp space", () => {
     );
     chmodSync(mise, 0o755);
     const jj = Bun.which("jj");
-    if (jj === null) throw new Error("jj is required by the fixture");
+    expect(jj).not.toBeNull();
+    if (jj === null) return;
     symlinkSync(jj, join(home, ".local/bin/jj"));
     writeFileSync(join(f.root, "not-executable"), "not executable\n");
     const env = {
@@ -443,7 +444,8 @@ describe("createRunTemp", () => {
       false,
     );
     const ended = recordedLifetime("run-1", records);
-    if (ended.state !== "ended") throw new Error("missing end record");
+    expect(ended.state).toBe("ended");
+    if (ended.state !== "ended") return;
     expect(freeRunTemp(ended, root, records).isOk()).toBe(true);
     expect(existsSync(temp.dir)).toBe(false);
   });

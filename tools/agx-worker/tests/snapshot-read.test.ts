@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
+import { jsonOf, z } from "../../shared/src/zod.ts";
 import {
   append,
   flushRunPublications,
@@ -69,7 +70,9 @@ const addRun = (root: string, name: string, minute: number) => {
 };
 const published = async (names: string[]) => {
   const root = fresh();
-  names.forEach((name, index) => addRun(root, name, index));
+  names.forEach((name, index) => {
+    addRun(root, name, index);
+  });
   await publishCurrentRuns(root);
   expect(statSync(foldFile(root)).isFile()).toBe(true);
   return root;
@@ -158,7 +161,11 @@ test("a snapshot whose identity does not match the log is ignored", async () => 
   // Written by another release, or damaged: not trusted.
   const foreign = await published(["aaaa", "bbbb"]);
   rewriteInPlace(foreign, "ticket-aaaa", "ticket-ZZZZ");
-  const file = JSON.parse(readFileSync(foldFile(foreign), "utf8"));
+  const file = jsonOf(z.record(z.string(), z.unknown())).safeParse(
+    readFileSync(foldFile(foreign), "utf8"),
+  );
+  expect(file.success).toBe(true);
+  if (!file.success) return;
   writeFileSync(
     foldFile(foreign),
     JSON.stringify({ ...file, writer: "0.0.0-other" }),

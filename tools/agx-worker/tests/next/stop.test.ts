@@ -280,7 +280,7 @@ describe("real run stop", () => {
           ticket,
           '+++\nschema = 2\nname = "stop-fixture"\nwrites = []\noutcome = "stop fixture"\nverify = ["true"]\n[proposition]\nid = "STOP"\nclaim = "stops"\nrefuted_by = "vendor remains"\n+++\nWait.\n',
         );
-        let signalReady: () => void = () => {};
+        let signalReady: (() => void) | undefined;
         const ready = new Promise<void>((resolveReady) => {
           signalReady = resolveReady;
         });
@@ -294,7 +294,7 @@ describe("real run stop", () => {
           port: 0,
           fetch: (request) => {
             if (new URL(request.url).pathname === "/ready") {
-              signalReady();
+              signalReady?.();
               return new Response("ready");
             }
             return Response.json({
@@ -558,7 +558,7 @@ describe("direct systemctl stop", () => {
     );
     const unit = "agt_signal-fixture";
     const session = "fake-vendor-session";
-    let signalReady: () => void = () => {};
+    let signalReady: (() => void) | undefined;
     const ready = new Promise<void>((resolveReady) => {
       signalReady = resolveReady;
     });
@@ -572,7 +572,7 @@ describe("direct systemctl stop", () => {
       port: 0,
       fetch: (request) => {
         if (new URL(request.url).pathname === "/ready") {
-          signalReady();
+          signalReady?.();
           return new Response("ready");
         }
         return Response.json({ answers: { worker: { choice: "localized" } } });

@@ -69,12 +69,11 @@ async function deliver(input: Case) {
     parentPid: dead.pid,
     ...(input.deadlineMs === undefined ? {} : { deadlineMs: input.deadlineMs }),
   };
-  const mode =
-    input.senderDelayMs === "never"
-      ? "hang"
-      : input.senderExit === undefined || input.senderExit === 0
-        ? "ok"
-        : "unknown";
+  let mode: "hang" | "ok" | "unknown";
+  if (input.senderDelayMs === "never") mode = "hang";
+  else if (input.senderExit === undefined || input.senderExit === 0)
+    mode = "ok";
+  else mode = "unknown";
   const home = join(root, "rn-home");
   await Bun.write(
     join(home, "fake.json"),
@@ -230,7 +229,7 @@ test("run end notice: a failed send is recorded and does not touch the outcome",
 });
 
 test("run end notice: the default budget leaves tens of seconds over a relay turn", () => {
-  const parsed = EndNoticeRequest.parse({
+  const parsedResult = EndNoticeRequest.safeParse({
     id: "x",
     ticket: "t",
     dispatcher: "claude:d5fd4690-9c34-4937-ab24-54a8f96a8b9d",
@@ -241,7 +240,9 @@ test("run end notice: the default budget leaves tens of seconds over a relay tur
     verifyExits: [],
     parentPid: 1,
   });
-  expect(parsed.deadlineMs).toBeGreaterThanOrEqual(60_000);
+  expect(parsedResult.success).toBe(true);
+  if (parsedResult.success)
+    expect(parsedResult.data.deadlineMs).toBeGreaterThanOrEqual(60_000);
 });
 
 test("run end notice: a sender that accepts after 3 s is recorded accepted", async () => {
@@ -317,7 +318,7 @@ test("a bare Claude dispatcher is qualified for a real run end notice", async ()
         answers: { worker: { choice: "mechanical", confidence: 0.9 } },
       }),
   });
-  try {
+  const run = async () => {
     const child = Bun.spawn(
       [
         process.execPath,
@@ -369,7 +370,13 @@ test("a bare Claude dispatcher is qualified for a real run end notice", async ()
     const records = await Bun.file(join(state, "records.jsonl")).text();
     expect(records).toContain('"dispatcher_session":"bare-claude-session"');
     expect(records).toContain('"ack_lookup_kind":"accepted"');
-  } finally {
-    await server.stop(true);
-  }
+  };
+  const result = await run().then(
+    () => ({ ok: true as const }),
+    (error: unknown) => ({ ok: false as const, error }),
+  );
+  await server.stop(true);
+  expect(result, result.ok ? undefined : String(result.error)).toMatchObject({
+    ok: true,
+  });
 }, 30_000);

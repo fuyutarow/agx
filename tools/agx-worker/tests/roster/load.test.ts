@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
 import { loadRoster } from "../../src/roster/load.ts";
+import { jsonOf, z } from "../../../shared/src/zod.ts";
 
 const catalogPath = join(import.meta.dir, "../../src/roster/catalog.toml");
 const examplePath = join(
@@ -30,10 +31,14 @@ describe("roster loader", () => {
     const example = await readFile(examplePath, "utf8");
     const result = await withPolicy(example);
     expect(result.ok).toBe(true);
-    if (result.ok)
-      expect(JSON.parse(JSON.stringify(result.value))).not.toHaveProperty(
-        "default",
+    if (result.ok) {
+      const serialized = jsonOf(z.record(z.string(), z.unknown())).safeParse(
+        JSON.stringify(result.value),
       );
+      expect(serialized.success).toBe(true);
+      if (serialized.success)
+        expect(serialized.data).not.toHaveProperty("default");
+    }
   });
 
   test("exclude removes a catalog row", async () => {
@@ -67,7 +72,7 @@ describe("roster loader", () => {
     expect(example).not.toMatch(/^default\s*=/mu);
     const result = await withPolicy(example);
     expect(result.ok).toBe(true);
-    if (result.ok) expect("default" in result.value).toBe(false);
+    if (result.ok) expect(Object.hasOwn(result.value, "default")).toBe(false);
   });
 
   test.each(['"luna-high"', '"missing-row"', '""'])(

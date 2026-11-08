@@ -53,7 +53,7 @@ describe("repository [route] override", () => {
     expect(loaded.ok).toBe(true);
     if (!loaded.ok) return;
     expect(loaded.value.auto.routes).toEqual(["claude"]);
-    expect("default" in loaded.value).toBe(false);
+    expect(Object.hasOwn(loaded.value, "default")).toBe(false);
     expect(routeFilterLabel(loaded.value.auto)).toBe('routes=["claude"]');
   });
 
@@ -82,7 +82,7 @@ describe("repository [route] override", () => {
     expect(loaded.ok).toBe(true);
     if (!loaded.ok) return;
     expect(loaded.value.auto.routes).toEqual(["codex"]);
-    expect("default" in loaded.value).toBe(false);
+    expect(Object.hasOwn(loaded.value, "default")).toBe(false);
   });
 
   test("the override of one repo does not leak into another", async () => {

@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { jsonOf, z } from "../../../shared/src/zod.ts";
 import {
   recordRoutingPick,
   routingDecision,
@@ -9,6 +10,17 @@ import {
 } from "../../src/next/routing-events.ts";
 
 const roots: string[] = [];
+const event = (id: string, source: string) =>
+  JSON.stringify({
+    schema: 1,
+    at: "2020-01-01T00:00:00Z",
+    host: "fixture",
+    row: "row",
+    route: "codex",
+    source,
+    audit: { decision_id: id },
+  }) + "\n";
+const RoutingEvent = z.object({ at: z.string() });
 const previous = process.env.AGX_STATE_DIR;
 afterEach(() => {
   if (previous === undefined) delete process.env.AGX_STATE_DIR;
@@ -21,16 +33,6 @@ test("dated writes and newest-first lookup preserve legacy bytes", () => {
   const root = mkdtempSync(join(tmpdir(), "agx-routing-rotate-"));
   roots.push(root);
   process.env.AGX_STATE_DIR = root;
-  const event = (id: string, source: string) =>
-    JSON.stringify({
-      schema: 1,
-      at: "2020-01-01T00:00:00Z",
-      host: "fixture",
-      row: "row",
-      route: "codex",
-      source,
-      audit: { decision_id: id },
-    }) + "\n";
   const legacyPath = join(root, "routing.jsonl");
   const legacy = event("legacy", "legacy") + event("duplicate", "legacy");
   writeFileSync(legacyPath, legacy);
@@ -47,10 +49,12 @@ test("dated writes and newest-first lookup preserve legacy bytes", () => {
     decision_id: "today",
   });
   const today = Temporal.Now.instant().toString().slice(0, 10);
-  const written = JSON.parse(
-    readFileSync(join(root, `routing-${today}.jsonl`), "utf8"),
+  const written = jsonOf(RoutingEvent).safeParse(
+    readFileSync(join(root, `routing-${today}.jsonl`), "utf8").trim(),
   );
-  expect(written.at.slice(0, 10)).toBe(today);
+  expect(written.success).toBe(true);
+  if (!written.success) return;
+  expect(written.data.at.slice(0, 10)).toBe(today);
   expect(routingDecision("today")?.source).toBe("today");
   expect(routingDecision("older")?.source).toBe("older");
   expect(routingDecision("legacy")?.source).toBe("legacy");

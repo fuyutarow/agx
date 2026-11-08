@@ -38,6 +38,13 @@ const CELLAR = "/home/linuxbrew/.linuxbrew/Cellar/agx/1.22.69/bin/agx-worker";
 const STABLE = "/home/linuxbrew/.linuxbrew/opt/agx/bin/agx-worker";
 
 const cellarRuntime = { execPath: CELLAR, main: "/$bunfs/root/agx-worker" };
+const src = (f: string) =>
+  readFileSync(new URL(`../src/${f}`, import.meta.url), "utf8");
+const walk = (dir: string): string[] =>
+  readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    if (e.isDirectory()) return walk(join(dir, e.name));
+    return e.name.endsWith(".ts") ? [join(dir, e.name)] : [];
+  });
 
 test("with a Cellar execPath the self command starts at the opt link", () => {
   expect(stableSelfCommand(cellarRuntime)).toEqual([STABLE]);
@@ -47,8 +54,6 @@ test("with a Cellar execPath the self command starts at the opt link", () => {
 });
 
 test("the end-notice default and dispatch/run spawns take the stable helper", () => {
-  const src = (f: string) =>
-    readFileSync(new URL(`../src/${f}`, import.meta.url), "utf8");
   expect(src("next/end-notice.ts")).toContain(
     "workerCommand: string[] = stableSelfCommand()",
   );
@@ -59,18 +64,10 @@ test("the end-notice default and dispatch/run spawns take the stable helper", ()
 
 test("no source file besides self-command.ts calls selfCommand()", () => {
   const root = new URL("../src", import.meta.url).pathname;
-  const walk = (dir: string): string[] =>
-    readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
-      e.isDirectory()
-        ? walk(join(dir, e.name))
-        : e.name.endsWith(".ts")
-          ? [join(dir, e.name)]
-          : [],
-    );
-  const offenders = walk(root).filter(
-    (f) =>
-      !f.endsWith("/self-command.ts") &&
-      /(?<![A-Za-z])selfCommand\b/u.test(readFileSync(f, "utf8")),
+  const offenders = walk(root).filter((f) =>
+    f.endsWith("/self-command.ts")
+      ? false
+      : /(?<![A-Za-z])selfCommand\b/u.test(readFileSync(f, "utf8")),
   );
   expect(offenders).toEqual([]);
 });

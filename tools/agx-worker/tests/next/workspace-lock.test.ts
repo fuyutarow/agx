@@ -113,7 +113,7 @@ async function until(predicate: () => boolean, awaited = "the test predicate") {
     if (predicate()) return;
     await Bun.sleep(10);
   }
-  throw new Error(`timed out after 20000ms waiting for: ${awaited}`);
+  expect.unreachable(`timed out after 20000ms waiting for: ${awaited}`);
 }
 
 const Row = z.looseObject({

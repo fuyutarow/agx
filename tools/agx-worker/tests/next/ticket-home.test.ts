@@ -126,7 +126,7 @@ test.each([
       AGX_WORKER_BIN: join(parent, "worker.ts"),
       XDG_STATE_HOME: join(parent, "tmp"),
       JEV_URL: jev.url,
-          TYPESAFE_API_KEY: "test-key",
+      TYPESAFE_API_KEY: "test-key",
       AGX_CONFIG: new URL(
         "../../src/roster/policy.example.toml",
         import.meta.url,
@@ -422,7 +422,7 @@ test.each(["scratch", "empty-git", "other-repository"])(
             AGX_WORKER_BIN: worker,
             XDG_STATE_HOME: join(parent, "tmp"),
             JEV_URL: jev.url,
-          TYPESAFE_API_KEY: "test-key",
+            TYPESAFE_API_KEY: "test-key",
           },
           stdin: "ignore",
           stdout: "pipe",

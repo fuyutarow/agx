@@ -11,7 +11,7 @@ test("refusal is the first line; the store WARNs merge into one line", () => {
   const out = composePreflightRefusal({
     tree: "--cd /w",
     checkCode: 2,
-    checkErr: `${stores.map(warn).join("\n")}\n${refusal}\n`,
+    checkErr: `${stores.map((store) => warn(store)).join("\n")}\n${refusal}\n`,
     failures: [],
   });
   const lines = (out ?? "").trimEnd().split("\n");
@@ -30,7 +30,7 @@ test("a check with only WARNs and exit 0 does not refuse", () => {
     composePreflightRefusal({
       tree: "--cd /w",
       checkCode: 0,
-      checkErr: `${stores.map(warn).join("\n")}\n`,
+      checkErr: `${stores.map((store) => warn(store)).join("\n")}\n`,
       failures: [],
     }),
   ).toBeUndefined();
