@@ -4,6 +4,26 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { terminalEnvironment } from "../../src/next/end-notice.ts";
 import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
+import { jsonOf, z } from "../../../shared/src/zod.ts";
+
+const RecordSchema = z.looseObject({
+  kind: z.string().optional(),
+  id: z.string().optional(),
+  notice: z.looseObject({ status: z.string().optional() }).optional(),
+  command: z.string().default(""),
+  agent: z.string().optional(),
+  session: z.string().optional(),
+  args: z.array(z.string()).default([]),
+  hasFrom: z.boolean().optional(),
+  envNames: z.array(z.string()).optional(),
+  delivery: z.string().optional(),
+  helper: z.number().optional(),
+});
+const decodeRecord = (line: string): z.output<typeof RecordSchema> => {
+  const result = jsonOf(RecordSchema).safeParse(line);
+  expect(result.success).toBe(true);
+  return result.success ? result.data : { command: "", args: [] };
+};
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -109,10 +129,10 @@ async function fixture(mode = "ok", missing = false) {
     const records = (await Bun.file(join(stateDir, "records.jsonl")).text())
       .trim()
       .split("\n")
-      .map((line) => JSON.parse(line));
-    return records
-      .filter((row) => row.kind === "end-notice" && row.id === runId)
-      .at(-1).notice;
+      .map((line) => decodeRecord(line));
+    return records.findLast(
+      (row) => row.kind === "end-notice" && row.id === runId,
+    )?.notice;
   };
   return {
     root,
@@ -127,7 +147,7 @@ async function fixture(mode = "ok", missing = false) {
         .trim()
         .split("\n")
         .filter(Boolean)
-        .map((line) => JSON.parse(line)),
+        .map((line) => decodeRecord(line)),
   };
 }
 
@@ -144,7 +164,12 @@ test("one terminal send per run to the address lookupAddress resolved, with no a
   ).toEqual([["claude-code", "dispatcher"]]);
   const sends = calls.filter((c) => c.command === "send");
   expect(sends).toHaveLength(1);
-  const send = sends[0];
+  const send = sends[0] ?? {
+    command: "",
+    args: [],
+    envNames: [],
+    hasFrom: false,
+  };
   expect(send.args).toHaveLength(2);
   expect(send.hasFrom).toBe(false);
   expect(send.args[0]).toBe("alice/dispatcher@host");
@@ -161,7 +186,7 @@ test("one terminal send per run to the address lookupAddress resolved, with no a
     "CODEX_THREAD_ID",
   ])
     expect(send.envNames).not.toContain(name);
-  expect(send.args[1].split("\n")[0]).toBe(`agx end-notice run ${id}`);
+  expect(send.args[1]?.split("\n")[0]).toBe(`agx end-notice run ${id}`);
   expect(calls.some((c) => c.command === "mcp" || c.command === "status")).toBe(
     false,
   );
@@ -213,8 +238,8 @@ test("two notices for different runs started together are both accepted", async 
   expect(
     calls
       .filter((c) => c.delivery !== undefined)
-      .map((c) => c.delivery)
-      .sort(),
+      .map((c) => c.delivery ?? "")
+      .toSorted((left, right) => left.localeCompare(right)),
   ).toEqual([id, otherId]);
   expect(calls.some((c) => c.command === "mcp")).toBe(false);
 });
@@ -227,7 +252,7 @@ test("a send without a message id is unknown and is not retried", async () => {
       (await run.calls()).filter((c) => c.command === "send"),
     ).toHaveLength(1);
   }
-  expect((await (await fixture("unknown")).invoke()).receipt).toBe(
+  expect((await (await fixture("unknown")).invoke())?.receipt).toBe(
     "receipt unavailable",
   );
 });
@@ -252,7 +277,7 @@ test("an unregistered dispatcher is unreachable and nothing is sent; an absent b
 
 test("a send that never ends is a deadline and its helper is killed", async () => {
   const hanging = await fixture("hang");
-  expect((await hanging.invoke()).status).toBe("deadline");
+  expect((await hanging.invoke())?.status).toBe("deadline");
   const calls = await hanging.calls();
   expect(calls.filter((c) => c.command === "send")).toHaveLength(1);
   const helper = calls.find((call) => call.helper !== undefined)?.helper;
