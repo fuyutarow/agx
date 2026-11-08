@@ -2980,7 +2980,7 @@ describe("AGX-GC-LOCAL-TRUNK-1025", () => {
       expect(dry.code, dry.err).toBe(0);
       if (names.length === 1) {
         expect(dry.out).toContain("\tws\tremovable\t");
-        expect(dry.out).toContain(`trunk source: local bookmark ${names[0]}`);
+        expect(dry.out).toContain(`trunk source: ${names[0]}`);
         expect(dry.out).not.toContain("missing trunk setting");
       } else {
         expect(dry.out).toContain("\tkeep\t");
@@ -3017,7 +3017,7 @@ describe("AGX-GC-LOCAL-TRUNK-1025", () => {
     const dry = await ws(["gc", "--dry-run", "--include-unrecorded"], path);
     expect(dry.code, dry.err).toBe(0);
     expect(dry.out).toContain("\tws\tremovable\t");
-    expect(dry.out).toContain("trunk source: jj trunk()");
+    expect(dry.out).toContain("trunk source: main");
     await Bun.write(
       join(path, "agx.toml"),
       'schema = 1\n[ws]\ntrunk = "root()"\n',
@@ -3034,9 +3034,8 @@ describe("AGX-GC-LOCAL-TRUNK-1025", () => {
     );
     expect(explicit.code, explicit.err).toBe(0);
     expect(explicit.out).toContain("\tkeep\t");
-    expect(explicit.out).toContain(
-      'trunk source: agx.toml [ws].trunk = "root()" resolves to root',
-    );
+    expect(explicit.out).toContain("trunk source: root()");
+    expect(explicit.out).not.toContain("local candidate bookmarks");
   });
 });
 

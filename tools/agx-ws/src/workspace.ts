@@ -2772,10 +2772,16 @@ async function trunkCommit(
 }
 
 /** Freeze the remote copy of the trunk bookmark when one exists. */
-async function landingTrunk(repo: Repo, cfg: Config): Promise<Attempt<{ commit: string | null; ref: string }>> {
+async function landingTrunk(repo: Repo, cfg: Config): Promise<Attempt<{ commit: string | null; ref: string; unresolved?: string }>> {
   const local = await resolveTrunk(repo, cfg);
   if (!local.ok) return local;
-  if (local.value.commit === null) return good({ commit: null, ref: cfg.trunk });
+  // Unconfigured root with zero or several local candidates: carry resolveTrunk's diagnostic (names the candidates and the missing [ws].trunk setting) for the dry-run reason.
+  if (local.value.commit === null)
+    return good({
+      commit: null,
+      ref: cfg.trunk,
+      ...(cfg.trunkConfigured ? {} : { unresolved: local.value.source }),
+    });
   const names = await jjOut(
     ["log", "--no-graph", "-r", local.value.commit, "-T", 'self.local_bookmarks().map(|b| b.name()).join("\\n")'],
     repo.backing, true,
@@ -4675,7 +4681,7 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
         failed.push(...(c.verdict === "broken" ? [ws.dir] : []));
       }
       // Escape control characters without breaking the column contract.
-      if (options.dryRun) reason += `; trunk source: ${trunk.value.ref}`;
+      if (options.dryRun) reason += `; trunk source: ${trunk.value.unresolved ?? trunk.value.ref}`;
       lines.push(
         [ws.dir, kind, c.verdict, c.change, c.age, reason]
           .map((field) => field.replaceAll("\t", "\\t").replaceAll("\n", "\\n"))
