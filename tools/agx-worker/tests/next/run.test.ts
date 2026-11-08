@@ -899,6 +899,7 @@ describe("agx-worker run", () => {
         id: z.string(),
         started_at: z.string(),
         ended_at: z.string().nullable(),
+        run_dir_bytes: z.number().int().nonnegative(),
         ticket: z.string(),
         state: z.enum(["running", "ended"]),
         exit: z.number().nullable(),
@@ -955,6 +956,7 @@ describe("agx-worker run", () => {
     expect(firstRow.sandbox_source).toBe("flag");
     expect(firstRow.started_at).toBe(started.at);
     expect(firstRow.ended_at).toBe(ended.at);
+    expect(firstRow.run_dir_bytes).toBeGreaterThan(0);
     expect(secondRow.dispatcher_session).toBe("claude-session");
     expect(secondRow.continues).toBe(started.id);
     expect(secondRow.vendor_session).toBe("continued-vendor-1");
@@ -975,6 +977,7 @@ describe("agx-worker run", () => {
     expect(Object.keys(firstRow).toSorted()).toEqual(
       [
         "ended_at",
+        "run_dir_bytes",
         "elapsed_seconds",
         "started_at",
         "continues",

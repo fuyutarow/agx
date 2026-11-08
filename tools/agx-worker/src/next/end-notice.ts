@@ -11,6 +11,7 @@ export type EndNotice = z.output<typeof EndNoticeResult>;
 const NOTICE_DEADLINE_MS = 120_000;
 
 export const EndNoticeRequest = z.object({
+  runDirSize: z.object({ bytes: z.number(), largest: z.object({ name: z.string(), bytes: z.number(), directory: z.boolean() }).optional() }).optional(),
   id: z.string(),
   ticket: z.string(),
   dispatcher: z.string().nullable(),
@@ -180,6 +181,11 @@ export function terminalEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   );
 }
 
+export function sizeNotice(size: EndNoticeRequest["runDirSize"]): string {
+  if (size === undefined || size.bytes <= 256 * 1024 * 1024) return "";
+  return `\nRun directory: ${(size.bytes / 1024 / 1024).toFixed(1)} MiB; largest subdirectory: ${size.largest?.name ?? "none"}`;
+}
+
 async function sendEndNotice(
   input: EndNoticeRequest,
   env: NodeJS.ProcessEnv,
@@ -204,6 +210,7 @@ async function sendEndNotice(
     `agx run ${input.id} ${input.ticket} ended ${input.outcome} ` +
     `exit ${input.exit ?? "none"} after ${(elapsedMs / 60_000).toFixed(1)} min; result: ${input.resultPath ?? "none"}; ` +
     `verify: ${input.verifyDetails ?? verifyText(input.verifyExits, input.verifyRound)}; ` +
+    sizeNotice(input.runDirSize) +
     "\nNo reply needed; read: agx worker ls --json";
   const executable = env.PATH === undefined ? Bun.which("reason-network") : Bun.which("reason-network", { PATH: env.PATH });
   if (executable === null) return { status: "unreachable", exit: 127, receipt: "reason-network executable not found on PATH" };

@@ -21,7 +21,8 @@ const rejectPrototypeFlag = (type: string, flag: string): void => {
     exitWithError(`agx: unknown option '--${flag}'\n`, 2);
   }
 };
-export const COMMANDS = COMMAND_NAMES.map((name) => ({
+const ALL_COMMANDS = [...COMMAND_NAMES, "reclaim-runs"] as const;
+export const COMMANDS = ALL_COMMANDS.map((name) => ({
   name,
   definition: command({
     name,
@@ -54,7 +55,7 @@ async function main(): Promise<void> {
     await runMain();
     return;
   }
-  if (COMMAND_NAMES.some((name) => name === rawArgs[0])) stateDir();
+  if (ALL_COMMANDS.some((name) => name === rawArgs[0])) stateDir();
   const root = cli(
     {
       name: "agx-worker",
@@ -74,7 +75,12 @@ async function main(): Promise<void> {
   let exit = 2;
   const commandName = rawArgs[0];
   const commandArgs = rawArgs.slice(1);
-  if (commandName === "probe") {
+  if (commandName === "reclaim-runs") {
+    const parsed = cli({ name: "agx worker reclaim-runs", parameters: [], strictFlags: true, ignoreArgv: rejectPrototypeFlag, flags: { olderThan: { type: Number, description: "minimum age in days" }, apply: { type: Boolean, description: "move eligible files to the graveyard" }, pin: { type: [String], description: "file containing absolute paths to protect (repeatable)" } } }, undefined, commandArgs);
+    const { reclaimRuns } = await import("./reclaim-runs.ts");
+    process.exitCode = await reclaimRuns(parsed.flags.olderThan ?? Number.NaN, parsed.flags.apply === true, stateDir(), parsed.flags.pin ?? []);
+    return;
+  } else if (commandName === "probe") {
     const parsed = cli(
       {
         name: "agx worker probe",
@@ -199,7 +205,7 @@ async function main(): Promise<void> {
     // process exits (a pending one would hold the event loop, the workspace lock and the unit open).
     await settleRunPublications();
     await new Promise<void>((resolve) =>
-      process.stdout.write("", () => resolve()),
+      { process.stdout.write("", () => { resolve(); }); },
     );
     process.exit(exit);
   } else if (commandName === "check") {

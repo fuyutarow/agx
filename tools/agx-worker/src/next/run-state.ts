@@ -1,3 +1,5 @@
+import { lstatSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { z } from "../../../shared/src/zod.ts";
 import { Outcome } from "./outcome.ts";
 import { Lease, Evidence, StopSignal } from "./lease.ts";
@@ -57,6 +59,7 @@ export const RunSchema = z.object({
   legacy: LegacyIdentity.optional(),
   started_at: z.string(),
   ended_at: z.string().nullable(),
+  run_dir_bytes: z.number().int().nonnegative().optional(),
   ticket: z.string(),
   state: z.enum(["running", "ended"]),
   lease: Lease.optional(),
@@ -123,3 +126,21 @@ export type ListedRun = {
     | { state: "running"; outcome: null; lease: z.output<typeof Lease> }
     | { state: "ended"; outcome: Outcome; lease?: z.output<typeof Lease> }
   );
+
+/** Apparent bytes, each device/inode once; never follow symbolic links. */
+export function measureRunDir(path: string) {
+  const seen = new Set<string>();
+  const walk = (target: string): number => {
+    const stat = lstatSync(target);
+    const key = `${stat.dev}:${stat.ino}`;
+    if (seen.has(key)) return 0;
+    seen.add(key);
+    return stat.size + (stat.isDirectory() ? readdirSync(target).reduce((sum, name) => sum + walk(join(target, name)), 0) : 0);
+  };
+  const root = lstatSync(path);
+  seen.add(`${root.dev}:${root.ino}`);
+  const children = readdirSync(path).map((name) => ({ name, bytes: walk(join(path, name)), directory: lstatSync(join(path, name)).isDirectory() }));
+  const largest = children.filter((child) => child.directory).toSorted((a, b) => b.bytes - a.bytes)[0];
+  return { bytes: root.size + children.reduce((sum, child) => sum + child.bytes, 0), largest };
+}
+

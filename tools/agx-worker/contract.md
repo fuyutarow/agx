@@ -1003,9 +1003,24 @@ the ticket's ACK instruction.
 
 `run` creates and exports absolute `AGX_RUN_DIR=<state-root>/runs/<run-id>` before
 spawning the worker. For workspace-write it adds that directory to the worker
-sandbox's writable paths and names it in the brief. Workers write results, logs
-and measurements there, alongside runner-owned `report.json`; workspace paths
-hold source changes. Read-only briefs direct results to the final response, and
+sandbox's writable paths and names it in the brief. Results needed for judgment
+are small files directly under the run directory. Large outputs go in `artifacts/`,
+which is reclaimable after judgment; caches, venvs and build trees belong in
+shared caches or the run temp directory. Workspace paths hold source changes.
+
+At run end, the ended event records `run_dir_bytes` as apparent bytes counted once
+per device and inode without following symlinks. Above 256 MiB the end notice
+names the size and largest top-level subdirectory. `agx worker reclaim-runs
+--older-than DAYS` previews eligible judged, ended runs strictly older than the
+window; `--apply` moves their non-record files and subdirectories with `rip`.
+Repeatable `--pin FILE` reads one absolute path per line and skips any run
+containing a pinned path, listing the run as pinned. An unreadable pin file or
+a non-absolute entry refuses the operation before any removal.
+The record set is `brief.md`, `ticket.orig.md` and its SHA256, `report.json`,
+`result.md`, run-ID receipt and last-message files, spawn and attempt JSON,
+interim and progress files, verify logs, and `judged-evidence-<sha256>.txt` files. Reclaim never runs automatically.
+The byte total measures removal from run directories; `rip` retains a graveyard,
+so it does not promise filesystem space has been freed. Read-only briefs direct results to the final response, and
 the runner records that response in its report. Preflight refuses read-only runs
 when any ticket or `[verify].always` entry names `AGX_RUN_DIR`, identifying the
 entry and repair, because the worker is not granted that writable root.

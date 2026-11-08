@@ -33,6 +33,7 @@ import { Outcome, deriveOutcome } from "./outcome.ts";
 import { lossEvidence, Lease, StopSignal, Evidence } from "./lease.ts";
 import {
   EndNoticeResult,
+  measureRunDir,
   LegacyIdentity,
   RunSchema,
   type FoldedRun,
@@ -46,6 +47,7 @@ import { ticketContext } from "./ticket-home.ts";
 import { Sandbox, SandboxSource } from "./sandbox.ts";
 
 import { recordRoutingPick } from "./routing-events.ts";
+import { scheduleEndNotice } from "./end-notice.ts";
 import { freeRunTemp, recordedLifetime } from "../temp.ts";
 
 export const PickAuditSchema = z.object({
@@ -216,6 +218,7 @@ const EventSchema = z.discriminatedUnion("kind", [
   }),
   z.looseObject({
     kind: z.literal("ended"),
+    run_dir_bytes: z.number().int().nonnegative().optional(),
     id: z.string(),
     at: z.string(),
     exit: z.number(),
@@ -605,6 +608,22 @@ function withDecisionReference(
   return { ...event, decision_id: decisionId, ...usage };
 }
 
+function endEventWithSize(event: Extract<z.input<typeof EventSchema>, { kind: "ended" }>, root: string) {
+  if (event.run_dir_bytes !== undefined && event.end_notice !== undefined) return event;
+  if (!/^[a-zA-Z0-9_-]+$/u.test(event.id)) return event;
+  const dir = join(root, "runs", event.id);
+  const measured = fromThrowable(() => existsSync(dir) ? measureRunDir(dir) : { bytes: 0 })();
+  if (measured.isErr()) return event;
+  const size = measured.value;
+  const bytes = event.run_dir_bytes ?? size.bytes;
+  if (event.end_notice !== undefined || size.bytes <= 256 * 1024 * 1024)
+    return { ...event, run_dir_bytes: bytes };
+  const origin = events(root).findLast((row) => row.id === event.id && (row.kind === "started" || row.kind === "dispatching"));
+  if (origin?.kind !== "started" && origin?.kind !== "dispatching") return { ...event, run_dir_bytes: bytes };
+  const notice = scheduleEndNotice({ id: event.id, ticket: origin.ticket, dispatcher: origin.dispatcher_session, startedAt: origin.at, endedAt: event.at, outcome: event.outcome ?? "unknown", exit: event.exit, resultPath: event.report_path, verifyExits: (event.verify ?? []).map((check) => check.exit), runDirSize: size, env: { AGX_STATE_DIR: root } });
+  return { ...event, run_dir_bytes: bytes, end_notice: notice };
+}
+
 export function append(
   event: z.input<typeof EventSchema>,
   root = stateDir(),
@@ -612,7 +631,9 @@ export function append(
 ): void {
   const path = recordPath(root);
   mkdirSync(dirname(path), { recursive: true });
-  const recorded = withDecisionReference(event, pendingPickAudit);
+  const recorded = event.kind === "ended"
+    ? endEventWithSize(event, root)
+    : withDecisionReference(event, pendingPickAudit);
   appendFileSync(path, `${JSON.stringify(recorded)}\n`, {
     encoding: "utf8",
     flag: "a",
@@ -1109,6 +1130,7 @@ function foldInto(runs: Map<string, FoldedRun>, input: NextEvent[]): void {
     if (event.kind === "ended" && event.cause !== undefined)
       run.cause = event.cause;
     if (event.kind === "ended") {
+      run.run_dir_bytes = event.run_dir_bytes;
       run.state = "ended";
       run.signal = event.signal;
       run.stopped_by = event.stopped_by;
@@ -1267,6 +1289,7 @@ export async function listingHistory(workspace?: string, root = stateDir()) {
 
 function readRecordedFold(root: string, malformed?: Record<string, unknown>[]) {
   const path = recordPath(root);
+  // oxlint-disable-next-line unicorn/no-useless-undefined -- the absence is part of this reader's return contract.
   if (!existsSync(path)) return undefined;
   const fd = openSync(path, "r");
   const stat = fstatSync(fd);

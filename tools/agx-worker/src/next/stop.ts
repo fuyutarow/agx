@@ -6,7 +6,8 @@ import { listingProgress } from "./listing-progress.ts";
 import { userInfo } from "node:os";
 import { fromThrowable } from "neverthrow";
 import { leaseFor } from "./lease.ts";
-import type { ListedRun } from "./run-state.ts";
+import { measureRunDir, type ListedRun } from "./run-state.ts";
+import { scheduleEndNotice } from "./end-notice.ts";
 import { resolveRunId } from "./run-id.ts";
 import {
   acquireWorkspaceLock,
@@ -284,10 +285,19 @@ function recordStopped(run: ListedRun, actor: string) {
     reportPath,
     `${JSON.stringify({ outcome: "stopped", result: existsSync(resultFile) ? resultFile : "unknown", verify, ...(parsed !== undefined && !parsed.success ? { verify_state: "unknown" } : {}) })}\n`,
   );
+  const endedAt = now();
+  const runDirSize = measureRunDir(runDir);
+  const endNotice = scheduleEndNotice({
+    id: run.id, ticket: run.ticket, dispatcher: run.dispatcher_session,
+    startedAt: run.started_at, endedAt, outcome: "stopped", exit: 143,
+    resultPath: reportPath, verifyExits: verify.map((item) => item.exit), runDirSize,
+  });
   const stopped = {
     kind: "ended",
     id: run.id,
-    at: now(),
+    at: endedAt,
+    run_dir_bytes: runDirSize.bytes,
+    end_notice: endNotice,
     exit: 143,
     outcome: "stopped",
     signal: "SIGTERM",

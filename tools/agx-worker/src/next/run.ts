@@ -94,6 +94,7 @@ import {
   withSuitePath,
   type VerifyKind,
 } from "./verify.ts";
+import { measureRunDir } from "./run-state.ts";
 import { scheduleEndNotice } from "./end-notice.ts";
 import { completionFor } from "./completion.ts";
 import {
@@ -246,7 +247,7 @@ export const renderPromise = (
       "",
       sandbox === "read-only"
         ? `AGX_RUN_DIR=${runDir}. Return your results in the final response; the runner records the response in its report.`
-        : `AGX_RUN_DIR=${runDir}. Write worker results, logs and measurements there; keep only source changes in the workspace.`,
+        : `AGX_RUN_DIR=${runDir}. Write results needed to judge the run directly in $AGX_RUN_DIR (result.md and small files). Put large outputs in $AGX_RUN_DIR/artifacts/; they are reclaimable after judgment. Put caches, venvs and build trees in shared caches or the run temp directory, never the run directory; keep only source changes in the workspace.`,
       "Promise:",
       `outcome: ${ticket.outcome}`,
       `writes: ${JSON.stringify(ticket.writes.map((glob) => resolve(cwd, glob)))}`,
@@ -779,7 +780,9 @@ async function runUnguarded(flags: Flags): Promise<number> {
           return `${label}: ${v.cmd} (log: ${v.log_path})`;
         });
         const details = parts.length === 0 ? "not run" : parts.join(", ");
+        const runDirSize = measureRunDir(runDir);
         const endNotice = scheduleEndNotice({
+          runDirSize,
           id,
           ticket: ticketName,
           dispatcher: dispatcherIdentity,
@@ -798,6 +801,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
           {
             kind: "ended",
             id,
+            run_dir_bytes: runDirSize.bytes,
             at: endedAt,
             exit: code,
             outcome: "stopped",
@@ -1557,7 +1561,9 @@ async function runUnguarded(flags: Flags): Promise<number> {
     verifyRoundNumber === 0
       ? undefined
       : verifyRoundOf(verifyRoundNumber, verifyRounds);
+  const runDirSize = measureRunDir(runDir);
   const endNotice = scheduleEndNotice({
+    runDirSize,
     id,
     ticket: ticketName,
     dispatcher: dispatcherIdentity,
@@ -1575,6 +1581,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
     {
       kind: "ended",
       id,
+      run_dir_bytes: runDirSize.bytes,
       at: endedAt,
       exit,
       outcome,
