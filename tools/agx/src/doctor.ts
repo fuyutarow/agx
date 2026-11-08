@@ -1,4 +1,6 @@
 import { attempt } from "../../shared/src/attempt.ts";
+import { lstat, readdir } from "node:fs/promises";
+import { join } from "node:path";
 import { cli as cleyeCli } from "cleye";
 import { standardCli } from "../../shared/src/cli.ts";
 import {
@@ -7,7 +9,11 @@ import {
 } from "../../shared/src/doctor-record.ts";
 import { doctorTools } from "../../shared/src/doctor-aggregate.ts";
 import { resolveSuiteTool } from "../../shared/src/path-dispatch.ts";
-import { checkState } from "../../shared/src/state-dir.ts";
+import {
+  checkState,
+  isStateRootName,
+  stateDir,
+} from "../../shared/src/state-dir.ts";
 import { jsonOf } from "../../shared/src/zod.ts";
 import pkg from "../package.json" with { type: "json" };
 
@@ -202,7 +208,24 @@ async function collectAggregate(timeout: number): Promise<DoctorAggregate> {
   const results = await Promise.all(
     doctorTools.map((tool) => collect(tool, timeout)),
   );
-  const findings = results.flatMap((result) => result.findings);
+  const root = stateDir();
+  const names = await readdir(root);
+  const unknown = await Promise.all(
+    names
+      .filter((name) => !isStateRootName(name))
+      .toSorted()
+      .map(async (name) => ({
+        tool: "agx",
+        object: name,
+        finding: "unknown-state-root-entry",
+        remedy: "Inspect this entry; doctor does not remove it.",
+        size_bytes: (await lstat(join(root, name))).size,
+      })),
+  );
+  const findings = [
+    ...results.flatMap((result) => result.findings),
+    ...unknown,
+  ];
   const kinds = Object.fromEntries(
     [...new Set(findings.map((row) => row.finding))].map((kind) => [
       kind,

@@ -6,6 +6,7 @@ export const DoctorRecord = z.object({
   object: z.string().min(1),
   finding: z.string().min(1),
   remedy: z.string().min(1),
+  size_bytes: z.number().int().nonnegative().optional(),
 });
 export const WorkspaceDoctorSummary = z.object({
   type: z.literal("workspace_summary"),

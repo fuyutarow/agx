@@ -997,6 +997,14 @@ No tie threshold or exploration policy is introduced.
 
 ## Worker result directory
 
+The direct state-root entries owned by the suite are declared in
+`tools/shared/src/state-dir.ts`, including its bounded legacy and atomic-publication
+name patterns. `agx doctor` reports every other direct entry as
+`unknown-state-root-entry`, with its name and apparent `lstat` size in bytes
+(for a directory, the directory entry size; symlinks are not followed). It does
+not move, delete, or modify unknown entries. Its own refresh still publishes
+the declared doctor queue and aggregate in the root.
+
 For Claude-route briefs, the run-end notice from the Reason Network terminal sender is the completion notice.
 The worker sends no completion ACK, even when the ticket requests one.
 Workspace-write workers put their result in `$AGX_RUN_DIR/result.md`;

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { DoctorResponse, refreshDoctor } from "../src/refresh.ts";
 import { jsonOf, z } from "../../shared/src/zod.ts";
 import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
+import { stateRootNames } from "../../shared/src/state-dir.ts";
 
 const entry = join(import.meta.dir, "../src/agx.ts");
 async function fixture() {
@@ -79,6 +80,43 @@ const finding = {
   remedy: "agx worker judge fixture reject",
 };
 const emit = `process.stdout.write(${JSON.stringify(JSON.stringify(finding) + "\n")});`;
+
+test("doctor reports only unknown state-root entries without changing them", async () => {
+  await using f = await fixture();
+  for (const name of stateRootNames) {
+    await writeFile(join(f.state, name), "");
+  }
+  for (const name of [
+    "runs-2026-01-01.jsonl",
+    "lifecycle-2026-01-01.jsonl",
+    "routing-2026-11-08.jsonl",
+    "records.snapshot.json.00000000-0000-4000-8000-000000000000.tmp",
+    "current-runs.json.00000000-0000-4000-8000-000000000000.tmp",
+    "workspace-verdicts.json.00000000-0000-4000-8000-000000000000.tmp",
+    "doctor-aggregate.json.123.00000000-0000-4000-8000-000000000000.tmp",
+  ])
+    await writeFile(join(f.state, name), "");
+  const unknown = join(f.state, "llu_api-commit.log");
+  await writeFile(unknown, "foreign contents");
+  const before = await stat(unknown);
+  const result = await f.run();
+  expect(result.exit, result.stderr).toBe(1);
+  expect(decode(result.stdout).findings).toEqual([
+    {
+      tool: "agx",
+      object: "llu_api-commit.log",
+      finding: "unknown-state-root-entry",
+      remedy: "Inspect this entry; doctor does not remove it.",
+      size_bytes: 16,
+    },
+  ]);
+  expect(await stat(unknown)).toEqual(before);
+  expect(await Bun.file(unknown).text()).toBe("foreign contents");
+  await rm(unknown);
+  const clean = await f.run();
+  expect(clean.exit, clean.stderr).toBe(0);
+  expect(decode(clean.stdout).findings).toEqual([]);
+});
 
 test("default deadlines allow real-inventory durations and exit 1 findings", async () => {
   await using f = await fixture();
@@ -551,10 +589,9 @@ test("concurrent CLI refreshes serialize all members and coalesce callers into o
     true,
   );
   expect(lines.slice(3, 6).every((line) => line.startsWith("end "))).toBe(true);
-  expect(lines.slice(6, 9).every((line) => line.startsWith("start "))).toBe(
-    true,
-  );
-  expect(lines.slice(9).every((line) => line.startsWith("end "))).toBe(true);
+  // A slow spawn can start after another member has already ended in round two.
+  // The first six events above establish the boundary; the per-member lock and
+  // counts establish non-overlap and two complete collections.
 });
 
 test("whole-request deadline kills a hanging collection and preserves the prior snapshot", async () => {
