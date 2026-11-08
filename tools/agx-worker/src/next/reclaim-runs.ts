@@ -121,6 +121,7 @@ export async function reclaimRuns(
   root = stateDir(),
   pinFiles: string[] = [],
   noPins = false,
+  json = false,
 ): Promise<number> {
   const automatic = process.env.AGX_RECLAIM_AUTOMATIC === "1";
   if (!Number.isFinite(days) || days < 0) {
@@ -163,6 +164,7 @@ export async function reclaimRuns(
   let skipped = 0;
   let moved = 0;
   const candidates: { id: string; paths: string[]; bytes: number }[] = [];
+  const rows: string[][] = [];
   const inodes = new Map<
     string,
     { size: number; links: number; count: number }
@@ -187,12 +189,14 @@ export async function reclaimRuns(
         (pin) => inside(resolve(dir), pin) || inside(canonicalDir, pin),
       )
     ) {
-      process.stdout.write(automatic ? "" : `${run.id}: pinned\n`);
+      process.stdout.write(json || automatic ? "" : `${run.id}: pinned\n`);
+      rows.push([run.id, "pinned"]);
       continue;
     }
     const inspected = inspectRun(dir, run.id);
     if (inspected.isErr()) {
       skipped++;
+      rows.push([run.id, "skipped"]);
       process.stderr.write(`${run.id}: skipped: ${String(inspected.error)}\n`);
       continue;
     }
@@ -230,7 +234,10 @@ export async function reclaimRuns(
         `${JSON.stringify({ id: candidate.id, at: Temporal.Now.instant().toString(), bytes: candidate.bytes })}\n`,
       );
     total += candidate.bytes;
-    if (!automatic)
+    let verdict = apply ? "moved" : "would-move";
+    if (candidate.paths.length === 0) verdict = "nothing-to-move";
+    rows.push([candidate.id, verdict, String(candidate.bytes)]);
+    if (!automatic && !json)
       process.stdout.write(
         `${candidate.id}: ${candidate.bytes} bytes ${apply ? "moved" : "would move"} to the graveyard\n`,
       );
@@ -242,18 +249,34 @@ export async function reclaimRuns(
       );
     return 0;
   }
-  process.stdout.write(
-    `total: ${total} bytes ${apply ? "moved" : "would move"} to the graveyard\n`,
-  );
+  if (!json)
+    process.stdout.write(
+      `total: ${total} bytes ${apply ? "moved" : "would move"} to the graveyard\n`,
+    );
   const shared = [...inodes.values()].reduce(
     (sum, inode) => sum + (inode.links > inode.count ? inode.size : 0),
     0,
   );
-  if (shared > 0)
+  if (shared > 0 && !json)
     process.stdout.write(
       `shared: ${shared} bytes are in files with hard links outside the moved set; moving them frees no space\n`,
     );
   if (skipped > 0) process.stderr.write(`skipped: ${skipped} runs\n`);
+  if (json)
+    process.stdout.write(
+      JSON.stringify({
+        rows,
+        counts: {
+          [apply ? "moved" : "would-move"]: candidates.filter(
+            (candidate) => candidate.paths.length > 0,
+          ).length,
+          bytes: total,
+          skipped,
+        },
+        broken: [],
+        complete: true,
+      }) + "\n",
+    );
   process.stderr.write(
     "rip keeps moved files in the graveyard; disk space returns only when the graveyard is purged\n",
   );

@@ -94,9 +94,55 @@ async function main(): Promise<void> {
   const commandArgs = rawArgs.slice(1);
   if (commandName === "reclaim-runs") {
     const noPins = commandArgs.includes("--no-pins");
-    const parsed = cli({ name: "agx worker reclaim-runs", parameters: [], strictFlags: true, ignoreArgv: rejectPrototypeFlag, help: { description: "Examples:\n  agx worker reclaim-runs --older-than 14\n  agx worker reclaim-runs --older-than 14 --apply --pin pins.txt\nUse --no-pins to explicitly apply without pins." }, flags: { olderThan: { type: Number, description: "minimum age in days" }, apply: { type: Boolean, description: "move eligible files to the graveyard" }, pin: { type: [String], description: "file containing absolute paths to protect (repeatable)" } } }, undefined, commandArgs.filter((arg) => arg !== "--no-pins"));
+    const parsed = cli(
+      {
+        name: "agx worker reclaim-runs",
+        parameters: [],
+        strictFlags: true,
+        ignoreArgv: rejectPrototypeFlag,
+        help: {
+          description:
+            "Default: report only; --apply moves eligible files. Shared reclaim grammar: tools/agx-worker/contract.md.\nExamples:\n  agx worker reclaim-runs --older-than 14\n  agx worker reclaim-runs --older-than 14 --apply --pin pins.txt\nUse --no-pins to explicitly apply without pins.",
+        },
+        flags: {
+          olderThan: { type: Number, description: "minimum age in days" },
+          apply: {
+            type: Boolean,
+            description: "move eligible files to the graveyard",
+          },
+          dryRun: { type: Boolean, description: "report only" },
+          json: { type: Boolean, description: "emit rows and counts as JSON" },
+          pin: {
+            type: [String],
+            description:
+              "file containing absolute paths to protect (repeatable)",
+          },
+        },
+      },
+      undefined,
+      commandArgs.filter((arg) => arg !== "--no-pins"),
+    );
+    if (parsed.flags.apply === true && parsed.flags.dryRun === true) {
+      process.stderr.write(
+        "agx worker reclaim-runs: --apply and --dry-run cannot be combined\n",
+      );
+      process.exitCode = 2;
+      return;
+    }
     const { reclaimRuns } = await import("./reclaim-runs.ts");
-    process.exitCode = await reclaimRuns(parsed.flags.olderThan ?? Number.NaN, parsed.flags.apply === true, stateDir(), parsed.flags.pin ?? [], noPins);
+    process.exitCode = await reclaimRuns(
+      parsed.flags.olderThan ?? Number.NaN,
+      parsed.flags.apply === true,
+      stateDir(),
+      parsed.flags.pin ?? [],
+      noPins,
+      parsed.flags.json === true,
+    );
+    if (parsed.flags.json === true && process.exitCode === 1)
+      process.stdout.write(
+        JSON.stringify({ rows: [], counts: {}, broken: [], complete: false }) +
+          "\n",
+      );
     return;
   } else if (commandName === "probe") {
     const parsed = cli(
@@ -243,9 +289,11 @@ async function main(): Promise<void> {
     // A run process ends with its run: publications still in flight get a short grace, then the
     // process exits (a pending one would hold the event loop, the workspace lock and the unit open).
     await settleRunPublications();
-    await new Promise<void>((resolve) =>
-      { process.stdout.write("", () => { resolve(); }); },
-    );
+    await new Promise<void>((resolve) => {
+      process.stdout.write("", () => {
+        resolve();
+      });
+    });
     process.exit(exit);
   } else if (commandName === "check") {
     const parsed = cli(

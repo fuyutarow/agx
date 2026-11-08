@@ -27,14 +27,17 @@ const fail = (error: unknown): void => {
 async function show<T>(
   work: () => Promise<Attempt<T>>,
   print: (value: T) => void,
+  onFailure: () => void = () => {},
 ): Promise<void> {
   const result = await attempt(work);
   if (!result.ok) {
     fail(result.error);
+    onFailure();
     return;
   }
   if (!result.value.ok) {
     fail(result.value.error);
+    onFailure();
     return;
   }
   print(result.value.value);
@@ -124,17 +127,53 @@ const gcCommand = command(
         type: Boolean,
         description: "list eligible paths without deleting",
       },
+      apply: {
+        type: Boolean,
+        description: "explicitly remove eligible tickets",
+      },
+      json: { type: Boolean, description: "emit rows and counts as JSON" },
     },
     help: {
-      description: "Remove only accepted tickets with landed workspaces.",
+      description:
+        "Default: remove; --dry-run reports only. Shared reclaim grammar: tools/agx-worker/contract.md. Remove only accepted tickets with landed workspaces.",
     },
   },
-  async (args) =>
-    show(
+  async (args) => {
+    if (args.flags.apply === true && args.flags.dryRun === true) {
+      process.stderr.write("tkt: --apply and --dry-run cannot be combined\n");
+      process.exitCode = 2;
+      return;
+    }
+    await show(
       () =>
         collect(args.flags.repo ?? process.cwd(), args.flags.dryRun === true),
-      lines,
-    ),
+      (items) => {
+        if (args.flags.json === true) {
+          const verdict =
+            args.flags.dryRun === true ? "would-collect" : "collected";
+          process.stdout.write(
+            JSON.stringify({
+              rows: items.map((item) => item.split("\t")),
+              counts: { [verdict]: items.length },
+              broken: [],
+              complete: true,
+            }) + "\n",
+          );
+        } else lines(items);
+      },
+      () => {
+        if (args.flags.json === true)
+          process.stdout.write(
+            JSON.stringify({
+              rows: [],
+              counts: {},
+              broken: [],
+              complete: false,
+            }) + "\n",
+          );
+      },
+    );
+  },
 );
 const doctorCommand = command(
   {

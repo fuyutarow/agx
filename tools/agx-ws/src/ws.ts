@@ -193,7 +193,8 @@ const rmCommand = command(
       repo: repoFlag,
       discardBroken: {
         type: Boolean,
-        description: "save broken workspace working-copy differences to $AGX_STATE_DIR/ws-rm/<slug>-<UTC>-<UUID>.patch (default state dir: ~/.local/state/agx; XDG_STATE_HOME overrides ~/.local/state), then remove it",
+        description:
+          "save broken workspace working-copy differences to $AGX_STATE_DIR/ws-rm/<slug>-<UTC>-<UUID>.patch (default state dir: ~/.local/state/agx; XDG_STATE_HOME overrides ~/.local/state), then remove it",
       },
     },
   },
@@ -244,10 +245,14 @@ const gcCommand = command(
     ignoreArgv: rejectPrototypeFlag,
     help: {
       description:
-        'Enumerate jj workspaces. Print TSV: path, kind, verdict, change id, age, reason. Exit 1 for failed collection or broken workspaces; refused repositories exit 2. Legacy workspaces are report-only until --legacy. Keep a workspace by setting `keep = ["ws_<name>"]` under `[ws]` in the main checkout root `agx.toml` (example: `keep = ["ws_reference"]`). Machine-local keep entries live under `[ws]` in `$XDG_CONFIG_HOME/agx/repos/<name>.toml`. agx ws add is the only creator.',
+        'Default: remove; --dry-run reports only. Shared reclaim grammar: tools/agx-worker/contract.md. Enumerate jj workspaces. Print TSV: path, kind, verdict, change id, age, reason. Exit 1 for failed collection or broken workspaces; refused repositories exit 2. Legacy workspaces are report-only until --legacy. Keep a workspace by setting `keep = ["ws_<name>"]` under `[ws]` in the main checkout root `agx.toml` (example: `keep = ["ws_reference"]`). Machine-local keep entries live under `[ws]` in `$XDG_CONFIG_HOME/agx/repos/<name>.toml`. agx ws add is the only creator.',
     },
     flags: {
       dryRun: { type: Boolean, description: "report only; remove nothing" },
+      apply: {
+        type: Boolean,
+        description: "explicitly remove eligible workspaces",
+      },
       json: {
         type: Boolean,
         description: "emit rows and authoritative verdict counts",
@@ -286,12 +291,37 @@ const gcCommand = command(
         description:
           "limit total untracked-file inventory time per repository (default: 120 seconds)",
       },
-      repoBudgetSeconds: { type: Number, description: "soft per-repository budget in seconds (default: 180); prelude and one candidate may overrun" },
-      allBudgetSeconds: { type: Number, description: "soft --all run budget in seconds (default: 1500); the current repository may overrun" },
+      repoBudgetSeconds: {
+        type: Number,
+        description:
+          "soft per-repository budget in seconds (default: 180); prelude and one candidate may overrun",
+      },
+      allBudgetSeconds: {
+        type: Number,
+        description:
+          "soft --all run budget in seconds (default: 1500); the current repository may overrun",
+      },
       repo: repoFlag,
     },
   },
   async (argv) => {
+    const failGc = (error: unknown) => {
+      fail(error);
+      if (argv.flags.json === true)
+        process.stdout.write(
+          JSON.stringify({
+            rows: [],
+            counts: {},
+            broken: [],
+            complete: false,
+          }) + "\n",
+        );
+    };
+    if (argv.flags.apply === true && argv.flags.dryRun === true) {
+      process.stderr.write("ws: --apply and --dry-run cannot be combined\n");
+      process.exitCode = 2;
+      return;
+    }
     if (argv.flags.all === true && argv.flags.repo !== undefined) {
       fail("--all and --repo cannot be combined");
       return;
@@ -322,15 +352,29 @@ const gcCommand = command(
       fail("--inventory-budget-seconds must be an integer from 1 to 86400");
       return;
     }
-    for (const [name, value] of [["repo-budget-seconds", argv.flags.repoBudgetSeconds], ["all-budget-seconds", argv.flags.allBudgetSeconds]] as const) {
-      if (value !== undefined && (!Number.isSafeInteger(value) || value < 1 || value > 86400)) {
+    for (const [name, value] of [
+      ["repo-budget-seconds", argv.flags.repoBudgetSeconds],
+      ["all-budget-seconds", argv.flags.allBudgetSeconds],
+    ] as const) {
+      if (
+        value !== undefined &&
+        (!Number.isSafeInteger(value) || value < 1 || value > 86400)
+      ) {
         fail(`--${name} must be an integer from 1 to 86400`);
         return;
       }
     }
-    const journal: { signal?: "SIGTERM" | "SIGINT"; removed: number; remaining: number } = { removed: 0, remaining: 0 };
-    const onTerm = () => { journal.signal ??= "SIGTERM"; };
-    const onInt = () => { journal.signal ??= "SIGINT"; };
+    const journal: {
+      signal?: "SIGTERM" | "SIGINT";
+      removed: number;
+      remaining: number;
+    } = { removed: 0, remaining: 0 };
+    const onTerm = () => {
+      journal.signal ??= "SIGTERM";
+    };
+    const onInt = () => {
+      journal.signal ??= "SIGINT";
+    };
     process.on("SIGTERM", onTerm);
     process.on("SIGINT", onInt);
     const options = {
@@ -345,17 +389,33 @@ const gcCommand = command(
       allBudgetSeconds: argv.flags.allBudgetSeconds ?? 1500,
       journal,
     };
-    const done = await (argv.flags.all === true
+    const done = await (
+      argv.flags.all === true
         ? gcAll(options)
-        : gc({ ...options, repo: argv.flags.repo ?? process.cwd() })).finally(() => {
+        : gc({ ...options, repo: argv.flags.repo ?? process.cwd() })
+    ).finally(() => {
       process.off("SIGTERM", onTerm);
       process.off("SIGINT", onInt);
     });
     if (!done.ok) {
+      if (journal.signal === undefined) {
+        failGc(done.error);
+        return;
+      }
       fail(done.error);
-      if (journal.signal === undefined) return;
-      writeSync(2, `gc interrupted removed=${journal.removed} remaining=${journal.remaining}\n`);
-      if (argv.flags.json === true) process.stdout.write(JSON.stringify({ rows: [], counts: {}, broken: [], complete: false }) + "\n");
+      writeSync(
+        2,
+        `gc interrupted removed=${journal.removed} remaining=${journal.remaining}\n`,
+      );
+      if (argv.flags.json === true)
+        process.stdout.write(
+          JSON.stringify({
+            rows: [],
+            counts: {},
+            broken: [],
+            complete: false,
+          }) + "\n",
+        );
       process.exitCode = journal.signal === "SIGTERM" ? 143 : 130;
       return;
     }
@@ -393,7 +453,10 @@ const gcCommand = command(
       fail(`broken workspaces: ${done.value.broken.join(", ")}`);
     if ((done.value.refused?.length ?? 0) > 0) process.exitCode = 2;
     if (journal.signal !== undefined) {
-      writeSync(2, `gc interrupted removed=${journal.removed} remaining=${journal.remaining}\n`);
+      writeSync(
+        2,
+        `gc interrupted removed=${journal.removed} remaining=${journal.remaining}\n`,
+      );
       process.exitCode = journal.signal === "SIGTERM" ? 143 : 130;
     }
   },
@@ -484,11 +547,25 @@ const doctorCommand = command(
       return;
     }
     const summaries = await doctorSummaries();
-    if (!summaries.ok) { fail(summaries.error); return; }
+    if (!summaries.ok) {
+      fail(summaries.error);
+      return;
+    }
     for (const summary of summaries.value) {
       process.stdout.write(JSON.stringify(summary) + "\n");
-      if (summary.oldest_unjudged_age_hours !== null && summary.oldest_unjudged_age_hours > summary.unjudged_warn_hours)
-        done.value.push(["agx-ws", summary.repo, "runs", "unjudged-age", `judge returned runs older than ${summary.unjudged_warn_hours} hours`].join("\t"));
+      if (
+        summary.oldest_unjudged_age_hours !== null &&
+        summary.oldest_unjudged_age_hours > summary.unjudged_warn_hours
+      )
+        done.value.push(
+          [
+            "agx-ws",
+            summary.repo,
+            "runs",
+            "unjudged-age",
+            `judge returned runs older than ${summary.unjudged_warn_hours} hours`,
+          ].join("\t"),
+        );
     }
     const output = doctorOutput(done.value);
     if (!output.ok) {
