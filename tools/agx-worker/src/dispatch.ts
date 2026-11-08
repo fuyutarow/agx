@@ -30,6 +30,7 @@ import { JJ_READ_ARGS } from "../../shared/src/jj-read.ts";
 import { readonlyCommand } from "../../shared/src/readonly-command.ts";
 import { InspectionTimeout } from "../../shared/src/agx-config.ts";
 import { resolveSuiteTool } from "../../shared/src/path-dispatch.ts";
+import { stateDir as resolveStateDir } from "../../shared/src/state-dir.ts";
 
 import { stableCommand, stableSelfCommand } from "./self-command.ts";
 import { parseNextTicket } from "./next/ticket.ts";
@@ -305,10 +306,7 @@ async function reserveContinuation(
   unit: string,
   env: NodeJS.ProcessEnv,
 ): Promise<string | undefined> {
-  const lockRoot = join(
-    env.AGX_STATE_DIR ?? join(env.HOME ?? process.cwd(), ".local/state/agx"),
-    "continuations",
-  );
+  const lockRoot = join(resolveStateDir(env), "continuations");
   await mkdir(lockRoot, { recursive: true });
   const path = join(
     lockRoot,

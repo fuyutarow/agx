@@ -1,7 +1,7 @@
 // Read-only GPU state API. Only gpu-sampler.ts may execute the driver tool.
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { attemptOr } from "./attempt.ts";
+import { xdgStateHome } from "./state-dir.ts";
 import { jsonOf, z } from "./zod.ts";
 export const RETAIN_MS = 2 * 60 * 60_000;
 const MAX_SAMPLES = 721;
@@ -51,10 +51,7 @@ export type GpuReading = z.output<typeof GpuReadingSchema>;
 export const GPU_INTERVAL_MS = 60_000;
 export const GPU_FRESH_MS = 120_000;
 export function gpuStatePath(): string {
-  return join(
-    process.env.XDG_STATE_HOME ?? join(homedir(), ".local/state"),
-    "gpu-owner.json",
-  );
+  return join(xdgStateHome(), "gpu-owner.json");
 }
 export function gpuSampleInterval(_random = Math.random): number {
   return GPU_INTERVAL_MS;

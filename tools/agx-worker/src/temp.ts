@@ -6,9 +6,9 @@ import {
   realpathSync,
   rmSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { err, fromThrowable, Result } from "neverthrow";
+import { xdgStateHome } from "../../shared/src/state-dir.ts";
 import { recordedFoldedRuns } from "./next/store.ts";
 import { RunSchema } from "./next/run-state.ts";
 
@@ -30,13 +30,7 @@ export function recordedLifetime(id: string, recordRoot?: string): RunLifetime {
 }
 
 export function agxTempRoot(env: NodeJS.ProcessEnv = process.env): string {
-  return resolve(
-    env.XDG_STATE_HOME === undefined || env.XDG_STATE_HOME === ""
-      ? join(env.HOME ?? homedir(), ".local", "state")
-      : env.XDG_STATE_HOME,
-    "agx",
-    "runs",
-  );
+  return resolve(xdgStateHome(env), "agx", "runs");
 }
 
 const makeDirectoriesWritable = (path: string): void => {

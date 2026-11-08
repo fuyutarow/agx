@@ -1,6 +1,7 @@
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { jsonOf, z } from "./zod.ts";
+import { stateDir as dispatchStateDir } from "./state-dir.ts";
+export { dispatchStateDir };
 
 /** The dispatch state basename has one owner, including consumers outside agx. */
 export const STATE_DIR = "agx";
@@ -113,16 +114,6 @@ export function parseActiveMarker(text: string): ActiveMarkerRead {
       reason: parsed.error.issues[0]?.message ?? "invalid marker",
     };
   return { kind: "valid", marker: parsed.data };
-}
-
-export function dispatchStateDir(env: NodeJS.ProcessEnv = process.env): string {
-  const explicit = env.AGX_STATE_DIR;
-  if (explicit !== undefined && explicit !== "") return explicit;
-  const base = env.XDG_STATE_HOME;
-  return join(
-    base === undefined || base === "" ? join(homedir(), ".local/state") : base,
-    STATE_DIR,
-  );
 }
 
 /** Read-only location of the pre-separation ledger. */

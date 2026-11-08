@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { lstat } from "node:fs/promises";
 
 // Direct children owned by the suite, including legacy state retained for readers.
@@ -55,16 +55,19 @@ export function isStateRootName(name: string): boolean {
 const nonEmpty = (value: string | undefined) =>
   value === "" ? undefined : value;
 
+/** XDG state home, ignoring relative and empty XDG_STATE_HOME values. */
+export function xdgStateHome(env: NodeJS.ProcessEnv = process.env): string {
+  const xdg = nonEmpty(env.XDG_STATE_HOME);
+  return xdg !== undefined && isAbsolute(xdg)
+    ? xdg
+    : join(nonEmpty(env.HOME) ?? homedir(), ".local", "state");
+}
+
 /** The sole live state directory; legacy-v1 beneath it is read-only. */
 export function stateDir(env: NodeJS.ProcessEnv = process.env): string {
-  return (
-    nonEmpty(env.AGX_STATE_DIR) ??
-    join(
-      nonEmpty(env.XDG_STATE_HOME) ??
-        join(env.HOME ?? homedir(), ".local", "state"),
-      "agx",
-    )
-  );
+  const explicit = nonEmpty(env.AGX_STATE_DIR);
+  if (explicit !== undefined) return resolve(explicit);
+  return join(xdgStateHome(env), "agx");
 }
 
 const exists = (path: string) =>

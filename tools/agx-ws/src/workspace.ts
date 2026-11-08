@@ -45,6 +45,7 @@ import {
 } from "../../shared/src/attempt.ts";
 import { acquire, pidAlive } from "../../shared/src/dir-lock.ts";
 import { stateDir } from "./state-dir.ts";
+import { xdgStateHome } from "../../shared/src/state-dir.ts";
 import { opStoreSize, orderGcCandidates, readGcOrder, writeGcOrder } from "./gc-order.ts";
 import { indexedWorkspaces, recordWorkspace } from "./workspace-index.ts";
 import { validateSlug } from "../../shared/src/slug.ts";
@@ -337,13 +338,7 @@ async function bury(
 function miseStateDir(): string {
   const configured = process.env.MISE_STATE_DIR;
   if (configured !== undefined && configured !== "") return resolve(configured);
-  const stateHome = process.env.XDG_STATE_HOME;
-  return join(
-    stateHome === undefined || stateHome === ""
-      ? join(process.env.HOME ?? homedir(), ".local", "state")
-      : stateHome,
-    "mise",
-  );
+  return join(xdgStateHome(), "mise");
 }
 
 async function guardWorkspaceForget(
