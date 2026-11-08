@@ -24,6 +24,7 @@ const WORKER_ENV_KEYS = [
   "TEMP",
   // Shared package cache selected by the dispatcher, also used as a Codex writable root.
   "BUN_INSTALL_CACHE_DIR",
+  "UV_CACHE_DIR",
   "JULIA_DEPOT_PATH",
   // mise's active shell and explicit roots keep declared tool config and data discoverable.
   "MISE_ACTIVATE_SHIMS",
@@ -69,6 +70,16 @@ export function workerSharedCaches(
       root: resolve(
         source.BUN_INSTALL_CACHE_DIR ??
           join(source.HOME ?? homedir(), ".bun", "install", "cache"),
+      ),
+    },
+    {
+      key: "UV_CACHE_DIR",
+      root: resolve(
+        source.UV_CACHE_DIR ??
+          join(
+            source.XDG_CACHE_HOME ?? join(source.HOME ?? homedir(), ".cache"),
+            "uv",
+          ),
       ),
     },
     {

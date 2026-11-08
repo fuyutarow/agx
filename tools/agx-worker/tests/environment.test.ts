@@ -20,6 +20,7 @@ const WORKER_ENV_KEYS = [
   "TMP",
   "TEMP",
   "BUN_INSTALL_CACHE_DIR",
+  "UV_CACHE_DIR",
   "JULIA_DEPOT_PATH",
   "MISE_ACTIVATE_SHIMS",
   "MISE_SHELL",
@@ -53,6 +54,7 @@ describe("worker environment", () => {
           key: "BUN_INSTALL_CACHE_DIR",
           root: join(home ?? homedir(), ".bun", "install", "cache"),
         },
+        { key: "UV_CACHE_DIR", root: join(home ?? homedir(), ".cache", "uv") },
         { root: join(home ?? homedir(), ".cache", "cocoindex-code") },
         ...["compiled", "logs", "scratchspaces"].map((dir) => ({
           root: join(home ?? homedir(), ".julia", dir),
@@ -69,6 +71,7 @@ describe("worker environment", () => {
       }),
     ).toEqual([
       { key: "BUN_INSTALL_CACHE_DIR", root: resolve("relative-bun-cache") },
+      { key: "UV_CACHE_DIR", root: resolve("relative-xdg-cache", "uv") },
       { root: resolve("relative-xdg-cache", "cocoindex-code") },
       ...["compiled", "logs", "scratchspaces"].map((dir) => ({
         root: join(homedir(), ".julia", dir),
@@ -83,7 +86,7 @@ describe("worker environment", () => {
         HOME: "/home-fixture",
         JULIA_DEPOT_PATH: path,
       }).map((cache) => cache.root);
-      expect(roots.slice(2)).toEqual(
+      expect(roots.slice(3)).toEqual(
         ["compiled", "logs", "scratchspaces"].map((dir) => join("/first", dir)),
       );
       for (const forbidden of [
