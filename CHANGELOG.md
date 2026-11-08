@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.8.0 — 2026-11-08
+
+- Document the state-root allowlist and doctor finding.
+- Report unknown state-root entries in doctor.
+
 ## 5.7.1 — 2026-11-08
 
 - Correct the change command help description.
