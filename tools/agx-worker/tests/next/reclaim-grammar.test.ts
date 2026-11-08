@@ -16,6 +16,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 test("reclaim modes preserve effects and JSON envelope", async () => {
   for (const [flags, removes] of [
@@ -83,7 +84,7 @@ test("reclaim modes preserve effects and JSON envelope", async () => {
       ],
       {
         env: {
-          ...process.env,
+          ...subprocessEnvironment(),
           AGX_STATE_DIR: state,
           PATH: `${bin}:${process.env.PATH}`,
         },
@@ -122,7 +123,7 @@ test("reclaim modes preserve effects and JSON envelope", async () => {
         ],
         {
           env: {
-            ...process.env,
+            ...subprocessEnvironment(),
             AGX_STATE_DIR: state,
             PATH: `${bin}:${process.env.PATH}`,
           },

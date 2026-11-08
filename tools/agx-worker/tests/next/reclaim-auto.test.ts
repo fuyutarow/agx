@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 async function fixture(
   ages: [string, number, boolean, boolean][],
@@ -94,7 +95,7 @@ async function fixture(
     [process.execPath, resolve("tools/agx-worker/src/next/cli.ts"), ...args],
     {
       env: {
-        ...process.env,
+        ...subprocessEnvironment(),
         AGX_STATE_DIR: state,
         XDG_CONFIG_HOME: config,
         PATH: `${bin}:${process.env.PATH}`,

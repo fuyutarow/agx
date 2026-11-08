@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { COMMAND_NAMES } from "../src/next/commands.ts";
+import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 
 const cli = join(import.meta.dir, "../src/next/cli.ts");
 
@@ -16,7 +17,7 @@ test("worker help describes every command and hides internal flags", () => {
       ["run", "--help=true"],
     ]) {
       const result = Bun.spawnSync([process.execPath, cli, ...args], {
-        env: { ...process.env, AGX_STATE_DIR: state },
+        env: subprocessEnvironment({ AGX_STATE_DIR: state }),
         timeout: 10_000,
       });
       const output = result.stdout.toString();
@@ -46,7 +47,7 @@ test("removed classify command is rejected", () => {
   try {
     const result = Bun.spawnSync(
       [process.execPath, cli, "classify", "run-id"],
-      { env: { ...process.env, AGX_STATE_DIR: state } },
+      { env: subprocessEnvironment({ AGX_STATE_DIR: state }) },
     );
     expect(result.exitCode).toBe(2);
     expect(result.stdout.toString()).toBe("");

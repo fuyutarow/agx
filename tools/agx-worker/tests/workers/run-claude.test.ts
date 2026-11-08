@@ -16,7 +16,8 @@ import { workerEnvironment } from "../../src/workers/environment.ts";
 
 test("file, inherited credentials, cooldown and one fallback stay confined to the child", async () => {
   const root = mkdtempSync(join(tmpdir(), "agx-credit-test-"));
-  const old = { ...process.env };
+  // In-process snapshot for restoring process.env below; no subprocess inherits it.
+  const old = Object.assign({}, process.env);
   try {
     process.env.HOME = root;
     process.env.AGX_STATE_DIR = join(root, "state");

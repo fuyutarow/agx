@@ -47,7 +47,8 @@ describe("workspace-write egress parity", () => {
       "utf8",
     );
     expect(run).toMatch(
-      /sandbox === "workspace-write"\s*\?\s*\[\s*"--allowed-tools",\s*claudeWorkspaceWriteAllowedTools\(\),\s*\]\s*:\s*\[\]/u,
+      // The trailing comma is optional: oxfmt (trailingComma "all") drops it when the array fits on one line.
+      /sandbox === "workspace-write"\s*\?\s*\[\s*"--allowed-tools",\s*claudeWorkspaceWriteAllowedTools\(\),?\s*\]\s*:\s*\[\]/u,
     );
     expect(run).toMatch(
       /sandbox === "workspace-write"\s*\?\s*JSON\.stringify\(\s*claudeWorkspaceWriteSettings/u,

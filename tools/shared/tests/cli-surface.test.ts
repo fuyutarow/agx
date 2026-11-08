@@ -38,7 +38,6 @@ test("cli contract: an unknown command prints usage on stderr with exit 2", asyn
     ["tools/agx/src/agx.ts", ["worker"]],
     ["tools/agx/src/agx.ts", ["ticket"]],
     ["tools/agx/src/agx.ts", ["ws"]],
-    ["tools/agx/src/agx.ts", ["change"]],
     ["tools/agx/src/agx.ts", ["status"]],
     ["tools/agx/src/agx.ts", ["doctor"]],
     ["tools/agx-worker/src/next/cli.ts", []],

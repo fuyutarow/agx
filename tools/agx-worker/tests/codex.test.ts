@@ -401,8 +401,11 @@ describe("agx", () => {
     },
   );
 
+  // CHANGELOG 5.4.1 shares the uv cache with Python workers; environment.ts makes it a Codex writable
+  // root. The run temp (TMPDIR) is in the codex list too: run-temp.test.ts "state root and both
+  // sandbox roots include the run temp".
   test.each([false, true])(
-    "workspace-write grants exactly the shared caches and preserves their environment (resume=%s)",
+    "workspace-write grants exactly the shared caches and the run temp, and preserves their environment (resume=%s)",
     (resume) => {
       for (const customCache of [undefined, 'shared cache "quoted"']) {
         const fixtureDir = scratch();
@@ -420,6 +423,7 @@ describe("agx", () => {
           xdgCacheHome ?? join(home, ".cache"),
           "cocoindex-code",
         );
+        const uvCache = join(xdgCacheHome ?? join(home, ".cache"), "uv");
         const depot = join(fixtureDir, "julia-depot");
         const r = run(
           [
@@ -433,6 +437,7 @@ describe("agx", () => {
             HOME: home,
             JULIA_DEPOT_PATH: `${depot}:/other-depot`,
             XDG_CACHE_HOME: xdgCacheHome,
+            UV_CACHE_DIR: undefined,
             BUN_INSTALL_CACHE_DIR:
               customCache === undefined ? undefined : cache,
           },
@@ -444,14 +449,18 @@ describe("agx", () => {
         );
         expect(roots).toHaveLength(1);
         expect(launch[launch.indexOf(roots[0] ?? "") - 1]).toBe("-c");
+        const runTemp =
+          process.env.TMPDIR === undefined ? [] : [resolve(process.env.TMPDIR)];
         expect(Bun.TOML.parse(roots[0] ?? "")).toEqual({
           sandbox_workspace_write: {
             writable_roots: [
               cache,
+              uvCache,
               indexCache,
               ...["compiled", "logs", "scratchspaces"].map((dir) =>
                 join(depot, dir),
               ),
+              ...runTemp,
             ],
           },
         });

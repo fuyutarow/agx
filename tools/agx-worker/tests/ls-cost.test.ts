@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "../../shared/src/zod.ts";
+import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 import {
   newRoutingAudit,
   recordRoutingPick,
@@ -114,7 +115,7 @@ test("a new started record carries decision_id, not pick_audit; the audit is sto
 
 const lsJson = (root: string) => {
   const result = Bun.spawnSync([process.execPath, cli, "ls", "--json"], {
-    env: { ...process.env, AGX_STATE_DIR: root },
+    env: subprocessEnvironment({ AGX_STATE_DIR: root }),
     stdout: "pipe",
     stderr: "pipe",
   });

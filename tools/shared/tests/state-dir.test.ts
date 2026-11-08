@@ -47,7 +47,8 @@ test("state directory precedence, empty values and absolute paths", () => {
   }
 });
 
-test("worker migration refusal checks the shared XDG state home", () => {
+// CHANGELOG 10.0.0: "Remove startup refusal for retired state configuration and agx-next."
+test("a retired agx-next directory in the XDG state home no longer refuses startup", () => {
   const root = mkdtempSync(join(tmpdir(), "agx-xdg-refusal-"));
   using _cleanup = {
     [Symbol.dispose]: () => {
@@ -61,12 +62,13 @@ test("worker migration refusal checks the shared XDG state home", () => {
     [
       process.execPath,
       "-e",
-      `import { stateDir } from ${JSON.stringify(worker)}; stateDir();`,
+      `import { stateDir } from ${JSON.stringify(worker)}; console.log(stateDir());`,
     ],
     { env: { HOME: root, XDG_STATE_HOME: "relative-xdg", AGX_STATE_DIR: "" } },
   );
-  expect(result.exitCode).toBe(2);
-  expect(result.stderr.toString()).toContain(`mv ${base}/agx-next ${base}/agx`);
+  expect(result.exitCode).toBe(0);
+  expect(result.stderr.toString()).not.toContain("mv ");
+  expect(result.stdout.toString().trim()).toBe(join(base, "agx"));
 });
 
 test("XDG state home is shared by the independent run-temp and GPU paths", () => {

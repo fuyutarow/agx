@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sizeNotice } from "../../src/next/end-notice.ts";
 import { measureRunDir } from "../../src/next/reclaim-runs.ts";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 test("measures a 300 MiB run and counts hard links once", () => {
   const root = mkdtempSync(join(tmpdir(), "agx-size-"));
@@ -128,7 +129,7 @@ test("ended records expose measured bytes and delivered notices distinguish larg
         ],
         {
           env: {
-            ...process.env,
+            ...subprocessEnvironment(),
             PATH: root,
             REASON_NETWORK_HOME: home,
             AGX_STATE_DIR: state,
@@ -200,7 +201,7 @@ test("stop's fallback end records the directory size and its fold retains it", a
         id,
       ],
       {
-        env: { ...process.env, AGX_STATE_DIR: state },
+        env: { ...subprocessEnvironment(), AGX_STATE_DIR: state },
         stdout: "pipe",
         stderr: "pipe",
         timeout: 15000,

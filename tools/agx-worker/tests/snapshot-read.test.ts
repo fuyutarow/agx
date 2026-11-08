@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 import {
   append,
   flushRunPublications,
@@ -75,7 +76,7 @@ const published = async (names: string[]) => {
 };
 const lsJson = (root: string) => {
   const result = Bun.spawnSync([process.execPath, cli, "ls", "--json"], {
-    env: { ...process.env, AGX_STATE_DIR: root },
+    env: subprocessEnvironment({ AGX_STATE_DIR: root }),
     stdout: "pipe",
     stderr: "pipe",
   });

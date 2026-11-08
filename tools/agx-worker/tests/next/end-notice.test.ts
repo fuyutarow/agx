@@ -3,6 +3,7 @@ import { chmod, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { terminalEnvironment } from "../../src/next/end-notice.ts";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -85,7 +86,7 @@ async function fixture(mode = "ok", missing = false) {
       ],
       {
         env: {
-          ...process.env,
+          ...subprocessEnvironment(),
           ...agentEnv,
           CLAUDE_CODE_SESSION_ID: "dispatcher-session",
           CODEX_THREAD_ID: "worker-thread",

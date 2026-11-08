@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 test("preview is read-only and apply retains records and ineligible runs", async () => {
   const root = mkdtempSync(join(tmpdir(), "agx-reclaim-"));
@@ -101,7 +102,7 @@ test("preview is read-only and apply retains records and ineligible runs", async
         ],
         {
           env: {
-            ...process.env,
+            ...subprocessEnvironment(),
             PATH: `${bin}:${process.env.PATH}`,
             AGX_STATE_DIR: state,
             GRAVEYARD: join(root, "graveyard"),
@@ -220,7 +221,7 @@ test("invalid pin input refuses before any removal", async () => {
         ],
         {
           env: {
-            ...process.env,
+            ...subprocessEnvironment(),
             AGX_STATE_DIR: state,
             GRAVEYARD: join(root, "graveyard"),
           },
@@ -309,7 +310,7 @@ test("explicit pins, shared files, failure and rerun", async () => {
         ],
         {
           env: {
-            ...process.env,
+            ...subprocessEnvironment(),
             PATH: `${bin}:${process.env.PATH}`,
             AGX_STATE_DIR: state,
           },
@@ -392,7 +393,7 @@ test("unreadable entry is reported and skipped", async () => {
         "1",
       ],
       {
-        env: { ...process.env, AGX_STATE_DIR: state },
+        env: { ...subprocessEnvironment(), AGX_STATE_DIR: state },
         stdout: "pipe",
         stderr: "pipe",
       },

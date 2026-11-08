@@ -18,6 +18,7 @@ test("the run package exposes only the agx-worker bin", () => {
   });
 });
 
+// reclaim-runs was added by CHANGELOG 5.4.0 ("Bound worker run directories and add explicit reclaim.").
 test("the CLI exposes the run, doctor, and process interface commands", () => {
   expect(COMMANDS.map((entry) => entry.name)).toEqual([
     "dispatch",
@@ -31,5 +32,6 @@ test("the CLI exposes the run, doctor, and process interface commands", () => {
     "roster",
     "host",
     "probe",
+    "reclaim-runs",
   ]);
 });
