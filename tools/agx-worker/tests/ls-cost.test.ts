@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { z } from "../../shared/src/zod.ts";
+import { jsonOf, z } from "../../shared/src/zod.ts";
 import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 import {
   newRoutingAudit,
@@ -17,6 +17,43 @@ import {
 } from "../src/next/store.ts";
 
 const cli = join(import.meta.dir, "../src/next/cli.ts");
+const makeAudit = (id: string) => ({
+  decision_id: id,
+  input: { text: 'quote " brace } bracket ] \\ ' + "y".repeat(3000) },
+  filters: [{ reason: "r", removed: [], after: ["a"] }],
+});
+const ended = (id: string) => ({
+  kind: "ended",
+  id,
+  at: "2026-10-15T00:02:00Z",
+  exit: 0,
+  outcome: "ok",
+  report_path: null,
+  vendor_session: null,
+  verify: [],
+  returned: true,
+  changed_files: 1,
+});
+const judged = (id: string, evidence: boolean) => ({
+  kind: "judged",
+  id,
+  at: "2026-10-15T00:03:00Z",
+  decision: "accept",
+  note: "ok",
+  ...(evidence
+    ? {
+        evidence: [
+          {
+            path: "/e.txt",
+            sha256: "00",
+            content: 'c } "' + "z".repeat(2000),
+          },
+        ],
+      }
+    : {}),
+});
+const renderRows = (rows: object[]) =>
+  `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`;
 const previous = process.env.AGX_STATE_DIR;
 const roots: string[] = [];
 afterEach(async () => {
@@ -36,7 +73,8 @@ const jsonLines = (path: string) =>
   readFileSync(path, "utf8")
     .split("\n")
     .filter((line) => line !== "")
-    .map((line) => z.record(z.string(), z.unknown()).parse(JSON.parse(line)));
+    .map((line) => jsonOf(z.record(z.string(), z.unknown())).safeParse(line))
+    .flatMap((result) => (result.success ? [result.data] : []));
 
 const baseStarted = (id: string) => ({
   kind: "started" as const,
@@ -54,11 +92,11 @@ const baseStarted = (id: string) => ({
 
 test("a new started record carries decision_id, not pick_audit; the audit is stored by that id", () => {
   const root = fixture();
-  const audit = newRoutingAudit({ path: "/tmp/t.md", sha256: null });
-  audit.input = { big: "x".repeat(5000) };
-  recordRoutingPick({ id: "terra-medium", route: "codex" }, "jev", audit);
+  const pickAudit = newRoutingAudit({ path: "/tmp/t.md", sha256: null });
+  pickAudit.input = { big: "x".repeat(5000) };
+  recordRoutingPick({ id: "terra-medium", route: "codex" }, "jev", pickAudit);
   setPendingPickAudit({
-    audit,
+    audit: pickAudit,
     source: "jev",
     probabilities: null,
     usage_snapshot: null,
@@ -69,7 +107,7 @@ test("a new started record carries decision_id, not pick_audit; the audit is sto
   const started = jsonLines(recordPath(root)).find(
     (row) => row.kind === "started",
   );
-  expect(started?.decision_id).toBe(audit.decision_id);
+  expect(started?.decision_id).toBe(pickAudit.decision_id);
   expect(started?.usage_id).toBe("usage-1");
   expect(started).not.toHaveProperty("pick_audit");
   expect(readFileSync(recordPath(root), "utf8")).not.toContain("xxxxxxxxxx");
@@ -82,7 +120,7 @@ test("a new started record carries decision_id, not pick_audit; the audit is sto
   const stored = routing.filter(
     (row) =>
       z.object({ decision_id: z.string() }).safeParse(row.audit).data
-        ?.decision_id === audit.decision_id,
+        ?.decision_id === pickAudit.decision_id,
   );
   expect(stored).toHaveLength(1);
   expect(stored[0]?.audit).toMatchObject({ input: { big: "x".repeat(5000) } });
@@ -106,7 +144,7 @@ test("a new started record carries decision_id, not pick_audit; the audit is sto
   );
   expect(lifecycle).toHaveLength(1);
   expect(lifecycle[0]?.audit).toEqual({
-    decision_id: audit.decision_id,
+    decision_id: pickAudit.decision_id,
     outcome_kind: "held",
     run_id: "run-new",
     worker_outcome: null,
@@ -124,46 +162,11 @@ const lsJson = (root: string) => {
 };
 
 test("ls --json is identical for old lines (copied audit, inline evidence), new lines, and a mix", () => {
-  const audit = (id: string) => ({
-    decision_id: id,
-    input: { text: 'quote " brace } bracket ] \\ ' + "y".repeat(3000) },
-    filters: [{ reason: "r", removed: [], after: ["a"] }],
-  });
-  const ended = (id: string) => ({
-    kind: "ended",
-    id,
-    at: "2026-10-15T00:02:00Z",
-    exit: 0,
-    outcome: "ok",
-    report_path: null,
-    vendor_session: null,
-    verify: [],
-    returned: true,
-    changed_files: 1,
-  });
-  const judged = (id: string, evidence: boolean) => ({
-    kind: "judged",
-    id,
-    at: "2026-10-15T00:03:00Z",
-    decision: "accept",
-    note: "ok",
-    ...(evidence
-      ? {
-          evidence: [
-            {
-              path: "/e.txt",
-              sha256: "00",
-              content: 'c } "' + "z".repeat(2000),
-            },
-          ],
-        }
-      : {}),
-  });
   const oldLines = (id: string): object[] => [
     {
       ...baseStarted(id),
       pick_audit: {
-        audit: audit(`d-${id}`),
+        audit: makeAudit(`d-${id}`),
         source: "jev",
         probabilities: null,
         usage_snapshot: null,
@@ -178,16 +181,14 @@ test("ls --json is identical for old lines (copied audit, inline evidence), new 
     ended(id),
     judged(id, false),
   ];
-  const render = (rows: object[]) =>
-    `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`;
   const state = (rows: object[]) => {
     const root = fixture();
-    writeFileSync(join(root, "records.jsonl"), render(rows));
+    writeFileSync(join(root, "records.jsonl"), renderRows(rows));
     return root;
   };
   const ids = ["a", "b", "c", "d"];
-  const allOld = lsJson(state(ids.flatMap(oldLines)));
-  const allNew = lsJson(state(ids.flatMap(newLines)));
+  const allOld = lsJson(state(ids.flatMap((id) => oldLines(id))));
+  const allNew = lsJson(state(ids.flatMap((id) => newLines(id))));
   const mixed = lsJson(
     state(
       ids.flatMap((id, index) =>
@@ -195,7 +196,9 @@ test("ls --json is identical for old lines (copied audit, inline evidence), new 
       ),
     ),
   );
-  expect(z.array(z.unknown()).parse(JSON.parse(allOld))).toHaveLength(4);
+  const oldOutput = jsonOf(z.array(z.unknown())).safeParse(allOld);
+  expect(oldOutput.success).toBe(true);
+  if (oldOutput.success) expect(oldOutput.data).toHaveLength(4);
   expect(allNew).toBe(allOld);
   expect(mixed).toBe(allOld);
 });

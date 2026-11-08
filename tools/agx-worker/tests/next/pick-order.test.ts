@@ -7,9 +7,10 @@ test("real roster picks are deterministic, credit-aware and cheapest within a cr
     policyPath: new URL("../../src/roster/policy.example.toml", import.meta.url)
       .pathname,
   });
-  if (!loaded.ok) throw new Error(loaded.error);
-  const rows = loaded.catalogRows.filter((row) =>
-    fitsPublishedTimeBox(row, 600),
+  expect(loaded.ok).toBe(true);
+  if (!loaded.ok) return;
+  const rows = loaded.catalogRows.filter((candidate) =>
+    fitsPublishedTimeBox(candidate, 600),
   );
   const cases: [RequirementClass, string, string][] = [
     ["mechanical", "luna-low", "haiku-low"],
@@ -26,11 +27,11 @@ test("real roster picks are deterministic, credit-aware and cheapest within a cr
       const ordered = orderCandidates(rows, requirement, covered);
       expect(ordered[0]?.id).toBe(expected);
       expect(
-        orderCandidates([...rows].reverse(), requirement, covered).map(
-          (row) => row.id,
+        orderCandidates(rows.toReversed(), requirement, covered).map(
+          (candidate) => candidate.id,
         ),
       ).toEqual(ordered.map((row) => row.id));
-      expect(ordered[0]?.id).not.toMatch(/^(fable|opus)-/);
+      expect(ordered[0]?.id).not.toMatch(/^(fable|opus)-/u);
     }
   }
 });
@@ -40,7 +41,8 @@ test("expensive credit rows cannot overtake cheaper qualifying rows, including e
     policyPath: new URL("../../src/roster/policy.example.toml", import.meta.url)
       .pathname,
   });
-  if (!loaded.ok) throw new Error(loaded.error);
+  expect(loaded.ok).toBe(true);
+  if (!loaded.ok) return;
   for (const requirement of [
     "mechanical",
     "localized",
@@ -52,25 +54,34 @@ test("expensive credit rows cannot overtake cheaper qualifying rows, including e
       (row) => row.route === "claude",
     );
     const firstClaude = ordered.find((row) => row.route === "claude");
-    for (const row of ordered.filter((row) => /^(opus|fable)-/u.test(row.id))) {
-      if (firstClaude === undefined || row.route !== "claude") continue;
-      const rowPrice = (row.price_in ?? Infinity) + (row.price_out ?? Infinity);
-      const firstPrice =
-        (firstClaude.price_in ?? Infinity) +
-        (firstClaude.price_out ?? Infinity);
-      if (firstPrice < rowPrice)
-        expect(ordered.indexOf(firstClaude)).toBeLessThan(ordered.indexOf(row));
-    }
+    const costlyClaudeRows = ordered.filter(
+      (item) => /^(opus|fable)-/u.test(item.id) && item.route === "claude",
+    );
+    const firstPrice =
+      (firstClaude?.price_in ?? Infinity) +
+      (firstClaude?.price_out ?? Infinity);
+    expect(
+      costlyClaudeRows.every((candidate) => {
+        const candidatePrice =
+          (candidate.price_in ?? Infinity) + (candidate.price_out ?? Infinity);
+        return (
+          firstClaude === undefined ||
+          firstPrice >= candidatePrice ||
+          ordered.indexOf(firstClaude) < ordered.indexOf(candidate)
+        );
+      }),
+    ).toBe(true);
     expect(
       orderCandidates(
-        [...loaded.catalogRows].reverse(),
+        loaded.catalogRows.toReversed(),
         requirement,
         (row) => row.route === "claude",
       ).map((row) => row.id),
     ).toEqual(ordered.map((row) => row.id));
   }
   const base = loaded.catalogRows[0];
-  if (base === undefined) throw new Error("empty catalog");
+  expect(base).toBeDefined();
+  if (base === undefined) return;
   const ties = [
     { ...base, id: "z-low" },
     { ...base, id: "a-low" },

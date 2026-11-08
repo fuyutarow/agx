@@ -35,7 +35,7 @@ async function history(root: string, workspaces: number) {
       JSON.stringify({
         kind: "started",
         id,
-        at: new Date().toISOString(),
+        at: Temporal.Now.instant().toString(),
         ticket: "old",
         writes: [],
         cwd: workspace,
@@ -48,7 +48,7 @@ async function history(root: string, workspaces: number) {
       JSON.stringify({
         kind: "ended",
         id,
-        at: new Date().toISOString(),
+        at: Temporal.Now.instant().toString(),
         exit: 0,
         outcome: "ok",
         report_path: null,
@@ -68,79 +68,83 @@ test("a live run holds the current-runs lock only for the publish write", async 
     stdout: "ignore",
     stderr: "ignore",
   });
+  using cleanup = new DisposableStack();
+  cleanup.defer(() => {
+    child.kill();
+  });
   const lockPath = join(root, "current-runs.json");
   const publishedIds = async () => {
-    const published = Published.parse(
-      JSON.parse(await readFile(lockPath, "utf8")),
+    const parsed = jsonOf(Published).safeParse(
+      await readFile(lockPath, "utf8"),
     );
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return { running: [], ended: [] };
+    const published = parsed.data;
+    const rows = Rows.safeParse(published.output);
+    expect(rows.success).toBe(true);
+    if (!rows.success) return { running: [], ended: [] };
     return {
-      running: Rows.parse(published.output).runs.map((run) => run.id),
+      running: rows.data.runs.map((run) => run.id),
       ended: published.endedRuns.map((run) => run.id),
     };
   };
-  try {
-    const id = "live-run";
-    const workspace = join(root, "live");
-    append(
-      {
-        kind: "started",
-        id,
-        at: new Date().toISOString(),
-        ticket: "live",
-        writes: [],
-        cwd: workspace,
-        workspace,
-        row: "fixture",
-        dispatcher_session: null,
-        vendor_session: null,
-        pid: child.pid,
-      },
+  const id = "live-run";
+  const workspace = join(root, "live");
+  append(
+    {
+      kind: "started",
+      id,
+      at: Temporal.Now.instant().toString(),
+      ticket: "live",
+      writes: [],
+      cwd: workspace,
+      workspace,
+      row: "fixture",
+      dispatcher_session: null,
+      vendor_session: null,
+      pid: child.pid,
+    },
+    root,
+  );
+  // Judge-style acquisition for as long as the start publication is in flight.
+  const flushed = flushRunPublications();
+  const startedAt = performance.now();
+  let attempts = 0;
+  let slowest = 0;
+  while (attempts < 100 && performance.now() - startedAt < 60_000) {
+    const began = performance.now();
+    const lock = await acquireWorkspaceLockUntilAvailable(
+      lockPath,
       root,
+      2_000,
     );
-    // Judge-style acquisition for as long as the start publication is in flight.
-    let pending = true;
-    const flushed = flushRunPublications().then(() => {
-      pending = false;
-    });
-    let attempts = 0;
-    let slowest = 0;
-    while (pending) {
-      const began = performance.now();
-      const lock = await acquireWorkspaceLockUntilAvailable(
-        lockPath,
-        root,
-        2_000,
-      );
-      slowest = Math.max(slowest, performance.now() - began);
-      expect(lock.ok, JSON.stringify(lock)).toBe(true);
-      if (lock.ok) await lock.release();
-      attempts += 1;
-      await Bun.sleep(20);
-    }
-    await flushed;
-    expect(attempts).toBeGreaterThan(0);
-    expect(slowest).toBeLessThan(500);
-    expect((await publishedIds()).running).toContain(id);
-    expect(child.killed || child.exitCode === null).toBe(true);
-
-    append(
-      {
-        kind: "ended",
-        id,
-        at: new Date().toISOString(),
-        exit: 0,
-        outcome: "ok",
-        report_path: null,
-        vendor_session: null,
-        verify: [],
-      },
-      root,
-    );
-    await flushRunPublications();
-    const after = await publishedIds();
-    expect(after.running).not.toContain(id);
-    expect(after.ended).toContain(id);
-  } finally {
-    child.kill();
+    slowest = Math.max(slowest, performance.now() - began);
+    expect(lock.ok, JSON.stringify(lock)).toBe(true);
+    if (lock.ok) await lock.release();
+    attempts += 1;
+    await Promise.race([flushed, Bun.sleep(20)]);
   }
+  await flushed;
+  expect(attempts).toBeGreaterThan(0);
+  expect(slowest).toBeLessThan(500);
+  expect((await publishedIds()).running).toContain(id);
+  expect(child.killed || child.exitCode === null).toBe(true);
+
+  append(
+    {
+      kind: "ended",
+      id,
+      at: Temporal.Now.instant().toString(),
+      exit: 0,
+      outcome: "ok",
+      report_path: null,
+      vendor_session: null,
+      verify: [],
+    },
+    root,
+  );
+  await flushRunPublications();
+  const after = await publishedIds();
+  expect(after.running).not.toContain(id);
+  expect(after.ended).toContain(id);
 });
