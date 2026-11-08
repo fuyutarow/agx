@@ -38,6 +38,9 @@
         "tools/release/fake-gh.ts",
         "tools/agx-worker/tests/fake-claude.ts",
         "tools/agx-worker/tests/fake-codex.ts",
+        // These fixtures are imported by generated executable scripts in tests.
+        "tools/agx-worker/tests/fake-live-worker.ts",
+        "tools/agx-worker/tests/fixtures/reason-notice.ts",
         "tools/agx-worker/tests/next/fixtures/probe-codex.ts",
         "tools/agx-worker/tests/next/fixtures/sender-vendor.ts",
         "tools/agx-worker/tests/next/fixtures/outcome-worker.ts",

@@ -2,7 +2,6 @@
 import { z } from "../../shared/src/zod.ts";
 
 export const EffortSchema = z.enum(["low", "medium", "high", "xhigh", "max"]);
-export type Effort = z.output<typeof EffortSchema>;
 
 export const CapabilitySchema = z.union([
   z.string().trim().min(1),
@@ -23,11 +22,6 @@ export function verifyLine(verify: string[]): string {
   if (verify.length === 0) return "";
   const list = verify.map((c) => `\`${c}\``).join("; ");
   return `The router runs these verify commands outside the sandbox after you exit and grades you on them: ${list}. Run commands your sandbox can run and the ticket permits in the foreground before you finish; do not background anything you need to see. If a command needs something the sandbox lacks (such as a GPU, user systemd, agent-resource-run, or writable paths), or the ticket says not to run it, do not stop or refuse: finish the change and the router will run it outside the sandbox.`;
-}
-
-/** Appended only to a claude-route brief, regardless of the bound target. */
-export function claudeAckLine(_name: string | undefined): string {
-  return "Do not send a completion ACK, even if the ticket asks for one. The run-end notice, sent by Reason Network as its terminal sender, is the completion notice; put the result in $AGX_RUN_DIR/result.md.";
 }
 
 // --- overlap of write scopes ---------------------------------------------------------------------
