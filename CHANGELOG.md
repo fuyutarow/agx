@@ -1,5 +1,9 @@
 # Changelog
 
+## 5.5.0 — 2026-11-08
+
+- Require an explicit pin decision and report graveyard moves and recovery.
+
 ## 5.4.1 — 2026-11-08
 
 - Share the uv cache with Python workers
