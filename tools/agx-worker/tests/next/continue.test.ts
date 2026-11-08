@@ -39,6 +39,36 @@ const ticketText = (prose: string): string =>
 
 // Seeds one ended run per prior row; the Jev endpoint is a closed port, so a continue that
 // routed would be refused (Jev unreachable) instead of keeping the pinned row.
+// Awaited, not spawnSync: the in-process Jev fake must answer while a continuation that routes is
+// still in flight, and a blocked event loop would hold the child until its 10 s bound.
+const spawnCli = async (
+  cmd: string[],
+  opts: { cwd: string; env: NodeJS.ProcessEnv },
+) => {
+  const child = Bun.spawn(cmd, {
+    cwd: opts.cwd,
+    env: opts.env,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const killer = setTimeout(() => child.kill(), 10_000);
+  try {
+    const [stdout, stderr] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    await child.exited;
+    return {
+      exitCode: child.exitCode,
+      stdout: Buffer.from(stdout),
+      stderr: Buffer.from(stderr),
+    };
+  } finally {
+    clearTimeout(killer);
+  }
+};
+
 const fixture = async (ticketName = "pin") => {
   const root = tempDirs.register(
     mkdtempSync(join(tmpdir(), `agx-test-${process.pid}-continue-`)),
@@ -47,6 +77,7 @@ const fixture = async (ticketName = "pin") => {
   // The worker removes each run directory but intentionally leaves its configured root.
   tempDirs.register(join(root, "agx-tmp"));
   await prepareTicketRepo(root);
+  mkdirSync(join(root, "home"));
   const bin = join(root, "bin");
   mkdirSync(bin);
   writeFileSync(join(bin, "mise"), '#!/usr/bin/env bun\nconsole.log("{}");\n');
@@ -79,7 +110,9 @@ const fixture = async (ticketName = "pin") => {
   ];
   const records = [
     ...seed("codex-run", "terra-high", "codex-thread-1"),
-    ...seed("claude-run", "sonnet-high", "claude-session-1"),
+    // opus-medium publishes no aa_time_per_task_s in the catalog, so a continuation of it is outside
+    // the published time box. (sonnet-high now publishes 346.14 s, which fits a 600 s box.)
+    ...seed("claude-run", "opus-medium", "claude-session-1"),
     ...seed("bare-run", "terra-high", null),
     ...seed("ghost-run", "no-such-row", "ghost-session"),
   ];
@@ -107,7 +140,7 @@ const fixture = async (ticketName = "pin") => {
       ),
     );
   };
-  const resume = (
+  const resume = async (
     id: string | undefined,
     overrides: NodeJS.ProcessEnv = {},
     entry = "tools/agx-worker/src/next/cli.ts",
@@ -115,7 +148,7 @@ const fixture = async (ticketName = "pin") => {
     sandboxArgs: string[] = ["--sandbox", "read-only"],
     command = "run",
   ) =>
-    Bun.spawnSync(
+    spawnCli(
       [
         ...(compiled ? [entry] : [process.execPath]),
         ...(overrides.AGX_TEST_PRELOAD === undefined
@@ -137,6 +170,8 @@ const fixture = async (ticketName = "pin") => {
           MISE_GLOBAL_CONFIG_FILE: join(root, "mise-config.toml"),
           XDG_CONFIG_HOME: join(root, "config"),
           XDG_STATE_HOME: join(root, "agx-tmp"),
+          // Route usage reads ~/.codex/sessions; keep it on an empty temporary home, never the real one.
+          HOME: join(root, "home"),
           JEV_URL: "http://127.0.0.1:1/choice",
           AGX_WORKER_BIN: worker,
           TYPESAFE_API_KEY: "test-key",
@@ -147,7 +182,6 @@ const fixture = async (ticketName = "pin") => {
           AGX_DISPATCHER_SESSION: "dispatcher",
           ...overrides,
         },
-        timeout: 10_000,
       },
     );
   const events = () =>
@@ -211,7 +245,7 @@ test.each(["check", "run"])(
         }),
       ].toSorted();
     const beforePaths = paths();
-    const refused = f.resume("timeout-sec", {}, undefined, false, [], command);
+    const refused = await f.resume("timeout-sec", {}, undefined, false, [], command);
     expect(refused.exitCode, refused.stderr.toString()).toBe(2);
     expect(refused.stdout.toString()).toBe("");
     expect(refused.stderr.toString()).toBe(
@@ -280,7 +314,7 @@ appendFileSync(${JSON.stringify(join(f.state, "records.jsonl"))}, JSON.stringify
             : null,
         ]);
     const before = snapshot();
-    const result = f.resume(
+    const result = await f.resume(
       "codex-",
       {},
       undefined,
@@ -303,7 +337,7 @@ appendFileSync(${JSON.stringify(join(f.state, "records.jsonl"))}, JSON.stringify
       expect(snapshot()).toEqual(before);
       // The shared check and direct run must also refuse without recording a refusal.
       for (const command of ["check", "run"]) {
-        const checked = f.resume(
+        const checked = await f.resume(
           "codex-run",
           {},
           undefined,
@@ -432,7 +466,7 @@ test.each([false, true])(
         ),
       );
       // claude-run's row publishes no duration, so this continuation routes and needs Jev.
-      const result = f.resume(
+      const result = await f.resume(
         item.prior,
         { JEV_URL: routeJev.url },
         entry,
@@ -477,7 +511,7 @@ test.each([false, true])(
     if (inheritedId === undefined)
       expect.unreachable("continued run ID was not recorded");
     rmSync(join(f.state, "runs", inheritedId, `${inheritedId}.json`));
-    const chained = f.resume(inheritedId, {}, entry, compiled, []);
+    const chained = await f.resume(inheritedId, {}, entry, compiled, []);
     expect(chained.exitCode, chained.stderr.toString()).toBe(0);
     const parsedChain = schema.safeParse(chained.stdout.toString().trim());
     expect(parsedChain.success).toBe(true);
@@ -530,16 +564,17 @@ appendFileSync(${JSON.stringify(join(f.state, "records.jsonl"))}, JSON.stringify
         `verify = ["true"]\npremises = ["file:${missing ? "missing" : "agx.toml"}"]`,
       ),
     );
-    const results = Array.from({ length: 2 }, () =>
-      f.resume(
+    // Sequential, as the two attempts were under spawnSync: each attempt must see the other's records.
+    const results = [];
+    for (let attempt = 0; attempt < 2; attempt += 1)
+      results.push(await f.resume(
         "codex-run",
         env,
         undefined,
         false,
         ["--sandbox", "none"],
         "dispatch",
-      ),
-    );
+      ));
     expect(
       results.map((result) => result.exitCode),
       results.map((result) => result.stderr.toString()).join("\n"),
@@ -562,7 +597,7 @@ describe("agx worker run --continue pins the prior row", () => {
     async (name) => {
       const f = await fixture(name);
       f.writeOriginal();
-      const result = f.resume("codex-run");
+      const result = await f.resume("codex-run");
       expect(result.exitCode).toBe(0);
       const receiptResult = jsonOf(Receipt).safeParse(
         result.stdout.toString().trim(),
@@ -586,7 +621,7 @@ describe("agx worker run --continue pins the prior row", () => {
   test("a unique run id prefix resolves to the full prior id", async () => {
     const f = await fixture();
     f.writeOriginal();
-    const result = f.resume("codex-");
+    const result = await f.resume("codex-");
     expect(result.exitCode, result.stderr.toString()).toBe(0);
     const receipt = jsonOf(Receipt).safeParse(result.stdout.toString().trim());
     expect(receipt.success).toBe(true);
@@ -627,7 +662,7 @@ describe("agx worker run --continue pins the prior row", () => {
       ["absent", ["unknown run 'absent'", "5 recorded runs"]],
     ] as const) {
       const before = f.events().length;
-      const result = f.resume(selector);
+      const result = await f.resume(selector);
       expect(result.exitCode).toBe(2);
       const lines = result.stderr.toString().trim().split("\n");
       expect(lines).toHaveLength(1);
@@ -640,7 +675,7 @@ describe("agx worker run --continue pins the prior row", () => {
   test("a row without a published duration starts fresh on an eligible route", async () => {
     const f = await fixture();
     f.writeOriginal("claude-run");
-    const result = f.resume("claude-run", { JEV_URL: routeJev.url });
+    const result = await f.resume("claude-run", { JEV_URL: routeJev.url });
     expect(result.exitCode).toBe(0);
     const receiptResult = jsonOf(Receipt).safeParse(
       result.stdout.toString().trim(),
@@ -648,7 +683,7 @@ describe("agx worker run --continue pins the prior row", () => {
     expect(receiptResult.success).toBe(true);
     if (!receiptResult.success) return;
     const receipt = receiptResult.data;
-    expect(receipt.row).not.toBe("sonnet-high");
+    expect(receipt.row).not.toBe("opus-medium");
     const ended = f
       .events()
       .find((event) => event.kind === "ended" && event.id === receipt.id);
@@ -658,7 +693,7 @@ describe("agx worker run --continue pins the prior row", () => {
   test("a run without a vendor session exits 2 before any worker starts", async () => {
     const f = await fixture();
     const before = f.events().length;
-    const result = f.resume("bare-run");
+    const result = await f.resume("bare-run");
     expect(result.exitCode).toBe(2);
     const lines = result.stderr.toString().trim().split("\n");
     expect(lines).toHaveLength(1);
@@ -726,10 +761,10 @@ describe("agx worker run --continue pins the prior row", () => {
         )
         .join("\n")}\n`,
     );
-    const checked = f.resume("codex-run", env, undefined, false, [], "check");
+    const checked = await f.resume("codex-run", env, undefined, false, [], "check");
     expect(checked.exitCode, checked.stderr.toString()).toBe(0);
     expect(checked.stdout.toString()).toContain("row=luna-max -> terra-high");
-    const continued = f.resume("codex-run", env);
+    const continued = await f.resume("codex-run", env);
     expect(continued.exitCode, continued.stderr.toString()).toBe(0);
     expect(continued.stderr.toString()).toContain(
       "row luna-max is outside the 600 s time box; continuing codex-run on ",
@@ -773,9 +808,19 @@ describe("agx worker run --continue pins the prior row", () => {
       readFileSync(
         new URL("../../src/roster/policy.example.toml", import.meta.url),
         "utf8",
-      ).replace("exclude = []", 'exclude = ["terra-high"]'),
+      )
+        .replace("exclude = []", 'exclude = ["terra-high"]')
+        // The example policy names the real Jev endpoint; route to the loopback fake instead.
+        .replace(
+          'url = "https://api.typesafe.ai/v1/systemone"',
+          `url = "${routeJev.url}"`,
+        ),
     );
-    const checked = f.resume(
+    // terra-high is excluded by policy, so fresh routing picks the next row. Contract
+    // (tools/agx-worker/contract.md, "Pick stages" 3): mechanical rows with equal price keep
+    // ascending published time, and luna-low publishes 28.07 s against luna-high's 269.24 s
+    // (catalog.toml, 2026-10-28), so luna-low is the expected row.
+    const checked = await f.resume(
       "codex-run",
       { AGX_CONFIG: policy, JEV_URL: routeJev.url },
       undefined,
@@ -785,9 +830,9 @@ describe("agx worker run --continue pins the prior row", () => {
     );
     expect(checked.exitCode, checked.stderr.toString()).toBe(0);
     expect(checked.stdout.toString()).toContain(
-      `CONTINUE run=codex-run row=terra-high -> luna-high workspace=${f.root}`,
+      `CONTINUE run=codex-run row=terra-high -> luna-low workspace=${f.root}`,
     );
-    const continued = f.resume("codex-run", {
+    const continued = await f.resume("codex-run", {
       AGX_CONFIG: policy,
       JEV_URL: routeJev.url,
     });
@@ -801,7 +846,7 @@ describe("agx worker run --continue pins the prior row", () => {
     expect(receipt.success).toBe(true);
     if (!receipt.success) return;
     expect(receipt.data).toMatchObject({
-      row: "luna-high",
+      row: "luna-low",
       continued_from_row: "terra-high",
       workspace: f.root,
     });
@@ -812,7 +857,7 @@ describe("agx worker run --continue pins the prior row", () => {
           (event) => event.kind === "started" && event.id === receipt.data.id,
         ),
     ).toMatchObject({
-      row: "luna-high",
+      row: "luna-low",
       continued_from_row: "terra-high",
       workspace: f.root,
       continues: "codex-run",
@@ -833,7 +878,7 @@ describe("agx worker run --continue pins the prior row", () => {
       join(f.state, "records.jsonl"),
       `${events.map((event) => JSON.stringify(event)).join("\n")}\n`,
     );
-    const result = f.resume("codex-run", {}, undefined, false, [], "check");
+    const result = await f.resume("codex-run", {}, undefined, false, [], "check");
     expect(result.exitCode).toBe(2);
     expect(result.stderr.toString()).toContain("workspace");
     expect(result.stderr.toString()).toContain("no longer exists");
@@ -843,7 +888,7 @@ describe("agx worker run --continue pins the prior row", () => {
     const f = await fixture();
     f.writeOriginal();
     writeFileSync(f.ticket, ticketText("amended prose"));
-    const result = f.resume("codex-run");
+    const result = await f.resume("codex-run");
     expect(result.exitCode).toBe(0);
     const receiptResult = jsonOf(Receipt).safeParse(
       result.stdout.toString().trim(),
@@ -872,7 +917,7 @@ describe("agx worker run --continue pins the prior row", () => {
       `${[...events, { kind: "judged", id: "codex-run", at: "2026-10-14T01:11:00.000Z", decision: "reject", note: "Fix the Jev evidence before continuing." }].map((event) => JSON.stringify(event)).join("\n")}\n`,
     );
 
-    const result = f.resume("codex-run");
+    const result = await f.resume("codex-run");
     expect(result.exitCode, result.stderr.toString()).toBe(0);
     const receipt = jsonOf(Receipt).safeParse(result.stdout.toString().trim());
     expect(receipt.success).toBe(true);
@@ -897,7 +942,7 @@ describe("agx worker run --continue pins the prior row", () => {
   test("the continuation prompt says when no judgment was recorded", async () => {
     const f = await fixture();
     f.writeOriginal();
-    const result = f.resume("codex-run");
+    const result = await f.resume("codex-run");
     expect(result.exitCode, result.stderr.toString()).toBe(0);
     const receipt = jsonOf(Receipt).safeParse(result.stdout.toString().trim());
     expect(receipt.success).toBe(true);
@@ -913,7 +958,7 @@ describe("agx worker run --continue pins the prior row", () => {
 
   test("a missing original ticket does not prevent continuation", async () => {
     const f = await fixture();
-    const result = f.resume("codex-run");
+    const result = await f.resume("codex-run");
     expect(result.exitCode, result.stderr.toString()).toBe(0);
     const receipt = jsonOf(Receipt).safeParse(result.stdout.toString().trim());
     expect(receipt.success).toBe(true);
@@ -988,7 +1033,7 @@ if (process.argv[2] === "--internal-codex") {
       expect(built.exitCode, built.stderr.toString()).toBe(0);
     }
     const path = `${bin}:${process.env.PATH}`;
-    const result = f.resume(
+    const result = await f.resume(
       "codex-run",
       {
         AGX_WORKER_BIN: undefined,
