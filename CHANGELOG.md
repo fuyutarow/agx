@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.10.0 — 2026-11-08
+
+- Accept explicit reclaim mode flags.
+- Add shared reclaim mode flags and JSON output.
+- Add shared reclaim mode flags and JSON output.
+
 ## 5.9.0 — 2026-11-08
 
 - Accept --repo as the repository path flag while retaining --cwd.
