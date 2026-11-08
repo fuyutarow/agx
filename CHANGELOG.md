@@ -1,5 +1,9 @@
 # Changelog
 
+## 10.0.2 — 2026-11-08
+
+- Keep workspace gc dry runs from writing classification order state.
+
 ## 10.0.1 — 2026-11-08
 
 - Remove unused worker exports and message sender
