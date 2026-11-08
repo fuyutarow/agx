@@ -8,6 +8,17 @@ import { stateDir, checkState } from "./state-dir.ts";
 
 import { readDoctorResponse, pollAfterMs } from "../../agx/src/refresh.ts";
 
+// Reject conflicting location flags before even checking the state directory.
+const rawArgs = process.argv.slice(2);
+const separator = rawArgs.indexOf("--");
+const options = separator < 0 ? rawArgs : rawArgs.slice(0, separator);
+if (
+  options.some((arg) => arg === "--repo" || arg.startsWith("--repo=")) &&
+  options.some((arg) => arg === "--cwd" || arg.startsWith("--cwd="))
+) {
+  process.stderr.write("agx-status: --repo and --cwd cannot be used together\n");
+  process.exit(2);
+}
 await checkState();
 
 const workspaceCounts = z.object({
@@ -328,8 +339,10 @@ function plainInvocation(argv: string[]): { cwd: string | undefined } | null {
   if (argv.length === 1 && first === "--json") return { cwd: undefined };
   if (argv.length !== 3) return null;
   let cwd: string | undefined;
-  if (first === "--json" && second === "--cwd") cwd = operandOf(third);
-  if (first === "--cwd" && third === "--json") cwd = operandOf(second);
+  if (first === "--json" && (second === "--cwd" || second === "--repo"))
+    cwd = operandOf(third);
+  if ((first === "--cwd" || first === "--repo") && third === "--json")
+    cwd = operandOf(second);
   return cwd === undefined ? null : { cwd };
 }
 
@@ -347,9 +360,13 @@ else {
       ignoreArgv: rejectPrototypeFlag,
       flags: {
         json: { type: Boolean, description: "emit status as JSON" },
+        repo: {
+          type: String,
+          description: "any workspace or the main checkout of the repository (default: cwd)",
+        },
         cwd: {
           type: String,
-          description: "repository path (default: current directory)",
+          description: "older name for --repo",
         },
       },
       help: {
@@ -359,11 +376,11 @@ else {
     },
     async (args) => {
       if (args.flags.json !== true) {
-        process.stderr.write("Usage: agx-status --json [--cwd DIR]\n");
+        process.stderr.write("Usage: agx-status --json [--repo DIR]\n");
         process.exitCode = 2;
         return;
       }
-      await emit(args.flags.cwd ?? process.cwd());
+      await emit(args.flags.repo ?? args.flags.cwd ?? process.cwd());
     },
   );
 }
