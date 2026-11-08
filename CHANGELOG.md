@@ -1,5 +1,9 @@
 # Changelog
 
+## 10.0.1 — 2026-11-08
+
+- Remove unused worker exports and message sender
+
 ## 10.0.0 — 2026-11-08
 
 - Allow status with retired state configuration present.
