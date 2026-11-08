@@ -2792,11 +2792,12 @@ describe("gc integration branches", () => {
     for (const dir of [conflict, success])
       await Bun.write(join(dir, "results/result.md"), "new result");
     setRecords(
-      [conflict, success].map((dir) => ({
-        ...recFor(dir),
-        id: dir === conflict ? "conflict" : "success",
-        report_path: join(dir, "results/result.md"),
-      })),
+      [conflict, success].map((dir) =>
+        Object.assign(recFor(dir), {
+          id: dir === conflict ? "conflict" : "success",
+          report_path: join(dir, "results/result.md"),
+        }),
+      ),
     );
     await Bun.write(
       join(env.AGX_STATE_DIR!, "runs/conflict/harvest/results/result.md"),
@@ -2921,7 +2922,7 @@ describe("gc integration branches", () => {
     expect(oversized.ok && oversized.value.count).toBe(2);
   });
 
-  // measured 5312ms on the census of alpha under host load
+  // Full-file execution reached 11008ms under host load; preserve the GC contract with headroom.
   test("fully rejected runs collect only when reachable and results are preserved", async () => {
     const path = await repo('trunk = "main"\n');
     for (const slug of [
@@ -3015,7 +3016,7 @@ describe("gc integration branches", () => {
     ])
       expect(existsSync(wsDir(path, slug))).toBe(true);
     expect(await Bun.file(copied).text()).toBe("measurement");
-  }, 11000);
+  }, 15000);
 
   test("filesets select literal paths without selecting neighboring files", async () => {
     const path = await repo();

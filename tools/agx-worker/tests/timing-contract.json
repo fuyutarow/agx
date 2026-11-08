@@ -380,6 +380,11 @@
     "timeout": 30000
   },
   {
+    "file": "tools/agx-worker/tests/next/reclaim-runs.test.ts",
+    "name": "file default",
+    "timeout": 30000
+  },
+  {
     "file": "tools/agx-worker/tests/next/route.test.ts",
     "name": "file default",
     "timeout": 60000
@@ -687,7 +692,7 @@
   {
     "file": "tools/agx-ws/tests/workspace.test.ts",
     "name": "fully rejected runs collect only when reachable and results are preserved",
-    "timeout": 11000
+    "timeout": 15000
   },
   {
     "file": "tools/agx-ws/tests/workspace.test.ts",
