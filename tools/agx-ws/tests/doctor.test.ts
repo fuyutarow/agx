@@ -2,7 +2,7 @@ import { afterAll, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { doctorFindings, type DoctorWorkspaceRow } from "../src/workspace.ts";
+import { doctorFindings, type DoctorWorkspaceRow } from "../src/doctor.ts";
 import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 
 const scratch = await mkdtemp(join(tmpdir(), "ws-doctor-root-"));
@@ -13,7 +13,7 @@ test("unset repository override reads strict L2 config; an override bypasses it"
   const configHome = join(scratch, "config");
   await mkdir(join(configHome, "agx/repos"), { recursive: true });
   await writeFile(join(configHome, "agx/repos/example.toml"), "schema = 42\n");
-  const source = `import { doctorInventory } from ${JSON.stringify(join(import.meta.dir, "../src/workspace.ts"))}; const result = await doctorInventory(process.argv[1]); console.log(JSON.stringify(result.ok ? result : { ok: false, error: String(result.error) }));`;
+  const source = `import { doctorInventory } from ${JSON.stringify(join(import.meta.dir, "../src/doctor.ts"))}; const result = await doctorInventory(process.argv[1]); console.log(JSON.stringify(result.ok ? result : { ok: false, error: String(result.error) }));`;
   for (const root of [undefined, join(scratch, "empty")]) {
     const child = Bun.spawn([process.execPath, "-e", source, scratch], {
       env: {

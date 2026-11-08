@@ -9,14 +9,13 @@ import { errorMessage } from "../../shared/src/attempt.ts";
 import packageJson from "../package.json" with { type: "json" };
 import {
   add,
-  doctor as doctorWorkspaces,
-  doctorSummaries,
   gc,
   gcAll,
   LegacyWorkspaceConfigError,
   refresh,
   remove,
 } from "./workspace.ts";
+import { doctor as doctorWorkspaces, doctorSummaries } from "./doctor.ts";
 
 import { checkState } from "./state-dir.ts";
 

@@ -720,7 +720,7 @@ describe("ws contract: shared agx.toml [ws] policy", () => {
 
       const safeGit = join(safe, ".git");
       await Bun.write(safeGit, `gitdir: ${join(path, ".git")}\n`);
-      const inventory = `import { doctorInventory } from ${JSON.stringify(join(import.meta.dir, "../src/workspace.ts"))}; console.log(JSON.stringify(await doctorInventory()));`;
+      const inventory = `import { doctorInventory } from ${JSON.stringify(join(import.meta.dir, "../src/doctor.ts"))}; console.log(JSON.stringify(await doctorInventory()));`;
       const doctor = await run(
         ["bun", "-e", inventory],
         safe,
