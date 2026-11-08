@@ -41,7 +41,6 @@ import {
   acquireWorkspaceLockUntilAvailable,
   events,
   foldedRuns,
-  importLegacyRecords,
   now,
   overlapWarnings,
   publishCurrentRuns,
@@ -1976,15 +1975,12 @@ export async function judgeRun(
   return 0;
 }
 
-export async function stats(flags: Flags): Promise<number> {
+export async function stats(_flags: Flags): Promise<number> {
   const legacyLand = await legacyLandStatus();
   if (legacyLand.status === "refused") {
     process.stdout.write(`${JSON.stringify({ legacy_land: legacyLand })}\n`);
     return 2;
   }
-  const importFlag =
-    flags.importLegacy === true || value(flags, "import-legacy") === "true";
-  const legacyImport = importFlag ? await importLegacyRecords() : undefined;
   const all = events();
   const runs = await foldedRuns();
   const report = {
@@ -2000,7 +1996,6 @@ export async function stats(flags: Flags): Promise<number> {
       ]),
     ),
     judgments: all.filter((event) => event.kind === "judged").length,
-    ...(legacyImport === undefined ? {} : { legacy_import: legacyImport }),
     by_row: Object.fromEntries(
       [...new Set(runs.map((entry) => entry.row))].map((row) => [
         row,

@@ -58,9 +58,7 @@ check the command handed to a fixture systemd runner.
 Versions share state rather than receiving version-specific databases. The
 [state resolver](../tools/shared/src/state-dir.ts) selects nonempty
 `AGX_STATE_DIR`, then `XDG_STATE_HOME/agx`, then `~/.local/state/agx`. Preserve
-the same state location across an upgrade. Retired `AGX_NEXT_STATE_DIR` and an
-unmigrated layout can cause startup refusal; follow the explicit migration
-instructions only after draining and backing up.
+the same state location across an upgrade.
 
 The worker's [event schemas and readers](../tools/agx-worker/src/next/store.ts)
 accept extra fields on known event kinds using `z.looseObject`; optional fields

@@ -2,7 +2,6 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { COMMAND_NAMES } from "../../src/next/commands.ts";
 import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const roots: string[] = [];
@@ -23,47 +22,17 @@ const fixture = () => {
   return { root, env };
 };
 
-test("all commands refuse the retired state variable, including empty values", async () => {
+test("retired state variable and sibling directory do not block stats", () => {
   const { env } = fixture();
-  await Promise.all(["", "/unused"].flatMap((value) =>
-    COMMAND_NAMES.map(async (command) => {
-      const child = Bun.spawn(
-        [process.execPath, "tools/agx-worker/src/next/cli.ts", command],
-        {
-          env: { ...env, AGX_NEXT_STATE_DIR: value },
-          stdout: "pipe",
-          stderr: "pipe",
-        },
-      );
-      const [exit, stdout, stderr] = await Promise.all([
-        child.exited,
-        new Response(child.stdout).text(),
-        new Response(child.stderr).text(),
-      ]);
-      expect(exit).toBe(2);
-      expect(stdout).toBe("");
-      expect(stderr).toBe(
-        "agx: AGX_NEXT_STATE_DIR is retired; use AGX_STATE_DIR\n",
-      );
-    }),
-  ));
-});
-
-test.each([...COMMAND_NAMES])("all commands refuse an unmigrated directory without creating state: %s", (command) => {
-  const { env } = fixture();
-  const base = env.XDG_STATE_HOME;
-  mkdirSync(join(base, "agx-next"), { recursive: true });
+  mkdirSync(join(env.XDG_STATE_HOME, "agx-next"), { recursive: true });
+  for (const value of ["", "/unused"]) {
     const result = Bun.spawnSync(
-      [process.execPath, "tools/agx-worker/src/next/cli.ts", command],
-      { env },
+      [process.execPath, "tools/agx-worker/src/next/cli.ts", "stats"],
+      { env: { ...env, AGX_NEXT_STATE_DIR: value } },
     );
-    expect(result.exitCode).toBe(2);
-    expect(result.stdout.toString()).toBe("");
-    expect(result.stderr.toString()).toBe(
-      `agx: state migration required: mv ${base}/agx ${base}/agx.legacy-v1.tmp && mv ${base}/agx-next ${base}/agx && mv ${base}/agx.legacy-v1.tmp ${base}/agx/legacy-v1\n`,
-    );
-    expect(existsSync(join(base, "agx"))).toBe(false);
-    expect(existsSync(join(base, "agx-next"))).toBe(true);
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(join(env.XDG_STATE_HOME, "agx-next"))).toBe(true);
+  }
 });
 
 test("state resolution uses the explicit path, XDG, then home; empty values fall through", () => {

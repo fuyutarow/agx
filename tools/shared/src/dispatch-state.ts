@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import { jsonOf, z } from "./zod.ts";
 import { stateDir as dispatchStateDir } from "./state-dir.ts";
 export { dispatchStateDir };
@@ -114,13 +113,6 @@ export function parseActiveMarker(text: string): ActiveMarkerRead {
       reason: parsed.error.issues[0]?.message ?? "invalid marker",
     };
   return { kind: "valid", marker: parsed.data };
-}
-
-/** Read-only location of the pre-separation ledger. */
-export function dispatchLegacyStateDir(
-  env: NodeJS.ProcessEnv = process.env,
-): string {
-  return join(dispatchStateDir(env), "legacy-v1");
 }
 
 /** Active markers are read only from the current state directory. */

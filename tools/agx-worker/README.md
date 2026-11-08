@@ -3,18 +3,10 @@
 Dispatch, inspect and judge worker runs. Invoke it directly or through `agx worker`.
 
 The append-only records live at `<state>/records.jsonl`. State resolves from non-empty
-`AGX_STATE_DIR`, then `$XDG_STATE_HOME/agx`, then `~/.local/state/agx`. Legacy ledgers
-are read only from `<state>/legacy-v1`. Judgments remain available to audit and
-statistics views; local run outcomes and grades do not enter model selection criteria.
-See the [state migration refusals](contract.md) before migrating existing data.
-
-Import historical runs and lifecycle judgments explicitly with
-`agx worker stats --import-legacy`, then read `agx worker ls --json --all`.
-Listings include `judgment.at` and imported runs' original identity in `legacy`.
-Judgment time determines the latest decision across dated archives and current
-records; repeated imports add no duplicate events. Plain listings and stats never
-import. See [Legacy judgments](contract.md#legacy-judgments) for tie rules,
-provenance, counters, supported sources, and failure semantics.
+`AGX_STATE_DIR`, then `$XDG_STATE_HOME/agx`, then `~/.local/state/agx`.
+Already-imported runs and judgments remain visible through `agx worker ls --json --all`,
+including original run identity in `legacy`. See [Legacy judgments](contract.md#legacy-judgments)
+for judgment tie rules.
 
 The [Worker environment, version 1](contract.md#worker-environment-version-1) specifies
 `AGX_WORKER=1`, dispatcher identity precedence, child inheritance, and the other worker
@@ -165,7 +157,6 @@ agx worker ls <id-prefix|ticket>
 agx worker ls run-abc --json
 agx worker ls exact-ticket-name --json
 agx worker ls --json --summary
-agx worker ls --include-legacy --all
 ```
 
 A selector accepts an exact run ID, a unique ID prefix, or an exact ticket name.
@@ -173,15 +164,8 @@ Ticket matches are ordered oldest to newest. Plain unselected output shows the
 newest 30; `--all` shows every visible run. JSON retains its array of all visible
 runs; `--summary` wraps it in `{runs, summary}`.
 
-Malformed imported runs are hidden by default. Only imported started records
-that fail event decoding are malformed. Missing historical choice metadata and
-placeholder strings do not make a decoded run malformed. Stderr reports
-`hidden_legacy=N` when rows are excluded; `--json --summary` also includes
-`summary.hidden_legacy` (including zero). The count covers the workspace scope
-before selector/running/limit filtering; `--include-legacy` includes those rows
-and sets the hidden count to zero. Undecodable imported started records are
-shown as raw records for inspection. Invalid complete event-log JSON and
-undecodable records without legacy provenance still fail.
+Malformed records are skipped with a diagnostic. The JSON summary reports their
+count in `hidden_legacy`.
 
 If a report recorded under the sibling retired `agx-next/` root exists at the
 same relative location under the current state root, listings return the current

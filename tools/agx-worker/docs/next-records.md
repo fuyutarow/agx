@@ -2,7 +2,7 @@
 
 `agx-worker` stores one append-only JSONL file at `<state>/records.jsonl`.
 State resolves from non-empty `AGX_STATE_DIR`, then non-empty `XDG_STATE_HOME` plus
-`/agx`, then `~/.local/state/agx`. See [startup migration refusals](../contract.md).
+`/agx`, then `~/.local/state/agx`.
 Each line is one event. Readers ignore an incomplete trailing line and reject malformed
 complete lines. Readers ignore unknown fields; writers may add fields; required fields never
 change type. Event `at` values are RFC 3339 timestamps. Ticket paths are positional:
@@ -75,13 +75,9 @@ to the worker, rather than a second process timeout. `supersedes = "RUN_ID"` (or
 - `judged`: `{ "kind": "judged", "id", "at", "decision", "note" }`.
 
 Imported events may carry `legacy_key`, a deterministic deduplication key.
-`agx worker stats --import-legacy` reads legacy ledgers from `<state>/legacy-v1` (read-only), folds `run`, `acceptance`, `interim`, and `landed` rows into the same
-event log, skips malformed lines, and reports import counts. Legacy `acceptance` rows become
-`accept` or `reject`; `landed` becomes `accept`. Legacy `grade` and `grade-waived` rows are
-ignored because grades are not judgments. Existing invalid `judged` decisions remain in the
-append-only log but are ignored when folding; `landed` decisions from earlier imports fold as
-`accept`. The latest valid judgment wins. Importing the same source again adds no duplicate
-events.
+Existing invalid `judged` decisions remain in the append-only log but are ignored
+when folding; historical `landed` decisions fold as `accept`. The latest valid
+judgment wins.
 
 Events are append-only. The current run view folds events by `id`: the latest
 progress and judgment win; a `started` with no `ended` is `running` while its
@@ -154,7 +150,7 @@ checking liveness, and emitting rows still cost proportionally to the stored run
 
 ## Published snapshot (`current-runs.json`)
 
-The owner publishes `$AGX_NEXT_STATE_DIR/current-runs.json` after each appended event, written
+The owner publishes `$AGX_STATE_DIR/current-runs.json` after each appended event, written
 atomically under a kernel lock: one file, one writer. It is `{ "output", "capturedAt", "exit",
 "endedRuns", "acceptedRuns" }`. `output` is the JSON text of `{ runs, summary }` for running and
 orphaned rows, unchanged. Readers must ignore unknown fields. The two arrays let `agx-status` count

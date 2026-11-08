@@ -7,7 +7,6 @@ import {
   ProgressSchema,
   ProgressReaderSchema,
   dispatchStateDir,
-  dispatchLegacyStateDir,
   dispatchStateReadDirs,
   parseActiveMarker,
   serializeActiveMarker,
@@ -76,7 +75,6 @@ test.each([
 ])("state and legacy reads share one root: %j", (env, root) => {
   expect(dispatchStateDir(env)).toBe(root);
   expect(dispatchStateReadDirs(env)).toEqual([root]);
-  expect(dispatchLegacyStateDir(env)).toBe(join(root, "legacy-v1"));
 });
 
 test("the strict writer and forward-compatible reader share the active marker contract", () => {

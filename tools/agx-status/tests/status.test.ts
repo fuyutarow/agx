@@ -283,11 +283,11 @@ test("single state directory precedence and startup refusals preserve data", asy
     await stateFs.mkdir(join(root, "agx-next"));
     await stateFs.writeFile(join(root, "agx-next/sentinel"), "unchanged");
     const migrationEnv = { ...env, XDG_STATE_HOME: root };
-    const expected = `agx: state migration required; run: mv ${root}/agx ${root}/agx.legacy-v1.tmp && mv ${root}/agx-next ${root}/agx && mv ${root}/agx.legacy-v1.tmp ${root}/agx/legacy-v1`;
-    expect(await stateRefusal(migrationEnv)).toBe(expected);
+
+    expect(await stateRefusal(migrationEnv)).toBeUndefined();
     expect(
       await stateRefusal({ ...migrationEnv, AGX_STATE_DIR: explicit }),
-    ).toBe(expected);
+    ).toBeUndefined();
     for (const override of [
       {},
       { AGX_NEXT_STATE_DIR: "" },
@@ -308,13 +308,9 @@ test("single state directory precedence and startup refusals preserve data", asy
         child.stderr.text(),
         child.exited,
       ]);
-      expect(code).toBe(2);
-      expect(out).toBe("");
-      expect(err).toBe(
-        (Object.hasOwn(override, "AGX_NEXT_STATE_DIR")
-          ? "agx: AGX_NEXT_STATE_DIR is retired; use AGX_STATE_DIR"
-          : expected) + "\n",
-      );
+      expect(code).toBe(0);
+      expect(out).not.toBe("");
+      expect(err).toBe("");
     }
     expect(
       await stateFs.readFile(join(root, "agx-next/sentinel"), "utf8"),

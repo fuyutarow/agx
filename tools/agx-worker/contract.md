@@ -13,7 +13,7 @@ PATH unchanged by this rule; this does not alter the global PATH.
 | `agx worker check TICKET [--cd TREE]`                                                          | Validate a ticket and its premises without starting a worker.                                                                         |
 | `agx worker ls [SELECTOR] [--workspace PATH] [--json]`                                         | List runs and judgments; SELECTOR is a run id, unique run-id prefix, or exact ticket name. Ticket selections put the newest run last. |
 | `agx worker judge RUN_ID accept\|reject [--note TEXT]`                                         | Append an acceptance or rejection judgment.                                                                                           |
-| `agx worker stats [--import-legacy\|--routing\|--usage jev] [--window DURATION] [--host NAME]` | Report run counts, import legacy records, routing statistics, or Jev token usage.                                                     |
+| `agx worker stats [--routing\|--usage jev] [--window DURATION] [--host NAME]` | Report run counts, routing statistics, or Jev token usage.                                                     |
 | `agx worker probe --vendor codex --sandbox MODE --cd PATH --timeout-ms N --json`               | Run a bounded vendor diagnostic without a ticket or run record.                                                                       |
 | `agx worker dispatch TICKET [--ws SLUG] [--unit NAME] [--continue RUN_ID] [--session ID]`      | Obtain a workspace through `agx ws`, or reuse a continuation's recorded workspace, and start a durable worker unit.                   |
 | `agx worker roster TICKET`                                                                     | Print one selected roster row. `roster --json` prints the full validated roster and routing objective.                                |
@@ -88,34 +88,14 @@ fall through). The probe lists that directory without parsing landing journals; 
 entry named `land`, including a file or symlink, conservatively counts as present.
 Unreadable directories, dangling state symlinks, non-directory state paths and other
 inspection errors produce only `{"legacy_land":{"present":null,"status":"refused","reason":"..."}}`
-on stdout and exit 2, before importing or reading run records. Successful presence
-inspection retains the existing stats fields and exit behavior. Existing retired
-state-variable and required state-migration diagnostics still refuse on stderr with
-exit 2 before stats runs.
+on stdout and exit 2, before reading run records. Successful presence
+inspection retains the existing stats fields and exit behavior.
 
-Ordinary stats creates, renames, deletes and rewrites no state files, and performs
-no migration. `--import-legacy` retains its explicit run-record import behavior;
-it neither migrates landing state nor proves its migration. Consumers need no
-private path or file-format knowledge. This field follows the worker CLI's package
-version and compatibility policy; further object fields may be added compatibly.
+Ordinary stats creates, renames, deletes and rewrites no state files.
 
 ## Legacy judgments
 
-For shell and machine consumers, `agx worker stats --import-legacy` is the explicit
-owner mutation that imports history. It emits one JSON object on stdout, including
-`legacy_import`. Plain `stats` and `ls --json` never import or modify state.
-`agx worker ls --json --all` exposes the canonical imported runs and judgments;
-consumers need no journal reader. These additive fields follow the worker package
-version; consumers must tolerate additional JSON fields.
-
-The importer reads `<state>/legacy-v1/runs.jsonl`, `lifecycle.jsonl`, and dated
-`runs-YYYY-MM-DD.jsonl` and `lifecycle-YYYY-MM-DD.jsonl` archives. It never changes
-these source files. Run rows (`kind=run`) establish run identity. Acceptance rows
-(`kind=acceptance`, boolean `accept`), landing rows (`kind=landed`), and lifecycle
-rows (`type=judged`, `decision=accept|reject|landed`) become judgment events.
-`landed` means `accept`. Existing `kind=judged` rows are also accepted. Interim
-rows retain their progress import behavior; grades and other lifecycle types are
-ignored. Judgments require an ISO 8601 `at` with UTC or an explicit offset.
+`agx worker ls --json --all` exposes already-imported canonical runs and judgments.
 
 Every non-null listing `judgment` contains `decision`, `note`, and `at`, including
 current judgments and history imported before this extension. The latest instant
@@ -131,29 +111,10 @@ canonical log position. Equal instants use these rules:
 Imported runs expose `legacy: {run_id, source: "legacy-v1"}` alongside canonical
 `id`, `workspace`, `ticket`, and start/end timestamps. Original run IDs share one
 namespace across legacy files; the canonical ID is `legacy-` plus the first 24
-hexadecimal characters of SHA-256 of the original UTF-8 run ID. Re-import and
-archive relocation preserve this mapping. Current runs omit `legacy`.
+hexadecimal characters of SHA-256 of the original UTF-8 run ID. Current runs omit `legacy`.
 
-`legacy_import.runs_imported` counts newly imported run identities;
-`judgments_imported` and `progress_imported` count newly appended events.
-Repeated rows with the same event identity, including copies in multiple archives,
-append once. Re-importing unchanged history returns zero for these three counters
-and leaves `runs` and `judgments` unchanged. The top-level `judgments` counts all
-stored judgment events, including superseded ones, rather than judged runs.
-`malformed_lines` counts invalid JSON/non-object lines and recognized judgments
-with an invalid timestamp or decision. `ignored_rows` counts unsupported rows,
-rows without a usable kind/run ID, and events without an imported run. Both scan
-counters recur on re-import. An orphan event can import after its run appears.
-
-Successful scans exit 0, including scans with malformed/ignored source rows;
-these counters expose partial source coverage. Usage/state migration refusals
-exit 2; a corrupt canonical log exits 1 with a stderr diagnostic. Import writes
-are append-only and may be partial if interrupted; retry resumes using stable
-event keys. The legacy landing refusal described above still applies before import.
-
-Real CLI fixtures: `tests/next/legacy-judgments.test.ts` covers archive chronology,
-late discovery, equal-time ties, source duplication, identity, timestamps, counts,
-malformed rows, and read-only listings/stats.
+The top-level stats `judgments` count includes all stored judgment events, including
+superseded ones.
 
 ## Tickets and dispatch
 
@@ -215,12 +176,7 @@ and saved report include `execution.executable_path`, `execution.executable_argv
 
 Run events, progress, and judgments are stored in one append-only `records.jsonl` file. The state
 directory resolves from non-empty `AGX_STATE_DIR`, then non-empty `$XDG_STATE_HOME/agx`,
-then `~/.local/state/agx`. Legacy ledgers are read only from `<state>/legacy-v1`.
-Every worker command refuses `AGX_NEXT_STATE_DIR`, even when empty, with exit 2 and
-`agx: AGX_NEXT_STATE_DIR is retired; use AGX_STATE_DIR`. If the resolved state directory
-is missing but `<base>/agx-next` exists, startup refuses with exit 2 and prints:
-`mv <base>/agx <base>/agx.legacy-v1.tmp && mv <base>/agx-next <base>/agx && mv <base>/agx.legacy-v1.tmp <base>/agx/legacy-v1`.
-Here `<base>` is non-empty `XDG_STATE_HOME` or `~/.local/state`. The CLI never moves data.
+then `~/.local/state/agx`.
 
 Local judgments and graded run summaries remain audit data and do not enter the Jev request or
 the class ranking. Selection uses the ticket, roster evidence, explicit route and
@@ -493,14 +449,12 @@ not a guarantee of file discovery, schema compatibility, or successful writes.
 | `AGX_CODEX_TEST_STDIN_WAIT_MS` | Test seam: Codex prompt stdin wait, default 30000 ms when unset; supplied values use Math.max(1, Number(value)).                                                                                                                                                                                                               | [workers/codex.ts](src/workers/codex.ts), stdin wait                                                                                                                        | [codex.test.ts](tests/codex.test.ts), stdin wait fixture                                                                                                                                         |
 | `AGX_TEST_PROCESS_TREE_CPU`    | Test seam: exact `flat` selects a zero CPU observation. Other values use normal process-tree sampling.                                                                                                                                                                                                                         | [lifecycle.ts](src/lifecycle.ts), process CPU sampling                                                                                                                      | [lifecycle.test.ts](tests/lifecycle.test.ts) covers CPU sampling; no direct variable assertion                                                                                                   |
 
-Retired names are refusals, not aliases. Merely defining `AGX_NEXT_STATE_DIR` (even empty)
-refuses worker startup with exit 2; defining `AGX_NEXT_WORKER` refuses run with exit 2 and
+Defining `AGX_NEXT_WORKER` refuses run with exit 2 and
 directs callers to `AGX_WORKER_BIN`. Defining `AGX_NEXT_JEV_URL` is rejected by the Jev
 client in favor of `JEV_URL`. Defining `AGX_DOCTOR_QUIET` refuses doctor with exit 2 in
-favor of `--quiet`. Sources: [state.ts](src/state.ts), [next/run.ts](src/next/run.ts),
+favor of `--quiet`. Sources: [next/run.ts](src/next/run.ts),
 [jev-client.ts](../shared/src/jev-client.ts), [next/cli.ts](src/next/cli.ts).
-Existing tests: [next/state-dir.test.ts](tests/next/state-dir.test.ts),
-[next/run.test.ts](tests/next/run.test.ts), [jev-client.test.ts](tests/jev-client.test.ts),
+Existing tests: [next/run.test.ts](tests/next/run.test.ts), [jev-client.test.ts](tests/jev-client.test.ts),
 respectively. Doctor's retired-variable refusal has no direct existing test assertion.
 
 Version 1 records these observed semantics. It adds no runtime version variable or negotiated
@@ -585,7 +539,7 @@ permissions, retired input, symlinks, competing creates and unchanged existing f
 ## Statistics window parameter
 
 `--window DURATION` is shared by `stats --routing` and `stats --usage jev`; it is
-invalid with plain `stats` or `--import-legacy`. The default is `24h` for routing
+invalid with plain `stats`. The default is `24h` for routing
 statistics and `7d` for Jev usage. Its grammar is a positive decimal integer followed
 by `m`, `h` or `d`; units mean exactly 60, 3600 or 86400 seconds. Unsafe durations
 and windows beginning before the Unix epoch are rejected.
@@ -595,7 +549,7 @@ and windows beginning before the Unix epoch are rejected.
 `agx worker stats --routing --window 24h [--host NAME]` emits one JSON object and
 newline, identically on terminals and pipes. Direct `agx-worker stats` is equivalent.
 This read-only projection does not import history or start workers. Plain `stats`
-retains its existing output. `--routing` cannot combine with `--import-legacy`;
+retains its existing output. 
 `--host` requires `--routing`. No positional arguments are accepted.
 
 `observation.start` and `observation.end` are UTC instants; the interval is
@@ -767,7 +721,7 @@ executables and valid/invalid host declarations.
 Shell, CI and agent consumers use `agx worker stats --usage jev --window 7d`.
 JSON is the default and only output mode for this projection. The window follows
 the shared [statistics window parameter](#statistics-window-parameter).
-`--usage` is exclusive with `--routing`, `--host`, `--import-legacy`, and positional
+`--usage` is exclusive with `--routing`, `--host`, and positional
 arguments. No stdin is consumed.
 
 The read-only command emits one JSON object and newline on stdout, with `schema: 1`,
@@ -843,7 +797,6 @@ agx worker ls <id-prefix|ticket>
 agx worker ls run-abc --json
 agx worker ls exact-ticket-name --json
 agx worker ls --json --summary
-agx worker ls --include-legacy --all
 ```
 
 A selector accepts an exact run ID, a unique ID prefix, or an exact ticket name.
@@ -851,15 +804,8 @@ Ticket matches are ordered oldest to newest. Plain unselected output shows the
 newest 30; `--all` shows every visible run. JSON retains its array of all visible
 runs; `--summary` wraps it in `{runs, summary}`.
 
-Malformed imported runs are hidden by default. Only imported started records
-that fail event decoding are malformed. Missing historical choice metadata and
-placeholder strings do not make a decoded run malformed. Stderr reports
-`hidden_legacy=N` when rows are excluded; `--json --summary` also includes
-`summary.hidden_legacy` (including zero). The count covers the workspace scope
-before selector/running/limit filtering; `--include-legacy` includes those rows
-and sets the hidden count to zero. Undecodable imported started records are
-shown as raw records for inspection. Invalid complete event-log JSON and
-undecodable records without legacy provenance still fail.
+Malformed records are skipped with a diagnostic. JSON summary reports the count
+in `hidden_legacy`.
 
 If a report recorded under the sibling retired `agx-next/` root exists at the
 same relative location under the current state root, listings return the current

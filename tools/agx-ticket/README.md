@@ -142,9 +142,7 @@ deletion conditions require fixture updates and a release changeset.
 
 The complete shared configuration contract is [repository configuration](../../contract/config.md).
 State uses non-empty `AGX_STATE_DIR`, otherwise non-empty `XDG_STATE_HOME` plus `/agx`,
-otherwise `~/.local/state/agx`. The legacy ledger is read-only at `<state dir>/legacy-v1/`.
-Startup rejects `AGX_NEXT_STATE_DIR` and a pending sibling `agx-next` migration with exit 2
-and migration guidance; it never moves data automatically. Retired `AGX_DOCTOR_HOME` and
+otherwise `~/.local/state/agx`. Retired `AGX_DOCTOR_HOME` and
 `AGX_DOCTOR_WORKSPACE` are rejected and direct operators to the L2 repository registry.
 
 Doctor inspects exactly the repositories registered by `listAgxRepos()` in the agx L2

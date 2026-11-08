@@ -74,7 +74,7 @@ test("public ls hides malformed imports, counts them and normalizes moved report
       return result;
     };
     const plain = invoke();
-    expect(plain.stderr.toString()).toContain("hidden_legacy=1");
+    expect(plain.stderr.toString()).not.toContain("--include-legacy");
     expect(plain.stdout.toString()).not.toContain("tkt_legacy ");
     const row = z.object({
       id: z.string(),
@@ -94,23 +94,12 @@ test("public ls hides malformed imports, counts them and normalizes moved report
     expect(output.data.find((entry) => entry.id === "run-2")?.report_path).toBe(
       join(root, "agx-next", "missing.json"),
     );
-    const included = invoke("--json", "--include-legacy");
-    const includedRows = jsonOf(
-      z.array(z.looseObject({ id: z.string() })),
-    ).safeParse(included.stdout.toString());
-    expect(includedRows.success).toBe(true);
-    if (includedRows.success) expect(includedRows.data).toHaveLength(5000);
-    expect(included.stdout.toString()).toContain('"row":42');
-    expect(included.stderr.toString()).not.toContain("hidden_legacy");
     const summary = jsonOf(
       z.object({ summary: z.object({ hidden_legacy: z.number() }) }),
     ).safeParse(invoke("--json", "--summary").stdout.toString());
     expect(summary.success).toBe(true);
     if (summary.success) expect(summary.data.summary.hidden_legacy).toBe(1);
     expect(invoke("run-0", "--json").stdout.toString()).toContain(report);
-    expect(
-      invoke("legacy", "--include-legacy", "--json").stdout.toString(),
-    ).toContain('"run-1"');
     expect(
       invoke("--ticket", "ticket-0", "--latest", "--json").stdout.toString(),
     ).toContain(report);

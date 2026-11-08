@@ -177,9 +177,7 @@ include `trunk source`, without changing the six-column TSV or JSON row shape.
   Refresh uses only the applicable subset described above.
 
 State uses non-empty `AGX_STATE_DIR`, otherwise non-empty `XDG_STATE_HOME` plus `/agx`, otherwise
-`~/.local/state/agx`. The legacy ledger is read-only at `<state dir>/legacy-v1/`.
-Startup refuses retired state configuration and pending migration with exit 2 and guidance,
-without moving data. `AGX_NEXT_STATE_DIR` is retired. Workspace discovery rejects retired
+`~/.local/state/agx`. Workspace discovery rejects retired
 `AGX_DOCTOR_HOME` and `AGX_DOCTOR_WORKSPACE` in favor of `AGX_REPOS_ROOT`.
 
 ## Interface with agx-worker

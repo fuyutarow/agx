@@ -71,6 +71,15 @@ async function main(): Promise<void> {
     await runMain();
     return;
   }
+  const retiredFlag = rawArgs
+    .slice(1, rawArgs.indexOf("--") < 0 ? undefined : rawArgs.indexOf("--"))
+    .find(
+      (arg) =>
+        (rawArgs[0] === "ls" && /^--include-legacy(?:[=:.]|$)/u.test(arg)) ||
+        (rawArgs[0] === "stats" && /^--import-legacy(?:[=:.]|$)/u.test(arg)),
+    );
+  if (retiredFlag !== undefined)
+    exitWithError(`agx: unknown option '${retiredFlag}'\n`, 2);
   if (ALL_COMMANDS.some((name) => name === rawArgs[0])) stateDir();
   const root = cli(
     {
@@ -378,10 +387,6 @@ Ticket min_effort = "low" | "medium" | "high" | "xhigh" | "max" sets a routing f
             description:
               "with --json, include running counts by dispatcher session",
           },
-          includeLegacy: {
-            type: Boolean,
-            description: "include malformed imported legacy runs",
-          },
           all: { type: Boolean, description: "show every run" },
           workspace: {
             type: String,
@@ -471,10 +476,6 @@ Ticket min_effort = "low" | "medium" | "high" | "xhigh" | "max" sets a routing f
         parameters: [],
         flags: {
           json: { type: Boolean, description: "JSON output (routing)" },
-          importLegacy: {
-            type: Boolean,
-            description: "import legacy agx JSONL records",
-          },
           usage: {
             type: String,
             description: "emit versioned Jev token usage JSON (--usage jev)",
@@ -502,11 +503,9 @@ Ticket min_effort = "low" | "medium" | "high" | "xhigh" | "max" sets a routing f
     if (
       parsed._.length > 0 ||
       (parsed.flags.routing !== true && parsed.flags.json === true) ||
-      (parsed.flags.routing === true && parsed.flags.importLegacy === true) ||
       (parsed.flags.usage !== undefined &&
         (parsed.flags.usage !== "jev" ||
           parsed.flags.routing === true ||
-          parsed.flags.importLegacy === true ||
           parsed.flags.host !== undefined)) ||
       (parsed.flags.routing !== true && parsed.flags.host !== undefined) ||
       (parsed.flags.routing !== true &&
@@ -514,7 +513,7 @@ Ticket min_effort = "low" | "medium" | "high" | "xhigh" | "max" sets a routing f
         parsed.flags.window !== undefined)
     ) {
       process.stderr.write(
-        "agx worker stats: --window requires --routing or --usage jev; --host and --json require --routing; usage, routing and import-legacy are exclusive; no positional arguments\n",
+        "agx worker stats: --window requires --routing or --usage jev; --host and --json require --routing; usage and routing are exclusive; no positional arguments\n",
       );
       exit = 2;
     } else if (parsed.flags.usage === "jev") {

@@ -4,13 +4,10 @@ import {
   openSync,
   fstatSync,
   readSync,
-  createReadStream,
   existsSync,
   mkdirSync,
   readFileSync,
-  readdirSync,
   statSync,
-  writeFileSync,
 } from "node:fs";
 import { createHash } from "node:crypto";
 import packageJson from "../../package.json" with { type: "json" };
@@ -24,7 +21,6 @@ import {
 } from "node:fs/promises";
 import { dlopen, FFIType, read as ffiRead } from "bun:ffi";
 import { basename, dirname, join, resolve } from "node:path";
-import { createInterface } from "node:readline";
 import { fromPromise, fromThrowable } from "neverthrow";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { globsOverlap } from "../ticket.ts";
@@ -608,19 +604,42 @@ function withDecisionReference(
   return { ...event, decision_id: decisionId, ...usage };
 }
 
-function endEventWithSize(event: Extract<z.input<typeof EventSchema>, { kind: "ended" }>, root: string) {
-  if (event.run_dir_bytes !== undefined && event.end_notice !== undefined) return event;
+function endEventWithSize(
+  event: Extract<z.input<typeof EventSchema>, { kind: "ended" }>,
+  root: string,
+) {
+  if (event.run_dir_bytes !== undefined && event.end_notice !== undefined)
+    return event;
   if (!/^[a-zA-Z0-9_-]+$/u.test(event.id)) return event;
   const dir = join(root, "runs", event.id);
-  const measured = fromThrowable(() => existsSync(dir) ? measureRunDir(dir) : { bytes: 0 })();
+  const measured = fromThrowable(() =>
+    existsSync(dir) ? measureRunDir(dir) : { bytes: 0 },
+  )();
   if (measured.isErr()) return event;
   const size = measured.value;
   const bytes = event.run_dir_bytes ?? size.bytes;
   if (event.end_notice !== undefined || size.bytes <= 256 * 1024 * 1024)
     return { ...event, run_dir_bytes: bytes };
-  const origin = events(root).findLast((row) => row.id === event.id && (row.kind === "started" || row.kind === "dispatching"));
-  if (origin?.kind !== "started" && origin?.kind !== "dispatching") return { ...event, run_dir_bytes: bytes };
-  const notice = scheduleEndNotice({ id: event.id, ticket: origin.ticket, dispatcher: origin.dispatcher_session, startedAt: origin.at, endedAt: event.at, outcome: event.outcome ?? "unknown", exit: event.exit, resultPath: event.report_path, verifyExits: (event.verify ?? []).map((check) => check.exit), runDirSize: size, env: { AGX_STATE_DIR: root } });
+  const origin = events(root).findLast(
+    (row) =>
+      row.id === event.id &&
+      (row.kind === "started" || row.kind === "dispatching"),
+  );
+  if (origin?.kind !== "started" && origin?.kind !== "dispatching")
+    return { ...event, run_dir_bytes: bytes };
+  const notice = scheduleEndNotice({
+    id: event.id,
+    ticket: origin.ticket,
+    dispatcher: origin.dispatcher_session,
+    startedAt: origin.at,
+    endedAt: event.at,
+    outcome: event.outcome ?? "unknown",
+    exit: event.exit,
+    resultPath: event.report_path,
+    verifyExits: (event.verify ?? []).map((check) => check.exit),
+    runDirSize: size,
+    env: { AGX_STATE_DIR: root },
+  });
   return { ...event, run_dir_bytes: bytes, end_notice: notice };
 }
 
@@ -631,9 +650,10 @@ export function append(
 ): void {
   const path = recordPath(root);
   mkdirSync(dirname(path), { recursive: true });
-  const recorded = event.kind === "ended"
-    ? endEventWithSize(event, root)
-    : withDecisionReference(event, pendingPickAudit);
+  const recorded =
+    event.kind === "ended"
+      ? endEventWithSize(event, root)
+      : withDecisionReference(event, pendingPickAudit);
   appendFileSync(path, `${JSON.stringify(recorded)}\n`, {
     encoding: "utf8",
     flag: "a",
@@ -741,284 +761,7 @@ export function events(root = stateDir()): NextEvent[] {
   return all;
 }
 
-type LegacyImportResult = Readonly<{
-  runs_imported: number;
-  judgments_imported: number;
-  progress_imported: number;
-  malformed_lines: number;
-  ignored_rows: number;
-}>;
-
 const LegacyRow = z.record(z.string(), z.unknown());
-const rowOf = (value: unknown): Record<string, unknown> | undefined => {
-  const parsed = LegacyRow.safeParse(value);
-  return parsed.success ? parsed.data : undefined;
-};
-const stringOf = (value: unknown): string | undefined =>
-  typeof value === "string" ? value : undefined;
-const numberOf = (value: unknown): number | undefined =>
-  typeof value === "number" && Number.isFinite(value) ? value : undefined;
-const legacyId = (runId: string): string =>
-  `legacy-${createHash("sha256").update(runId).digest("hex").slice(0, 24)}`;
-const legacySourceDir = (): string => join(stateDir(), "legacy-v1");
-
-const importedEventKeys = (): Set<string> =>
-  new Set(
-    events().flatMap((event) =>
-      event.legacy_key === undefined ? [] : [event.legacy_key],
-    ),
-  );
-
-type PendingLegacyRow = Readonly<{
-  row: Record<string, unknown>;
-  key: string;
-}>;
-
-type LegacyReadResult = Readonly<{
-  pending: PendingLegacyRow[];
-  runs_imported: number;
-  malformed_lines: number;
-  ignored_rows: number;
-}>;
-
-const legacyKeyFor = (
-  kind: string,
-  runId: string,
-  row: Record<string, unknown>,
-): string => {
-  const digest = createHash("sha256")
-    .update(
-      JSON.stringify([
-        kind,
-        runId,
-        row.at,
-        row.graded_at,
-        row.waived_at,
-        row.grade,
-        row.accept,
-        row.reason,
-      ]),
-    )
-    .digest("hex")
-    .slice(0, 24);
-  return `${kind}:${digest}`;
-};
-
-function importLegacyRun(
-  legacy: Record<string, unknown>,
-  runId: string,
-  knownKeys: Set<string>,
-): number {
-  const startedKey = `run:${runId}`;
-  const endedKey = `run-ended:${runId}`;
-  const ticket = rowOf(legacy.ticket);
-  const pick = rowOf(legacy.pick);
-  const worker = rowOf(legacy.worker);
-  const cwd = stringOf(legacy.cwd) ?? "unknown";
-  const startedAt = stringOf(legacy.started_at) ?? now();
-  const endedAt = stringOf(legacy.ended_at) ?? startedAt;
-  const writesResult = z.array(z.string()).safeParse(ticket?.writes);
-  const writes = writesResult.success ? writesResult.data : [];
-  const outcome = worker?.outcome;
-  let exit = numberOf(legacy.exit) ?? numberOf(worker?.exit_code);
-  if (exit === undefined) {
-    if (outcome === "ok" || outcome === "returned") exit = 0;
-    else if (outcome === "timeout") exit = 3;
-    else exit = 1;
-  }
-  const id = legacyId(runId);
-  let imported = 0;
-  if (!knownKeys.has(startedKey)) {
-    const brief = rowOf(legacy.brief);
-    append({
-      kind: "started",
-      id,
-      at: startedAt,
-      ticket:
-        stringOf(ticket?.name) ?? basename(stringOf(brief?.path) ?? "legacy"),
-      writes,
-      cwd,
-      workspace: cwd,
-      row: stringOf(pick?.choice) ?? "unknown",
-      dispatcher_session: stringOf(legacy.dispatcher_session) ?? null,
-      vendor_session: stringOf(worker?.session) ?? null,
-      continues: null,
-      pid: 0,
-      legacy_key: startedKey,
-      legacy: { run_id: runId, source: "legacy-v1" },
-    });
-    knownKeys.add(startedKey);
-    imported = 1;
-  }
-  if (!knownKeys.has(endedKey)) {
-    append({
-      kind: "ended",
-      id,
-      at: endedAt,
-      exit,
-      report_path: null,
-      vendor_session: stringOf(worker?.session) ?? null,
-      verify: [],
-      legacy_key: endedKey,
-    });
-    knownKeys.add(endedKey);
-  }
-  return imported;
-}
-
-async function readLegacyFile(
-  filePath: string,
-  knownKeys: Set<string>,
-): Promise<LegacyReadResult> {
-  const pending: PendingLegacyRow[] = [];
-  let runsImported = 0;
-  let malformedLines = 0;
-  let ignoredRows = 0;
-  const input = createInterface({
-    input: createReadStream(filePath),
-    crlfDelay: Infinity,
-  });
-  for await (const line of input) {
-    const parsed = jsonOf(LegacyRow).safeParse(line);
-    if (!parsed.success) {
-      malformedLines += 1;
-      continue;
-    }
-    const legacy = parsed.data;
-    const kind = legacy.type === "judged" ? "judged" : stringOf(legacy.kind);
-    const runId = stringOf(legacy.run_id);
-    if (kind === "run" && runId !== undefined) {
-      runsImported += importLegacyRun(legacy, runId, knownKeys);
-      continue;
-    }
-    const importable = ["acceptance", "interim", "landed", "judged"];
-    if (
-      kind === undefined ||
-      runId === undefined ||
-      !importable.includes(kind)
-    ) {
-      ignoredRows += 1;
-      continue;
-    }
-    const timestamp = z.iso.datetime({ offset: true }).safeParse(legacy.at);
-    const validDecision =
-      kind !== "judged" ||
-      legacy.decision === "accept" ||
-      legacy.decision === "reject" ||
-      legacy.decision === "landed";
-    if (
-      kind !== "interim" &&
-      (!timestamp.success ||
-        !validDecision ||
-        (kind === "acceptance" && typeof legacy.accept !== "boolean"))
-    ) {
-      malformedLines += 1;
-      continue;
-    }
-    const key =
-      kind === "judged"
-        ? `judged:${createHash("sha256")
-            .update(
-              JSON.stringify([
-                runId,
-                legacy.at,
-                legacy.decision,
-                legacy.note ?? legacy.reason ?? "",
-              ]),
-            )
-            .digest("hex")}`
-        : legacyKeyFor(kind, runId, legacy);
-    pending.push({ row: { ...legacy, kind }, key });
-  }
-  return {
-    pending,
-    runs_imported: runsImported,
-    malformed_lines: malformedLines,
-    ignored_rows: ignoredRows,
-  };
-}
-
-function importLegacyEvent(
-  row: Record<string, unknown>,
-  key: string,
-): "judged" | "progress" | undefined {
-  const kind = stringOf(row.kind);
-  const runId = stringOf(row.run_id);
-  if (kind === undefined || runId === undefined) return undefined;
-  const id = legacyId(runId);
-  const at =
-    stringOf(row.at) ??
-    stringOf(row.graded_at) ??
-    stringOf(row.waived_at) ??
-    now();
-  if (kind === "interim") {
-    const interim = rowOf(row.interim_report);
-    const reportValue = interim?.return ?? interim ?? row.interim_report;
-    const path = join(stateDir(), "runs", id, "last-progress.json");
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, `${JSON.stringify(reportValue)}\n`);
-    append({ kind: "progress", id, at, path, legacy_key: key });
-    return "progress";
-  }
-  let decision: string | undefined;
-  if (kind === "acceptance")
-    decision = row.accept === true ? "accept" : "reject";
-  if (kind === "landed") decision = "accept";
-  if (kind === "judged") decision = stringOf(row.decision);
-  if (decision === undefined) return undefined;
-  const note = stringOf(row.note) ?? stringOf(row.reason) ?? "";
-  append({ kind: "judged", id, at, decision, note, legacy_key: key });
-  return "judged";
-}
-
-/** Import old agx rows idempotently; malformed source lines are counted and skipped. */
-export async function importLegacyRecords(): Promise<LegacyImportResult> {
-  const sourceDir = legacySourceDir();
-  const files = existsSync(sourceDir)
-    ? readdirSync(sourceDir)
-        .filter(
-          (name) =>
-            name === "runs.jsonl" ||
-            name === "lifecycle.jsonl" ||
-            /^(runs|lifecycle)-\d{4}-\d{2}-\d{2}\.jsonl$/u.test(name),
-        )
-        .toSorted()
-    : [];
-  const knownKeys = importedEventKeys();
-  const pending: PendingLegacyRow[] = [];
-  let runsImported = 0;
-  let judgmentsImported = 0;
-  let progressImported = 0;
-  let malformedLines = 0;
-  let ignoredRows = 0;
-
-  for (const file of files) {
-    const read = await readLegacyFile(join(sourceDir, file), knownKeys);
-    pending.push(...read.pending);
-    runsImported += read.runs_imported;
-    malformedLines += read.malformed_lines;
-    ignoredRows += read.ignored_rows;
-  }
-
-  for (const { row, key } of pending) {
-    if (knownKeys.has(key)) continue;
-    if (!knownKeys.has(`run:${stringOf(row.run_id) ?? ""}`)) {
-      ignoredRows += 1;
-      continue;
-    }
-    const imported = importLegacyEvent(row, key);
-    if (imported === "progress") progressImported += 1;
-    if (imported === "judged") judgmentsImported += 1;
-    knownKeys.add(key);
-  }
-  return {
-    runs_imported: runsImported,
-    judgments_imported: judgmentsImported,
-    progress_imported: progressImported,
-    malformed_lines: malformedLines,
-    ignored_rows: ignoredRows,
-  };
-}
 
 export async function overlapWarnings(
   writes: string[],

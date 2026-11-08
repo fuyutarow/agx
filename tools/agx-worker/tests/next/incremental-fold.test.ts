@@ -411,13 +411,7 @@ test("warm listing retains malformed imports without rereading history, while fo
   read.mockClear();
   expect(await listingHistory()).toEqual(history);
   expect(await list({ json: true })).toBe(0);
-  expect(
-    warning.mock.calls.some(([line]) =>
-      String(line).includes("hidden_legacy=1"),
-    ),
-  ).toBe(true);
-  expect(await list({ json: true, includeLegacy: true })).toBe(0);
-  expect(output.mock.calls.at(-1)?.[0]).toContain('"row":42');
+  expect(output.mock.calls.at(-1)?.[0]).not.toContain('"row":42');
   expect(read.mock.calls).toHaveLength(0);
   expect(whole.mock.calls.some(([path]) => path === recordPath())).toBe(false);
   const strict = Bun.spawnSync(

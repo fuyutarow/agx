@@ -46,22 +46,9 @@ import { runningSummary, listingRows } from "./listing.ts";
 import { listingProgress } from "./listing-progress.ts";
 
 export async function list(flags: Flags): Promise<number> {
-  const includeLegacy = flags.includeLegacy === true;
   const visibleHistory = async (workspace?: string) => {
     const history = await listingHistory(workspace);
-    const malformed = history.malformed.filter(
-      (row) => workspace === undefined || row.workspace === workspace,
-    );
-    const hidden = includeLegacy ? 0 : malformed.length;
-    if (hidden > 0)
-      process.stderr.write(
-        `agx: hidden_legacy=${hidden} malformed imported runs; use --include-legacy to inspect\n`,
-      );
-    return {
-      runs: history.runs,
-      malformed: includeLegacy ? malformed : [],
-      hidden,
-    };
+    return { runs: history.runs, hidden: history.malformed.length };
   };
   const workspacePath = value(flags, "workspace");
   const workspace =
@@ -144,12 +131,7 @@ export async function list(flags: Flags): Promise<number> {
   const selector = value(flags, "selector");
   const startedAt = new Map(rows.map((entry) => [entry.id, entry.started_at]));
   const selection = selectedRuns(rows, selector, startedAt);
-  if (
-    selection.error !== undefined &&
-    !history.malformed.some(
-      (row) => row.id === selector || row.ticket === selector,
-    )
-  ) {
+  if (selection.error !== undefined) {
     process.stderr.write(`agx: ${selection.error}\n`);
     return 2;
   }
@@ -164,14 +146,7 @@ export async function list(flags: Flags): Promise<number> {
   if (asJson) {
     const selected = selector === undefined ? rows : visible;
     const projected = await listingProgress(selected);
-    const malformed = history.malformed.filter(
-      (row) =>
-        !running &&
-        (selector === undefined ||
-          row.id === selector ||
-          row.ticket === selector),
-    );
-    let payload: unknown = [...listingRows(projected), ...malformed];
+    let payload: unknown = listingRows(projected);
     if (flags.summary === true) {
       payload = {
         runs: payload,
@@ -183,17 +158,6 @@ export async function list(flags: Flags): Promise<number> {
     output += "\n";
     const older = rows.length - visible.length;
     if (older > 0) output += `… ${older} older (agx worker ls --all)\n`;
-  }
-  if (!asJson && !running) {
-    output += history.malformed
-      .filter(
-        (row) =>
-          selector === undefined ||
-          row.id === selector ||
-          row.ticket === selector,
-      )
-      .map((row) => `${JSON.stringify(row)}\n`)
-      .join("");
   }
   process.stdout.write(output);
   return 0;
