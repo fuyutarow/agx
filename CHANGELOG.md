@@ -1,5 +1,9 @@
 # Changelog
 
+## 9.0.0 — 2026-11-08
+
+- Remove agx ws adopt and the gc --legacy flag.
+
 ## 8.0.1 — 2026-11-08
 
 - Keep the zero- and multi-candidate trunk diagnostic (naming the missing [ws].trunk setting) in gc dry-run reasons
