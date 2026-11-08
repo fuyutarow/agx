@@ -8,12 +8,11 @@ import { enterStep, runAddCommand } from "./deadline.ts";
 import { errorMessage } from "../../shared/src/attempt.ts";
 import packageJson from "../package.json" with { type: "json" };
 import {
-  add,
   gc,
   gcAll,
-  refresh,
   remove,
 } from "./workspace.ts";
+import { add, refresh } from "./create.ts";
 import { LegacyWorkspaceConfigError } from "./config.ts";
 import { doctor as doctorWorkspaces, doctorSummaries } from "./doctor.ts";
 
