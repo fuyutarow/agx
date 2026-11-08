@@ -968,8 +968,10 @@ A Claude row is credit-covered when the shared credential resolver would give it
 
 ### Routing audit journal
 
-`routing.jsonl` retains each selection before a worker starts, independently of
-worker judgments. Its optional `audit` adds a decision UUID, ticket path and
+`routing-YYYY-MM-DD.jsonl` retains each selection before a worker starts, independently of
+worker judgments, using the event's UTC date. Decision lookup searches dated journals
+newest first and falls back to the untouched legacy `routing.jsonl`; routing statistics
+include both dated and legacy journals. Its optional `audit` adds a decision UUID, ticket path and
 SHA-256, exact structured Jev input and SHA-256 of its JSON serialization,
 truncation flag, ordered before/after filter traces and removal details,
 capability tags, timeout class, effective temperature and selection mode,

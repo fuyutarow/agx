@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { stateDir } from "../state.ts";
@@ -55,7 +55,7 @@ export function recordRoutingPick(
       2,
     );
   appendFileSync(
-    join(root, "routing.jsonl"),
+    join(root, `routing-${event.data.at.slice(0, 10)}.jsonl`),
     `${JSON.stringify(event.data)}\n`,
     {
       mode: 0o600,
@@ -93,10 +93,26 @@ export function recordRoutingRefusal(input: {
   );
 }
 
-export function routingEvents() {
-  const read = fromThrowable(() =>
-    readFileSync(join(stateDir(), "routing.jsonl"), "utf8"),
-  )();
+function routingFiles(root: string): string[] {
+  const entries = fromThrowable(() => readdirSync(root))();
+  if (entries.isErr()) {
+    if (
+      z.object({ code: z.literal("ENOENT") }).safeParse(entries.error).success
+    )
+      return [];
+    return exitWithError(
+      `agx: cannot read routing statistics: ${String(entries.error)}\n`,
+      2,
+    );
+  }
+  return entries.value
+    .filter((name) => /^routing-\d{4}-\d{2}-\d{2}\.jsonl$/u.test(name))
+    .toSorted()
+    .toReversed();
+}
+
+function readRoutingFile(root: string, name: string) {
+  const read = fromThrowable(() => readFileSync(join(root, name), "utf8"))();
   if (read.isErr()) {
     if (z.object({ code: z.literal("ENOENT") }).safeParse(read.error).success)
       return { events: [], trailingPartial: false, present: false };
@@ -122,6 +138,29 @@ export function routingEvents() {
     trailingPartial: tail !== "",
     present: true,
   };
+}
+
+/** Read all journals in chronological file order for aggregate statistics. */
+export function routingEvents() {
+  const root = stateDir();
+  const files = ["routing.jsonl", ...routingFiles(root).toReversed()];
+  const journals = files.map((file) => readRoutingFile(root, file));
+  return {
+    events: journals.flatMap((journal) => journal.events),
+    trailingPartial: journals.some((journal) => journal.trailingPartial),
+    present: journals.some((journal) => journal.present),
+  };
+}
+
+/** Find the first matching decision, preferring the newest dated journal. */
+export function routingDecision(decisionId: string, root = stateDir()) {
+  for (const file of [...routingFiles(root), "routing.jsonl"]) {
+    const event = readRoutingFile(root, file).events.find(
+      (row) => row.audit?.decision_id === decisionId,
+    );
+    if (event !== undefined) return event;
+  }
+  return null;
 }
 
 export function newRoutingAudit(

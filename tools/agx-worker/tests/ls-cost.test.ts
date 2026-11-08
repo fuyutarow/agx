@@ -51,7 +51,7 @@ const baseStarted = (id: string) => ({
   pid: 2147483647,
 });
 
-test("a new started record carries decision_id, not pick_audit; the audit is read from routing.jsonl by that id", () => {
+test("a new started record carries decision_id, not pick_audit; the audit is stored by that id", () => {
   const root = fixture();
   const audit = newRoutingAudit({ path: "/tmp/t.md", sha256: null });
   audit.input = { big: "x".repeat(5000) };
@@ -73,7 +73,11 @@ test("a new started record carries decision_id, not pick_audit; the audit is rea
   expect(started).not.toHaveProperty("pick_audit");
   expect(readFileSync(recordPath(root), "utf8")).not.toContain("xxxxxxxxxx");
 
-  const routing = jsonLines(join(root, "routing.jsonl"));
+  const journal = join(
+    root,
+    `routing-${Temporal.Now.instant().toString().slice(0, 10)}.jsonl`,
+  );
+  const routing = jsonLines(journal);
   const stored = routing.filter(
     (row) =>
       z.object({ decision_id: z.string() }).safeParse(row.audit).data
@@ -96,7 +100,7 @@ test("a new started record carries decision_id, not pick_audit; the audit is rea
     root,
     false,
   );
-  const lifecycle = jsonLines(join(root, "routing.jsonl")).filter(
+  const lifecycle = jsonLines(journal).filter(
     (row) => row.source === "lifecycle",
   );
   expect(lifecycle).toHaveLength(1);
