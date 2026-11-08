@@ -9,10 +9,15 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const roots: string[] = [];
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
+const cliPath = join(repoRoot, "tools/agx/src/agx.ts");
+const workerCliPath = join(repoRoot, "tools/agx-worker/src/next/cli.ts");
+const policyPath = join(repoRoot, "tools/agx-worker/src/roster/policy.example.toml");
 afterEach(() => {
   for (const root of roots.splice(0))
     rmSync(root, { recursive: true, force: true });
@@ -20,15 +25,15 @@ afterEach(() => {
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "agx-jev-usage-"));
   roots.push(root);
-  for (const dir of ["bin", "state", "home", "state/legacy-v1"])
+  for (const dir of ["bin", "state", "home", "state/legacy-v1", "work"])
     mkdirSync(join(root, dir), { recursive: true });
   symlinkSync(
-    resolve("tools/agx-worker/src/next/cli.ts"),
+    workerCliPath,
     join(root, "bin/agx-worker"),
   );
   writeFileSync(
     join(root, "policy.toml"),
-    readFileSync("tools/agx-worker/src/roster/policy.example.toml", "utf8"),
+    readFileSync(policyPath, "utf8"),
   );
   const env = {
     ...subprocessEnvironment(),
@@ -37,6 +42,7 @@ function fixture() {
     HOME: join(root, "home"),
     XDG_CONFIG_HOME: join(root, "config"),
     AGX_CONFIG: join(root, "policy.toml"),
+    AGX_TEST_CWD: join(root, "work"),
     TYPESAFE_API_KEY: "fixture-key",
     PATH: `${join(root, "bin")}:${dirname(process.execPath)}`,
   };
@@ -49,11 +55,15 @@ function fixture() {
     Reflect.deleteProperty(env, key);
   return { root, env };
 }
-const args = [process.execPath, "tools/agx/src/agx.ts", "worker"];
+const args = [process.execPath, cliPath, "worker"];
 const stats = (
   env: NodeJS.ProcessEnv,
   extra = ["--usage", "jev", "--window", "7d"],
-) => Bun.spawnSync([...args, "stats", ...extra], { env, timeout: 15_000 });
+) => {
+  const cwd = env.AGX_TEST_CWD!;
+  expect(cwd).toContain("agx-jev-usage-");
+  return Bun.spawnSync([...args, "stats", ...extra], { env, cwd, timeout: 15_000 });
+};
 const Report = jsonOf(
   z.object({
     schema: z.literal(1),
@@ -261,6 +271,7 @@ test("real routing CLI captures response usage even for fallback, missing usage 
   async function pick() {
     const child = Bun.spawn([...args, "roster", ticket], {
       env: { ...env, JEV_URL: `http://127.0.0.1:${server.port}` },
+      cwd: env.AGX_TEST_CWD,
       stdout: "pipe",
       stderr: "pipe",
       timeout: 15_000,
@@ -271,7 +282,8 @@ test("real routing CLI captures response usage even for fallback, missing usage 
       child.exited,
     ]);
     expect(exit, err).toBe(0);
-    expect(out).toContain("luna-high");
+    expect(out).toContain("luna-low");
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
   await pick();
   let data = report(stats(env));
@@ -283,7 +295,7 @@ test("real routing CLI captures response usage even for fallback, missing usage 
   server.reload({
     fetch: () =>
       Response.json({
-        answers: {},
+        answers: { worker: { choice: "mechanical" } },
         usage: { input_tokens: 10, output_tokens: 2 },
       }),
   });

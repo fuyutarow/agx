@@ -17,6 +17,10 @@ import { writeUsageSnapshot } from "./usage-snapshot.fixture.ts";
 import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 
 const roots: string[] = [];
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
+const cliPath = join(repoRoot, "tools/agx/src/agx.ts");
+const workerCliPath = join(repoRoot, "tools/agx-worker/src/next/cli.ts");
+const policyPath = join(repoRoot, "tools/agx-worker/src/roster/policy.example.toml");
 const FIRST_NOW_MS = Temporal.Instant.from(
   "2026-10-26T00:00:00Z",
 ).epochMilliseconds;
@@ -33,9 +37,9 @@ afterEach(() => {
 const fixture = () => {
   const root = mkdtempSync(join(tmpdir(), "agx-routing-stats-"));
   roots.push(root);
-  for (const dir of ["bin", "state", "home"]) mkdirSync(join(root, dir));
+  for (const dir of ["bin", "state", "home", "work"]) mkdirSync(join(root, dir));
   symlinkSync(
-    resolve("tools/agx-worker/src/next/cli.ts"),
+    workerCliPath,
     join(root, "bin/agx-worker"),
   );
   // Presence fixtures are never executed by stats.
@@ -44,7 +48,7 @@ const fixture = () => {
   writeFileSync(
     join(root, "policy.toml"),
     readFileSync(
-      "tools/agx-worker/src/roster/policy.example.toml",
+      policyPath,
       "utf8",
     ).replace('allow = ["codex"]', 'allow = ["codex", "claude"]'),
   );
@@ -55,6 +59,7 @@ const fixture = () => {
     HOME: join(root, "home"),
     XDG_CONFIG_HOME: join(root, "config"),
     AGX_CONFIG: join(root, "policy.toml"),
+    AGX_TEST_CWD: join(root, "work"),
     TYPESAFE_API_KEY: "fixture-not-a-secret",
     PATH: `${join(root, "bin")}:${dirname(process.execPath)}`,
   };
@@ -101,11 +106,15 @@ const writeDecoyCodexRollout = (home: string, nowMs: number) => {
   );
   utimesSync(path, measuredAt / 1000, measuredAt / 1000);
 };
-const args = [process.execPath, "tools/agx/src/agx.ts", "worker"];
+const args = [process.execPath, cliPath, "worker"];
 const stats = (
   env: NodeJS.ProcessEnv,
   extra = ["--routing", "--window", "24h"],
-) => Bun.spawnSync([...args, "stats", ...extra], { env, timeout: 15_000 });
+) => {
+  const cwd = env.AGX_TEST_CWD!;
+  expect(cwd).toContain("agx-routing-stats-");
+  return Bun.spawnSync([...args, "stats", ...extra], { env, cwd, timeout: 15_000 });
+};
 const Route = z.object({
   state: z.enum(["unknown", "unavailable"]),
   executable: z.string(),
@@ -380,6 +389,7 @@ test("real roster CLI selections are persisted before any worker starts", async 
     );
     const child = Bun.spawn([...args, "roster", ticket], {
       env: { ...env, JEV_URL: `http://127.0.0.1:${server.port}` },
+      cwd: env.AGX_TEST_CWD,
       stdout: "pipe",
       stderr: "pipe",
       timeout: 15_000,
@@ -398,6 +408,7 @@ test("real roster CLI selections are persisted before any worker starts", async 
     server.reload({ fetch: () => Response.json({ answers: {} }) });
     const fallback = Bun.spawn([...args, "roster", ticket], {
       env: { ...env, JEV_URL: `http://127.0.0.1:${server.port}` },
+      cwd: env.AGX_TEST_CWD,
       stdout: "pipe",
       stderr: "pipe",
       timeout: 15_000,
