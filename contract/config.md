@@ -20,8 +20,10 @@ agx-ticket and agx-ws use it. Workspace policy details are described in
 
 Defaults are `tickets = ".agents/tickets"`, no readiness commands, no keep entries and no
 repository verification commands. Merge order is defaults, L1, L2; later values replace each
-key, and arrays are replaced rather than concatenated. L1 is optional: local-only operation
-needs no tracked file or ignore rule. No repository working file supplies L2.
+key, and an array in a later layer replaces the earlier layer's array, with one exception:
+`[ws].keep` is the union of L1 and L2 entries (duplicates removed), so L2 adds to L1's keep
+list and never removes from it. L1 is optional: local-only operation needs no tracked file or
+ignore rule. No repository working file supplies L2.
 
 ```toml
 # L1: agx.toml, committed at trunk() (Git: HEAD)
@@ -39,7 +41,9 @@ commands = ['test -s "$AGX_TICKET_PATH"']
 timeout_ms = 10000
 ```
 
-L1 accepts `schema`, `tickets`, `[ws]`, `[verify]`, `[check]` and `[route]`. Schema must equal 1.
+L1 accepts `schema`, `tickets`, `[ws]`, `[verify]`, `[check]` and `[route]`. Its `[ws]` table
+accepts `ready`, `trunk`, `keep`, `regenerable` and `unjudged_warn_hours`; `[ws].keep` is
+accepted at L1. Schema must equal 1.
 `[route]` accepts only `allow`, with the same meaning as the user policy key of the same
 name (see [User policy and catalog](#user-policy-and-catalog)). When present, it replaces the
 user policy's `route.allow` for runs whose repository is this one; every other route key stays
@@ -49,7 +53,7 @@ invalid `[route]`, before any effect. L2 rejects `[route]`.
 Declarations use TOML 1.0 syntax. Unknown keys, malformed TOML, duplicate TOML keys and unsupported or missing schema fail.
 Ticket paths must be nonempty relative strings; absolute POSIX and Windows paths and `~/`
 are rejected at L1. Relative ticket paths resolve from the main checkout. Paths are UTF-8
-strings; no canonicalization or signature is applied. `[ws].keep` is rejected with guidance to put it in L2.
+strings; no canonicalization or signature is applied.
 
 ```toml
 # L2: ~/.config/agx/repos/project.toml (filename is arbitrary)
@@ -65,9 +69,12 @@ keep = ["/srv/project.ws/ws-reference"]
 always = []
 ```
 
-L2 requires absolute `root` and schema 1. It accepts L1 keys except `[check]` and `[route]`, plus `[ws].keep` and
-`[usehooks]` with required `hooks`, `link_task`, `link_path` strings and nonempty `command`
-string array when present. Readiness, keep and verification arrays contain nonblank strings.
+L2 requires absolute `root` and schema 1. It accepts `schema`, `tickets`, `[verify]` and a `[ws]`
+table limited to `ready` and `keep`, plus `[usehooks]` with required `hooks`, `link_task`,
+`link_path` strings and nonempty `command` string array when present. `[check]` and `[route]`
+are rejected, and so are the L1-only `[ws]` keys `trunk`, `regenerable` and `unjudged_warn_hours`.
+L2 `[ws].keep` is added to L1 `[ws].keep` as a set union with duplicates removed; L2 `[ws].ready`
+replaces L1 `[ws].ready`. Readiness, keep and verification arrays contain nonblank strings.
 Absolute ticket paths and `~/` expansion are allowed only here; relative paths still resolve
 from the main checkout. The reader canonicalizes the main checkout with realpath, but compares
 L2 `root` literally: operators must declare that real path, not a symlink alias.
@@ -273,8 +280,8 @@ diagnostic containing the equivalent `[ws]` table and a direction to delete the 
 These requirements preserve the intended configuration design. They are not promises of
 commands or schemas that the present code does not implement.
 
-- Shared policy should be reviewed and portable; machine paths and keep lists should remain
-  outside version control. Every declaration should have one writer and one authority.
+- Shared policy should be reviewed and portable; machine paths and machine-local keep entries
+  should remain outside version control (shared keep entries may live in L1). Every declaration should have one writer and one authority.
 - Unsupported schema versions should fail with exit 2 and one line explaining migration or
   upgrade. Optional keys with defaults should retain schema version and use a minor release.
   Changing meaning, deleting a key or making one required should increment schema by one and
