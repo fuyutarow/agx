@@ -1,5 +1,9 @@
 # Changelog
 
+## 10.5.0 — 2026-11-10
+
+- A Claude API credit failure no longer moves worker load onto the Claude subscription: the run ends the attempt as capacity (credits_unavailable) and continues on the next eligible row, claude rows stay out of routing while the 24 h marker is fresh, and policy key claude_run.on_credits_unavailable = "subscription" restores the in-process subscription retry
+
 ## 10.4.2 — 2026-11-10
 
 - Skip legacy usage journals outside the stats window and count, warn about and skip unparseable legacy lines instead of failing the Jev usage aggregate.
