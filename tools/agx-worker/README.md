@@ -234,3 +234,10 @@ in `proposition.refuted_by`, tied to `outcome`. Missing declarations refuse befo
 routing with exit 2, rule/quoted-field/fix diagnostics and a hash-bearing refusal
 record. Use `agx worker check TICKET --json` for the violation list. See the
 [model-free intake contract](contract.md#model-free-ticket-intake).
+
+Claude workers resolve `ANTHROPIC_API_KEY` from the environment, then `fnox get
+ANTHROPIC_API_KEY`, then `~/.config/agx/anthropic-api-key` (a regular file with
+mode 0600). The lookup runs inside the worker as well as routing. If API credits
+are unavailable, the worker retries using the subscription and records that
+credential; a 24-hour marker sends later runs to the subscription. Run records
+expose the credential and, for API credentials, its source, never the key.

@@ -15,19 +15,27 @@ export type KeyLookup =
 
 const LEGACY_FILE = join(homedir(), ".config/typesafe/.env");
 
-function fromFnox(): { ok: true; key: string } | { ok: false; why: string } {
-  const r = Bun.spawnSync(["fnox", "get", "TYPESAFE_API_KEY"], {
-    cwd: homedir(),
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-    timeout: 10_000,
-  });
+function fromFnox(
+  name: string,
+): { ok: true; key: string } | { ok: false; why: string } {
+  const r = Bun.spawnSync(
+    [
+      Bun.which("fnox", { PATH: process.env.PATH ?? "" }) ?? "fnox",
+      "get",
+      name,
+    ],
+    {
+      cwd: process.env.HOME ?? homedir(),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 10_000,
+    },
+  );
   if (r.exitCode !== 0) {
-    const err = r.stderr.toString().trim().split("\n").at(-1) ?? "";
     return {
       ok: false,
-      why: `fnox exit ${r.exitCode ?? "killed"}${err === "" ? "" : `: ${err}`}`,
+      why: `fnox exit ${r.exitCode ?? "killed"}`,
     };
   }
   const key = r.stdout.toString().trim();
@@ -44,20 +52,35 @@ function fromLegacyFile(): string | undefined {
   return m?.[1];
 }
 
-/** The key and where it came from, or why none was found (every place tried is named). */
-export function typesafeKey(): KeyLookup {
-  const env = process.env.TYPESAFE_API_KEY;
+/** Resolve a named secret without exposing it in process arguments or diagnostics. */
+export function resolveSecret(
+  name: string,
+  environment: NodeJS.ProcessEnv,
+  file: () => string | undefined,
+  fileDescription: string,
+): KeyLookup {
+  const env = environment[name];
   if (env !== undefined && env !== "")
     return { ok: true, key: env, source: "env" };
   const fnox =
-    Bun.which("fnox") === null
+    Bun.which("fnox", { PATH: process.env.PATH ?? "" }) === null
       ? { ok: false as const, why: "fnox not installed" }
-      : fromFnox();
+      : fromFnox(name);
   if (fnox.ok) return { ok: true, key: fnox.key, source: "fnox" };
-  const file = fromLegacyFile();
-  if (file !== undefined) return { ok: true, key: file, source: "file" };
+  const key = file();
+  if (key !== undefined) return { ok: true, key, source: "file" };
   return {
     ok: false,
-    reason: `no TYPESAFE_API_KEY (env unset; ${fnox.why}; ${LEGACY_FILE} absent or without the key)`,
+    reason: `no ${name} (env unset; ${fnox.why}; ${fileDescription})`,
   };
+}
+
+/** The key and where it came from, or why none was found (every place tried is named). */
+export function typesafeKey(): KeyLookup {
+  return resolveSecret(
+    "TYPESAFE_API_KEY",
+    process.env,
+    fromLegacyFile,
+    `${LEGACY_FILE} absent or without the key`,
+  );
 }

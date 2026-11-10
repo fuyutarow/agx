@@ -226,6 +226,8 @@ const EventSchema = z.discriminatedUnion("kind", [
     stopped_by: z.string().optional(),
     report_path: z.string().nullable(),
     vendor_session: z.string().nullable(),
+    credential: z.enum(["api_key", "subscription"]).optional(),
+    credential_source: z.enum(["env", "fnox", "file"]).optional(),
     rows: z.array(z.string()).optional(),
     final_row: z
       .object({
@@ -873,6 +875,8 @@ function foldInto(runs: Map<string, FoldedRun>, input: NextEvent[]): void {
     if (event.kind === "ended" && event.cause !== undefined)
       run.cause = event.cause;
     if (event.kind === "ended") {
+      run.credential = event.credential;
+      run.credential_source = event.credential_source;
       run.run_dir_bytes = event.run_dir_bytes;
       run.state = "ended";
       run.signal = event.signal;

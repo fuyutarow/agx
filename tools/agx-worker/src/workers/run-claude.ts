@@ -8,7 +8,10 @@ import { jsonOf, jsonText, z } from "../../../shared/src/zod.ts";
 import { interimReturnWriter, parseReturn } from "../report.ts";
 import { activityWriter } from "../lifecycle.ts";
 import { workerEnvironment } from "./environment.ts";
-import { claudeCredential } from "./claude-credential.ts";
+import {
+  claudeCredentialDetails,
+  type CredentialSource,
+} from "./claude-credential.ts";
 import { progressWriter } from "./codex-progress.ts";
 import { foldClaudeEvent, resultEvent } from "./claude-progress.ts";
 import { stateDir } from "../state.ts";
@@ -95,6 +98,7 @@ export type RunResult = Readonly<{
   capacityCause?: string | undefined;
   creditsUnavailable?: boolean | undefined;
   credential?: "api_key" | "subscription" | undefined;
+  credential_source?: CredentialSource | undefined;
 }>;
 
 type Relay = Readonly<{
@@ -112,6 +116,7 @@ type Relay = Readonly<{
   transient?: boolean;
   worker_fault?: boolean;
   credential?: "api_key" | "subscription" | undefined;
+  credential_source?: CredentialSource | undefined;
   outcome?: "capacity" | "credits_unavailable";
 }>;
 
@@ -131,9 +136,15 @@ type ParsedStdout = Readonly<{
 export async function runClaude(config: RunConfig): Promise<RunResult> {
   const environment = workerEnvironment(process.env);
   const marker = join(stateDir(), "claude-credits-unavailable");
-  const credential = claudeCredential(environment);
+  const { credential, credential_source } =
+    claudeCredentialDetails(environment);
   const start = performance.now();
-  const first = await runClaudeAttempt(config, environment, credential);
+  const first = await runClaudeAttempt(
+    config,
+    environment,
+    credential,
+    credential_source,
+  );
   if (
     first.creditsUnavailable !== true ||
     credential !== "api_key" ||
@@ -157,6 +168,7 @@ async function runClaudeAttempt(
   config: RunConfig,
   environment: NodeJS.ProcessEnv,
   credential: "api_key" | "subscription",
+  credential_source?: CredentialSource,
 ): Promise<RunResult> {
   const session = config.resume ?? crypto.randomUUID();
   const args = [
@@ -348,6 +360,7 @@ async function runClaudeAttempt(
       capacityCause: creditsFailed ? undefined : capacityCause,
       creditsUnavailable: creditsFailed,
       credential,
+      credential_source,
     };
   }
 
@@ -375,6 +388,7 @@ async function runClaudeAttempt(
     capacityCause: creditsFailed ? undefined : capacityCause,
     creditsUnavailable: creditsFailed,
     credential,
+    credential_source,
   };
 }
 
@@ -442,6 +456,7 @@ export function toRelay(run: RunResult): Relay {
     return {
       ...capacity,
       credential: run.credential,
+      credential_source: run.credential_source,
       exit_code: run.exitCode,
       timed_out: run.timedOut,
       stdout: boundedText(run.stdout),
@@ -454,6 +469,7 @@ export function toRelay(run: RunResult): Relay {
   return {
     ...capacity,
     credential: run.credential,
+    credential_source: run.credential_source,
     exit_code: run.exitCode,
     timed_out: run.timedOut,
     result: typeof result === "string" ? boundedText(result) : undefined,

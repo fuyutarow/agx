@@ -818,12 +818,10 @@ missing progress directories are discovered once rather than opened per row.
 
 ## Dispatch receipt and run outcomes
 
-Claude reads `~/.config/agx/anthropic-api-key` when it is a nonempty regular
-file with mode 0600. The key is supplied only in the Claude child's environment;
-an invalid mode is diagnosed and ignored. Inherited Claude credentials remain
-available when the file is absent; a file key takes precedence over them.
-The final run receipt and Claude attempt receipt expose only `credential`, either
-`api_key` or `subscription`. If a keyed attempt reports an unavailable credit
+Claude resolves `ANTHROPIC_API_KEY` from the environment, then fnox, then the
+nonempty regular mode-0600 file `~/.config/agx/anthropic-api-key`. Invalid file
+modes are diagnosed and ignored. The key is supplied in the Claude child's environment. The final receipt and run record expose `credential` and, for
+an API credential, `credential_source` (`env`, `fnox`, or `file`). If a keyed attempt reports an unavailable credit
 balance or spend limit, the wrapper records a marker in the agx state directory
 and retries once with both Anthropic key and auth token removed. For 24 hours the
 marker causes later Claude children to omit both credentials; after that the key
@@ -910,7 +908,7 @@ Invalid, missing, or unknown answers refuse without selecting a row.
 2. Jev classifies the ticket as mechanical, localized or cross_module, or returns it. Its input contains no route availability, usage windows, row data or run outcomes.
 3. Code filters by the class TB4 bar (0, 15, 40). Missing TB4 passes only bar 0. If no row passes, rows rank by descending TB4 first. Otherwise, credit-covered rows come first, followed by ascending published input plus output price, published time and row ID. These latter keys also break ties in the fallback.
 
-A Claude row is credit-covered when the shared credential resolver would give its worker an API key: a valid key file or inherited Anthropic key or auth token, without a fresh 24-hour credits-unavailable marker. The audit records whether any ordered candidate is covered and the ordered candidate IDs. Historical pick-audit schemas retain optional measured evidence and anonymization fields for reading old records; new picks do not emit them.
+A Claude row is credit-covered when the shared credential resolver would give its worker an API key: a key from the environment, fnox, or a valid key file, or an inherited Anthropic auth token, without a fresh 24-hour credits-unavailable marker. The audit records whether any ordered candidate is covered and the ordered candidate IDs. Historical pick-audit schemas retain optional measured evidence and anonymization fields for reading old records; new picks do not emit them.
 
 ### Routing audit journal
 

@@ -320,3 +320,10 @@ worker check with workspace add JSON for identical ticket/readiness values, and 
 dry-run GC with add JSON for identical keep/readiness values. The shared reader and agx-ws
 fixtures now cover that workspace integration across add, gc, rm and doctor. A local-only setup
 still needs policy declarations in the matching L2 repository file.
+
+Claude workers resolve `ANTHROPIC_API_KEY` from the environment, then `fnox get
+ANTHROPIC_API_KEY`, then the regular mode-0600 file
+`~/.config/agx/anthropic-api-key`. The worker repeats the lookup in its own
+execution environment. When API credits are unavailable it retries on the
+subscription and records that credential; a marker selects the subscription for
+24 hours. The run record includes the credential and API-key source, not the key.

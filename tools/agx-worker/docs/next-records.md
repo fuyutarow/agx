@@ -200,3 +200,9 @@ Cargo and Bun command directories. It reads an optional Homebrew installation
 prefix from `${XDG_CONFIG_HOME:-$HOME/.config}/agx/brew-prefix` and adds its `bin`
 and `sbin` directories. Set `AGX_BREW_PREFIX_FILE` to keep using a prefix file at
 another location. Dispatcher-provided command paths remain authoritative.
+
+Claude `ended` events and folded `ls --json` rows may include `credential`
+(`api_key` or `subscription`) and, for an API credential, `credential_source`
+(`env`, `fnox`, or `file`). These identify the final attempt, including a
+subscription retry after credits exhaustion. Historical and interrupted runs
+may lack these fields; key values are never recorded.

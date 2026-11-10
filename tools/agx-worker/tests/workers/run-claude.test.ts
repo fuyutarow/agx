@@ -36,6 +36,8 @@ test("file, inherited credentials, cooldown and one fallback stay confined to th
       if (!Object.hasOwn(old, key)) delete process.env[key];
     Object.assign(process.env, old);
   });
+  writeFileSync(join(root, "fnox"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+  process.env.PATH = `${root}:${process.env.PATH ?? ""}`;
   process.env.HOME = root;
   process.env.AGX_STATE_DIR = join(root, "state");
   delete process.env.ANTHROPIC_API_KEY;
@@ -116,7 +118,7 @@ test("file, inherited credentials, cooldown and one fallback stay confined to th
   expect([initialCall.key, initialCall.token]).toEqual([false, false]);
   expect(inheritedCall.key).toBe(true);
   expect(tokenCall.key).toBe(true);
-  expect(fileCall.fileKey).toBe(true);
+  expect(fileCall.fileKey).toBe(false);
   expect(
     calls()
       .slice(-2)
@@ -154,11 +156,14 @@ test("shared credential resolution covers file and inherited credentials until c
   const root = mkdtempSync(join(tmpdir(), "agx-credential-pick-"));
   const oldHome = process.env.HOME;
   const oldState = process.env.AGX_STATE_DIR;
+  const oldPath = process.env.PATH;
   using cleanup = new DisposableStack();
   cleanup.defer(() => {
     rmSync(root, { recursive: true, force: true });
   });
   cleanup.defer(() => {
+    if (oldPath === undefined) delete process.env.PATH;
+    else process.env.PATH = oldPath;
     if (oldHome === undefined) delete process.env.HOME;
     else process.env.HOME = oldHome;
     if (oldState === undefined) delete process.env.AGX_STATE_DIR;

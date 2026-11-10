@@ -1144,6 +1144,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
       timed_out: z.boolean().optional(),
       exit_code: z.number().optional(),
       credential: z.enum(["api_key", "subscription"]).optional(),
+      credential_source: z.enum(["env", "fnox", "file"]).optional(),
     }),
   );
   let workerReceipt: z.output<typeof workerReceiptSchema> = {};
@@ -1610,6 +1611,12 @@ async function runUnguarded(flags: Flags): Promise<number> {
       end_notice: endNotice,
       report_path: reportPath,
       vendor_session: vendorSession,
+      ...(workerReceipt.credential === undefined
+        ? {}
+        : { credential: workerReceipt.credential }),
+      ...(workerReceipt.credential_source === undefined
+        ? {}
+        : { credential_source: workerReceipt.credential_source }),
       ...(attemptedRows.length > 1 ? { rows: attemptedRows } : {}),
       ...(attemptedRows.length > 1
         ? {

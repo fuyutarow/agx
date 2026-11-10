@@ -110,6 +110,8 @@ export const RunSchema = z.object({
   ticket_orig_path: z.string().optional(),
   ticket_sha256: z.string().optional(),
   vendor_session: z.string().nullable(),
+  credential: z.enum(["api_key", "subscription"]).optional(),
+  credential_source: z.enum(["env", "fnox", "file"]).optional(),
   dispatcher_address: z.string().nullable().optional(),
   end_notice: EndNoticeResult.optional(),
   pid: z.number(),
