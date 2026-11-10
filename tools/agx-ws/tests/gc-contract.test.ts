@@ -1086,11 +1086,12 @@ test("ws contract: gc summary counts removed and kept by reason", async () => {
     "--grace-minutes",
     "0",
   ];
-  const [result, all, plain] = await Promise.all([
-    gc(f),
+  // Dry runs first: a concurrent removal would race their view of the same workspace.
+  const [all, plain] = await Promise.all([
     run([...args, "--json"], f.repo, f.baseEnv),
     run(args, f.repo, f.baseEnv),
   ]);
+  const result = await gc(f);
   expect(result.code, result.err).toBe(0);
   const parsed = jsonOf(
     z.object({

@@ -112,6 +112,11 @@ verdicts. Failed removal yields `FAILED`, preserves completed output, and exits 
 JSON output is `{ rows, counts, complete }`, with rows as six-element string arrays. Counts exclude
 `collected` rows; `collectable` counts `empty`, `landed` and `abandoned` classifications even when
 an opt-in flag is absent. `--all` visits L2-registered repositories and cannot combine with `--repo`.
+A commit row that jj cannot render (for example `<Error: ...>` in place of its json value) marks only
+that commit unreadable, with jj's raw message truncated to 300 characters. Each workspace whose
+decision reads that commit (its target chain, or its trunk comparison) is a `broken` row whose reason
+names the commit, so it is kept, `complete` is `false`, and `gc` exits 1 under the broken-workspace
+rule above. Every other workspace is classified and collected as before; the aggregate run does not fail.
 
 ## Repository policy: `agx.toml`
 

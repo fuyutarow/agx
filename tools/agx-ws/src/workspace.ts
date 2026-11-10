@@ -48,7 +48,7 @@ import {
   writeGcOrder,
 } from "./gc-order.ts";
 import { indexedWorkspaces } from "./workspace-index.ts";
-import { fromThrowable, jsonOf, z } from "../../shared/src/zod.ts";
+import { fromThrowable, jsonOf, jsonText, z } from "../../shared/src/zod.ts";
 import { jjWorkspace, refLocks } from "./jj-workspace.ts";
 import { withWorkspaceLock } from "./lock.ts";
 import { runStep } from "./subprocess.ts";
@@ -1482,11 +1482,73 @@ type GcTrace = {
   comparisonMs: number;
 };
 
+/** Commits jj could not render; each maps to jj's raw message (truncated). */
+export type CommitGraph = Map<string, JjCommit> & {
+  unreadable: Map<string, string>;
+};
+
+const UNREADABLE_MESSAGE_LIMIT = 300;
+
+export function emptyCommitGraph(): CommitGraph {
+  return Object.assign(new Map<string, JjCommit>(), {
+    unreadable: new Map<string, string>(),
+  });
+}
+
+/**
+ * Parses one `commit_id<TAB>json` row per line. jj renders `<Error: ...>` in place of the json
+ * value when a commit cannot be read; that marks only this commit unreadable, not the whole graph.
+ */
+export function parseGcCommitRows(output: string): Attempt<CommitGraph> {
+  const graph = emptyCommitGraph();
+  for (const line of output.trim().split("\n").filter(Boolean)) {
+    const tab = line.indexOf("\t");
+    if (tab <= 0)
+      return bad(
+        "invalid aggregate workspace commit row: missing commit id: " +
+          line.slice(0, UNREADABLE_MESSAGE_LIMIT),
+      );
+    const id = line.slice(0, tab);
+    const payload = line.slice(tab + 1);
+    const decoded = jsonText.safeParse(payload);
+    if (!decoded.success) {
+      graph.unreadable.set(id, payload.slice(0, UNREADABLE_MESSAGE_LIMIT));
+      continue;
+    }
+    const parsed = JjCommitSchema.safeParse(decoded.data);
+    if (!parsed.success)
+      return bad(
+        "invalid aggregate workspace commit row: " + parsed.error.message,
+      );
+    const row = parsed.data;
+    const files = parseJjTreeFiles(row.files);
+    if (!files.ok) {
+      graph.unreadable.set(
+        id,
+        `files unreadable: ${msg(files)}`.slice(0, UNREADABLE_MESSAGE_LIMIT),
+      );
+      continue;
+    }
+    graph.set(row.id, {
+      ...row,
+      parents: row.parents.split(",").filter(Boolean),
+      remoteBookmarks: row.remoteBookmarks
+        .split(",")
+        .filter(
+          (bookmark) => bookmark.length > 0 && !bookmark.endsWith("@git"),
+        ),
+      files: files.value,
+      changedPaths: row.changedPaths.split("\0").filter(Boolean),
+    });
+  }
+  return good(graph);
+}
+
 async function gcCommitGraph(
   repo: Repo,
   trunk: string | null,
   trace?: (step: string, ms: number) => void,
-): Promise<Attempt<Map<string, JjCommit>>> {
+): Promise<Attempt<CommitGraph>> {
   const trunkTest =
     trunk === null
       ? "false"
@@ -1500,7 +1562,7 @@ async function gcCommitGraph(
   const treeOwnerTest = `self.working_copies().len() > 0 || (${trunkHeadTest})`;
   const changedPathsTest = `if(!empty && !(${trunkTest}) && !self.contained_in("::remote_bookmarks()"), self.diff().files().map(|file| file.path()).join("\\0"), "")`;
   const template =
-    'json({"id" => commit_id, "parents" => stringify(parents.map(|parent| parent.commit_id()).join(",")), "change" => change_id.short(12), "description" => description.first_line(), "empty" => empty, "trunk" => ' +
+    'commit_id ++ "\\t" ++ json({"id" => commit_id, "parents" => stringify(parents.map(|parent| parent.commit_id()).join(",")), "change" => change_id.short(12), "description" => description.first_line(), "empty" => empty, "trunk" => ' +
     trunkTest +
     ', "remote" => self.contained_in("::remote_bookmarks()"), "remoteBookmarks" => stringify(self.remote_bookmarks().map(|bookmark| if(bookmark.remote(), stringify(bookmark.name()) ++ "@" ++ stringify(bookmark.remote()), stringify(bookmark.name()))).join(",")), "filesIncluded" => ' +
     treeOwnerTest +
@@ -1518,30 +1580,9 @@ async function gcCommitGraph(
   trace?.("aggregate jj graph generation", performance.now() - graphStart);
   if (!output.ok) return output;
   const parseStart = performance.now();
-  const commits = new Map<string, JjCommit>();
-  for (const line of output.value.trim().split("\n").filter(Boolean)) {
-    const parsed = jsonOf(JjCommitSchema).safeParse(line);
-    if (!parsed.success)
-      return bad(
-        "invalid aggregate workspace commit row: " + parsed.error.message,
-      );
-    const row = parsed.data;
-    const files = parseJjTreeFiles(row.files);
-    if (!files.ok) return files;
-    commits.set(row.id, {
-      ...row,
-      parents: row.parents.split(",").filter(Boolean),
-      remoteBookmarks: row.remoteBookmarks
-        .split(",")
-        .filter(
-          (bookmark) => bookmark.length > 0 && !bookmark.endsWith("@git"),
-        ),
-      files: files.value,
-      changedPaths: row.changedPaths.split("\0").filter(Boolean),
-    });
-  }
+  const commits = parseGcCommitRows(output.value);
   trace?.("graph parsing", performance.now() - parseStart);
-  return good(commits);
+  return commits;
 }
 
 async function workspaceCommitReachable(
@@ -2238,9 +2279,9 @@ function sameTrackedFile(
   );
 }
 
-function unlandedWorkspaceChange(
+export function unlandedWorkspaceChange(
   ws: Workspace,
-  commits: Map<string, JjCommit>,
+  commits: CommitGraph,
 ): {
   change: JjCommit | undefined;
   changes: JjCommit[];
@@ -2260,7 +2301,9 @@ function unlandedWorkspaceChange(
       return {
         change: undefined,
         changes: [],
-        missing: `commit ${id} is absent from aggregate revset`,
+        missing: commits.unreadable.has(id)
+          ? `commit ${id} is unreadable: ${commits.unreadable.get(id)}`
+          : `commit ${id} is absent from aggregate revset`,
         remoteBookmarks: [],
       };
     for (const bookmark of commit.remoteBookmarks)
@@ -2283,7 +2326,7 @@ async function classifyGc(
   ws: Workspace,
   kind: string,
   records: RunRecord[],
-  commits: Map<string, JjCommit>,
+  commits: CommitGraph,
   graphError: string | undefined,
   trunk: string | null,
   options: GcOptions,
@@ -2416,7 +2459,9 @@ async function classifyGc(
     )
       return verdict(
         "broken",
-        `cannot compare workspace content with trunk ${trunk}`,
+        commits.unreadable.has(trunk)
+          ? `cannot compare workspace content with trunk ${trunk}: commit is unreadable: ${commits.unreadable.get(trunk)}`
+          : `cannot compare workspace content with trunk ${trunk}`,
       );
     const comparisonStart = performance.now();
     const changedPaths = new Set(
@@ -3326,9 +3371,7 @@ export async function gc(options: GcOptions): Promise<Attempt<GcResult>> {
     report("run records", performance.now() - stepStart);
     const records = recordsResult.ok ? recordsResult.value : [];
     const graphResult = await gcCommitGraph(repo, trunk.value.commit, report);
-    const commits = graphResult.ok
-      ? graphResult.value
-      : new Map<string, JjCommit>();
+    const commits = graphResult.ok ? graphResult.value : emptyCommitGraph();
     const lines: string[] = [];
     const failed: string[] = [];
     const broken: string[] = [];
