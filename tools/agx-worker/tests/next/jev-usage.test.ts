@@ -147,7 +147,8 @@ test("real CLI sums only in-window evidence, and missing historical usage is nev
     { kind: "started", id: "historical", at: at(3) },
     { kind: "started", id: "outside", at: at(200) },
   ]);
-  journal(root, "legacy-v1/runs-2026-10-23.jsonl", [
+  // Named for today (UTC): a dated archive's name must bound its rows from above.
+  journal(root, `legacy-v1/runs-${at(0).slice(0, 10)}.jsonl`, [
     {
       kind: "run",
       run_id: "old-known",

@@ -1,4 +1,10 @@
-import { appendFileSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+} from "node:fs";
 import { join } from "node:path";
 import { fromPromise, fromThrowable } from "neverthrow";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
@@ -66,11 +72,33 @@ export function recordJevUsage(post: JevPost, roster: Roster): string {
   return capture.id;
 }
 
-function journal(path: string) {
+type Journal = {
+  path: string;
+  rows: Record<string, unknown>[];
+  present: boolean;
+  trailing: boolean;
+  /** Lines that were not JSON objects; only legacy journals skip them. */
+  skipped: number;
+  /** False when a legacy file was excluded by name or mtime and never opened. */
+  read: boolean;
+};
+
+/**
+ * Strict journals (live captures, records) refuse a non-object line. Legacy run
+ * journals are immutable history, so a damaged line is skipped and counted instead.
+ */
+function journal(path: string, lenient = false): Journal {
   const read = fromThrowable(() => readFileSync(path, "utf8"))();
   if (read.isErr()) {
     if (z.object({ code: z.literal("ENOENT") }).safeParse(read.error).success)
-      return { rows: [], present: false, trailing: false };
+      return {
+        path,
+        rows: [],
+        present: false,
+        trailing: false,
+        skipped: 0,
+        read: false,
+      };
     return exitWithError(
       `agx worker stats: cannot read ${path}: ${String(read.error)}\n`,
       2,
@@ -78,21 +106,58 @@ function journal(path: string) {
   }
   const lines = read.value.split("\n");
   const tail = lines.pop();
-  const rows = lines
-    .filter((line) => line !== "")
-    .map((line) => {
-      const parsed = jsonOf(z.record(z.string(), z.unknown())).safeParse(line);
-      if (!parsed.success)
-        return exitWithError(
-          `agx worker stats: malformed usage source ${path}: ${parsed.error.message}\n`,
-          2,
-        );
-      return parsed.data;
-    });
-  return { rows, present: true, trailing: tail !== "" };
+  const rows: Record<string, unknown>[] = [];
+  let skipped = 0;
+  for (const line of lines) {
+    if (line === "") continue;
+    const parsed = jsonOf(z.record(z.string(), z.unknown())).safeParse(line);
+    if (parsed.success) {
+      rows.push(parsed.data);
+      continue;
+    }
+    if (!lenient)
+      return exitWithError(
+        `agx worker stats: malformed usage source ${path}: ${parsed.error.message}\n`,
+        2,
+      );
+    skipped += 1;
+  }
+  return {
+    path,
+    rows,
+    present: true,
+    trailing: tail !== "",
+    skipped,
+    read: true,
+  };
 }
 
-function legacyJournals(root: string) {
+const DATED_RUNS = /^runs-(\d{4}-\d{2}-\d{2})\.jsonl$/u;
+
+/**
+ * Whether a legacy file can hold a row inside [startMs, ...). A dated archive is
+ * named for the UTC day its rows were stamped on, so its rows precede the start
+ * of the day after next, which also covers any offset up to 24 hours. Undated
+ * files and names that are not valid dates fall back to mtime: an append-only
+ * file is never older than its newest row, so a file last written before the
+ * window start holds nothing inside it.
+ */
+function mayHoldWindow(name: string, path: string, startMs: number): boolean {
+  const date = DATED_RUNS.exec(name)?.[1];
+  if (date !== undefined) {
+    const day = fromThrowable(() => Temporal.PlainDate.from(date))();
+    if (day.isOk()) {
+      const latestMs = Temporal.Instant.from(
+        `${day.value.add({ days: 2 }).toString()}T00:00:00Z`,
+      ).epochMilliseconds;
+      return latestMs > startMs;
+    }
+  }
+  const stat = fromThrowable(() => statSync(path))();
+  return stat.isErr() || stat.value.mtimeMs >= startMs;
+}
+
+function legacyJournals(root: string, startMs: number) {
   return [root, join(root, "legacy-v1")].flatMap((dir) => {
     const read = fromThrowable(() => readdirSync(dir))();
     if (read.isErr()) {
@@ -106,7 +171,19 @@ function legacyJournals(root: string) {
     return read.value
       .filter((name) => /^runs(?:-\d{4}-\d{2}-\d{2})?\.jsonl$/u.test(name))
       .toSorted()
-      .map((name) => journal(join(dir, name)));
+      .map((name) => {
+        const path = join(dir, name);
+        if (!mayHoldWindow(name, path, startMs))
+          return {
+            path,
+            rows: [],
+            present: true,
+            trailing: false,
+            skipped: 0,
+            read: false,
+          };
+        return journal(path, true);
+      });
   });
 }
 
@@ -143,7 +220,14 @@ export async function jevUsageStats(window: string): Promise<number> {
       const root = stateDir();
       const captures = journal(join(root, "jev-usage.jsonl"));
       const records = journal(join(root, "records.jsonl"));
-      const old = legacyJournals(root);
+      const old = legacyJournals(root, bounds.startMs);
+      const skippedLines = old.flatMap((source) =>
+        source.read ? [{ path: source.path, count: source.skipped }] : [],
+      );
+      const skippedTotal = skippedLines.reduce(
+        (sum, source) => sum + source.count,
+        0,
+      );
       const inWindow = (at: string) => {
         const ms = Temporal.Instant.from(at).epochMilliseconds;
         return ms >= bounds.startMs && ms < bounds.endMs;
@@ -221,8 +305,17 @@ export async function jevUsageStats(window: string): Promise<number> {
       const partialTail = [captures, records, ...old].some(
         (source) => source.trailing,
       );
+      // A skipped line has no readable timestamp, so it may hide in-window usage.
       const observedComplete =
-        unknown === 0 && unknownTime === 0 && !partialTail;
+        unknown === 0 &&
+        unknownTime === 0 &&
+        !partialTail &&
+        skippedTotal === 0;
+      for (const source of skippedLines)
+        if (source.count > 0)
+          process.stderr.write(
+            `agx worker stats: skipped ${source.count} unparseable line(s) in usage source ${source.path}\n`,
+          );
       return {
         schema: 1,
         usage: "jev",
@@ -259,6 +352,7 @@ export async function jevUsageStats(window: string): Promise<number> {
           legacy_journals_present: old.filter((source) => source.present)
             .length,
           trailing_partial_record: partialTail,
+          skipped_lines: skippedLines,
           first_capture_at:
             all
               .map((row) => row.at)

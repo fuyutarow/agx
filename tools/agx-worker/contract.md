@@ -775,9 +775,19 @@ attributed to their `started_at`; current calls use response capture time.
 Legacy run IDs deduplicate rotations and matching imported started records.
 Runs outside `[from,to)` do not contribute tokens or missing-usage counts.
 
+A legacy run journal is excluded without being opened when its name is dated
+`runs-YYYY-MM-DD.jsonl` and that UTC day, plus two days of slack, ends at or before
+`from`; an undated `runs*.jsonl` is excluded when its mtime is before `from`. Both
+rules are safe because rows are stamped no later than their file's day, and an
+append-only file is never older than its newest row. A read legacy journal line that
+is not a JSON object is skipped and counted: one stderr warning per file names the
+path and count, `coverage.skipped_lines` lists each read file's count, and the
+observed totals become null because a skipped line may hide in-window usage.
+
 Exit 0 means a projection was collected, including explicitly partial results.
-Invalid flag combinations/windows, unreadable journals, invalid complete JSON lines,
-invalid capture records, or invalid effective configuration exit 2 with a diagnostic
+Invalid flag combinations/windows, unreadable journals, invalid complete JSON lines
+in the live capture or records journals, invalid capture records, or invalid
+effective configuration exit 2 with a diagnostic
 on stderr and no JSON. Cleye parser failures (for example unknown flags) retain its
 exit 1 behavior. An incomplete final journal line is excluded and disclosed, rather
 than reported as a complete observation. No import, rewrite, cache publication or
@@ -787,6 +797,8 @@ or field changes require another schema version.
 `tests/next/jev-usage.test.ts` exercises the real suite CLI with isolated state and
 a local Jev HTTP fixture, including successful capture, fallbacks, missing historical
 usage, legacy deduplication, invalid input, partial writes and out-of-window records.
+`tests/next/stats-corrupt-line.test.ts` covers out-of-window legacy files that are never
+read, and in-window NUL-damaged legacy lines that are skipped, counted and warned.
 
 ## Listing visibility and moved reports
 
