@@ -1,5 +1,9 @@
 # Changelog
 
+## 10.4.0 — 2026-11-10
+
+- Add `agx worker config [--repo <path>] [--json]`, a read-only view of the effective repository (L1/L2), routing and Claude credential configuration with each value's source.
+
 ## 10.3.0 — 2026-11-10
 
 - Remove the retired route.no_egress key: a policy naming it is rejected with a delete-the-key error, and roster --json always shows the effective allowed routes in auto.routes (default claude and codex)
