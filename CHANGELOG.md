@@ -1,5 +1,9 @@
 # Changelog
 
+## 10.2.0 — 2026-11-10
+
+- Make the user routing policy additive over shipped defaults: every key is optional, a missing default-path agx.toml routes on defaults, route.no_egress is retired and ignored, and roster --json adds a policy field naming the source and each key's origin
+
 ## 10.1.0 — 2026-11-10
 
 - Resolve Claude API keys from fnox and record the credential used.
