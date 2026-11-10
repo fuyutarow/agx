@@ -16,7 +16,7 @@ import {
   ROUTING_OBJECTIVE,
 } from "../../src/roster/index.ts";
 import { readRouteUsage } from "../../src/next/usage.ts";
-import { blindCriterion, route } from "../../src/next/route.ts";
+import { blindCriterion, route, routingBrief } from "../../src/next/route.ts";
 import {
   append,
   events,
@@ -34,15 +34,6 @@ setDefaultTimeout(60_000);
 const RoutingRequest = z.looseObject({
   state: z.looseObject({
     task: z.string(),
-    published_task_metrics: z.record(
-      z.string(),
-      z
-        .object({
-          aa_time_per_task_s: z.number().nullable(),
-        })
-        .catchall(z.unknown()),
-    ),
-    task_size: z.looseObject({ timeout_s: z.number(), class: z.string() }),
   }),
   questions: z.looseObject({
     worker: z.looseObject({
@@ -549,8 +540,8 @@ describe("capability constrained routing", () => {
     expect(selected.aa_time_per_task_s).toBeLessThanOrEqual(360);
     const request = server.rawRequest();
     if (request === undefined) expect.unreachable("missing Jev request");
-    expect(request.state.task_size.timeout_s).toBe(600);
-    expect(request.state.published_task_metrics).toEqual({});
+    expect(request.state).not.toHaveProperty("task_size");
+    expect(request.state).not.toHaveProperty("published_task_metrics");
     expect(
       server.request()?.questions.worker.criteria.mechanical,
     ).toBeDefined();
@@ -658,10 +649,7 @@ describe("capability constrained routing", () => {
     );
     expect(selected.id).toBe("terra-high");
     expect(server.request()?.state.routes).toBeUndefined();
-    expect(server.request()?.state.task_size).toEqual({
-      timeout_s: 14_400,
-      class: "multi-hour",
-    });
+    expect(server.request()?.state).not.toHaveProperty("task_size");
     expect(
       server.request()?.questions.worker.criteria.cross_module,
     ).toBeDefined();
@@ -864,7 +852,7 @@ test("route contract: Jev payload hides roster rows while classifying the ticket
     "uncheckable",
     "contradiction",
   ]);
-  expect(request.state.published_task_metrics).toEqual({});
+  expect(request.state).not.toHaveProperty("published_task_metrics");
   expect(selected.id).toBe(LOCALIZED_SELECTION);
   expect(server.calls()).toBe(1);
 });
@@ -912,7 +900,7 @@ for (const reason of ["split", "uncheckable", "contradiction"] as const) {
           "missing criterion",
       );
       expect(stderr).toContain("Probability: 1");
-      expect(stderr).toContain("ticket fields sent: task, task_size");
+      expect(stderr).toContain("ticket fields sent: task");
       expect(stderr).not.toContain("reason_code");
       expect(routingEvents().events.at(-1)).toMatchObject({
         source: "jev-return",
@@ -1325,7 +1313,7 @@ test("route contract: the selected row depends on the ticket class, and the choi
     expect(Object.keys(criteria).some((id) => id.startsWith("model_"))).toBe(
       false,
     );
-    expect(request?.state.published_task_metrics).toEqual({});
+    expect(request?.state).not.toHaveProperty("published_task_metrics");
     return row.id;
   };
   const mechanical = await selectClass("mechanical");
@@ -1546,4 +1534,45 @@ test("route: no row at or above min_effort refuses", async () => {
   );
   expect(result.kind).toBe("refused");
   if (result.kind === "refused") expect(result.message).toContain("min_effort");
+});
+
+const sentences = (text: string) =>
+  new Set(text.split(/(?<=\.)\s+/u).map((part) => part.trim()));
+
+test("class criteria are pairwise distinct: no shared sentence, each states its own condition", async () => {
+  await isolateState();
+  const server = startServer("localized", { localized: 1 });
+  await route("class criteria fixture");
+  const criteria = server.request()?.questions.worker.criteria ?? {};
+  const classes = ["mechanical", "localized", "cross_module"] as const;
+  for (const [index, first] of classes.entries())
+    for (const second of classes.slice(index + 1)) {
+      expect(criteria[first]).not.toBe(criteria[second]);
+      const other = sentences(criteria[second] ?? "");
+      expect(
+        [...sentences(criteria[first] ?? "")].filter((part) => other.has(part)),
+      ).toEqual([]);
+    }
+});
+
+test("writes and verify reach Jev in the task text after the prose", async () => {
+  await isolateState();
+  const server = startServer("mechanical", { mechanical: 1 });
+  const parsed = parseNextTicket(
+    `+++\nschema = 2\nname = "tidy-request"\nwrites = ["tools/agx-worker/src/next/route.ts"]\noutcome = "tidy the Jev request"\nverify = ["bun check"]\n[proposition]\nid = "TIDY-1"\nclaim = "the Jev request carries writes and verify"\nrefuted_by = "writes or verify is missing from the task text"\n+++\nRemove the dead request fields.\n`,
+  );
+  expect(parsed.success).toBe(true);
+  if (!parsed.success) return;
+  await route(
+    routingBrief(parsed.ticket, "Remove the dead request fields.\n"),
+    parsed.ticket.capabilities,
+    parsed.ticket.timeout_s,
+  );
+  const task = server.request()?.state.task ?? "";
+  expect(task).toContain('writes: ["tools/agx-worker/src/next/route.ts"]');
+  expect(task).toContain('verify: ["bun check"]');
+  expect(task.indexOf("Remove the dead request fields.")).toBeLessThan(
+    task.indexOf("writes: "),
+  );
+  expect(task.indexOf("writes: ")).toBeLessThan(task.indexOf("verify: "));
 });

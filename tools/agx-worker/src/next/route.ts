@@ -243,6 +243,33 @@ type CapacityRetryRouteOptions = {
   inspect?: boolean;
 };
 
+/** Each class states only its own condition; the three are mutually exclusive. */
+const CLASS_CRITERIA: Readonly<Record<RequirementClass, string>> = {
+  mechanical:
+    "Classify only the ticket: choose mechanical only when the edit and the check that proves it are both already stated in the ticket.",
+  localized:
+    "Choose localized only when a behavior change is needed, its writes stay inside one module, and the edit and its check are not both already stated.",
+  cross_module:
+    "Choose cross_module only when an invariant, a public API, or behavior spanning modules must change.",
+};
+
+/** The task text Jev reads: the proposition and prose, then the ticket's writes and verify commands. */
+export function routingBrief(
+  ticket: Readonly<{
+    proposition: Readonly<{ id: string; claim: string }>;
+    writes: readonly string[];
+    verify: readonly string[];
+  }>,
+  prose: string,
+): string {
+  return [
+    `Proposition ${ticket.proposition.id}: ${ticket.proposition.claim}`,
+    prose.trimEnd(),
+    `writes: ${JSON.stringify(ticket.writes)}`,
+    `verify: ${JSON.stringify(ticket.verify)}`,
+  ].join("\n");
+}
+
 export function route(
   brief: string,
   capabilities?: readonly string[],
@@ -431,8 +458,7 @@ export async function route(
   }
   const criteria: Record<string, string> = {};
   for (const requirementClass of RequirementClassSchema.options)
-    criteria[requirementClass] =
-      `Ticket class: ${requirementClass}. Classify only the ticket. mechanical: an edit whose check is already stated. localized: a behavior fix inside one module. cross_module: an invariant, a public API, or behavior across modules must change.`;
+    criteria[requirementClass] = CLASS_CRITERIA[requirementClass];
   for (const [reason, value] of Object.entries(returns))
     criteria[reason] = value.criterion;
   const truncated = brief.length > roster.auto.max_task_chars;
@@ -451,11 +477,6 @@ export async function route(
               "The task is truncated; omitted text is not evidence of missing input.",
           }
         : {}),
-      published_task_metrics: {},
-      task_size: {
-        timeout_s: timeoutS,
-        class: timeoutClass,
-      },
       ...(capabilities.length === 0
         ? {}
         : {
@@ -588,7 +609,7 @@ export async function route(
         pick_audit: pickAudit("jev-return", probabilities),
       });
     return refuseReply(
-      `agx: ticket returned: ${reason.data}: ${returns[reason.data].criterion} ${returns[reason.data].fix} Probability: ${probabilities?.[reason.data] ?? "unavailable"}; ticket fields sent: task${capabilities.length === 0 ? "" : ", required_capabilities"}, task_size; no row is substituted\n`,
+      `agx: ticket returned: ${reason.data}: ${returns[reason.data].criterion} ${returns[reason.data].fix} Probability: ${probabilities?.[reason.data] ?? "unavailable"}; ticket fields sent: task${capabilities.length === 0 ? "" : ", required_capabilities"}; no row is substituted\n`,
       "jev-return",
       probabilities,
     );

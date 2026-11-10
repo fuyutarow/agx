@@ -58,7 +58,7 @@ import {
 } from "../workers/codex-host.ts";
 import { resourceBriefFallback } from "../workers/codex-resource-probe.ts";
 import { leaseFor, type StopSignal } from "./lease.ts";
-import { route, type CapacityRetryRouteResult } from "./route.ts";
+import { route, routingBrief, type CapacityRetryRouteResult } from "./route.ts";
 import { pinContinuation } from "./continue.ts";
 import { resolveRunId } from "./run-id.ts";
 import { loadRoster, routeFilterLabel } from "../roster/index.ts";
@@ -594,7 +594,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
   const ticketName = ticket.name ?? basename(path, ".md");
   const continuationId = value(flags, "continue");
   const routing = {
-    brief: `Proposition ${ticket.proposition.id}: ${ticket.proposition.claim}\n${prose}`,
+    brief: routingBrief(ticket, prose),
     capabilities: ticket.capabilities ?? [],
     timeoutS: ticket.timeout_s ?? 600,
     maskedRows: await earlyQuitRows(ticketName, cwd),
