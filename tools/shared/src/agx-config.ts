@@ -213,11 +213,31 @@ type ResolvedAgxConfig = {
   checkCommands: string[];
   checkTimeoutMs: number | undefined;
 };
+/** The layer that supplied a repository value: shipped default, L1 trunk agx.toml, or machine-local L2. */
+export type ConfigLayer = "default" | "L1" | "L2";
+export type RepositoryValueKey =
+  | "tickets"
+  | "ws.ready"
+  | "ws.trunk"
+  | "ws.regenerable"
+  | "ws.unjudged_warn_hours"
+  | "verify.always"
+  | "check.commands"
+  | "check.timeout_ms"
+  | "route.allow";
 export type ResolvedAgxConfigWithProvenance = ResolvedAgxConfig & {
   policyRevision: string | undefined;
   workingCopyPolicyDiffers: boolean | undefined;
   /** The repository agx.toml [route] table, when it declares one. */
   repoRoute: RepoRouteOverride | undefined;
+  /** Where each repository value came from; L2 wins over L1 over the default. */
+  valueLayers: Readonly<Record<RepositoryValueKey, ConfigLayer>>;
+  /** Each ws.keep entry with every layer that declares it (L1 first). */
+  keepEntries: ReadonlyArray<{ value: string; layers: ConfigLayer[] }>;
+  /** The L1 policy file the entries came from, when trunk (or the default workspace) supplies one. */
+  l1Path: string | undefined;
+  /** The L2 file selected by this repository's root, when one exists. */
+  l2Path: string | undefined;
 };
 type CommittedRepositoryPolicy = ConfiguredPolicy & {
   kind: "committed";
@@ -413,6 +433,7 @@ export async function listAgxRepos(): Promise<
   Attempt<
     Array<{
       name: string;
+      path: string;
       root: string;
       config: z.output<typeof LocalConfig>;
     }>
@@ -428,6 +449,7 @@ export async function listAgxRepos(): Promise<
   if (!entries.ok) return missing(entries.error) ? good([]) : entries;
   const repos: Array<{
     name: string;
+    path: string;
     root: string;
     config: z.output<typeof LocalConfig>;
   }> = [];
@@ -453,6 +475,7 @@ export async function listAgxRepos(): Promise<
       );
     repos.push({
       name: entry.name.slice(0, -5),
+      path,
       root: parsed.data.root,
       config: parsed.data,
     });
@@ -462,10 +485,15 @@ export async function listAgxRepos(): Promise<
 
 async function localConfig(
   root: string,
-): Promise<Attempt<z.output<typeof LocalConfig> | undefined>> {
+): Promise<
+  Attempt<{ config: z.output<typeof LocalConfig>; path: string } | undefined>
+> {
   const repos = await listAgxRepos();
   if (!repos.ok) return repos;
-  return good(repos.value.find((repo) => repo.root === root)?.config);
+  const repo = repos.value.find((entry) => entry.root === root);
+  return good(
+    repo === undefined ? undefined : { config: repo.config, path: repo.path },
+  );
 }
 
 async function resolveConfig(
@@ -533,6 +561,8 @@ async function resolveConfig(
   let checkCommands: string[] = [];
   let checkTimeoutMs: number | undefined;
   let repoRoute: RepoRouteOverride | undefined;
+  const l1Declared = new Set<RepositoryValueKey>();
+  let l1Keep: string[] = [];
   if (policy !== undefined) {
     const text = policy.text;
     const refuse = async (reason: string): Promise<Attempt<never>> =>
@@ -575,13 +605,54 @@ async function resolveConfig(
     checkCommands = parsed.data.check?.commands ?? checkCommands;
     checkTimeoutMs = parsed.data.check?.timeout_ms;
     repoRoute = parsed.data.route;
+    l1Keep = parsed.data.ws?.keep ?? [];
+    const declaredByL1: Array<[RepositoryValueKey, boolean]> = [
+      ["tickets", declared !== undefined],
+      ["ws.ready", parsed.data.ws?.ready !== undefined],
+      ["ws.trunk", parsed.data.ws?.trunk !== undefined],
+      ["ws.regenerable", parsed.data.ws?.regenerable !== undefined],
+      [
+        "ws.unjudged_warn_hours",
+        parsed.data.ws?.unjudged_warn_hours !== undefined,
+      ],
+      ["verify.always", parsed.data.verify?.always !== undefined],
+      ["check.commands", parsed.data.check?.commands !== undefined],
+      ["check.timeout_ms", parsed.data.check?.timeout_ms !== undefined],
+      ["route.allow", parsed.data.route?.allow !== undefined],
+    ];
+    for (const [key] of declaredByL1.filter(([, isDeclared]) => isDeclared))
+      l1Declared.add(key);
   }
   const local = await localConfig(root);
   if (!local.ok) return local;
-  tickets = local.value?.tickets ?? tickets;
-  ready = local.value?.ws?.ready ?? ready;
-  keep = [...new Set([...keep, ...(local.value?.ws?.keep ?? [])])];
-  verifyAlways = local.value?.verify?.always ?? verifyAlways;
+  const l2 = local.value?.config;
+  const layerOf = (key: RepositoryValueKey, l2Wins: boolean): ConfigLayer => {
+    if (l2Wins) return "L2";
+    return l1Declared.has(key) ? "L1" : "default";
+  };
+  const valueLayers: Record<RepositoryValueKey, ConfigLayer> = {
+    tickets: layerOf("tickets", l2?.tickets !== undefined),
+    "ws.ready": layerOf("ws.ready", l2?.ws?.ready !== undefined),
+    "ws.trunk": layerOf("ws.trunk", false),
+    "ws.regenerable": layerOf("ws.regenerable", false),
+    "ws.unjudged_warn_hours": layerOf("ws.unjudged_warn_hours", false),
+    "verify.always": layerOf("verify.always", l2?.verify?.always !== undefined),
+    "check.commands": layerOf("check.commands", false),
+    "check.timeout_ms": layerOf("check.timeout_ms", false),
+    "route.allow": layerOf("route.allow", false),
+  };
+  tickets = l2?.tickets ?? tickets;
+  ready = l2?.ws?.ready ?? ready;
+  const l2Keep = l2?.ws?.keep ?? [];
+  keep = [...new Set([...keep, ...l2Keep])];
+  const keepEntries = keep.map((value) => ({
+    value,
+    layers: [
+      ...(l1Keep.includes(value) ? (["L1"] as const) : []),
+      ...(l2Keep.includes(value) ? (["L2"] as const) : []),
+    ],
+  }));
+  verifyAlways = l2?.verify?.always ?? verifyAlways;
   return good({
     root,
     policySource,
@@ -601,6 +672,10 @@ async function resolveConfig(
     policyRevision: committed.value.revision,
     workingCopyPolicyDiffers,
     repoRoute,
+    valueLayers,
+    keepEntries,
+    l1Path: policy === undefined ? undefined : join(root, "agx.toml"),
+    l2Path: local.value?.path,
   });
 }
 

@@ -116,6 +116,16 @@ failure; capacity runs skip verification. `tools/agx-worker/src/next/run.ts` and
 code own execution. L1 and L3 are human-authored inputs to gated decisions; L2 is an operator-owned
 local declaration. Catalog changes are reviewed and versioned with agx.
 
+## Seeing effective values
+
+`agx worker config [--repo <path>] [--json]` is the way to see the effective configuration. It
+prints, read-only, the repository values a dispatch from `--repo` (default: the working directory)
+would use with the layer each came from (`default`, `L1 <trunk agx.toml>` or `L2 <file>`, with
+`ws.keep` entries labelled per layer), the user routing policy as `roster --json` computes it
+(`policy` and `auto`), and the Claude credential choice (`credential`, `credential_source`, the
+`claude-credits-unavailable` marker and its expiry) without the key. It writes nothing, starts no
+worker and does not call Jev; a configuration error exits 2 and unavailable inspection exits 75.
+
 ## User policy and catalog
 
 The routing reader is `tools/agx-worker/src/roster/load.ts`. It combines the catalog embedded

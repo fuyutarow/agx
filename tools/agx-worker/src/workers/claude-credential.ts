@@ -44,16 +44,38 @@ export function claudeCredential(
   return claudeCredentialDetails(environment).credential;
 }
 
+const CREDITS_MARKER_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** Read-only view of the 24 h claude-credits-unavailable marker; `expiresAt` is set only while fresh. */
+export function creditsMarkerStatus(): {
+  path: string;
+  present: boolean;
+  fresh: boolean;
+  expiresAt: string | undefined;
+} {
+  const path = join(stateDir(), "claude-credits-unavailable");
+  if (!existsSync(path))
+    return { path, present: false, fresh: false, expiresAt: undefined };
+  const written = statSync(path).mtimeMs;
+  const fresh =
+    Temporal.Now.instant().epochMilliseconds - written < CREDITS_MARKER_TTL_MS;
+  return {
+    path,
+    present: true,
+    fresh,
+    expiresAt: fresh
+      ? Temporal.Instant.fromEpochMilliseconds(
+          Math.floor(written + CREDITS_MARKER_TTL_MS),
+        ).toString()
+      : undefined,
+  };
+}
+
 export function claudeCredentialDetails(environment: NodeJS.ProcessEnv): {
   credential: "api_key" | "subscription";
   credential_source?: CredentialSource;
 } {
-  const marker = join(stateDir(), "claude-credits-unavailable");
-  const fresh =
-    existsSync(marker) &&
-    Temporal.Now.instant().epochMilliseconds - statSync(marker).mtimeMs <
-      24 * 60 * 60 * 1000;
-  if (fresh) {
+  if (creditsMarkerStatus().fresh) {
     delete environment.ANTHROPIC_API_KEY;
     delete environment.ANTHROPIC_AUTH_TOKEN;
     return { credential: "subscription" };

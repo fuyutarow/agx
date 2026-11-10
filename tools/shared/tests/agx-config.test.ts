@@ -702,8 +702,18 @@ test("L2 listing is empty without its directory and names sorted files by their 
   expect(await listAgxRepos()).toEqual({
     ok: true,
     value: [
-      { name: "alpha", root: second.root, config: second },
-      { name: "zeta", root: first.root, config: first },
+      {
+        name: "alpha",
+        path: join(directory, "alpha.toml"),
+        root: second.root,
+        config: second,
+      },
+      {
+        name: "zeta",
+        path: join(directory, "zeta.toml"),
+        root: first.root,
+        config: first,
+      },
     ],
   });
 });

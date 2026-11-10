@@ -30,6 +30,7 @@ test("the CLI exposes the run, doctor, and process interface commands", () => {
     "stats",
     "doctor",
     "roster",
+    "config",
     "host",
     "probe",
     "reclaim-runs",

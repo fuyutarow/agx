@@ -33,6 +33,8 @@ const COMMAND_DESCRIPTIONS = {
   stats: "Show worker usage and routing statistics.",
   doctor: "Diagnose worker records.",
   roster: "Show worker routing selections or the roster.",
+  config:
+    "Show the effective configuration a dispatch would use, with each value's source.",
   host: "Check or declare host isolation.",
   probe: "Run a bounded Codex diagnostic.",
   "reclaim-runs": "Reclaim eligible old run files.",
@@ -585,6 +587,33 @@ Ticket min_effort = "low" | "medium" | "high" | "xhigh" | "max" sets a routing f
       process.stderr.write("agx worker roster: use --json\n");
       exit = 2;
     }
+  } else if (commandName === "config") {
+    const parsed = cli(
+      {
+        name: "agx-worker config",
+        help: {
+          description:
+            "Read-only: print every effective value a dispatch from --repo would use (repository L1/L2, user routing policy, Claude credential source) with where each came from. The API key is never shown.",
+        },
+        parameters: [],
+        flags: {
+          repo: {
+            type: String,
+            description: "repository path (default: the working directory)",
+          },
+          json: { type: Boolean, description: "emit one JSON object" },
+        },
+        strictFlags: true,
+        ignoreArgv: rejectPrototypeFlag,
+      },
+      undefined,
+      commandArgs,
+    );
+    const { configView } = await import("./config-view.ts");
+    exit = await configView({
+      repo: parsed.flags.repo,
+      json: parsed.flags.json === true,
+    });
   }
   await flushRunPublications();
   process.exitCode = exit;

@@ -30,6 +30,24 @@ This prints the parsed and validated dispatch roster as JSON. Its shape is the `
 the internal `loadRoster` function; callers should consume this process output instead of importing
 repository source files.
 
+## Effective configuration
+
+`agx worker config [--repo <path>] [--json]` prints every effective configuration value a dispatch
+from that repository (default: the working directory) would use, each with its source: the
+repository policy (`tickets`, `ws.*`, `verify.always`, `check.*`, `route.allow`; `default`, `L1`
+trunk `agx.toml` or `L2` machine-local file, with each `ws.keep` entry labelled by the layer that
+declares it), the user routing policy exactly as `roster --json` computes it (`policy` and `auto`),
+and the Claude credential a dispatch would choose (`credential`, `credential_source`, never the
+key) with the 24 h `claude-credits-unavailable` marker and its expiry. It is read-only: it writes
+no file, starts no worker and does not call Jev. A configuration error exits 2 with the reader's
+diagnostic; unavailable inspection exits 75. `--json` emits one object with `repository`,
+`routing` and `credential` keys.
+
+```sh
+agx worker config
+agx worker config --repo ~/Workspace/agx --json
+```
+
 ## Durable dispatch
 
 ```sh
