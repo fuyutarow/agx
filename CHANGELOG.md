@@ -1,5 +1,9 @@
 # Changelog
 
+## 10.2.2 — 2026-11-10
+
+- Record the Claude credential and its source in the attempt start record before spawning, so a run that ends by timeout without a receipt still shows them
+
 ## 10.2.1 — 2026-11-10
 
 - A policy that names one vendor in route.on_window_exhausted now keeps the shipped default for the other (codex continue, claude stop); roster --json policy.keys reports route.on_window_exhausted.codex and .claude separately.
