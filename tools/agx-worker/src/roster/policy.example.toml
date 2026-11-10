@@ -1,3 +1,8 @@
+# Every key below is optional: `schema = 1` alone is a valid policy, and with no file at
+# ~/.config/agx/agx.toml agx routes on shipped defaults (see contract/config.md). Name only
+# the values you change. Shipped defaults equal this file except: route.allow (omitted means
+# both routes), pick_temperature (default 0, argmax; shown as 0.5 here), and no_egress
+# (retired and ignored; delete it, it is kept below only so old files still load).
 schema = 1
 
 [route]

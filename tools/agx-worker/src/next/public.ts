@@ -57,7 +57,7 @@ export async function roster(ticketPath?: string): Promise<number> {
     return 1;
   }
   process.stdout.write(
-    `${JSON.stringify({ ...loaded.value, objective: ROUTING_OBJECTIVE })}\n`,
+    `${JSON.stringify({ ...loaded.value, objective: ROUTING_OBJECTIVE, policy: loaded.policy })}\n`,
   );
   return 0;
 }

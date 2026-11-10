@@ -8,6 +8,11 @@ import { resolveAgxConfigWithProvenance } from "../../../shared/src/agx-config.t
 
 import { generationExclusivityError } from "./generation.ts";
 import shippedCatalog from "./catalog.toml" with { type: "toml" };
+import {
+  POLICY_DEFAULTS,
+  POLICY_KEYS,
+  type PolicyKeySource,
+} from "./policy-defaults.ts";
 
 const RouteSchema = z.enum(["codex", "claude"]);
 const ChoiceSchema = z.strictObject({
@@ -64,35 +69,47 @@ const JevEndpointPolicySchema = z.discriminatedUnion("api", [
   z.strictObject({ api: z.literal("reseller"), url: z.url() }),
 ]);
 
+const JevFileSchema = z.strictObject({
+  api: z.enum(["typesafe", "reseller"]).optional(),
+  url: z.url().optional(),
+  model: z.string().min(1).optional(),
+});
+
+const ExhaustionSchema = z.strictObject({
+  codex: z.enum(["continue", "stop"]).optional(),
+  claude: z.enum(["continue", "stop"]).optional(),
+});
+
+const ClaudeRunSchema = z.strictObject({
+  max_budget_usd: z.number().gt(0),
+  max_turns: z.number().int().positive(),
+  reason: z.string().min(20),
+});
+
+/** The policy file: every key and table is optional except `schema`; omitted keys take shipped defaults. */
 const PolicySchema = z.strictObject({
   schema: z.literal(1),
-  route: z.strictObject({
-    allow: z.array(RouteSchema).min(1).optional(),
-    on_window_exhausted: z
-      .strictObject({
-        codex: z.enum(["continue", "stop"]).optional(),
-        claude: z.enum(["continue", "stop"]).optional(),
-      })
-      .optional(),
-    // Retired 2026-11-03: a default row would be silently substituted when Jev cannot route.
-    default: z
-      .never({
-        error:
-          "route.default was removed: agx never substitutes a row when Jev cannot route; delete the key",
-      })
-      .optional(),
-    exclude: z.array(z.string()).default([]),
-    max_task_chars: z.number().int().positive(),
-    timeout_ms: z.number().int().positive(),
-    no_egress: z.array(z.string()),
-    pick_temperature: z.number().min(0).max(5),
-    jev: JevEndpointPolicySchema,
-  }),
-  claude_run: z.strictObject({
-    max_budget_usd: z.number().gt(0),
-    max_turns: z.number().int().positive(),
-    reason: z.string().min(20),
-  }),
+  route: z
+    .strictObject({
+      allow: z.array(RouteSchema).min(1).optional(),
+      on_window_exhausted: ExhaustionSchema.optional(),
+      // Retired 2026-11-03: a default row would be silently substituted when Jev cannot route.
+      default: z
+        .never({
+          error:
+            "route.default was removed: agx never substitutes a row when Jev cannot route; delete the key",
+        })
+        .optional(),
+      exclude: z.array(z.string()).optional(),
+      max_task_chars: z.number().int().positive().optional(),
+      timeout_ms: z.number().int().positive().optional(),
+      // Retired: still accepted so existing files load; routing ignores it.
+      no_egress: z.array(z.string()).optional(),
+      pick_temperature: z.number().min(0).max(5).optional(),
+      jev: JevFileSchema.optional(),
+    })
+    .optional(),
+  claude_run: ClaudeRunSchema.partial().optional(),
 });
 
 const AutoSchema = z.strictObject({
@@ -130,7 +147,7 @@ const RosterSchema = z.strictObject({
   as_of: z.iso.date(),
   as_of_cost: z.iso.date().optional(),
   auto: AutoSchema,
-  claude_run: PolicySchema.shape.claude_run,
+  claude_run: ClaudeRunSchema,
   sources: z.record(z.string(), z.url()),
   choice: z.array(ChoiceSchema).min(1),
 });
@@ -148,6 +165,11 @@ export type RosterLoad =
         before: string[];
         excluded: string[];
       };
+      /** Where the policy came from and, per key, whether the file or the shipped default supplied it. */
+      readonly policy: {
+        readonly source: string;
+        readonly keys: Readonly<Record<string, PolicyKeySource>>;
+      };
     }
   | { readonly ok: false; readonly error: string };
 
@@ -158,17 +180,104 @@ export type LoadRosterOptions = Readonly<{
   repoRoot?: string;
 }>;
 
-function policyPathFromEnvironment(): string {
+type PolicyLocation = Readonly<{ path: string; explicit: boolean }>;
+
+/** An `AGX_CONFIG` or library-selected path is explicit; the XDG path is the default location. */
+function policyLocation(selected: string | undefined): PolicyLocation {
+  if (selected !== undefined) return { path: selected, explicit: true };
   const explicit = Bun.env.AGX_CONFIG;
-  if (explicit !== undefined && explicit.length > 0) return explicit;
+  if (explicit !== undefined && explicit.length > 0)
+    return { path: explicit, explicit: true };
   const xdg = Bun.env.XDG_CONFIG_HOME;
   const configHome =
     xdg !== undefined && xdg.length > 0 ? xdg : join(homedir(), ".config");
-  return join(configHome, "agx", "agx.toml");
+  return { path: join(configHome, "agx", "agx.toml"), explicit: false };
+}
+
+const MissingFileSchema = z.object({ code: z.literal("ENOENT") });
+const isMissingFile = (error: unknown): boolean =>
+  MissingFileSchema.safeParse(error).success;
+
+/** A different api brings its own endpoint: shipped url and model belong to the typesafe shape. */
+function jevCandidate(fileJev: z.output<typeof JevFileSchema> | undefined) {
+  if (fileJev === undefined) return JevEndpointDefaults;
+  if (fileJev.api !== undefined && fileJev.api !== JevEndpointDefaults.api)
+    return fileJev;
+  return { ...JevEndpointDefaults, ...fileJev };
 }
 
 async function parseToml(path: string): Promise<unknown> {
   return Bun.TOML.parse(await readFile(path, "utf8"));
+}
+
+type FilePolicy = z.output<typeof PolicySchema>;
+
+const JevEndpointDefaults = POLICY_DEFAULTS.route.jev;
+
+type ResolvedPolicy = Readonly<{
+  schema: 1;
+  route: Readonly<{
+    allow: z.output<typeof RouteSchema>[] | undefined;
+    on_window_exhausted: z.output<typeof ExhaustionSchema>;
+    exclude: string[];
+    max_task_chars: number;
+    timeout_ms: number;
+    no_egress: string[];
+    pick_temperature: number;
+    jev: z.output<typeof JevEndpointPolicySchema>;
+  }>;
+  claude_run: z.output<typeof ClaudeRunSchema>;
+}>;
+
+/** Overlays the file's keys on the shipped defaults and records each key's origin. */
+function resolvePolicy(
+  file: FilePolicy,
+):
+  | { ok: true; policy: ResolvedPolicy; keys: Record<string, PolicyKeySource> }
+  | { ok: false; error: string } {
+  const route = file.route ?? {};
+  const run = file.claude_run ?? {};
+  const fileJev = route.jev;
+  const jev = JevEndpointPolicySchema.safeParse(jevCandidate(fileJev));
+  if (!jev.success)
+    return { ok: false, error: `route.jev: ${jev.error.message}` };
+  const defaults = POLICY_DEFAULTS;
+  const policy: ResolvedPolicy = {
+    schema: 1,
+    route: {
+      allow: route.allow,
+      on_window_exhausted:
+        route.on_window_exhausted ?? defaults.route.on_window_exhausted,
+      exclude: route.exclude ?? [...defaults.route.exclude],
+      max_task_chars: route.max_task_chars ?? defaults.route.max_task_chars,
+      timeout_ms: route.timeout_ms ?? defaults.route.timeout_ms,
+      no_egress: route.no_egress ?? [...defaults.route.no_egress],
+      pick_temperature:
+        route.pick_temperature ?? defaults.route.pick_temperature,
+      jev: jev.data,
+    },
+    claude_run: {
+      max_budget_usd: run.max_budget_usd ?? defaults.claude_run.max_budget_usd,
+      max_turns: run.max_turns ?? defaults.claude_run.max_turns,
+      reason: run.reason ?? defaults.claude_run.reason,
+    },
+  };
+  const present: Readonly<Record<(typeof POLICY_KEYS)[number], boolean>> = {
+    "route.allow": route.allow !== undefined,
+    "route.on_window_exhausted": route.on_window_exhausted !== undefined,
+    "route.exclude": route.exclude !== undefined,
+    "route.max_task_chars": route.max_task_chars !== undefined,
+    "route.timeout_ms": route.timeout_ms !== undefined,
+    "route.no_egress": route.no_egress !== undefined,
+    "route.pick_temperature": route.pick_temperature !== undefined,
+    "route.jev": fileJev !== undefined,
+    "claude_run.max_budget_usd": run.max_budget_usd !== undefined,
+    "claude_run.max_turns": run.max_turns !== undefined,
+    "claude_run.reason": run.reason !== undefined,
+  };
+  const keys: Record<string, PolicyKeySource> = {};
+  for (const key of POLICY_KEYS) keys[key] = present[key] ? "file" : "default";
+  return { ok: true, policy, keys };
 }
 
 /** Reads the shipped catalog and one user policy, returning the legacy roster shape. */
@@ -180,9 +289,13 @@ export async function loadRoster(
       options.catalogPath === undefined
         ? shippedCatalog
         : await parseToml(options.catalogPath);
-    const policyPath = options.policyPath ?? policyPathFromEnvironment();
+    const location = policyLocation(options.policyPath);
+    const policyPath = location.path;
     const policyRaw = await attempt(() => parseToml(policyPath));
-    if (!policyRaw.ok)
+    // Only an absent file at the default location falls back to shipped defaults.
+    const useDefaults =
+      !policyRaw.ok && !location.explicit && isMissingFile(policyRaw.error);
+    if (!policyRaw.ok && !useDefaults)
       return {
         ok: false,
         error: `cannot read policy ${JSON.stringify(policyPath)}; see the distributed policy.example.toml: ${errorMessage(policyRaw.error).replaceAll(/[\r\n]+/gu, " ")}`,
@@ -190,9 +303,13 @@ export async function loadRoster(
     const catalogResult = CatalogSchema.safeParse(catalogRaw);
     if (!catalogResult.success)
       return { ok: false, error: catalogResult.error.message };
-    const policyResult = PolicySchema.safeParse(policyRaw.value);
+    const policyResult = PolicySchema.safeParse(
+      policyRaw.ok ? policyRaw.value : { schema: 1 },
+    );
     if (!policyResult.success)
       return { ok: false, error: policyResult.error.message };
+    const resolved = resolvePolicy(policyResult.data);
+    if (!resolved.ok) return { ok: false, error: resolved.error };
 
     const repoResult = await resolveAgxConfigWithProvenance(
       options.repoRoot ?? process.cwd(),
@@ -202,7 +319,7 @@ export async function loadRoster(
     const repoRoute = repoResult.value.repoRoute;
 
     const catalog = catalogResult.data;
-    const policy = policyResult.data;
+    const policy = resolved.policy;
     // A repository [route] replaces only the keys it declares; the rest stay user-global.
     const allow = repoRoute?.allow ?? policy.route.allow;
     const ids = new Set(catalog.choice.map((row) => row.id));
@@ -257,6 +374,10 @@ export async function loadRoster(
           .digest("hex"),
         before: catalog.choice.map((row) => row.id),
         excluded: policy.route.exclude,
+      },
+      policy: {
+        source: useDefaults ? "defaults" : `file:${policyPath}`,
+        keys: resolved.keys,
       },
     };
   }).then(

@@ -122,9 +122,13 @@ The routing reader is `tools/agx-worker/src/roster/load.ts`. It combines the cat
 from `tools/agx-worker/src/roster/catalog.toml` with one user policy. A nonempty `AGX_CONFIG`
 selects the policy path; otherwise nonempty `XDG_CONFIG_HOME` selects `agx/agx.toml`, otherwise
 `~/.config/agx/agx.toml`. Library callers may explicitly select catalog and policy paths.
-Missing or invalid explicit inputs do not fall back to the shipped defaults. Policy is
-required. The distributed `tools/agx-worker/src/roster/policy.example.toml` is an example,
-not automatically installed configuration.
+Missing or invalid explicit inputs (`AGX_CONFIG` or a library-selected path) do not fall back
+to the shipped defaults. The policy is additive over shipped defaults: only the default-path
+file (`XDG_CONFIG_HOME/agx/agx.toml`, else `~/.config/agx/agx.toml`) may be absent, and then
+routing uses the shipped defaults and `roster --json` reports policy source `defaults`. A
+default-path file that exists but cannot be read, parsed or validated fails; it never falls
+back. The distributed `tools/agx-worker/src/roster/policy.example.toml` is an example, not
+automatically installed configuration.
 
 Both declarations are human-authored TOML, schema 1, parsed with Bun TOML and strict validators.
 Unknown keys and duplicate TOML keys fail. There is no signing or canonicalization. Operators
@@ -132,15 +136,19 @@ own policy; maintainers review and version the catalog. The catalog supplies mod
 benchmark values, prices, use descriptions, source URLs and an `as_of` date; absent measurements
 remain absent rather than being estimated. Policy must not replace catalog row values.
 
-Policy contains `[route]` and `[claude_run]`. Route requires positive integer
-`max_task_chars` and `timeout_ms`, `no_egress` string array, `pick_temperature` in [0, 5], and
-`jev`. Optional `allow` is a nonempty array of `codex`/`claude`; optional `exclude` defaults to
-empty; optional `on_window_exhausted` maps each vendor to `continue` or `stop`. `default` was
-removed and is rejected: when Jev cannot route, the dispatch is refused with the failed step, never
-launched on a substituted row.
-`jev` requires `api = "typesafe"`, URL and nonempty model, or `api = "reseller"` and URL.
-Claude policy requires positive `max_budget_usd`, positive integer `max_turns`, and a `reason`
-of at least 20 characters. Numbers use JavaScript binary64 with the stated validator bounds.
+Policy contains `[route]` and `[claude_run]`; a file need name only the values it changes.
+Every key and table is optional; `schema = 1` is the only required line. An omitted key takes
+the shipped default listed in the table below. Route takes positive integer `max_task_chars`
+and `timeout_ms`, `pick_temperature` in [0, 5], and `jev`. `allow` is a nonempty array of
+`codex`/`claude`; `exclude` defaults to empty; `on_window_exhausted` maps each vendor to
+`continue` or `stop`. `default` was removed and is rejected: when Jev cannot route, the
+dispatch is refused with the failed step, never launched on a substituted row.
+`jev` is `api = "typesafe"`, URL and nonempty model, or `api = "reseller"` and URL; its omitted
+keys come from the shipped typesafe endpoint, except that a different `api` takes no shipped
+`url` or `model`. `no_egress` is retired: it is still accepted so existing files load, and is
+ignored by routing. Claude policy takes positive `max_budget_usd`, positive integer
+`max_turns`, and a `reason` of at least 20 characters. Numbers use JavaScript binary64 with
+the stated validator bounds.
 
 Excluded IDs must exist in the catalog. Excluded rows disappear. `allow` becomes the router's allowed routes, rather than
 removing rows from the exported choice array. Catalog Jev prices join the endpoint policy.
@@ -164,9 +172,16 @@ effective roster and pricing. It writes one JSON object to stdout and exits 0 on
 A policy or catalog load failure exits 1 with a diagnostic on stderr and no successful
 JSON; invoking roster without a ticket or `--json` exits 2. Do not interpret failed
 output as an empty roster. The response has `schema: 1`, catalog `as_of` (a date, not a
-live price timestamp), `auto`, `claude_run`, `sources`, `choice`, and `objective`.
-`auto` is the effective projection, not the operator TOML shape. Omitted optional route
-settings remain omitted in JSON; Jev prices come from the shipped catalog. No worker or
+live price timestamp), `auto`, `claude_run`, `sources`, `choice`, `objective`, and `policy`.
+`policy.source` is `file:<path>` for the policy file read or `defaults` when the default-path
+file is absent. `policy.keys` maps each policy key (`route.allow`, `route.on_window_exhausted`,
+`route.exclude`, `route.max_task_chars`, `route.timeout_ms`, `route.no_egress`,
+`route.pick_temperature`, `route.jev`, `claude_run.max_budget_usd`, `claude_run.max_turns`,
+`claude_run.reason`) to `file` or `default`; it reports the user policy file only, not a
+repository `[route]` override.
+`auto` is the effective projection, not the operator TOML shape: every key omitted from the
+policy shows its shipped default, except `routes`, which stays omitted when `route.allow` is
+unset; Jev prices come from the shipped catalog. No worker or
 Jev request is launched by this inspection.
 
 Each `choice` row exposes these pricing fields:
@@ -209,27 +224,28 @@ The user policy above is the public operator input, owned and read by agx. It is
 from the repository-root `agx.toml`. Consumers should inspect effective values through
 `agx worker roster --json` without a ticket; they should not copy the reader's schema.
 The following is the complete accepted operator key set, including nested keys
-(`tools/agx-worker/src/roster/load.ts:52–83`). All entries are required unless marked optional.
+(`tools/agx-worker/src/roster/load.ts`, defaults in `tools/agx-worker/src/roster/policy-defaults.ts`).
+Every entry is optional except `schema`; an omitted key or table takes the default shown.
 
-| Key                         | Accepted value and current meaning                                                                                                                                                                                                           |
-| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `schema`                    | Integer `1` only.                                                                                                                                                                                                                            |
-| `route.allow`               | Optional nonempty array of `codex` or `claude`; duplicates are accepted.                                                                                                                                                                     |
-| `route.exclude`             | Optional string array, default `[]`; every ID must exist.                                                                                                                                                                                    |
-| `route.on_window_exhausted` | Optional table with optional `codex` and `claude` keys, each `continue` or `stop`. Omitted vendors default to `continue`; `stop` makes an exhausted route unavailable. This is a subscription-window policy, not a worker concurrency limit. |
-| `route.max_task_chars`      | Positive integer; bounds the task excerpt sent for selection in JavaScript string units. Longer briefs are cut at a line boundary, with truncation and omitted length declared in the request. It does not limit the worker brief.           |
-| `route.timeout_ms`          | Positive integer; Jev request timeout in milliseconds, not the worker run timeout.                                                                                                                                                           |
-| `route.no_egress`           | Required string array, including empty strings if supplied. Preserved as `auto.no_egress`; the current routing path does not enforce an egress restriction from it.                                                                          |
-| `route.pick_temperature`    | Number from 0 through 5 inclusive; used to sample returned choice probabilities.                                                                                                                                                             |
-| `route.jev.api`             | `typesafe` or `reseller`; selects the endpoint shape.                                                                                                                                                                                        |
-| `route.jev.url`             | URL string accepted by the validator. Roster inspection does not prove endpoint reachability or acceptance by the later request client.                                                                                                      |
-| `route.jev.model`           | Required nonempty string for `typesafe`; rejected for `reseller`. Whitespace is not trimmed.                                                                                                                                                 |
-| `claude_run.max_budget_usd` | Number greater than zero; Claude run budget in USD.                                                                                                                                                                                          |
-| `claude_run.max_turns`      | Positive integer; Claude run turn limit.                                                                                                                                                                                                     |
-| `claude_run.reason`         | String of at least 20 characters; whitespace is not trimmed or checked for substantive justification.                                                                                                                                        |
+| Key                         | Accepted value and current meaning                                                                                                                                                                                                                                                                                                           |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schema`                    | Integer `1` only.                                                                                                                                                                                                                                                                                                                            |
+| `route.allow`               | Optional nonempty array of `codex` or `claude`; duplicates are accepted. Default: omitted, meaning both routes.                                                                                                                                                                                                                              |
+| `route.exclude`             | Optional string array, default `[]`; every ID must exist.                                                                                                                                                                                                                                                                                    |
+| `route.on_window_exhausted` | Optional table with optional `codex` and `claude` keys, each `continue` or `stop`. Default when the table is omitted: `codex = "continue"`, `claude = "stop"`. Inside a table you write, an omitted vendor is `continue`; `stop` makes an exhausted route unavailable. This is a subscription-window policy, not a worker concurrency limit. |
+| `route.max_task_chars`      | Optional positive integer, default `6000`; bounds the task excerpt sent for selection in JavaScript string units. Longer briefs are cut at a line boundary, with truncation and omitted length declared in the request. It does not limit the worker brief.                                                                                  |
+| `route.timeout_ms`          | Optional positive integer, default `20000`; Jev request timeout in milliseconds, not the worker run timeout.                                                                                                                                                                                                                                 |
+| `route.no_egress`           | Retired and ignored: an optional string array (default `[]`), still accepted so existing files load and preserved as `auto.no_egress`; routing does not enforce an egress restriction from it. Delete it from new files.                                                                                                                     |
+| `route.pick_temperature`    | Optional number from 0 through 5 inclusive, default `0` (argmax); used to sample returned choice probabilities.                                                                                                                                                                                                                              |
+| `route.jev.api`             | Optional `typesafe` (default) or `reseller`; selects the endpoint shape.                                                                                                                                                                                                                                                                     |
+| `route.jev.url`             | Optional URL string accepted by the validator, default `https://api.typesafe.ai/v1/systemone` for `typesafe`; required for `reseller`. Roster inspection does not prove endpoint reachability or acceptance by the later request client.                                                                                                     |
+| `route.jev.model`           | Optional nonempty string for `typesafe`, default `jev-latest`; rejected for `reseller`. Whitespace is not trimmed.                                                                                                                                                                                                                           |
+| `claude_run.max_budget_usd` | Optional number greater than zero, default `2`; Claude run budget in USD.                                                                                                                                                                                                                                                                    |
+| `claude_run.max_turns`      | Optional positive integer, default `60`; Claude run turn limit.                                                                                                                                                                                                                                                                              |
+| `claude_run.reason`         | Optional string of at least 20 characters, default is the shipped cost-cap rationale; whitespace is not trimmed or checked for substantive justification.                                                                                                                                                                                    |
 
-Tables `route`, `route.jev` and `claude_run` are required. Strict validation applies at every
-table level. In particular, output-only `auto`, `choice`, `sources`, `as_of`, Jev price keys
+Tables `route`, `route.jev` and `claude_run` are optional. Strict validation applies at every
+table level: unknown keys, wrong types and out-of-range values fail. In particular, output-only `auto`, `choice`, `sources`, `as_of`, Jev price keys
 and `max_codex_workers` are not operator inputs. Neither route arrays nor reason strings
 receive additional uniqueness or nonblank validation. Implementation locators for routing
 meaning are `tools/agx-worker/src/next/route.ts:43–145`,
