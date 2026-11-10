@@ -1,5 +1,9 @@
 # Changelog
 
+## 10.4.2 — 2026-11-10
+
+- Skip legacy usage journals outside the stats window and count, warn about and skip unparseable legacy lines instead of failing the Jev usage aggregate.
+
 ## 10.4.1 — 2026-11-10
 
 - Print agx worker config human output with one line per layer in the header and (not set) for unset values; --json is unchanged.
