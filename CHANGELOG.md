@@ -1,5 +1,9 @@
 # Changelog
 
+## 10.4.1 — 2026-11-10
+
+- Print agx worker config human output with one line per layer in the header and (not set) for unset values; --json is unchanged.
+
 ## 10.4.0 — 2026-11-10
 
 - Add `agx worker config [--repo <path>] [--json]`, a read-only view of the effective repository (L1/L2), routing and Claude credential configuration with each value's source.
