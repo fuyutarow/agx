@@ -11,6 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
@@ -313,6 +314,7 @@ test("a fresh credits-unavailable marker reports subscription with its expiry", 
   );
   const human = f.run(["config"]).stdout;
   expect(human).toMatch(/credits-unavailable marker\s+fresh until /u);
+  expect(human).toMatch(/credential_source\s+\(not set\)/u);
 });
 
 test("the command writes nothing", () => {
@@ -356,4 +358,86 @@ test("a configuration error exits 2 with the reader's diagnostic", () => {
   expect(result.stdout).toBe("");
   expect(result.stderr).toContain("unsupported schema 2");
   expect(result.stderr).toContain(join(f.repo, "agx.toml"));
+});
+
+/** SHA-256 of the `--json` bytes captured before the human-output change; the fixture's git SHA is masked. */
+const JSON_DIGEST = {
+  withLayers:
+    "42b9e011fd6461133526d5b65a2398c702b1f2d30f7907ce46686f9fb7187d36",
+  withoutLayers:
+    "8378934e569710d0f00dc5944d0c20ebd0e17aec874f25866ede20e44ae0b8de",
+};
+
+const digest = (text: string): string =>
+  createHash("sha256").update(text).digest("hex");
+
+/** Masks the temporary root and the commit-dependent `policy_revision`, which changes with commit time. */
+const maskedJson = (text: string, root: string): string =>
+  text
+    .replaceAll(root, "<ROOT>")
+    .replaceAll(
+      /"policy_revision":"[0-9a-f]{40}"/gu,
+      '"policy_revision":"<REV>"',
+    );
+
+test("--json bytes are unchanged for the existing fixtures", () => {
+  const f = fixture();
+  const withLayers = f.run(["config", "--json"]);
+  expect(withLayers.exit, withLayers.stderr).toBe(0);
+  expect(digest(maskedJson(withLayers.stdout, f.root))).toBe(
+    JSON_DIGEST.withLayers,
+  );
+  const bare = join(f.root, "bare");
+  mkdirSync(bare);
+  git(bare, ["init", "--quiet"]);
+  const withoutLayers = f.run(["config", "--json", "--repo", bare]);
+  expect(withoutLayers.exit, withoutLayers.stderr).toBe(0);
+  expect(digest(maskedJson(withoutLayers.stdout, f.root))).toBe(
+    JSON_DIGEST.withoutLayers,
+  );
+});
+
+test("the human header lists each layer on its own line", () => {
+  const f = fixture();
+  const lines = f.run(["config"]).stdout.split("\n");
+  expect(lines.slice(0, lines.indexOf(""))).toEqual([
+    `Repository ${f.repo}`,
+    `  L1 ${join(f.repo, "agx.toml")}`,
+    `  L2 ${f.l2}`,
+  ]);
+});
+
+test("every layer label in a human row matches a header line", () => {
+  const f = fixture();
+  const human = f.run(["config"]).stdout;
+  const header = new Set([`L1 ${join(f.repo, "agx.toml")}`, `L2 ${f.l2}`]);
+  const labels = [...human.matchAll(/\[([^\]]+)\]/gu)]
+    .map(([, label]) => label ?? "")
+    .filter((label) => /^L[12] /u.test(label));
+  expect(labels.length).toBeGreaterThan(0);
+  for (const label of labels)
+    for (const part of label.split(" + "))
+      expect(header.has(part), part).toBe(true);
+});
+
+test("human output never prints null and names unset values", () => {
+  const f = fixture();
+  const bare = join(f.root, "bare");
+  mkdirSync(bare);
+  git(bare, ["init", "--quiet"]);
+  for (const repo of [f.repo, bare]) {
+    const result = f.run(["config", "--repo", repo]);
+    expect(result.exit, result.stderr).toBe(0);
+    for (const line of result.stdout.split("\n"))
+      expect(line).not.toMatch(/\bnull\b/u);
+  }
+  const unset = f.run(["config", "--repo", bare]).stdout;
+  expect(unset).toMatch(/^ {2}L1 trunk:agx\.toml {2}\(absent\)$/mu);
+  expect(unset).toMatch(
+    /^ {2}L2 <XDG config>\/agx\/repos\/<name>\.toml {2}\(absent\)$/mu,
+  );
+  expect(unset).toMatch(
+    /route\.allow\s+\(not set: user routing policy applies\)\s+\[default\]$/mu,
+  );
+  expect(unset).toMatch(/check\.timeout_ms\s+\(not set\)\s+\[default\]$/mu);
 });

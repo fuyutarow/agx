@@ -41,11 +41,22 @@ and the Claude credential a dispatch would choose (`credential`, `credential_sou
 key) with the 24 h `claude-credits-unavailable` marker and its expiry. It is read-only: it writes
 no file, starts no worker and does not call Jev. A configuration error exits 2 with the reader's
 diagnostic; unavailable inspection exits 75. `--json` emits one object with `repository`,
-`routing` and `credential` keys.
+`routing` and `credential` keys. The human output opens with `Repository <root>` and one indented line per
+layer (`L1 <path>`, `L2 <path>`, or `L1 trunk:agx.toml  (absent)` when that file is not there), and each row's
+`[source]` repeats one of those labels. An unset value prints `(not set)`; an unset `route.allow` prints
+`(not set: user routing policy applies)`.
 
 ```sh
 agx worker config
 agx worker config --repo ~/Workspace/agx --json
+```
+
+```text
+Repository /home/me/Workspace/agx
+  L1 /home/me/Workspace/agx/agx.toml
+  L2 /home/me/.config/agx/repos/agx.toml
+
+  check.timeout_ms  5000             [L1 /home/me/Workspace/agx/agx.toml]
 ```
 
 ## Durable dispatch

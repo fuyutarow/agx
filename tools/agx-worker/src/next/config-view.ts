@@ -146,6 +146,27 @@ const markerText = (marker: {
 const show = (value: unknown): string =>
   typeof value === "string" ? value : (JSON.stringify(value) ?? "undefined");
 
+const NOT_SET = "(not set)";
+/** The repository has no `route.allow`, so the user policy (L3) decides the routes. */
+const ROUTES_NOT_SET = "(not set: user routing policy applies)";
+
+/** An unset value reads as `(not set)`, never as `null`, `-` or `undefined`. */
+const shown = (value: unknown): string =>
+  value === undefined || value === null ? NOT_SET : show(value);
+
+/** One line per layer; each row's `[source]` repeats the same `L1 <path>` or `L2 <path>` label. */
+function layerLines(repo: View["repository"]): string[] {
+  const l1 =
+    repo.l1_path === null
+      ? "L1 trunk:agx.toml  (absent)"
+      : `L1 ${repo.l1_path}`;
+  const l2 =
+    repo.l2_path === null
+      ? "L2 <XDG config>/agx/repos/<name>.toml  (absent)"
+      : `L2 ${repo.l2_path}`;
+  return [`  ${l1}`, `  ${l2}`];
+}
+
 const LONG_VALUE = 60;
 
 /** Align key, value and `[source]`; a long value does not widen the value column. */
@@ -170,27 +191,31 @@ type View = {
 function human(view: View): string {
   const repository: Array<[string, string, string]> = Object.entries(
     view.repository.values,
-  ).map(([key, item]) => [key, show(item.value), item.source]);
+  ).map(([key, item]) => [
+    key,
+    key === "route.allow" && item.value === null
+      ? ROUTES_NOT_SET
+      : shown(item.value),
+    item.source,
+  ]);
   const keep: Array<[string, string, string]> = view.repository[
     "ws.keep"
   ].entries.map((item) => ["ws.keep", item.value, item.source]);
   if (keep.length === 0) keep.push(["ws.keep", "[]", "default"]);
   const routing: Array<[string, string, string]> = Object.entries(
     view.routing.values,
-  ).map(([key, item]) => [
-    key,
-    item.value === undefined ? "-" : show(item.value),
-    item.source,
-  ]);
+  ).map(([key, item]) => [key, shown(item.value), item.source]);
   const marker = view.credential.credits_unavailable_marker;
   const credential: Array<[string, string, string]> = [
     ["credential", view.credential.credential, ""],
-    ["credential_source", view.credential.credential_source ?? "-", ""],
+    ["credential_source", shown(view.credential.credential_source), ""],
     ["credits-unavailable marker", markerText(marker), marker.path],
   ];
   const repo = view.repository;
   return [
-    `Repository ${repo.root} (L1 trunk agx.toml, L2 machine-local; ${repo.policy_source})`,
+    `Repository ${repo.root}`,
+    ...layerLines(repo),
+    "",
     ...rows([...repository, ...keep]),
     "",
     `Routing (L3 user policy: ${view.routing.policy.source})`,
