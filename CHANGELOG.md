@@ -1,5 +1,9 @@
 # Changelog
 
+## 10.0.4 — 2026-11-10
+
+- Keep one unreadable jj commit row from aborting workspace gc: only workspaces whose decision reads that commit are reported broken with its reason; the rest are classified and collected.
+
 ## 10.0.3 — 2026-11-08
 
 - Report a retired configuration once in worker preflight instead of also reporting an unreadable dispatch roster
