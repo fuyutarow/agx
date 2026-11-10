@@ -1,5 +1,9 @@
 # Changelog
 
+## 10.2.1 — 2026-11-10
+
+- A policy that names one vendor in route.on_window_exhausted now keeps the shipped default for the other (codex continue, claude stop); roster --json policy.keys reports route.on_window_exhausted.codex and .claude separately.
+
 ## 10.2.0 — 2026-11-10
 
 - Make the user routing policy additive over shipped defaults: every key is optional, a missing default-path agx.toml routes on defaults, route.no_egress is retired and ignored, and roster --json adds a policy field naming the source and each key's origin
