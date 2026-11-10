@@ -620,8 +620,7 @@ export async function preflight(
     const eligible = loaded.value.choice.filter(
       (row) =>
         !maskedRows.includes(row.id) &&
-        (loaded.value.auto.routes === undefined ||
-          loaded.value.auto.routes.includes(row.route)) &&
+        loaded.value.auto.routes.includes(row.route) &&
         (minimumTb4 === undefined || (row.tb4 ?? 0) >= minimumTb4),
     );
     if (eligible.length === 0)

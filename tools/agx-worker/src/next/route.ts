@@ -335,12 +335,8 @@ export async function route(
     })),
   });
   audit.filters = filters;
-  let eligible = filter(
-    roster.choice,
-    "route not allowed",
-    (row) =>
-      roster.auto.routes === undefined ||
-      roster.auto.routes.includes(row.route),
+  let eligible = filter(roster.choice, "route not allowed", (row) =>
+    roster.auto.routes.includes(row.route),
   );
   eligible = filter(eligible, "masked", (row) => !maskedRows.includes(row.id));
   if (floor?.success === true) {
@@ -396,7 +392,7 @@ export async function route(
       2,
     );
   if (candidates.length === 0) {
-    const allowed = roster.auto.routes ?? ["codex", "claude"];
+    const allowed = roster.auto.routes;
     const unpublished = availableCandidates
       .filter(
         (row) =>

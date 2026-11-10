@@ -169,7 +169,7 @@ export function removeClaudeSandboxStubs(
 /**
  * Network egress of a workspace-write worker, one declaration for both routes. The codex route
  * passes it as sandbox_workspace_write.network_access (codex.ts); the claude route grants all
- * domains plus the web tools when it is true. `[route] no_egress` is not applied on either route.
+ * domains plus the web tools when it is true.
  */
 export const WORKSPACE_WRITE_NETWORK_ACCESS = true;
 

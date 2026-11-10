@@ -734,7 +734,7 @@ describe("agx worker run --continue pins the prior row", () => {
     const policy = join(f.root, "policy.toml");
     writeFileSync(
       policy,
-      `schema = 1\n[route]\nallow = ["codex"]\nexclude = []\nmax_task_chars = 6000\ntimeout_ms = 20000\nno_egress = []\npick_temperature = 0.5\n[route.jev]\napi = "typesafe"\nurl = "http://127.0.0.1:1/choice"\nmodel = "test"\n[claude_run]\nmax_budget_usd = 2\nmax_turns = 60\nreason = "A fixed test policy for a bounded worker run."\n`,
+      `schema = 1\n[route]\nallow = ["codex"]\nexclude = []\nmax_task_chars = 6000\ntimeout_ms = 20000\npick_temperature = 0.5\n[route.jev]\napi = "typesafe"\nurl = "http://127.0.0.1:1/choice"\nmodel = "test"\n[claude_run]\nmax_budget_usd = 2\nmax_turns = 60\nreason = "A fixed test policy for a bounded worker run."\n`,
     );
     const rosterModule = new URL("../../src/roster/index.ts", import.meta.url)
       .pathname;

@@ -103,8 +103,13 @@ const PolicySchema = z.strictObject({
       exclude: z.array(z.string()).optional(),
       max_task_chars: z.number().int().positive().optional(),
       timeout_ms: z.number().int().positive().optional(),
-      // Retired: still accepted so existing files load; routing ignores it.
-      no_egress: z.array(z.string()).optional(),
+      // Retired 2026-11-10: routing never enforced it, so a file naming it is rejected.
+      no_egress: z
+        .never({
+          error:
+            "route.no_egress was removed: routing never enforced it; delete the key",
+        })
+        .optional(),
       pick_temperature: z.number().min(0).max(5).optional(),
       jev: JevFileSchema.optional(),
     })
@@ -113,7 +118,7 @@ const PolicySchema = z.strictObject({
 });
 
 const AutoSchema = z.strictObject({
-  routes: z.array(RouteSchema).min(1).optional(),
+  routes: z.array(RouteSchema).min(1),
   on_window_exhausted: z
     .strictObject({
       codex: z.enum(["continue", "stop"]).optional(),
@@ -123,7 +128,6 @@ const AutoSchema = z.strictObject({
   max_task_chars: z.number().int().positive(),
   timeout_ms: z.number().int().positive(),
   max_codex_workers: z.number().int().positive().optional(),
-  no_egress: z.array(z.string()),
   pick_temperature: z.number().min(0).max(5),
   jev: z.discriminatedUnion("api", [
     z.strictObject({
@@ -222,7 +226,6 @@ type ResolvedPolicy = Readonly<{
     exclude: string[];
     max_task_chars: number;
     timeout_ms: number;
-    no_egress: string[];
     pick_temperature: number;
     jev: z.output<typeof JevEndpointPolicySchema>;
   }>;
@@ -255,7 +258,6 @@ function resolvePolicy(
       exclude: route.exclude ?? [...defaults.route.exclude],
       max_task_chars: route.max_task_chars ?? defaults.route.max_task_chars,
       timeout_ms: route.timeout_ms ?? defaults.route.timeout_ms,
-      no_egress: route.no_egress ?? [...defaults.route.no_egress],
       pick_temperature:
         route.pick_temperature ?? defaults.route.pick_temperature,
       jev: jev.data,
@@ -273,7 +275,6 @@ function resolvePolicy(
     "route.exclude": route.exclude !== undefined,
     "route.max_task_chars": route.max_task_chars !== undefined,
     "route.timeout_ms": route.timeout_ms !== undefined,
-    "route.no_egress": route.no_egress !== undefined,
     "route.pick_temperature": route.pick_temperature !== undefined,
     "route.jev": fileJev !== undefined,
     "claude_run.max_budget_usd": run.max_budget_usd !== undefined,
@@ -326,7 +327,8 @@ export async function loadRoster(
     const catalog = catalogResult.data;
     const policy = resolved.policy;
     // A repository [route] replaces only the keys it declares; the rest stay user-global.
-    const allow = repoRoute?.allow ?? policy.route.allow;
+    const allow = repoRoute?.allow ??
+      policy.route.allow ?? [...POLICY_DEFAULTS.route.allow];
     const ids = new Set(catalog.choice.map((row) => row.id));
     const unknownExcluded = policy.route.exclude.find((id) => !ids.has(id));
     if (unknownExcluded !== undefined) {
@@ -346,13 +348,12 @@ export async function loadRoster(
         ? {}
         : { as_of_cost: catalog.as_of_cost }),
       auto: {
-        ...(allow === undefined ? {} : { routes: allow }),
+        routes: allow,
         ...(policy.route.on_window_exhausted === undefined
           ? {}
           : { on_window_exhausted: policy.route.on_window_exhausted }),
         max_task_chars: policy.route.max_task_chars,
         timeout_ms: policy.route.timeout_ms,
-        no_egress: policy.route.no_egress,
         pick_temperature: policy.route.pick_temperature,
         jev: { ...policy.route.jev, ...catalog.jev },
       },

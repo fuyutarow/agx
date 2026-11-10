@@ -87,8 +87,7 @@ export async function routingStats(
         roster === undefined
           ? null
           : roster.choice.some((row) => row.route === route) &&
-            (roster.auto.routes === undefined ||
-              roster.auto.routes.includes(route));
+            roster.auto.routes.includes(route);
       return {
         schema: 1,
         observation: {

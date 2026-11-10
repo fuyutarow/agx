@@ -350,7 +350,7 @@ describe("capability constrained routing", () => {
   // Removed: "no eligible capability rows names the route filter" tested the retired
   // capability-tag TB4 gate; requirement bars now derive only from ticket class.
 
-  test("check reports the active route filter including omission", async () => {
+  test("check reports the active route filter, defaulting to both routes", async () => {
     const { root } = await isolateState();
     startServer("localized");
     await prepareTicketRepo(root);
@@ -399,7 +399,9 @@ describe("capability constrained routing", () => {
         ]);
         expect(stderr).toBe("");
         expect(exit).toBe(0);
-        expect(stdout).toContain(`routes=${routes ?? "all (codex, claude)"}`);
+        expect(stdout).toContain(
+          `routes=${routes ?? JSON.stringify(["claude", "codex"])}`,
+        );
       }),
     );
   });
@@ -1004,7 +1006,7 @@ test("a time box no candidate fits is refused before Jev is asked", async () => 
   const server = startServer("localized");
   const { message, event } = await expectRefusal("tiny time box fixture", 1);
   expect(message).toStartWith(
-    "route refused: no candidate in the 1 s time box among allowed routes [codex, claude]; rows without a published duration: ",
+    "route refused: no candidate in the 1 s time box among allowed routes [claude, codex]; rows without a published duration: ",
   );
   expect(event?.source).toBe("refused-no-row-in-time-box");
   expect(server.calls()).toBe(0);

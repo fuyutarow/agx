@@ -77,9 +77,9 @@ test("an empty schema = 1 file loads with every shipped default", async () => {
   const { auto, claude_run } = loaded.value;
   expect(auto.max_task_chars).toBe(6000);
   expect(auto.timeout_ms).toBe(20000);
-  expect(auto.no_egress).toEqual([]);
   expect(auto.pick_temperature).toBe(0);
-  expect(auto.routes).toBeUndefined();
+  expect(auto.routes).toEqual(["claude", "codex"]);
+  expect(auto).not.toHaveProperty("no_egress");
   expect(auto.on_window_exhausted).toEqual({
     codex: "continue",
     claude: "stop",
@@ -245,11 +245,10 @@ test("the current full policy file shape and the shipped example still load unch
       ),
     ).toBe(true);
     expect(loaded.policy.keys["route.max_task_chars"]).toBe("file");
-    expect(loaded.policy.keys["route.no_egress"]).toBe("file");
+    expect(loaded.policy.keys).not.toHaveProperty("route.no_egress");
     expect(loaded.value.auto).toMatchObject({
       max_task_chars: 6000,
       timeout_ms: 20000,
-      no_egress: [],
       pick_temperature: 0.5,
     });
   }
@@ -349,4 +348,23 @@ test("roster --json names the policy source and keeps its existing fields", asyn
   expect(missing.exit).toBe(1);
   expect(missing.stdout).toBe("");
   expect(policyPath.length).toBeGreaterThan(0);
+});
+
+test("a policy naming route.no_egress is rejected with a delete-the-key message", async () => {
+  await xdgWith("schema = 1\n[route]\nno_egress = []\n");
+  const loaded = await loadRoster({ repoRoot: await emptyRepo() });
+  expect(loaded.ok).toBe(false);
+  if (loaded.ok) return;
+  expect(loaded.error).toContain(
+    "route.no_egress was removed: routing never enforced it; delete the key",
+  );
+});
+
+test("a schema = 1 policy projects both routes to auto.routes, and a file allow narrows it", async () => {
+  await xdgWith("schema = 1\n");
+  const bare = await loadRoster({ repoRoot: await emptyRepo() });
+  expect(bare.ok && bare.value.auto.routes).toEqual(["claude", "codex"]);
+  await xdgWith('schema = 1\n[route]\nallow = ["codex"]\n');
+  const narrowed = await loadRoster({ repoRoot: await emptyRepo() });
+  expect(narrowed.ok && narrowed.value.auto.routes).toEqual(["codex"]);
 });

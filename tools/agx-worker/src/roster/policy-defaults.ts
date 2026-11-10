@@ -1,15 +1,15 @@
 /**
  * Shipped values for every optional user-policy key. They equal policy.example.toml, except
- * `route.allow` (omitted means both routes) and `pick_temperature` (0, argmax).
- * `route.no_egress` is retired: accepted for old files, preserved, never enforced.
+ * `pick_temperature` (0, argmax). `route.allow` defaults to both routes and always projects to
+ * `auto.routes`.
  */
 export const POLICY_DEFAULTS = {
   route: {
+    allow: ["claude", "codex"],
     on_window_exhausted: { codex: "continue", claude: "stop" },
     exclude: [],
     max_task_chars: 6000,
     timeout_ms: 20000,
-    no_egress: [],
     pick_temperature: 0,
     jev: {
       api: "typesafe",
@@ -35,7 +35,6 @@ export const POLICY_KEYS = [
   "route.exclude",
   "route.max_task_chars",
   "route.timeout_ms",
-  "route.no_egress",
   "route.pick_temperature",
   "route.jev",
   "claude_run.max_budget_usd",

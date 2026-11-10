@@ -20,9 +20,9 @@ export const exhaustionPolicy = (
   claude: auto.on_window_exhausted?.claude ?? "continue",
 });
 
-/** The active eligibility filter; omission preserves eligibility for every route. */
+/** The active eligibility filter: the effective allowed routes. */
 export const routeFilterLabel = (auto: AutoPolicy): string =>
-  `routes=${auto.routes === undefined ? "all (codex, claude)" : JSON.stringify(auto.routes)}`;
+  `routes=${JSON.stringify(auto.routes)}`;
 
 function price(v: number | undefined): string {
   if (v === undefined) return "—";
