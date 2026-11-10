@@ -1284,8 +1284,12 @@ async function runUnguarded(flags: Flags): Promise<number> {
             resolve(cwd, workerPath),
             ...workerArgs().slice(1),
           ];
+    const startFile = join(
+      runDir,
+      `spawn-${String(attemptNumber).padStart(2, "0")}.json`,
+    );
     writeFileSync(
-      join(runDir, `spawn-${String(attemptNumber).padStart(2, "0")}.json`),
+      startFile,
       `${JSON.stringify({ attempt: attemptNumber, executable: spawnCommand[0], argv: spawnCommand })}\n`,
     );
     const child = Bun.spawn(spawnCommand, {
@@ -1297,6 +1301,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
       env: {
         ...runEnv,
         AGX_CODEX_PROGRESS_FILE: activeProgressPath,
+        AGX_ATTEMPT_START_FILE: startFile,
         ...(process.env.AGX_WORKER_BIN === undefined
           ? {}
           : { BUN_BE_BUN: "1" }),

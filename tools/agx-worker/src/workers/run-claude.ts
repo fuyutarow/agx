@@ -10,6 +10,7 @@ import { activityWriter } from "../lifecycle.ts";
 import { workerEnvironment } from "./environment.ts";
 import {
   claudeCredentialDetails,
+  recordAttemptCredential,
   type CredentialSource,
 } from "./claude-credential.ts";
 import { progressWriter } from "./codex-progress.ts";
@@ -203,6 +204,7 @@ async function runClaudeAttempt(
   if (config.jsonSchema !== undefined)
     args.push("--json-schema", config.jsonSchema);
 
+  recordAttemptCredential({ credential, credential_source });
   const deadline = new AbortController();
   let capacityCause: string | undefined;
   let creditsFailed = false;

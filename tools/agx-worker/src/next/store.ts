@@ -6,6 +6,7 @@ import {
   readSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   statSync,
 } from "node:fs";
@@ -606,6 +607,51 @@ function withDecisionReference(
   return { ...event, decision_id: decisionId, ...usage };
 }
 
+const CredentialRecord = jsonOf(
+  z.looseObject({
+    credential: z.enum(["api_key", "subscription"]).optional(),
+    credential_source: z.enum(["env", "fnox", "file"]).optional(),
+  }),
+);
+
+/**
+ * An ended event without a final-receipt credential (a run that ended by
+ * timeout has no receipt) takes the credential its last attempt recorded in
+ * its start record `spawn-NN.json` before the Claude child was spawned. A
+ * receipt's own value, including a subscription fallback, always wins.
+ */
+function endEventWithCredential(
+  event: Extract<z.input<typeof EventSchema>, { kind: "ended" }>,
+  root: string,
+) {
+  if (event.credential !== undefined) return event;
+  if (!/^[a-zA-Z0-9_-]+$/u.test(event.id)) return event;
+  const dir = join(root, "runs", event.id);
+  const last = fromThrowable(() =>
+    readdirSync(dir)
+      .filter((name) => /^spawn-\d+\.json$/u.test(name))
+      .toSorted(
+        (a, b) =>
+          Math.trunc(Number(a.slice(6, -5))) -
+          Math.trunc(Number(b.slice(6, -5))),
+      )
+      .at(-1),
+  )();
+  if (last.isErr() || last.value === undefined) return event;
+  const name = last.value;
+  const start = fromThrowable(() => readFileSync(join(dir, name), "utf8"))();
+  if (start.isErr()) return event;
+  const parsed = CredentialRecord.safeParse(start.value);
+  if (!parsed.success || parsed.data.credential === undefined) return event;
+  return {
+    ...event,
+    credential: parsed.data.credential,
+    ...(parsed.data.credential_source === undefined
+      ? {}
+      : { credential_source: parsed.data.credential_source }),
+  };
+}
+
 function endEventWithSize(
   event: Extract<z.input<typeof EventSchema>, { kind: "ended" }>,
   root: string,
@@ -654,7 +700,7 @@ export function append(
   mkdirSync(dirname(path), { recursive: true });
   const recorded =
     event.kind === "ended"
-      ? endEventWithSize(event, root)
+      ? endEventWithSize(endEventWithCredential(event, root), root)
       : withDecisionReference(event, pendingPickAudit);
   appendFileSync(path, `${JSON.stringify(recorded)}\n`, {
     encoding: "utf8",

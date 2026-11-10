@@ -204,5 +204,13 @@ another location. Dispatcher-provided command paths remain authoritative.
 Claude `ended` events and folded `ls --json` rows may include `credential`
 (`api_key` or `subscription`) and, for an API credential, `credential_source`
 (`env`, `fnox`, or `file`). These identify the final attempt, including a
-subscription retry after credits exhaustion. Historical and interrupted runs
-may lack these fields; key values are never recorded.
+subscription retry after credits exhaustion. Key values are never recorded.
+
+The fields come from two places. Before each Claude child is spawned the
+worker writes the credential it decided on into that attempt's start record
+`runs/<id>/spawn-NN.json` (the supervisor names it in
+`AGX_ATTEMPT_START_FILE`). The final attempt's receipt value is used when
+present, so a credits fallback to the subscription shows `subscription`. When
+there is no receipt, as for a run that ends by timeout, the `ended` event takes
+the credential and source from the last attempt's start record. Runs that never
+reached a Claude spawn, and historical runs, may lack these fields.

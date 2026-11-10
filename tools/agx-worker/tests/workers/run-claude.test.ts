@@ -171,6 +171,8 @@ test("shared credential resolution covers file and inherited credentials until c
   });
   process.env.HOME = root;
   process.env.AGX_STATE_DIR = join(root, "state");
+  // The machine's real fnox must not supply a key: look for it only in the empty temp root.
+  process.env.PATH = root;
   expect(resolveCredential({})).toBe("subscription");
   expect(resolveCredential({ ANTHROPIC_API_KEY: "inherited" })).toBe("api_key");
   expect(resolveCredential({ ANTHROPIC_AUTH_TOKEN: "inherited" })).toBe(
