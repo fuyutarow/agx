@@ -78,3 +78,11 @@ bunx skills add fuyutarow/agx --skill driving-agx -a claude-code
 [driving-agx](skills/driving-agx/SKILL.md) covers workers, tickets, workspaces,
 messaging and health. It supersedes the separate driving-xmsg skill; use the
 skill from the same release tag as your installed suite.
+
+### Code composition
+
+Run `mise run loc` for grouped TS/TSX code lines and a group-by-language
+table. `mise run loc -- --json` includes every measured path, unclassified
+paths, and the raw Tokei summary. Counts use Tokei's default ignore rules and
+include uncommitted files. Install the declared tool with
+`mise install tokei@15.0.0` (requires Cargo/Rust).

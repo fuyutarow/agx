@@ -1,9 +1,13 @@
 min_version = "2026.10.0"
 
+[tool_alias]
+tokei = "cargo:tokei"
+
 [tools]
 bun = "1.4.3"
 rumdl = "0.2.78"
 jj = "0.46.0"
+tokei = "15.0" # Line counts for the code size report.
 
 # Host integrations are command authority, not versions provisioned by mise.
 [vars]
@@ -26,6 +30,10 @@ jj = "0.46.0"
 [tasks.setup]
 alias = "i"
 run = "bun install --frozen-lockfile"
+
+[tasks.loc]
+description = "Show grouped code-line composition and language totals"
+run = "bun --no-env-file tools/code-size.ts"
 
 [tasks.up]
 alias = "u"
