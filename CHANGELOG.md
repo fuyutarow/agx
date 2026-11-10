@@ -1,5 +1,9 @@
 # Changelog
 
+## 10.1.0 — 2026-11-10
+
+- Resolve Claude API keys from fnox and record the credential used.
+
 ## 10.0.4 — 2026-11-10
 
 - Keep one unreadable jj commit row from aborting workspace gc: only workspaces whose decision reads that commit are reported broken with its reason; the rest are classified and collected.
