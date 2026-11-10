@@ -30,7 +30,8 @@ export type PolicyKeySource = "file" | "default";
 /** Every policy key whose origin `roster --json` reports. */
 export const POLICY_KEYS = [
   "route.allow",
-  "route.on_window_exhausted",
+  "route.on_window_exhausted.codex",
+  "route.on_window_exhausted.claude",
   "route.exclude",
   "route.max_task_chars",
   "route.timeout_ms",

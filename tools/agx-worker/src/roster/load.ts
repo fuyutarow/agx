@@ -238,6 +238,7 @@ function resolvePolicy(
   const route = file.route ?? {};
   const run = file.claude_run ?? {};
   const fileJev = route.jev;
+  const exhausted = route.on_window_exhausted ?? {};
   const jev = JevEndpointPolicySchema.safeParse(jevCandidate(fileJev));
   if (!jev.success)
     return { ok: false, error: `route.jev: ${jev.error.message}` };
@@ -246,8 +247,11 @@ function resolvePolicy(
     schema: 1,
     route: {
       allow: route.allow,
-      on_window_exhausted:
-        route.on_window_exhausted ?? defaults.route.on_window_exhausted,
+      // Merged per vendor: a table naming one vendor keeps the shipped default for the other.
+      on_window_exhausted: {
+        codex: exhausted.codex ?? defaults.route.on_window_exhausted.codex,
+        claude: exhausted.claude ?? defaults.route.on_window_exhausted.claude,
+      },
       exclude: route.exclude ?? [...defaults.route.exclude],
       max_task_chars: route.max_task_chars ?? defaults.route.max_task_chars,
       timeout_ms: route.timeout_ms ?? defaults.route.timeout_ms,
@@ -264,7 +268,8 @@ function resolvePolicy(
   };
   const present: Readonly<Record<(typeof POLICY_KEYS)[number], boolean>> = {
     "route.allow": route.allow !== undefined,
-    "route.on_window_exhausted": route.on_window_exhausted !== undefined,
+    "route.on_window_exhausted.codex": exhausted.codex !== undefined,
+    "route.on_window_exhausted.claude": exhausted.claude !== undefined,
     "route.exclude": route.exclude !== undefined,
     "route.max_task_chars": route.max_task_chars !== undefined,
     "route.timeout_ms": route.timeout_ms !== undefined,

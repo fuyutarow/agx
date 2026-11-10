@@ -168,6 +168,53 @@ test("a file setting only pick_temperature and max_budget_usd keeps the other de
   });
 });
 
+test("a table naming one vendor in on_window_exhausted keeps the shipped default for the other", async () => {
+  await xdgWith(
+    'schema = 1\n[route]\non_window_exhausted = { codex = "stop" }\n',
+  );
+  const loaded = await loadRoster({ repoRoot: await emptyRepo() });
+  expect(loaded.ok).toBe(true);
+  if (!loaded.ok) return;
+  expect(loaded.value.auto.on_window_exhausted).toEqual({
+    codex: "stop",
+    claude: POLICY_DEFAULTS.route.on_window_exhausted.claude,
+  });
+  expect(loaded.value.auto.on_window_exhausted?.claude).toBe("stop");
+  expect(loaded.policy.keys["route.on_window_exhausted.codex"]).toBe("file");
+  expect(loaded.policy.keys["route.on_window_exhausted.claude"]).toBe(
+    "default",
+  );
+  expect(Object.keys(loaded.policy.keys)).toEqual([...POLICY_KEYS]);
+
+  await xdgWith(
+    'schema = 1\n[route]\non_window_exhausted = { claude = "continue" }\n',
+  );
+  const other = await loadRoster({ repoRoot: await emptyRepo() });
+  expect(other.ok).toBe(true);
+  if (!other.ok) return;
+  expect(other.value.auto.on_window_exhausted).toEqual({
+    codex: "continue",
+    claude: "continue",
+  });
+  expect(other.policy.keys["route.on_window_exhausted.codex"]).toBe("default");
+  expect(other.policy.keys["route.on_window_exhausted.claude"]).toBe("file");
+});
+
+test("a table naming both vendors in on_window_exhausted keeps both from the file", async () => {
+  await xdgWith(
+    'schema = 1\n[route]\non_window_exhausted = { codex = "stop", claude = "continue" }\n',
+  );
+  const loaded = await loadRoster({ repoRoot: await emptyRepo() });
+  expect(loaded.ok).toBe(true);
+  if (!loaded.ok) return;
+  expect(loaded.value.auto.on_window_exhausted).toEqual({
+    codex: "stop",
+    claude: "continue",
+  });
+  expect(loaded.policy.keys["route.on_window_exhausted.codex"]).toBe("file");
+  expect(loaded.policy.keys["route.on_window_exhausted.claude"]).toBe("file");
+});
+
 test("a partial route.jev overlays the shipped endpoint; another api brings its own url", async () => {
   await xdgWith('schema = 1\n[route.jev]\nmodel = "jev-pinned"\n');
   const partial = await loadRoster({ repoRoot: await emptyRepo() });
@@ -291,7 +338,12 @@ test("roster --json names the policy source and keeps its existing fields", asyn
   const parsedFile = fileResult.data;
   expect(parsedFile.policy.source).toBe(`file:${fullFixture}`);
   expect(parsedFile.policy.keys["route.timeout_ms"]).toBe("file");
-  expect(parsedFile.policy.keys["route.on_window_exhausted"]).toBe("default");
+  expect(parsedFile.policy.keys["route.on_window_exhausted.codex"]).toBe(
+    "default",
+  );
+  expect(parsedFile.policy.keys["route.on_window_exhausted.claude"]).toBe(
+    "default",
+  );
 
   const missing = await run({ AGX_CONFIG: join(root, "absent.toml") });
   expect(missing.exit).toBe(1);
