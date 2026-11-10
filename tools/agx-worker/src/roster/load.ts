@@ -80,9 +80,13 @@ const ExhaustionSchema = z.strictObject({
   claude: z.enum(["continue", "stop"]).optional(),
 });
 
+/** What a Claude API credit failure does: `stop` keeps the run off the Claude subscription, `subscription` retries there. */
+const CreditsUnavailableSchema = z.enum(["stop", "subscription"]);
+
 const ClaudeRunSchema = z.strictObject({
   max_budget_usd: z.number().gt(0),
   max_turns: z.number().int().positive(),
+  on_credits_unavailable: CreditsUnavailableSchema,
   reason: z.string().min(20),
 });
 
@@ -265,6 +269,9 @@ function resolvePolicy(
     claude_run: {
       max_budget_usd: run.max_budget_usd ?? defaults.claude_run.max_budget_usd,
       max_turns: run.max_turns ?? defaults.claude_run.max_turns,
+      on_credits_unavailable:
+        run.on_credits_unavailable ??
+        defaults.claude_run.on_credits_unavailable,
       reason: run.reason ?? defaults.claude_run.reason,
     },
   };
@@ -279,6 +286,8 @@ function resolvePolicy(
     "route.jev": fileJev !== undefined,
     "claude_run.max_budget_usd": run.max_budget_usd !== undefined,
     "claude_run.max_turns": run.max_turns !== undefined,
+    "claude_run.on_credits_unavailable":
+      run.on_credits_unavailable !== undefined,
     "claude_run.reason": run.reason !== undefined,
   };
   const keys: Record<string, PolicyKeySource> = {};

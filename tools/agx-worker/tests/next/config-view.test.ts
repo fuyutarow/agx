@@ -363,9 +363,9 @@ test("a configuration error exits 2 with the reader's diagnostic", () => {
 /** SHA-256 of the `--json` bytes captured before the human-output change; the fixture's git SHA is masked. */
 const JSON_DIGEST = {
   withLayers:
-    "42b9e011fd6461133526d5b65a2398c702b1f2d30f7907ce46686f9fb7187d36",
+    "81d7b4793aeae102ebfa2239b5e03bb06c640012a4603b3b2d30ffc2d6e3ca59",
   withoutLayers:
-    "8378934e569710d0f00dc5944d0c20ebd0e17aec874f25866ede20e44ae0b8de",
+    "cde1b752bd6a36981eb8f4d23b0056abc653beae1b9c80c8a408e91f7cfff9c9",
 };
 
 const digest = (text: string): string =>

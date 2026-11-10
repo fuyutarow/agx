@@ -79,6 +79,10 @@ export type RunConfig = Readonly<{
   priceIn?: number | undefined;
   priceCachedIn?: number | undefined;
   priceOut?: number | undefined;
+  // What an API credit failure does: "stop" ends the attempt as capacity, "subscription" retries on the
+  // subscription. The CLI always supplies it (default "stop", policy claude_run.on_credits_unavailable);
+  // a library caller that leaves it undefined keeps the historical retry.
+  onCreditsUnavailable?: "stop" | "subscription" | undefined;
   // Keep the session on disk (~/.claude/projects/<cwd>/<session>.jsonl) so `--resume` can continue
   // it. agx passes this for every worker it dispatches; probes and direct callers keep the
   // old no-persistence default.
@@ -118,7 +122,7 @@ type Relay = Readonly<{
   worker_fault?: boolean;
   credential?: "api_key" | "subscription" | undefined;
   credential_source?: CredentialSource | undefined;
-  outcome?: "capacity" | "credits_unavailable";
+  outcome?: "capacity";
 }>;
 
 const RecordSchema = z.record(z.string(), z.unknown());
@@ -154,6 +158,9 @@ export async function runClaude(config: RunConfig): Promise<RunResult> {
     return first;
   mkdirSync(dirname(marker), { recursive: true });
   writeFileSync(marker, "credits unavailable\n");
+  // Default policy: the failure ends this attempt as capacity (cause credits_unavailable) and the
+  // route loop moves the run to another row; the Claude subscription is never spent unasked.
+  if (config.onCreditsUnavailable === "stop") return first;
   delete environment.ANTHROPIC_API_KEY;
   delete environment.ANTHROPIC_AUTH_TOKEN;
   const remaining = config.timeoutMs - (performance.now() - start);
@@ -359,7 +366,7 @@ async function runClaudeAttempt(
         result === undefined
           ? "no result event in the stream-json output"
           : undefined,
-      capacityCause: creditsFailed ? undefined : capacityCause,
+      capacityCause,
       creditsUnavailable: creditsFailed,
       credential,
       credential_source,
@@ -387,7 +394,7 @@ async function runClaudeAttempt(
     stderr: redact(stderr),
     claude,
     parseError,
-    capacityCause: creditsFailed ? undefined : capacityCause,
+    capacityCause,
     creditsUnavailable: creditsFailed,
     credential,
     credential_source,
@@ -443,7 +450,7 @@ function primitive(
 
 export function toRelay(run: RunResult): Relay {
   const claude = asRecord(run.claude);
-  let capacity: Partial<Relay> =
+  const capacity: Partial<Relay> =
     run.capacityCause === undefined
       ? {}
       : ({
@@ -452,8 +459,6 @@ export function toRelay(run: RunResult): Relay {
           transient: true,
           worker_fault: false,
         } satisfies Partial<Relay>);
-  if (run.creditsUnavailable === true)
-    capacity = { outcome: "credits_unavailable" };
   if (claude === undefined) {
     return {
       ...capacity,
@@ -564,6 +569,7 @@ async function configFromCli(): Promise<Result<RunConfig, Error>> {
         priceIn: String,
         priceCachedIn: String,
         priceOut: String,
+        onCreditsUnavailable: String,
         resume: nonEmptyString("--resume"),
         persistSession: Boolean,
         safeMode: Boolean,
@@ -625,6 +631,11 @@ async function configFromCli(): Promise<Result<RunConfig, Error>> {
       : positiveNumber(Number(values.maxBudgetUsd), "--max-budget-usd");
   if (maxBudgetResult !== undefined && maxBudgetResult.isErr())
     return err(maxBudgetResult.error);
+  const onCredits = values.onCreditsUnavailable ?? "stop";
+  if (onCredits !== "stop" && onCredits !== "subscription")
+    return err(
+      new Error("--on-credits-unavailable must be stop or subscription"),
+    );
   const jsonSchemaFile = values.jsonSchemaFile;
   const jsonSchema =
     jsonSchemaFile === undefined
@@ -663,6 +674,7 @@ async function configFromCli(): Promise<Result<RunConfig, Error>> {
       ? {}
       : { priceCachedIn: priceCachedIn.value }),
     ...(priceOut.value === undefined ? {} : { priceOut: priceOut.value }),
+    onCreditsUnavailable: onCredits,
     ...(values.resume === undefined ? {} : { resume: values.resume }),
     persistSession: values.persistSession ?? false,
     claudeBin,

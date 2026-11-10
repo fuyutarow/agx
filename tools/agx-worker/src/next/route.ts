@@ -13,7 +13,10 @@ import {
 } from "../roster/index.ts";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { exitWithError } from "./exit.ts";
-import { claudeCredential } from "../workers/claude-credential.ts";
+import {
+  claudeCredential,
+  creditsMarkerStatus,
+} from "../workers/claude-credential.ts";
 import { workerEnvironment } from "../workers/environment.ts";
 import { readRouteUsage } from "./usage.ts";
 import { setPendingPickAudit } from "./store.ts";
@@ -367,8 +370,23 @@ export async function route(
     removed: [],
   });
   const usage = await readRouteUsage(undefined, exhaustionPolicy(roster.auto));
-  const availableCandidates = filter(
+  // A fresh credits marker means the Claude API credit ran out; under the default policy the
+  // Claude subscription (the coordinator's window) is not a substitute, so claude rows leave routing.
+  const creditsMarker = creditsMarkerStatus();
+  const holdClaude =
+    roster.claude_run.on_credits_unavailable === "stop" && creditsMarker.fresh;
+  const creditsEligible = filter(
     eligible,
+    "claude credits unavailable",
+    (row) => !(holdClaude && row.route === "claude"),
+    () => ({
+      marker: creditsMarker.path,
+      expires_at: creditsMarker.expiresAt,
+      on_credits_unavailable: roster.claude_run.on_credits_unavailable,
+    }),
+  );
+  const availableCandidates = filter(
+    creditsEligible,
     "route unavailable",
     (row) => usage[row.route].available,
     (row) => usage[row.route],

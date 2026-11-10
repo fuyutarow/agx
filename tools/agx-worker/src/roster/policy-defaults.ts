@@ -20,6 +20,7 @@ export const POLICY_DEFAULTS = {
   claude_run: {
     max_budget_usd: 2,
     max_turns: 60,
+    on_credits_unavailable: "stop",
     reason:
       "A worker task here cost 0.05-0.20 USD on luna; 20x is 1-4 USD, so 2 USD caps a run near the median at claude prices and turns an endless loop into a bounded failure.",
   },
@@ -39,5 +40,6 @@ export const POLICY_KEYS = [
   "route.jev",
   "claude_run.max_budget_usd",
   "claude_run.max_turns",
+  "claude_run.on_credits_unavailable",
   "claude_run.reason",
 ] as const;

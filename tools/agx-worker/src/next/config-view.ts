@@ -102,6 +102,7 @@ function routingSection(
     "route.jev": auto.jev,
     "claude_run.max_budget_usd": claude_run.max_budget_usd,
     "claude_run.max_turns": claude_run.max_turns,
+    "claude_run.on_credits_unavailable": claude_run.on_credits_unavailable,
     "claude_run.reason": claude_run.reason,
   };
   const values: Record<string, Entry> = {};

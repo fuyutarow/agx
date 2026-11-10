@@ -61,7 +61,7 @@ import { leaseFor, type StopSignal } from "./lease.ts";
 import { route, type CapacityRetryRouteResult } from "./route.ts";
 import { pinContinuation } from "./continue.ts";
 import { resolveRunId } from "./run-id.ts";
-import { routeFilterLabel } from "../roster/index.ts";
+import { loadRoster, routeFilterLabel } from "../roster/index.ts";
 import {
   earlyQuitRows,
   preflight,
@@ -644,6 +644,11 @@ async function runUnguarded(flags: Flags): Promise<number> {
         } satisfies CapacityRetryRouteResult);
   if (deadline.aborted)
     return fatal("ticket time box expired before worker startup", 124);
+  // The same load the route call used; routing already succeeded, so a failure here keeps the safe default.
+  const loadedPolicy = await loadRoster({});
+  const onCreditsUnavailable = loadedPolicy.ok
+    ? loadedPolicy.value.claude_run.on_credits_unavailable
+    : "stop";
   if (selectedRoute.kind === "exhausted")
     return fatal("no roster row satisfies the ticket's requirements", 2);
   if (selectedRoute.kind === "refused") {
@@ -1060,6 +1065,8 @@ async function runUnguarded(flags: Flags): Promise<number> {
       "60",
       "--max-budget-usd",
       "2",
+      "--on-credits-unavailable",
+      onCreditsUnavailable,
       "--timeout-ms",
       String((ticket.timeout_s ?? 600) * 1000),
       "--progress-file",

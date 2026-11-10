@@ -17,6 +17,14 @@ export function clearInheritedAgentEnvironment(
 }
 
 clearInheritedAgentEnvironment();
+// A real key in the environment would let routing and credential tests resolve a live credential.
+for (const key of [
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_AUTH_TOKEN",
+  "CLAUDE_CODE_OAUTH_TOKEN",
+  "TYPESAFE_API_KEY",
+])
+  delete process.env[key];
 delete process.env.MISE_NO_CONFIG;
 delete process.env.MISE_PARANOID;
 for (const key of [
@@ -45,12 +53,15 @@ const tempRoot = process.env.TMPDIR ?? tmpdir();
 async function guardReasonNetwork(root: string): Promise<void> {
   const bin = join(root, "guard-bin");
   await mkdir(bin, { recursive: true });
-  const stub = join(bin, "reason-network");
-  await Bun.write(
-    stub,
-    "#!/bin/sh\nprintf '%s\\n' 'agx tests must not run the real reason-network; put a fake on PATH' >&2\nexit 97\n",
-  );
-  await chmod(stub, 0o755);
+  // Neither the owner's real reason-network nor the real fnox store may be reached from a test.
+  for (const tool of ["reason-network", "fnox"]) {
+    const stub = join(bin, tool);
+    await Bun.write(
+      stub,
+      `#!/bin/sh\nprintf '%s\\n' 'agx tests must not run the real ${tool}; put a fake on PATH' >&2\nexit 97\n`,
+    );
+    await chmod(stub, 0o755);
+  }
   process.env.PATH = `${bin}${process.platform === "win32" ? ";" : ":"}${process.env.PATH ?? ""}`;
 }
 

@@ -267,6 +267,11 @@ record. Use `agx worker check TICKET --json` for the violation list. See the
 Claude workers resolve `ANTHROPIC_API_KEY` from the environment, then `fnox get
 ANTHROPIC_API_KEY`, then `~/.config/agx/anthropic-api-key` (a regular file with
 mode 0600). The lookup runs inside the worker as well as routing. If API credits
-are unavailable, the worker retries using the subscription and records that
-credential; a 24-hour marker sends later runs to the subscription. Run records
-expose the credential and, for API credentials, its source, never the key.
+are unavailable, the attempt ends as outcome `capacity` with cause
+`credits_unavailable`, a 24-hour marker is written, and the run continues on the
+next eligible row (claude rows stay out of routing while the marker is fresh; the
+routing audit names the filter `claude credits unavailable`). The Claude
+subscription is not used unasked: policy `claude_run.on_credits_unavailable`
+defaults to `stop`; `subscription` restores the in-process retry on the
+subscription (recording that credential) and keeps claude rows in routing. Run
+records expose the credential and, for API credentials, its source, never the key.
