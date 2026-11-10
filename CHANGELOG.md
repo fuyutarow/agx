@@ -1,5 +1,9 @@
 # Changelog
 
+## 10.3.0 — 2026-11-10
+
+- Remove the retired route.no_egress key: a policy naming it is rejected with a delete-the-key error, and roster --json always shows the effective allowed routes in auto.routes (default claude and codex)
+
 ## 10.2.2 — 2026-11-10
 
 - Record the Claude credential and its source in the attempt start record before spawning, so a run that ends by timeout without a receipt still shows them
