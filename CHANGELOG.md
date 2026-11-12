@@ -1,5 +1,9 @@
 # Changelog
 
+## 10.5.2 — 2026-11-13
+
+- Recognize the Claude CLI result text "Credit balance is too low" (with or without "is") as credit exhaustion, so the claude-credits-unavailable marker is written and the run moves to another row.
+
 ## 10.5.1 — 2026-11-10
 
 - Jev classification request: each class criterion states only its own condition, published_task_metrics and task_size are removed, and the task text carries the ticket's writes and verify
