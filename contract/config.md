@@ -151,6 +151,15 @@ is filtered when no key resolves or its 24-hour credits marker is fresh. A credi
 ends the attempt as capacity and routing continues to another eligible route. Declared API
 candidates have the prepaid preference; the presence of a key does not enable a route.
 
+Anthropic's prepaid API credit balance is not observable through an API, so agx cannot
+know before a run whether `claude-api` will succeed. It uses `claude-api` only when
+explicitly allowed; `claude-session` never uses a key. Credit exhaustion is detected
+only when a run fails with a message such as `Credit balance is too low`. A run may
+spend part of its budget before credits run out mid-run. The resulting marker defaults
+to `~/.local/state/agx/claude-credits-unavailable`; its 24-hour pause is the fixed
+`CREDITS_MARKER_TTL_MS` constant at `tools/agx-worker/src/workers/claude-credential.ts:47`,
+unrelated to when credits actually renew.
+
 The catalog stores each Claude model and effort once with its prices and scores. The loader
 expands each into session and API candidates; eligibility is governed by the allow list.
 Excluded IDs must exist in the catalog. Catalog IDs are unique before expansion.

@@ -273,3 +273,12 @@ next eligible route. Only `claude-api` is filtered while the marker is fresh. Th
 `claude-session` route strips Anthropic credentials and never resolves a key. A complete
 explicit policy is required; see `src/roster/policy.example.toml`.
 Run records expose the credential and, for API credentials, its source, never the key.
+
+Anthropic's prepaid API credit balance is not observable through an API, so agx cannot
+know before a run whether `claude-api` will succeed. It uses `claude-api` only when
+explicitly allowed; `claude-session` never uses a key. Credit exhaustion is detected
+only when a run fails with a message such as `Credit balance is too low`. A run may
+spend part of its budget before credits run out mid-run. The marker defaults to
+`~/.local/state/agx/claude-credits-unavailable`; its 24-hour pause is the fixed
+`CREDITS_MARKER_TTL_MS` constant at `tools/agx-worker/src/workers/claude-credential.ts:47`,
+unrelated to when credits actually renew.
