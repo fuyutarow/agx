@@ -198,3 +198,51 @@ test("shared credential resolution covers file and inherited credentials until c
     "subscription",
   );
 });
+
+test("a Claude result event saying the credit balance is too low ends the attempt as capacity and writes the marker", async () => {
+  const root = mkdtempSync(join(tmpdir(), "agx-credit-result-"));
+  // In-process snapshot for restoring process.env below; no subprocess inherits it.
+  const old = Object.assign({}, process.env);
+  using cleanup = new DisposableStack();
+  cleanup.defer(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+  cleanup.defer(() => {
+    for (const key of Object.keys(process.env))
+      if (!Object.hasOwn(old, key)) delete process.env[key];
+    Object.assign(process.env, old);
+  });
+  process.env.HOME = root;
+  process.env.AGX_STATE_DIR = join(root, "state");
+  process.env.ANTHROPIC_API_KEY = "inline-test-secret";
+  delete process.env.ANTHROPIC_AUTH_TOKEN;
+  const bin = join(root, "claude");
+  const log = join(root, "calls.log");
+  // Mirrors the attempt-01.json shape: a stream-json result event with is_error true.
+  writeFileSync(
+    bin,
+    `#!/bin/sh\necho call >> ${JSON.stringify(log)}\nif [ -n "$ANTHROPIC_API_KEY" ]; then printf '%s\\n' '{"type":"result","is_error":true,"result":"Credit balance is too low"}'; exit 1; fi\nprintf '{"result":"ok"}\\n'\n`,
+  );
+  chmodSync(bin, 0o755);
+  const run = await runClaude({
+    target: root,
+    prompt: "hello",
+    model: "test",
+    permissionMode: "plan",
+    maxTurns: 1,
+    timeoutMs: 10_000,
+    safeMode: false,
+    bare: false,
+    claudeBin: bin,
+    onCreditsUnavailable: "stop",
+  });
+  expect(readFileSync(log, "utf8").trim().split("\n")).toHaveLength(1);
+  const relay = toRelay(run);
+  expect(relay.outcome).toBe("capacity");
+  expect(relay.cause).toBe("credits_unavailable");
+  expect(relay.credential).toBe("api_key");
+  expect(run.exitCode).toBe(75);
+  expect(
+    readFileSync(join(root, "state", "claude-credits-unavailable"), "utf8"),
+  ).toContain("credits unavailable");
+});

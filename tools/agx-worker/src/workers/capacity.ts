@@ -57,7 +57,7 @@ export function creditsUnavailable(line: string): boolean {
     )
       return true;
   } else if (line.trimStart().startsWith("{")) return false;
-  return /Your credit balance is too low to access the Anthropic API|Credit balance too low|You have reached your specified (?:workspace )?API usage limits|enforced_spend_limit_reached/iu.test(
+  return /Your credit balance is too low to access the Anthropic API|Credit balance (?:is )?too low|You have reached your specified (?:workspace )?API usage limits|enforced_spend_limit_reached/iu.test(
     line,
   );
 }

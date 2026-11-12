@@ -8,6 +8,8 @@ test("credit failures are distinct from capacity and assistant text", () => {
   for (const message of [
     "Your credit balance is too low to access the Anthropic API",
     "Credit balance too low",
+    "Credit balance is too low",
+    '{"type":"result","is_error":true,"result":"Credit balance is too low"}',
     "You have reached your specified API usage limits",
     "You have reached your specified workspace API usage limits",
     '{"type":"error","error_code":"enforced_spend_limit_reached"}',
