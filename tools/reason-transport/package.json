@@ -1,6 +1,6 @@
 {
   "name": "@agx/reason-transport",
-  "version": "10.5.2",
+  "version": "11.0.0",
   "private": true,
   "type": "module",
   "exports": "./src/index.ts"

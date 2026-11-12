@@ -1,5 +1,9 @@
 # Changelog
 
+## 11.0.0 — 2026-11-13
+
+- Require explicit routing policy and split Claude API and session routes.
+
 ## 10.5.2 — 2026-11-13
 
 - Recognize the Claude CLI result text "Credit balance is too low" (with or without "is") as credit exhaustion, so the claude-credits-unavailable marker is written and the run moves to another row.
