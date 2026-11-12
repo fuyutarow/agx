@@ -9,7 +9,9 @@ import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
 const PricingProjection = z.looseObject({
   schema: z.literal(1),
   as_of: z.iso.date(),
-  auto: z.looseObject({ routes: z.array(z.enum(["codex", "claude"])) }),
+  auto: z.looseObject({
+    routes: z.array(z.enum(["codex", "claude-session", "claude-api"])),
+  }),
   claude_run: z.object({
     max_budget_usd: z.number(),
     max_turns: z.number(),
@@ -20,7 +22,7 @@ const PricingProjection = z.looseObject({
   choice: z.array(
     z.looseObject({
       id: z.string(),
-      route: z.enum(["codex", "claude"]),
+      route: z.enum(["codex", "claude-session", "claude-api"]),
       price_in: z.number().optional(),
       price_cached_in: z.number().optional(),
       price_out: z.number().optional(),
@@ -84,7 +86,7 @@ test("roster --json publishes pricing with missing prices omitted on a fixture",
   // and remains exported even though automatic routing allows only codex.
   const missing = roster.choice.find((row) => row.id === "sonnet-high");
   expect(missing).toMatchObject({
-    route: "claude",
+    route: "claude-session",
     price_in: 2,
     price_out: 10,
   });

@@ -39,7 +39,8 @@ describe("claude catalog durations", () => {
     expect(parsed.success).toBe(true);
     const choices = parsed.success ? parsed.data.choice : [];
     const claude = choices.filter(
-      (row) => row.route === "claude" && /^(?:haiku|sonnet)-/u.test(row.id),
+      (row) =>
+        row.route === "claude-session" && /^(?:haiku|sonnet)-/u.test(row.id),
     );
     expect(
       claude.map((row) => row.id).toSorted((a, b) => a.localeCompare(b)),

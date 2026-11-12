@@ -64,6 +64,7 @@ test("fnox precedence, fallback and actual credential receipt", async () => {
     safeMode: false,
     bare: false,
     claudeBin: claude,
+    route: "claude-api" as const,
   };
   let result = await runClaude(config);
   expect(toRelay(result)).toMatchObject({
@@ -73,8 +74,8 @@ test("fnox precedence, fallback and actual credential receipt", async () => {
   expect(JSON.stringify(toRelay(result))).not.toContain("fnox-secret");
   process.env.AGX_FAKE_FAIL = "1";
   result = await runClaude(config);
-  expect(toRelay(result).credential).toBe("subscription");
-  expect(toRelay(result).credential_source).toBeUndefined();
+  expect(toRelay(result).credential).toBe("api_key");
+  expect(toRelay(result).credential_source).toBe("fnox");
   expect(
     readFileSync(join(root, "state", "claude-credits-unavailable"), "utf8"),
   ).toContain("credits unavailable");

@@ -79,10 +79,7 @@ export type RunConfig = Readonly<{
   priceIn?: number | undefined;
   priceCachedIn?: number | undefined;
   priceOut?: number | undefined;
-  // What an API credit failure does: "stop" ends the attempt as capacity, "subscription" retries on the
-  // subscription. The CLI always supplies it (default "stop", policy claude_run.on_credits_unavailable);
-  // a library caller that leaves it undefined keeps the historical retry.
-  onCreditsUnavailable?: "stop" | "subscription" | undefined;
+  route: "claude-api" | "claude-session";
   // Keep the session on disk (~/.claude/projects/<cwd>/<session>.jsonl) so `--resume` can continue
   // it. agx passes this for every worker it dispatches; probes and direct callers keep the
   // old no-persistence default.
@@ -141,35 +138,39 @@ type ParsedStdout = Readonly<{
 export async function runClaude(config: RunConfig): Promise<RunResult> {
   const environment = workerEnvironment(process.env);
   const marker = join(stateDir(), "claude-credits-unavailable");
-  const { credential, credential_source } =
-    claudeCredentialDetails(environment);
-  const start = performance.now();
+  const details =
+    config.route === "claude-api"
+      ? claudeCredentialDetails(environment)
+      : { credential: "subscription" as const, credential_source: undefined };
+  if (config.route !== "claude-api") {
+    delete environment.ANTHROPIC_API_KEY;
+    delete environment.ANTHROPIC_AUTH_TOKEN;
+  }
+  if (config.route === "claude-api" && details.credential !== "api_key")
+    return {
+      exitCode: 75,
+      timedOut: false,
+      stdout: "",
+      stderr: "claude-api key unavailable",
+      claude: undefined,
+      parseError: undefined,
+      capacityCause: "credential_unavailable",
+    };
   const first = await runClaudeAttempt(
     config,
     environment,
-    credential,
-    credential_source,
+    details.credential,
+    details.credential_source,
   );
   if (
-    first.creditsUnavailable !== true ||
-    credential !== "api_key" ||
-    first.timedOut
-  )
-    return first;
-  mkdirSync(dirname(marker), { recursive: true });
-  writeFileSync(marker, "credits unavailable\n");
-  // Default policy: the failure ends this attempt as capacity (cause credits_unavailable) and the
-  // route loop moves the run to another row; the Claude subscription is never spent unasked.
-  if (config.onCreditsUnavailable === "stop") return first;
-  delete environment.ANTHROPIC_API_KEY;
-  delete environment.ANTHROPIC_AUTH_TOKEN;
-  const remaining = config.timeoutMs - (performance.now() - start);
-  if (remaining <= 0) return { ...first, timedOut: true, exitCode: 124 };
-  return runClaudeAttempt(
-    { ...config, timeoutMs: remaining },
-    environment,
-    "subscription",
-  );
+    first.creditsUnavailable === true &&
+    details.credential === "api_key" &&
+    !first.timedOut
+  ) {
+    mkdirSync(dirname(marker), { recursive: true });
+    writeFileSync(marker, "credits unavailable\n");
+  }
+  return first;
 }
 
 async function runClaudeAttempt(
@@ -569,7 +570,7 @@ async function configFromCli(): Promise<Result<RunConfig, Error>> {
         priceIn: String,
         priceCachedIn: String,
         priceOut: String,
-        onCreditsUnavailable: String,
+        route: String,
         resume: nonEmptyString("--resume"),
         persistSession: Boolean,
         safeMode: Boolean,
@@ -631,11 +632,9 @@ async function configFromCli(): Promise<Result<RunConfig, Error>> {
       : positiveNumber(Number(values.maxBudgetUsd), "--max-budget-usd");
   if (maxBudgetResult !== undefined && maxBudgetResult.isErr())
     return err(maxBudgetResult.error);
-  const onCredits = values.onCreditsUnavailable ?? "stop";
-  if (onCredits !== "stop" && onCredits !== "subscription")
-    return err(
-      new Error("--on-credits-unavailable must be stop or subscription"),
-    );
+  const route = values.route;
+  if (route !== "claude-api" && route !== "claude-session")
+    return err(new Error("invalid Claude route"));
   const jsonSchemaFile = values.jsonSchemaFile;
   const jsonSchema =
     jsonSchemaFile === undefined
@@ -674,7 +673,7 @@ async function configFromCli(): Promise<Result<RunConfig, Error>> {
       ? {}
       : { priceCachedIn: priceCachedIn.value }),
     ...(priceOut.value === undefined ? {} : { priceOut: priceOut.value }),
-    onCreditsUnavailable: onCredits,
+    route,
     ...(values.resume === undefined ? {} : { resume: values.resume }),
     persistSession: values.persistSession ?? false,
     claudeBin,

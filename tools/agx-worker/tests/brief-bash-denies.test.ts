@@ -19,7 +19,7 @@ refuted_by = "a workspace denying git yields a brief without git"
 body
 `;
 
-const brief = (cwd: string, route: "claude" | "codex"): string => {
+const brief = (cwd: string, route: "claude-session" | "codex"): string => {
   const parsed = parseNextTicket(source);
   if (!parsed.success) return expect.unreachable(parsed.reason);
   return renderPromise(
@@ -63,7 +63,7 @@ const writeSettings = (file: string, deny: string[]): void => {
 
 test("a workspace that denies Bash(git:*) gets a brief line naming git", () => {
   writeSettings(join(workspace, ".claude", "settings.json"), ["Bash(git:*)"]);
-  const text = brief(workspace, "claude");
+  const text = brief(workspace, "claude-session");
   const line = denyLine(text);
   expect(line).toBeDefined();
   expect(line).toContain("git *");
@@ -74,13 +74,13 @@ test("with no deny rules the brief has no Bash denies line", () => {
     join(workspace, ".claude", "settings.json"),
     JSON.stringify({ permissions: { allow: ["Bash(ls:*)"] } }),
   );
-  expect(denyLine(brief(workspace, "claude"))).toBeUndefined();
-  expect(brief(workspace, "claude")).not.toContain("Bash denies");
+  expect(denyLine(brief(workspace, "claude-session"))).toBeUndefined();
+  expect(brief(workspace, "claude-session")).not.toContain("Bash denies");
 });
 
 test("a missing or malformed settings file adds no line", () => {
   writeFileSync(join(workspace, ".claude", "settings.json"), "{ not json");
-  expect(denyLine(brief(workspace, "claude"))).toBeUndefined();
+  expect(denyLine(brief(workspace, "claude-session"))).toBeUndefined();
 });
 
 test("user settings and local settings deny rules are inherited and deduplicated", () => {
@@ -91,7 +91,7 @@ test("user settings and local settings deny rules are inherited and deduplicated
   writeSettings(join(workspace, ".claude", "settings.local.json"), [
     "Bash(git:*)",
   ]);
-  const line = denyLine(brief(workspace, "claude"));
+  const line = denyLine(brief(workspace, "claude-session"));
   expect(line).toBeDefined();
   expect(line).toContain("git *, rm *");
   expect(line?.split("git *").length).toBe(2);
@@ -99,7 +99,7 @@ test("user settings and local settings deny rules are inherited and deduplicated
 
 test("non-Bash deny rules are not named", () => {
   writeSettings(join(workspace, ".claude", "settings.json"), ["Read(./.env)"]);
-  expect(denyLine(brief(workspace, "claude"))).toBeUndefined();
+  expect(denyLine(brief(workspace, "claude-session"))).toBeUndefined();
 });
 
 test("codex briefs get no Bash denies line", () => {

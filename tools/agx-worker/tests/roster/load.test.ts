@@ -99,10 +99,13 @@ describe("roster loader", () => {
   test("a user allow of claude loads without any default", async () => {
     const example = await readFile(examplePath, "utf8");
     const result = await withPolicy(
-      example.replace('allow = ["codex"]', 'allow = ["claude"]'),
+      example.replace(
+        'allow = ["codex", "claude-session"]',
+        'allow = ["claude-session"]',
+      ),
     );
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.value.auto.routes).toEqual(["claude"]);
+    if (result.ok) expect(result.value.auto.routes).toEqual(["claude-session"]);
   });
 
   test("excluding a row removes it without a default to repair", async () => {

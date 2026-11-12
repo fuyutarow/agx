@@ -17,7 +17,8 @@ export const exhaustionPolicy = (
   auto: AutoPolicy,
 ): Readonly<Record<RouteName, WindowExhaustion>> => ({
   codex: auto.on_window_exhausted?.codex ?? "continue",
-  claude: auto.on_window_exhausted?.claude ?? "continue",
+  "claude-session": auto.on_window_exhausted?.["claude-session"] ?? "continue",
+  "claude-api": "continue",
 });
 
 /** The active eligibility filter: the effective allowed routes. */

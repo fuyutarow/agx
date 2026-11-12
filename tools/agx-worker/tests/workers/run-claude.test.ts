@@ -65,6 +65,7 @@ test("file, inherited credentials, cooldown and one fallback stay confined to th
     safeMode: false,
     bare: false,
     claudeBin: bin,
+    route: "claude-session" as const,
   };
   const keyPath = join(root, ".config", "agx", "anthropic-api-key");
   mkdirSync(join(root, ".config", "agx"), { recursive: true });
@@ -234,7 +235,7 @@ test("a Claude result event saying the credit balance is too low ends the attemp
     safeMode: false,
     bare: false,
     claudeBin: bin,
-    onCreditsUnavailable: "stop",
+    route: "claude-api",
   });
   expect(readFileSync(log, "utf8").trim().split("\n")).toHaveLength(1);
   const relay = toRelay(run);

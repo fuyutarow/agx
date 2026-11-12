@@ -386,7 +386,7 @@ price_out = 50.00
 
 [[choice]]
 id = "haiku-low"
-route = "claude"
+route = "claude-session"
 model = "claude-haiku-5-5"
 effort = "low"
 score_as_of = "2026-10-08"
@@ -399,7 +399,7 @@ aa_time_per_task_s = 102.62 # AA (2026-11-03): https://artificialanalysis.ai/mod
 
 [[choice]]
 id = "haiku-medium"
-route = "claude"
+route = "claude-session"
 model = "claude-haiku-5-5"
 effort = "medium"
 score_as_of = "2026-10-08"
@@ -414,7 +414,7 @@ aa_time_per_task_s = 192.63 # AA (2026-11-03): https://artificialanalysis.ai/mod
 
 [[choice]]
 id = "haiku-high"
-route = "claude"
+route = "claude-session"
 model = "claude-haiku-5-5"
 effort = "high"
 score_as_of = "2026-10-08"
@@ -429,7 +429,7 @@ aa_time_per_task_s = 298.12 # AA (2026-11-03): https://artificialanalysis.ai/mod
 
 [[choice]]
 id = "haiku-xhigh"
-route = "claude"
+route = "claude-session"
 model = "claude-haiku-5-5"
 effort = "xhigh"
 score_as_of = "2026-10-08"
@@ -444,7 +444,7 @@ aa_time_per_task_s = 433.75 # AA (2026-11-03): https://artificialanalysis.ai/mod
 
 [[choice]]
 id = "haiku-max"
-route = "claude"
+route = "claude-session"
 model = "claude-haiku-5-5"
 effort = "max"
 score_as_of = "2026-10-08"
@@ -459,7 +459,7 @@ aa_time_per_task_s = 595.42 # AA (2026-11-03): https://artificialanalysis.ai/mod
 
 [[choice]]
 id = "sonnet-low"
-route = "claude"
+route = "claude-session"
 model = "claude-sonnet-5-5"
 effort = "low"
 score_as_of = "2026-10-08"
@@ -470,7 +470,7 @@ aa_time_per_task_s = 131.17 # AA (2026-11-03): https://artificialanalysis.ai/mod
 
 [[choice]]
 id = "sonnet-medium"
-route = "claude"
+route = "claude-session"
 model = "claude-sonnet-5-5"
 effort = "medium"
 score_as_of = "2026-10-08"
@@ -484,7 +484,7 @@ aa_time_per_task_s = 190.36 # AA (2026-11-03): https://artificialanalysis.ai/mod
 
 [[choice]]
 id = "sonnet-high"
-route = "claude"
+route = "claude-session"
 model = "claude-sonnet-5-5"
 effort = "high"
 score_as_of = "2026-10-08"
@@ -498,7 +498,7 @@ aa_time_per_task_s = 346.14 # AA (2026-11-03): https://artificialanalysis.ai/mod
 
 [[choice]]
 id = "sonnet-xhigh"
-route = "claude"
+route = "claude-session"
 model = "claude-sonnet-5-5"
 effort = "xhigh"
 score_as_of = "2026-10-08"
@@ -509,7 +509,7 @@ aa_time_per_task_s = 725.6 # AA (2026-11-03): https://artificialanalysis.ai/mode
 
 [[choice]]
 id = "sonnet-max"
-route = "claude"
+route = "claude-session"
 model = "claude-sonnet-5-5"
 effort = "max"
 score_as_of = "2026-10-08"
@@ -520,7 +520,7 @@ aa_time_per_task_s = 1262.87 # AA (2026-11-03): https://artificialanalysis.ai/mo
 
 [[choice]]
 id = "opus-low"
-route = "claude"
+route = "claude-session"
 model = "claude-opus-5-5"
 effort = "low"
 score_as_of = "2026-10-08"
@@ -530,7 +530,7 @@ price_out = 20.00
 
 [[choice]]
 id = "opus-medium"
-route = "claude"
+route = "claude-session"
 model = "claude-opus-5-5"
 effort = "medium"
 score_as_of = "2026-10-08"
@@ -542,7 +542,7 @@ price_out = 20.00
 
 [[choice]]
 id = "opus-high"
-route = "claude"
+route = "claude-session"
 model = "claude-opus-5-5"
 effort = "high"
 score_as_of = "2026-10-08"
@@ -552,7 +552,7 @@ price_out = 20.00
 
 [[choice]]
 id = "opus-xhigh"
-route = "claude"
+route = "claude-session"
 model = "claude-opus-5-5"
 effort = "xhigh"
 score_as_of = "2026-10-08"
@@ -562,7 +562,7 @@ price_out = 20.00
 
 [[choice]]
 id = "opus-max"
-route = "claude"
+route = "claude-session"
 model = "claude-opus-5-5"
 effort = "max"
 score_as_of = "2026-10-08"
@@ -572,7 +572,7 @@ price_out = 20.00
 
 [[choice]]
 id = "fable-low"
-route = "claude"
+route = "claude-session"
 model = "claude-fable-5-1"
 effort = "low"
 score_as_of = "2026-10-08"
@@ -582,7 +582,7 @@ price_out = 50.00
 
 [[choice]]
 id = "fable-medium"
-route = "claude"
+route = "claude-session"
 model = "claude-fable-5-1"
 effort = "medium"
 score_as_of = "2026-10-08"
@@ -592,7 +592,7 @@ price_out = 50.00
 
 [[choice]]
 id = "fable-high"
-route = "claude"
+route = "claude-session"
 model = "claude-fable-5-1"
 effort = "high"
 score_as_of = "2026-10-08"
@@ -602,7 +602,7 @@ price_out = 50.00
 
 [[choice]]
 id = "fable-xhigh"
-route = "claude"
+route = "claude-session"
 model = "claude-fable-5-1"
 effort = "xhigh"
 score_as_of = "2026-10-08"
@@ -612,7 +612,7 @@ price_out = 50.00
 
 [[choice]]
 id = "fable-max"
-route = "claude"
+route = "claude-session"
 model = "claude-fable-5-1"
 effort = "max"
 score_as_of = "2026-10-08"

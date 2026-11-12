@@ -264,14 +264,12 @@ routing with exit 2, rule/quoted-field/fix diagnostics and a hash-bearing refusa
 record. Use `agx worker check TICKET --json` for the violation list. See the
 [model-free intake contract](contract.md#model-free-ticket-intake).
 
-Claude workers resolve `ANTHROPIC_API_KEY` from the environment, then `fnox get
+The `claude-api` route resolves `ANTHROPIC_API_KEY` from the environment, then `fnox get
 ANTHROPIC_API_KEY`, then `~/.config/agx/anthropic-api-key` (a regular file with
 mode 0600). The lookup runs inside the worker as well as routing. If API credits
 are unavailable, the attempt ends as outcome `capacity` with cause
 `credits_unavailable`, a 24-hour marker is written, and the run continues on the
-next eligible row (claude rows stay out of routing while the marker is fresh; the
-routing audit names the filter `claude credits unavailable`). The Claude
-subscription is not used unasked: policy `claude_run.on_credits_unavailable`
-defaults to `stop`; `subscription` restores the in-process retry on the
-subscription (recording that credential) and keeps claude rows in routing. Run
-records expose the credential and, for API credentials, its source, never the key.
+next eligible route. Only `claude-api` is filtered while the marker is fresh. The
+`claude-session` route strips Anthropic credentials and never resolves a key. A complete
+explicit policy is required; see `src/roster/policy.example.toml`.
+Run records expose the credential and, for API credentials, its source, never the key.

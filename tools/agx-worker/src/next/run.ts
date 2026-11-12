@@ -209,7 +209,7 @@ const ackLines = (
   routeName: string | undefined,
   result: LookupOutcome<string> | undefined,
 ): string[] => {
-  if (routeName === "claude") return [];
+  if (routeName !== "codex") return [];
   if (result?.kind !== "accepted")
     return ["No completion ACK: the run-end notice reports the end."];
   return [
@@ -253,7 +253,7 @@ export const renderPromise = (
       `outcome: ${ticket.outcome}`,
       `writes: ${JSON.stringify(ticket.writes.map((glob) => resolve(cwd, glob)))}`,
       ...(ticket.verify.length === 0 ? [] : [verifyLine(ticket.verify)]),
-      ...(routeName === "claude" ? claudeBashDenyLines(cwd) : []),
+      ...(routeName !== "codex" ? claudeBashDenyLines(cwd) : []),
       `Sandbox mode: ${sandbox}${sandbox === "none" ? " (unsandboxed)" : ""}.`,
       ...(
         [
@@ -644,11 +644,6 @@ async function runUnguarded(flags: Flags): Promise<number> {
         } satisfies CapacityRetryRouteResult);
   if (deadline.aborted)
     return fatal("ticket time box expired before worker startup", 124);
-  // The same load the route call used; routing already succeeded, so a failure here keeps the safe default.
-  const loadedPolicy = await loadRoster({});
-  const onCreditsUnavailable = loadedPolicy.ok
-    ? loadedPolicy.value.claude_run.on_credits_unavailable
-    : "stop";
   if (selectedRoute.kind === "exhausted")
     return fatal("no roster row satisfies the ticket's requirements", 2);
   if (selectedRoute.kind === "refused") {
@@ -678,9 +673,13 @@ async function runUnguarded(flags: Flags): Promise<number> {
     );
     return fatal(selectedRoute.message, selectedRoute.exitCode);
   }
+  const loadedPolicy = await loadRoster({ repoRoot: cwd });
+  if (!loadedPolicy.ok)
+    return fatal(`cannot read dispatch roster: ${loadedPolicy.error}`, 2);
   const row = selectedRoute.row;
   let activeRow = row;
   const attemptedRows = [row.id];
+  const attemptedCandidates = [`${row.route}:${row.id}`];
   let claudeRouteRan = false;
   const id = binding?.id ?? randomUUID();
   // Reclaim only recorded terminal runs, including owners killed after recording the end.
@@ -1062,11 +1061,11 @@ async function runUnguarded(flags: Flags): Promise<number> {
         : []),
       ...(claudeSettings === undefined ? [] : ["--settings", claudeSettings]),
       "--max-turns",
-      "60",
+      String(loadedPolicy.value.claude_run.max_turns),
       "--max-budget-usd",
-      "2",
-      "--on-credits-unavailable",
-      onCreditsUnavailable,
+      String(loadedPolicy.value.claude_run.max_budget_usd),
+      "--route",
+      activeRow.route,
       "--timeout-ms",
       String((ticket.timeout_s ?? 600) * 1000),
       "--progress-file",
@@ -1078,7 +1077,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
     ];
   };
   const before = workspaceSnapshot(cwd);
-  if (activeRow.route === "claude") claudeRouteRan = true;
+  if (activeRow.route !== "codex") claudeRouteRan = true;
   const suiteDirectory = ownSuiteDirectory(process.execPath, Bun.main);
   const baseEnv: NodeJS.ProcessEnv = withSuitePath(
     { ...environment, ...temp.env },
@@ -1370,7 +1369,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
       routing.brief,
       routing.capabilities,
       routing.timeoutS,
-      [...routing.maskedRows, ...attemptedRows],
+      [...routing.maskedRows, ...attemptedCandidates],
       {},
       {
         path: resolve(path),
@@ -1410,6 +1409,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
       latestVendorSession ?? vendorSessionFromProgress() ?? undefined;
     activeRow = next.row;
     attemptedRows.push(activeRow.id);
+    attemptedCandidates.push(`${activeRow.route}:${activeRow.id}`);
     if (briefIsOriginal && previousRow.route !== activeRow.route)
       writeFileSync(
         workerBrief,
@@ -1426,7 +1426,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
           ),
         ),
       );
-    if (activeRow.route === "claude") claudeRouteRan = true;
+    if (activeRow.route !== "codex") claudeRouteRan = true;
     currentResumeSession =
       previousRow.route === activeRow.route ? previousSession : undefined;
     if (currentResumeSession === undefined) latestVendorSession = null;

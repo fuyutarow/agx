@@ -52,7 +52,10 @@ async function fixture(tmpRoot?: (root: string) => string) {
     readFileSync(
       new URL("../src/roster/policy.example.toml", import.meta.url).pathname,
       "utf8",
-    ).replace('allow = ["codex"]', 'allow = ["claude"]'),
+    ).replace(
+      'allow = ["codex", "claude-session"]',
+      'allow = ["claude-session"]',
+    ),
   );
   const worker = join(root, "fake-claude-worker.ts");
   writeFileSync(
@@ -135,7 +138,7 @@ test("a read-only claude dispatch starts with a run dir and plan permission, or 
     return;
   }
   expect(existsSync(join(state, "runs", binding.id))).toBe(true);
-  expect(run?.route).toBe("claude");
+  expect(run?.route).toBe("claude-session");
   expect(run?.sandbox).toBe("read-only");
   const argv = readFileSync(join(state, "..", "argv.log"), "utf8");
   expect(argv).toContain('"--internal-claude"');

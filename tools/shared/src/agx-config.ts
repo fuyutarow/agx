@@ -70,7 +70,12 @@ const LocalWorkspaceConfig = z.strictObject({
 /** Repository route override; the worker merges it over the user policy per key. */
 const RepoRouteConfig = z.strictObject({
   allow: z
-    .array(z.enum(["codex", "claude"]))
+    .array(
+      z.enum(["codex", "claude-api", "claude-session"], {
+        error:
+          'route "claude" was split: write "claude-api" or "claude-session"',
+      }),
+    )
     .min(1)
     .optional(),
   // Retired 2026-11-03: agx never substitutes a row when Jev cannot route.
@@ -468,7 +473,12 @@ export async function listAgxRepos(): Promise<
     if (!raw.ok)
       return failure(`${path}: invalid TOML: ${errorMessage(raw.error)}`);
     const parsed = LocalConfig.safeParse(raw.value);
-    if (!parsed.success) return failure(`${path}: ${parsed.error.message}`);
+    if (!parsed.success) {
+      const split = parsed.error.issues.find((issue) =>
+        issue.message.startsWith('route "claude" was split'),
+      );
+      return failure(`${path}: ${split?.message ?? parsed.error.message}`);
+    }
     if (repos.some((repo) => repo.root === parsed.data.root))
       return failure(
         `${directory}: two files claim root ${parsed.data.root}; keep one repository override`,

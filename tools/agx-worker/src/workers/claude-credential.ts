@@ -75,11 +75,6 @@ export function claudeCredentialDetails(environment: NodeJS.ProcessEnv): {
   credential: "api_key" | "subscription";
   credential_source?: CredentialSource;
 } {
-  if (creditsMarkerStatus().fresh) {
-    delete environment.ANTHROPIC_API_KEY;
-    delete environment.ANTHROPIC_AUTH_TOKEN;
-    return { credential: "subscription" };
-  }
   const key = resolveSecret(
     "ANTHROPIC_API_KEY",
     environment,

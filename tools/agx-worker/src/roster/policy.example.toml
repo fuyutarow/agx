@@ -1,12 +1,10 @@
-# Every key below is optional: `schema = 1` alone is a valid policy, and with no file at
-# ~/.config/agx/agx.toml agx routes on shipped defaults (see contract/config.md). Name only
-# the values you change. Shipped defaults equal this file except: route.allow (omitted means
-# both routes) and pick_temperature (default 0, argmax; shown as 0.5 here).
+# Every value is required. Choose the routes and exhaustion behavior for your account.
+# This example uses session billing; adding claude-api explicitly enables prepaid API use.
 schema = 1
 
 [route]
-allow = ["codex"]
-on_window_exhausted = { codex = "continue", claude = "stop" }
+allow = ["codex", "claude-session"]
+on_window_exhausted = { codex = "continue", "claude-session" = "stop" }
 exclude = []
 max_task_chars = 6000
 timeout_ms = 20000
@@ -20,5 +18,4 @@ model = "jev-latest"
 [claude_run]
 max_budget_usd = 2.0
 max_turns = 60
-on_credits_unavailable = "stop"
 reason = "A worker task here cost 0.05-0.20 USD on luna; 20x is 1-4 USD, so 2 USD caps a run near the median at claude prices and turns an endless loop into a bounded failure."

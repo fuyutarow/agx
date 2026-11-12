@@ -79,10 +79,7 @@ async function isolateState() {
     "utf8",
   );
   process.env.AGX_CONFIG = join(root, "roster.toml");
-  await writeFile(
-    process.env.AGX_CONFIG,
-    roster.replace(/^allow = .*\n/mu, ""),
-  );
+  await writeFile(process.env.AGX_CONFIG, roster);
   process.env.HOME = home;
   process.env.AGX_STATE_DIR = join(root, "state");
   return { root, home };
@@ -316,8 +313,8 @@ describe("capability constrained routing", () => {
         await writeFile(
           path,
           (await readFile(path, "utf8")).replace(
-            "[route]",
-            '[route]\nallow = ["codex"]',
+            /^allow = .*$/mu,
+            'allow = ["codex"]',
           ),
         );
         const server = startServer("localized", probabilities);
@@ -359,7 +356,7 @@ describe("capability constrained routing", () => {
           configPath,
           routes === undefined
             ? original
-            : original.replace("[route]", `[route]\nallow = ${routes}`),
+            : original.replace(/^allow = .*$/mu, `allow = ${routes}`),
         );
         const child = Bun.spawn(
           [
@@ -391,7 +388,7 @@ describe("capability constrained routing", () => {
         expect(stderr).toBe("");
         expect(exit).toBe(0);
         expect(stdout).toContain(
-          `routes=${routes ?? JSON.stringify(["claude", "codex"])}`,
+          `routes=${routes ?? JSON.stringify(["codex", "claude-session"])}`,
         );
       }),
     );
@@ -764,8 +761,8 @@ test("combined candidate rejects mixed Sol generations before Jev, even outside 
   await writeFile(
     path,
     (await readFile(path, "utf8")).replace(
-      "[route]",
-      '[route]\nallow = ["codex"]',
+      /^allow = .*$/mu,
+      'allow = ["codex"]',
     ),
   );
   const catalogPath = join(root, "catalog.toml");
@@ -773,7 +770,7 @@ test("combined candidate rejects mixed Sol generations before Jev, even outside 
     catalogPath,
     (await readFile(catalogPath, "utf8")).replace(
       'id = "sol-low"\nroute = "codex"\nmodel = "gpt-6.1-sol"',
-      'id = "sol-low"\nroute = "claude"\nmodel = "gpt-6.0-sol"',
+      'id = "sol-low"\nroute = "claude-session"\nmodel = "gpt-6.0-sol"',
     ),
   );
   const server = startServer("localized");
@@ -994,7 +991,7 @@ test("a time box no candidate fits is refused before Jev is asked", async () => 
   const server = startServer("localized");
   const { message, event } = await expectRefusal("tiny time box fixture", 1);
   expect(message).toStartWith(
-    "route refused: no candidate in the 1 s time box among allowed routes [claude, codex]; rows without a published duration: ",
+    "route refused: no candidate in the 1 s time box among allowed routes [codex, claude-session]; rows without a published duration: ",
   );
   expect(event?.source).toBe("refused-no-row-in-time-box");
   expect(server.calls()).toBe(0);
@@ -1061,7 +1058,7 @@ test("every shipped Jev option is readable and keeps its row measurements", asyn
 
   expect(texts).toHaveLength(rows.length);
   const quantitativeCriterion =
-    /^Route (?:codex|claude)\. (?:(?:AA|TB4|SciCode|CodingAgent) \d+(?:\.\d+)?%? \(Artificial Analysis, \d{4}-\d{2}-\d{2}\)(?:; (?:AA|TB4|SciCode|CodingAgent) \d+(?:\.\d+)?%? \(Artificial Analysis, \d{4}-\d{2}-\d{2}\))*|no published scores)\. Price (?:\$\d+(?:\.\d+)?|—)\/(?:\$\d+(?:\.\d+)?|—)\/(?:\$\d+(?:\.\d+)?|—) per 1M tokens in\/cache\/out(?: \(per-token price only\))?\.(?: Cost to run AA index: \$\d+(?:\.\d+)? \(\d+(?:\.\d+)?M tokens, AA \d{4}-\d{2}-\d{2}\)\.)? Multiple (?:\d+(?:\.\d+)?|unknown)x cheapest costed row\.$/u;
+    /^Route (?:codex|claude-session|claude-api)\. (?:(?:AA|TB4|SciCode|CodingAgent) \d+(?:\.\d+)?%? \(Artificial Analysis, \d{4}-\d{2}-\d{2}\)(?:; (?:AA|TB4|SciCode|CodingAgent) \d+(?:\.\d+)?%? \(Artificial Analysis, \d{4}-\d{2}-\d{2}\))*|no published scores)\. Price (?:\$\d+(?:\.\d+)?|—)\/(?:\$\d+(?:\.\d+)?|—)\/(?:\$\d+(?:\.\d+)?|—) per 1M tokens in\/cache\/out(?: \(per-token price only\))?\.(?: Cost to run AA index: \$\d+(?:\.\d+)? \(\d+(?:\.\d+)?M tokens, AA \d{4}-\d{2}-\d{2}\)\.)? Multiple (?:\d+(?:\.\d+)?|unknown)x cheapest costed row\.$/u;
   for (const text of texts) {
     expect(text).toMatch(quantitativeCriterion);
     expect(text).not.toMatch(

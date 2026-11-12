@@ -14,7 +14,7 @@ const RoutingEvent = z.object({
   at: z.iso.datetime({ offset: true }),
   host: z.string().min(1),
   row: z.string().nullable(),
-  route: z.enum(["claude", "codex"]).nullable(),
+  route: z.enum(["claude-api", "claude-session", "codex"]).nullable(),
   source: z.string(),
   audit: z.record(z.string(), z.unknown()).optional(),
   outcome: z.string().optional(),
@@ -32,7 +32,7 @@ const RoutingRefusal = z.object({
 
 /** Private owner journal: capture selections even when no worker is subsequently started. */
 export function recordRoutingPick(
-  row: { id: string; route: "claude" | "codex" } | null,
+  row: { id: string; route: "claude-api" | "claude-session" | "codex" } | null,
   source: string,
   audit?: Record<string, unknown>,
   outcome = "selected",

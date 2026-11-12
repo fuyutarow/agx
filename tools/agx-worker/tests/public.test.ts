@@ -10,7 +10,10 @@ import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 const ENTRY = fileURLToPath(new URL("../src/next/cli.ts", import.meta.url));
 const FullRosterView = jsonOf(z.looseObject({ objective: z.string() }));
 const SelectedRow = jsonOf(
-  z.looseObject({ id: z.string(), route: z.enum(["codex", "claude"]) }),
+  z.looseObject({
+    id: z.string(),
+    route: z.enum(["codex", "claude-session", "claude-api"]),
+  }),
 );
 
 async function invoke(...args: string[]) {

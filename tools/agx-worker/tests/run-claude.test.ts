@@ -110,6 +110,7 @@ describe("tools/agx dispatchner", () => {
         safeMode: true,
         bare: false,
         claudeBin: fixture,
+        route: "claude-session" as const,
       });
       expect(run.exitCode).toBe(0);
       expect(readFileSync(join(target, "fake-claude-stdin.log"), "utf8")).toBe(
@@ -143,6 +144,7 @@ describe("tools/agx dispatchner", () => {
         safeMode: true,
         bare: false,
         claudeBin: fixture,
+        route: "claude-session" as const,
         settings,
         allowedTools: "Bash",
       });
@@ -193,6 +195,7 @@ describe("tools/agx dispatchner", () => {
         safeMode: true,
         bare: false,
         claudeBin: fixture,
+        route: "claude-session" as const,
       }),
     );
 
@@ -213,6 +216,7 @@ describe("tools/agx dispatchner", () => {
         safeMode: true,
         bare: false,
         claudeBin: fixture,
+        route: "claude-session" as const,
       }),
     );
 
@@ -281,6 +285,7 @@ describe("tools/agx dispatchner: --progress-file", () => {
         safeMode: true,
         bare: false,
         claudeBin: fixture,
+        route: "claude-session" as const,
         progressFile,
       }),
     );
@@ -320,6 +325,7 @@ describe("tools/agx dispatchner: session persistence and --resume", () => {
       safeMode: true,
       bare: false,
       claudeBin: fixture,
+      route: "claude-session" as const,
       ...extra,
     });
     expect(run.exitCode).toBe(0);
@@ -362,6 +368,7 @@ describe("tools/agx dispatchner: session persistence and --resume", () => {
         safeMode: true,
         bare: false,
         claudeBin: fixture,
+        route: "claude-session" as const,
       }),
     );
     expect(run.exitCode).toBe(0);

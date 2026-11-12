@@ -208,7 +208,7 @@ refuted_by = "unwritable path"
   );
   expect(parsed.success).toBe(true);
   if (!parsed.success) return;
-  for (const route of ["codex", "claude"]) {
+  for (const route of ["codex", "claude-session"]) {
     const brief = renderPromise(
       parsed.ticket,
       "/tmp/workspace",

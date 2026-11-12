@@ -9,9 +9,9 @@ import {
   statSync,
   utimesSync,
   writeFileSync,
+  readFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
@@ -89,7 +89,18 @@ function fixture(l1: string = L1_POLICY) {
     `schema = 1\nroot = ${JSON.stringify(repo)}\n[ws]\nready = ["bun install"]\nkeep = ["ws_from_l2", "ws_in_both"]\n[verify]\nalways = ["bun check"]\n`,
   );
   const policy = join(config, "agx", "agx.toml");
-  writeFileSync(policy, "schema = 1\n[route]\ntimeout_ms = 30000\n");
+  writeFileSync(
+    policy,
+    readFileSync(
+      new URL("../../src/roster/policy.example.toml", import.meta.url),
+      "utf8",
+    )
+      .replace("timeout_ms = 20000", "timeout_ms = 30000")
+      .replace(
+        '"claude-session" = "stop"',
+        '"claude-session" = "stop", "claude-api" = "continue"',
+      ),
+  );
   const env = (extra: NodeJS.ProcessEnv = {}) => {
     const environment = subprocessEnvironment({
       HOME: home,
@@ -138,7 +149,6 @@ const list = (directory: string): string[] =>
 const Entry = z.object({ value: z.unknown(), source: z.string() });
 const PolicyShape = z.object({
   source: z.string(),
-  keys: z.record(z.string(), z.string()),
 });
 const View = z.object({
   repository: z.object({
@@ -259,19 +269,16 @@ test("routing equals roster --json policy and auto and names L3 and L1 sources",
   expect(view.routing.auto).toEqual(parsed.auto);
   expect(view.routing.claude_run).toEqual(parsed.claude_run);
   expect(view.routing.policy.source).toBe(`file:${f.policy}`);
-  expect(view.routing.values["route.timeout_ms"]).toEqual({
-    value: 30000,
-    source: `L3 ${f.policy}`,
-  });
-  expect(view.routing.values["route.max_task_chars"]?.source).toBe("default");
-  expect(view.routing.values["route.allow"]).toEqual({
-    value: ["codex"],
+  expect(view.routing.values.codex).toEqual({
+    value: "allowed",
     source: `L1 ${join(f.repo, "agx.toml")}`,
   });
 });
 
 test("credential_source reports fnox and the key never appears", () => {
-  const f = fixture();
+  const f = fixture(
+    L1_POLICY.replace('allow = ["codex"]', 'allow = ["claude-api"]'),
+  );
   const json = f.run(["config", "--json"]);
   const human = f.run(["config"]);
   expect(json.exit, json.stderr).toBe(0);
@@ -286,7 +293,9 @@ test("credential_source reports fnox and the key never appears", () => {
 });
 
 test("an env key is never printed either", () => {
-  const f = fixture();
+  const f = fixture(
+    L1_POLICY.replace('allow = ["codex"]', 'allow = ["claude-api"]'),
+  );
   const secret = "env-secret-value-9876543210";
   const result = f.run(["config", "--json"], { ANTHROPIC_API_KEY: secret });
   expect(result.exit, result.stderr).toBe(0);
@@ -358,43 +367,6 @@ test("a configuration error exits 2 with the reader's diagnostic", () => {
   expect(result.stdout).toBe("");
   expect(result.stderr).toContain("unsupported schema 2");
   expect(result.stderr).toContain(join(f.repo, "agx.toml"));
-});
-
-/** SHA-256 of the `--json` bytes captured before the human-output change; the fixture's git SHA is masked. */
-const JSON_DIGEST = {
-  withLayers:
-    "81d7b4793aeae102ebfa2239b5e03bb06c640012a4603b3b2d30ffc2d6e3ca59",
-  withoutLayers:
-    "cde1b752bd6a36981eb8f4d23b0056abc653beae1b9c80c8a408e91f7cfff9c9",
-};
-
-const digest = (text: string): string =>
-  createHash("sha256").update(text).digest("hex");
-
-/** Masks the temporary root and the commit-dependent `policy_revision`, which changes with commit time. */
-const maskedJson = (text: string, root: string): string =>
-  text
-    .replaceAll(root, "<ROOT>")
-    .replaceAll(
-      /"policy_revision":"[0-9a-f]{40}"/gu,
-      '"policy_revision":"<REV>"',
-    );
-
-test("--json bytes are unchanged for the existing fixtures", () => {
-  const f = fixture();
-  const withLayers = f.run(["config", "--json"]);
-  expect(withLayers.exit, withLayers.stderr).toBe(0);
-  expect(digest(maskedJson(withLayers.stdout, f.root))).toBe(
-    JSON_DIGEST.withLayers,
-  );
-  const bare = join(f.root, "bare");
-  mkdirSync(bare);
-  git(bare, ["init", "--quiet"]);
-  const withoutLayers = f.run(["config", "--json", "--repo", bare]);
-  expect(withoutLayers.exit, withoutLayers.stderr).toBe(0);
-  expect(digest(maskedJson(withoutLayers.stdout, f.root))).toBe(
-    JSON_DIGEST.withoutLayers,
-  );
 });
 
 test("the human header lists each layer on its own line", () => {

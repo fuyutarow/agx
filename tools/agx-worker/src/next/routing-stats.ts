@@ -83,7 +83,7 @@ export async function routingStats(
       const policy =
         roster === undefined ? undefined : exhaustionPolicy(roster.auto);
       const usage = local ? await readRouteUsage(endMs, policy) : undefined;
-      const enabled = (route: "codex" | "claude") =>
+      const enabled = (route: "codex" | "claude-api" | "claude-session") =>
         roster === undefined
           ? null
           : roster.choice.some((row) => row.route === route) &&
@@ -126,7 +126,18 @@ export async function routingStats(
         ).length,
         routes: {
           codex: capability(local, enabled("codex"), "codex", usage?.codex),
-          claude: capability(local, enabled("claude"), "claude", usage?.claude),
+          "claude-session": capability(
+            local,
+            enabled("claude-session"),
+            "claude",
+            usage?.["claude-session"],
+          ),
+          "claude-api": capability(
+            local,
+            enabled("claude-api"),
+            "claude",
+            usage?.["claude-api"],
+          ),
         },
         coverage: {
           status: "partial",

@@ -172,6 +172,7 @@ test("runClaude records the credential in the start record before spawning, neve
     safeMode: false,
     bare: false,
     claudeBin: claude,
+    route: "claude-session" as const,
   });
   expect(result.timedOut).toBe(true);
   const text = readFileSync(file, "utf8");

@@ -14,7 +14,7 @@ import {
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { exitWithError } from "./exit.ts";
 import {
-  claudeCredential,
+  claudeCredentialDetails,
   creditsMarkerStatus,
 } from "../workers/claude-credential.ts";
 import { workerEnvironment } from "../workers/environment.ts";
@@ -36,6 +36,8 @@ export const fitsPublishedTimeBox = (row: Choice, timeoutS: number): boolean =>
   row.aa_time_per_task_s !== undefined &&
   row.aa_time_per_task_s !== null &&
   row.aa_time_per_task_s <= timeoutS * PUBLISHED_TASK_DURATION_BUDGET_RATIO;
+
+const apiCovered = (row: Choice) => row.route === "claude-api";
 
 const compareNumber = (a: number, b: number): number => {
   if (a === b) return 0;
@@ -368,7 +370,13 @@ export async function route(
   let eligible = filter(roster.choice, "route not allowed", (row) =>
     roster.auto.routes.includes(row.route),
   );
-  eligible = filter(eligible, "masked", (row) => !maskedRows.includes(row.id));
+  eligible = filter(
+    eligible,
+    "masked",
+    (row) =>
+      !maskedRows.includes(row.id) &&
+      !maskedRows.includes(`${row.route}:${row.id}`),
+  );
   if (floor?.success === true) {
     eligible = filter(
       eligible,
@@ -397,23 +405,26 @@ export async function route(
     removed: [],
   });
   const usage = await readRouteUsage(undefined, exhaustionPolicy(roster.auto));
-  // A fresh credits marker means the Claude API credit ran out; under the default policy the
-  // Claude subscription (the coordinator's window) is not a substitute, so claude rows leave routing.
   const creditsMarker = creditsMarkerStatus();
-  const holdClaude =
-    roster.claude_run.on_credits_unavailable === "stop" && creditsMarker.fresh;
+  const apiAllowed = roster.auto.routes.includes("claude-api");
+  const apiKey =
+    apiAllowed &&
+    !creditsMarker.fresh &&
+    claudeCredentialDetails(workerEnvironment(process.env)).credential ===
+      "api_key";
   const creditsEligible = filter(
     eligible,
-    "claude credits unavailable",
-    (row) => !(holdClaude && row.route === "claude"),
-    () => ({
-      marker: creditsMarker.path,
-      expires_at: creditsMarker.expiresAt,
-      on_credits_unavailable: roster.claude_run.on_credits_unavailable,
-    }),
+    "claude-api credits unavailable",
+    (row) => row.route !== "claude-api" || !creditsMarker.fresh,
+    () => ({ marker: creditsMarker.path, expires_at: creditsMarker.expiresAt }),
+  );
+  const keyEligible = filter(
+    creditsEligible,
+    "claude-api key unavailable",
+    (row) => row.route !== "claude-api" || apiKey,
   );
   const availableCandidates = filter(
-    creditsEligible,
+    keyEligible,
     "route unavailable",
     (row) => usage[row.route].available,
     (row) => usage[row.route],
@@ -631,11 +642,9 @@ export async function route(
   const qualifying = candidates.filter(
     (row) => (row.tb4 ?? (bar === 0 ? 0 : Number.NEGATIVE_INFINITY)) >= bar,
   );
-  const creditAvailable =
-    claudeCredential(workerEnvironment(process.env)) === "api_key";
-  const covered = (row: Choice) => row.route === "claude" && creditAvailable;
-  const ordered = orderCandidates(candidates, requirementClass, covered);
-  audit.credit_covered = ordered.some((row) => covered(row));
+
+  const ordered = orderCandidates(candidates, requirementClass, apiCovered);
+  audit.credit_covered = ordered.some((row) => apiCovered(row));
   audit.ordered_candidate_ids = ordered.map((row) => row.id);
   const chosen = ordered[0];
   if (chosen === undefined)

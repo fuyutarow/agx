@@ -61,7 +61,7 @@ test("accepted directory address alone is used in Codex brief", async () => {
     "send_message to alice/coordinator@host",
   );
   expect(brief("codex", result)).toContain("address goes stale");
-  expect(brief("claude", result)).not.toContain("completion ACK");
+  expect(brief("claude-session", result)).not.toContain("completion ACK");
 });
 test("refused and unavailable lookups do not request ACK", async () => {
   fake('{"sessions":[]}');

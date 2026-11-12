@@ -2,6 +2,7 @@ schema = 1
 
 [route]
 allow = ["codex"]
+on_window_exhausted = { codex = "continue" }
 exclude = ["luna-low"]
 max_task_chars = 6000
 timeout_ms = 20000

@@ -8,13 +8,10 @@ import { resolveAgxConfigWithProvenance } from "../../../shared/src/agx-config.t
 
 import { generationExclusivityError } from "./generation.ts";
 import shippedCatalog from "./catalog.toml" with { type: "toml" };
-import {
-  POLICY_DEFAULTS,
-  POLICY_KEYS,
-  type PolicyKeySource,
-} from "./policy-defaults.ts";
 
-const RouteSchema = z.enum(["codex", "claude"]);
+const RouteSchema = z.enum(["codex", "claude-api", "claude-session"], {
+  error: 'route "claude" was split: write "claude-api" or "claude-session"',
+});
 const ChoiceSchema = z.strictObject({
   id: z.string().regex(/^[a-z]+[0-9]*-[a-z]+$/u),
   route: RouteSchema,
@@ -60,65 +57,56 @@ const CatalogSchema = z
     },
   );
 
-const JevEndpointPolicySchema = z.discriminatedUnion("api", [
-  z.strictObject({
-    api: z.literal("typesafe"),
-    url: z.url(),
-    model: z.string().min(1),
-  }),
-  z.strictObject({ api: z.literal("reseller"), url: z.url() }),
-]);
-
 const JevFileSchema = z.strictObject({
-  api: z.enum(["typesafe", "reseller"]).optional(),
-  url: z.url().optional(),
-  model: z.string().min(1).optional(),
+  api: z.enum(["typesafe", "reseller"]),
+  url: z.url(),
+  model: z.string().min(1),
 });
 
 const ExhaustionSchema = z.strictObject({
   codex: z.enum(["continue", "stop"]).optional(),
-  claude: z.enum(["continue", "stop"]).optional(),
+  "claude-session": z.enum(["continue", "stop"]).optional(),
+  "claude-api": z.enum(["continue", "stop"]).optional(),
+  claude: z
+    .never({
+      error: 'route "claude" was split: write "claude-api" or "claude-session"',
+    })
+    .optional(),
 });
-
-/** What a Claude API credit failure does: `stop` keeps the run off the Claude subscription, `subscription` retries there. */
-const CreditsUnavailableSchema = z.enum(["stop", "subscription"]);
 
 const ClaudeRunSchema = z.strictObject({
   max_budget_usd: z.number().gt(0),
   max_turns: z.number().int().positive(),
-  on_credits_unavailable: CreditsUnavailableSchema,
   reason: z.string().min(20),
 });
 
 /** The policy file: every key and table is optional except `schema`; omitted keys take shipped defaults. */
 const PolicySchema = z.strictObject({
   schema: z.literal(1),
-  route: z
-    .strictObject({
-      allow: z.array(RouteSchema).min(1).optional(),
-      on_window_exhausted: ExhaustionSchema.optional(),
-      // Retired 2026-11-03: a default row would be silently substituted when Jev cannot route.
-      default: z
-        .never({
-          error:
-            "route.default was removed: agx never substitutes a row when Jev cannot route; delete the key",
-        })
-        .optional(),
-      exclude: z.array(z.string()).optional(),
-      max_task_chars: z.number().int().positive().optional(),
-      timeout_ms: z.number().int().positive().optional(),
-      // Retired 2026-11-10: routing never enforced it, so a file naming it is rejected.
-      no_egress: z
-        .never({
-          error:
-            "route.no_egress was removed: routing never enforced it; delete the key",
-        })
-        .optional(),
-      pick_temperature: z.number().min(0).max(5).optional(),
-      jev: JevFileSchema.optional(),
-    })
-    .optional(),
-  claude_run: ClaudeRunSchema.partial().optional(),
+  route: z.strictObject({
+    allow: z.array(RouteSchema).min(1),
+    on_window_exhausted: ExhaustionSchema,
+    // Retired 2026-11-03: a default row would be silently substituted when Jev cannot route.
+    default: z
+      .never({
+        error:
+          "route.default was removed: agx never substitutes a row when Jev cannot route; delete the key",
+      })
+      .optional(),
+    exclude: z.array(z.string()),
+    max_task_chars: z.number().int().positive(),
+    timeout_ms: z.number().int().positive(),
+    // Retired 2026-11-10: routing never enforced it, so a file naming it is rejected.
+    no_egress: z
+      .never({
+        error:
+          "route.no_egress was removed: routing never enforced it; delete the key",
+      })
+      .optional(),
+    pick_temperature: z.number().min(0).max(5),
+    jev: JevFileSchema,
+  }),
+  claude_run: ClaudeRunSchema,
 });
 
 const AutoSchema = z.strictObject({
@@ -126,7 +114,14 @@ const AutoSchema = z.strictObject({
   on_window_exhausted: z
     .strictObject({
       codex: z.enum(["continue", "stop"]).optional(),
-      claude: z.enum(["continue", "stop"]).optional(),
+      "claude-session": z.enum(["continue", "stop"]).optional(),
+      "claude-api": z.enum(["continue", "stop"]).optional(),
+      claude: z
+        .never({
+          error:
+            'route "claude" was split: write "claude-api" or "claude-session"',
+        })
+        .optional(),
     })
     .optional(),
   max_task_chars: z.number().int().positive(),
@@ -176,7 +171,6 @@ export type RosterLoad =
       /** Where the policy came from and, per key, whether the file or the shipped default supplied it. */
       readonly policy: {
         readonly source: string;
-        readonly keys: Readonly<Record<string, PolicyKeySource>>;
       };
     }
   | { readonly ok: false; readonly error: string };
@@ -202,98 +196,28 @@ function policyLocation(selected: string | undefined): PolicyLocation {
   return { path: join(configHome, "agx", "agx.toml"), explicit: false };
 }
 
-const MissingFileSchema = z.object({ code: z.literal("ENOENT") });
-const isMissingFile = (error: unknown): boolean =>
-  MissingFileSchema.safeParse(error).success;
-
-/** A different api brings its own endpoint: shipped url and model belong to the typesafe shape. */
-function jevCandidate(fileJev: z.output<typeof JevFileSchema> | undefined) {
-  if (fileJev === undefined) return JevEndpointDefaults;
-  if (fileJev.api !== undefined && fileJev.api !== JevEndpointDefaults.api)
-    return fileJev;
-  return { ...JevEndpointDefaults, ...fileJev };
-}
-
 async function parseToml(path: string): Promise<unknown> {
   return Bun.TOML.parse(await readFile(path, "utf8"));
 }
 
-type FilePolicy = z.output<typeof PolicySchema>;
-
-const JevEndpointDefaults = POLICY_DEFAULTS.route.jev;
-
-type ResolvedPolicy = Readonly<{
-  schema: 1;
-  route: Readonly<{
-    allow: z.output<typeof RouteSchema>[] | undefined;
-    on_window_exhausted: z.output<typeof ExhaustionSchema>;
-    exclude: string[];
-    max_task_chars: number;
-    timeout_ms: number;
-    pick_temperature: number;
-    jev: z.output<typeof JevEndpointPolicySchema>;
-  }>;
-  claude_run: z.output<typeof ClaudeRunSchema>;
-}>;
-
-/** Overlays the file's keys on the shipped defaults and records each key's origin. */
-function resolvePolicy(
-  file: FilePolicy,
-):
-  | { ok: true; policy: ResolvedPolicy; keys: Record<string, PolicyKeySource> }
-  | { ok: false; error: string } {
-  const route = file.route ?? {};
-  const run = file.claude_run ?? {};
-  const fileJev = route.jev;
-  const exhausted = route.on_window_exhausted ?? {};
-  const jev = JevEndpointPolicySchema.safeParse(jevCandidate(fileJev));
-  if (!jev.success)
-    return { ok: false, error: `route.jev: ${jev.error.message}` };
-  const defaults = POLICY_DEFAULTS;
-  const policy: ResolvedPolicy = {
-    schema: 1,
-    route: {
-      allow: route.allow,
-      // Merged per vendor: a table naming one vendor keeps the shipped default for the other.
-      on_window_exhausted: {
-        codex: exhausted.codex ?? defaults.route.on_window_exhausted.codex,
-        claude: exhausted.claude ?? defaults.route.on_window_exhausted.claude,
-      },
-      exclude: route.exclude ?? [...defaults.route.exclude],
-      max_task_chars: route.max_task_chars ?? defaults.route.max_task_chars,
-      timeout_ms: route.timeout_ms ?? defaults.route.timeout_ms,
-      pick_temperature:
-        route.pick_temperature ?? defaults.route.pick_temperature,
-      jev: jev.data,
-    },
-    claude_run: {
-      max_budget_usd: run.max_budget_usd ?? defaults.claude_run.max_budget_usd,
-      max_turns: run.max_turns ?? defaults.claude_run.max_turns,
-      on_credits_unavailable:
-        run.on_credits_unavailable ??
-        defaults.claude_run.on_credits_unavailable,
-      reason: run.reason ?? defaults.claude_run.reason,
-    },
-  };
-  const present: Readonly<Record<(typeof POLICY_KEYS)[number], boolean>> = {
-    "route.allow": route.allow !== undefined,
-    "route.on_window_exhausted.codex": exhausted.codex !== undefined,
-    "route.on_window_exhausted.claude": exhausted.claude !== undefined,
-    "route.exclude": route.exclude !== undefined,
-    "route.max_task_chars": route.max_task_chars !== undefined,
-    "route.timeout_ms": route.timeout_ms !== undefined,
-    "route.pick_temperature": route.pick_temperature !== undefined,
-    "route.jev": fileJev !== undefined,
-    "claude_run.max_budget_usd": run.max_budget_usd !== undefined,
-    "claude_run.max_turns": run.max_turns !== undefined,
-    "claude_run.on_credits_unavailable":
-      run.on_credits_unavailable !== undefined,
-    "claude_run.reason": run.reason !== undefined,
-  };
-  const keys: Record<string, PolicyKeySource> = {};
-  for (const key of POLICY_KEYS) keys[key] = present[key] ? "file" : "default";
-  return { ok: true, policy, keys };
-}
+const EXAMPLES: Record<string, string> = {
+  route: "[route]",
+  "route.allow": 'allow = ["codex", "claude-session"]',
+  "route.on_window_exhausted":
+    'on_window_exhausted = { codex = "continue", "claude-session" = "stop" }',
+  "route.exclude": "exclude = []",
+  "route.max_task_chars": "max_task_chars = 6000",
+  "route.timeout_ms": "timeout_ms = 20000",
+  "route.pick_temperature": "pick_temperature = 0",
+  "route.jev": "[route.jev]",
+  "route.jev.api": 'api = "typesafe"',
+  "route.jev.url": 'url = "https://api.typesafe.ai/v1/systemone"',
+  "route.jev.model": 'model = "jev-latest"',
+  claude_run: "[claude_run]",
+  "claude_run.max_budget_usd": "max_budget_usd = 2.0",
+  "claude_run.max_turns": "max_turns = 60",
+  "claude_run.reason": 'reason = "Explain the budget choice here"',
+};
 
 /** Reads the shipped catalog and one user policy, returning the legacy roster shape. */
 export async function loadRoster(
@@ -307,25 +231,37 @@ export async function loadRoster(
     const location = policyLocation(options.policyPath);
     const policyPath = location.path;
     const policyRaw = await attempt(() => parseToml(policyPath));
-    // Only an absent file at the default location falls back to shipped defaults.
-    const useDefaults =
-      !policyRaw.ok && !location.explicit && isMissingFile(policyRaw.error);
-    if (!policyRaw.ok && !useDefaults)
+    if (!policyRaw.ok)
       return {
         ok: false,
-        error: `cannot read policy ${JSON.stringify(policyPath)}; see the distributed policy.example.toml: ${errorMessage(policyRaw.error).replaceAll(/[\r\n]+/gu, " ")}`,
+        error: `cannot read policy ${JSON.stringify(policyPath)}; see policy.example.toml: ${errorMessage(policyRaw.error).replaceAll(/[\r\n]+/gu, " ")}`,
       };
     const catalogResult = CatalogSchema.safeParse(catalogRaw);
     if (!catalogResult.success)
       return { ok: false, error: catalogResult.error.message };
-    const policyResult = PolicySchema.safeParse(
-      policyRaw.ok ? policyRaw.value : { schema: 1 },
-    );
-    if (!policyResult.success)
-      return { ok: false, error: policyResult.error.message };
-    const resolved = resolvePolicy(policyResult.data);
-    if (!resolved.ok) return { ok: false, error: resolved.error };
-
+    const policyResult = PolicySchema.safeParse(policyRaw.value);
+    if (!policyResult.success) {
+      const issue = policyResult.error.issues[0];
+      if (issue?.message.startsWith('route "claude" was split') === true)
+        return { ok: false, error: issue.message };
+      const key = issue?.path.join(".") ?? "policy";
+      const example = EXAMPLES[key];
+      return {
+        ok: false,
+        error:
+          example === undefined
+            ? policyResult.error.message
+            : `policy ${key}: ${issue?.message}; example: ${example}`,
+      };
+    }
+    const policy = policyResult.data;
+    for (const route of policy.route.allow) {
+      if (policy.route.on_window_exhausted[route] === undefined)
+        return {
+          ok: false,
+          error: `policy route.on_window_exhausted.${route} is required; example: on_window_exhausted = { "${route}" = "stop" }`,
+        };
+    }
     const repoResult = await resolveAgxConfigWithProvenance(
       options.repoRoot ?? process.cwd(),
     );
@@ -334,10 +270,15 @@ export async function loadRoster(
     const repoRoute = repoResult.value.repoRoute;
 
     const catalog = catalogResult.data;
-    const policy = resolved.policy;
     // A repository [route] replaces only the keys it declares; the rest stay user-global.
-    const allow = repoRoute?.allow ??
-      policy.route.allow ?? [...POLICY_DEFAULTS.route.allow];
+    const allow = repoRoute?.allow ?? policy.route.allow;
+    for (const route of allow) {
+      if (policy.route.on_window_exhausted[route] === undefined)
+        return {
+          ok: false,
+          error: `policy route.on_window_exhausted.${route} is required; example: on_window_exhausted = { "${route}" = "stop" }`,
+        };
+    }
     const ids = new Set(catalog.choice.map((row) => row.id));
     const unknownExcluded = policy.route.exclude.find((id) => !ids.has(id));
     if (unknownExcluded !== undefined) {
@@ -347,9 +288,13 @@ export async function loadRoster(
       };
     }
 
-    const choice = catalog.choice.filter(
-      (row) => !policy.route.exclude.includes(row.id),
-    );
+    const choice = catalog.choice
+      .filter((row) => !policy.route.exclude.includes(row.id))
+      .flatMap((row) =>
+        row.route === "claude-session"
+          ? [row, { ...row, route: "claude-api" as const }]
+          : [row],
+      );
     const value = {
       schema: catalog.schema,
       as_of: catalog.as_of,
@@ -364,7 +309,14 @@ export async function loadRoster(
         max_task_chars: policy.route.max_task_chars,
         timeout_ms: policy.route.timeout_ms,
         pick_temperature: policy.route.pick_temperature,
-        jev: { ...policy.route.jev, ...catalog.jev },
+        jev:
+          policy.route.jev.api === "typesafe"
+            ? { ...policy.route.jev, ...catalog.jev }
+            : {
+                api: "reseller" as const,
+                url: policy.route.jev.url,
+                ...catalog.jev,
+              },
       },
       claude_run: policy.claude_run,
       sources: catalog.sources,
@@ -373,7 +325,10 @@ export async function loadRoster(
     const rosterResult = RosterSchema.safeParse(value);
     if (!rosterResult.success)
       return { ok: false, error: rosterResult.error.message };
-    const generationError = generationExclusivityError(rosterResult.data);
+    const generationError = generationExclusivityError({
+      ...rosterResult.data,
+      choice: catalog.choice,
+    });
     if (generationError !== undefined)
       return { ok: false, error: generationError };
     return {
@@ -391,8 +346,7 @@ export async function loadRoster(
         excluded: policy.route.exclude,
       },
       policy: {
-        source: useDefaults ? "defaults" : `file:${policyPath}`,
-        keys: resolved.keys,
+        source: `file:${policyPath}`,
       },
     };
   }).then(

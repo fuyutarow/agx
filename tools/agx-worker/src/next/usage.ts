@@ -28,7 +28,8 @@ export type RouteUsageState = {
   source_reason?: string;
 };
 export type RouteUsage = Readonly<{
-  claude: RouteUsageState;
+  "claude-session": RouteUsageState;
+  "claude-api": RouteUsageState;
   codex: RouteUsageState;
 }>;
 
@@ -127,7 +128,8 @@ export function routeState(
  * `exhaustion` is the roster's per-route declaration; an exhausted window vetoes a route only when declared "stop".
  */
 const CONTINUE_ALL: Readonly<Record<RouteName, WindowExhaustion>> = {
-  claude: "continue",
+  "claude-session": "continue",
+  "claude-api": "continue",
   codex: "continue",
 };
 
@@ -150,11 +152,12 @@ export async function readRouteUsage(
           MAX_AGE_MS,
         );
   return {
-    claude: routeState(
+    "claude-api": routeState({}, {}, nowMs),
+    "claude-session": routeState(
       { "7d": claude?.["7d"], "5h": claude?.["5h"] },
       EMPTY_WINDOWS.claude,
       nowMs,
-      exhaustion.claude,
+      exhaustion["claude-session"],
     ),
     codex: {
       ...routeState(

@@ -47,20 +47,22 @@ describe("repository [route] override", () => {
   test("repo A with [route] yields the repo routes", async () => {
     const policyPath = await userPolicy();
     const repoRoot = await repoWith(
-      `schema = 1\n[route]\nallow = ["claude"]\n`,
+      `schema = 1\n[route]\nallow = ["claude-session"]\n`,
     );
     const loaded = await loadRoster({ catalogPath, policyPath, repoRoot });
     expect(loaded.ok).toBe(true);
     if (!loaded.ok) return;
-    expect(loaded.value.auto.routes).toEqual(["claude"]);
+    expect(loaded.value.auto.routes).toEqual(["claude-session"]);
     expect(Object.hasOwn(loaded.value, "default")).toBe(false);
-    expect(routeFilterLabel(loaded.value.auto)).toBe('routes=["claude"]');
+    expect(routeFilterLabel(loaded.value.auto)).toBe(
+      'routes=["claude-session"]',
+    );
   });
 
   test("keys the repo does not declare stay user-global", async () => {
     const policyPath = await userPolicy();
     const repoRoot = await repoWith(
-      `schema = 1\n[route]\nallow = ["claude"]\n`,
+      `schema = 1\n[route]\nallow = ["claude-session"]\n`,
     );
     const loaded = await loadRoster({ catalogPath, policyPath, repoRoot });
     const user = await loadRoster({
@@ -87,11 +89,13 @@ describe("repository [route] override", () => {
 
   test("the override of one repo does not leak into another", async () => {
     const policyPath = await userPolicy();
-    const repoA = await repoWith(`schema = 1\n[route]\nallow = ["claude"]\n`);
+    const repoA = await repoWith(
+      `schema = 1\n[route]\nallow = ["claude-session"]\n`,
+    );
     const repoB = await repoWith("schema = 1\n");
     const a = await loadRoster({ catalogPath, policyPath, repoRoot: repoA });
     const b = await loadRoster({ catalogPath, policyPath, repoRoot: repoB });
-    expect(a.ok && a.value.auto.routes).toEqual(["claude"]);
+    expect(a.ok && a.value.auto.routes).toEqual(["claude-session"]);
     expect(b.ok && b.value.auto.routes).toEqual(["codex"]);
   });
 

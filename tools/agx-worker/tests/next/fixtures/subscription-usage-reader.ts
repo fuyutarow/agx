@@ -8,14 +8,14 @@ if (home === undefined || !Number.isSafeInteger(nowMs)) {
 } else {
   const usage = await readRouteUsage(
     nowMs,
-    { claude: "stop", codex: "continue" },
+    { "claude-session": "stop", "claude-api": "continue", codex: "continue" },
     { HOME: home },
   );
   process.stdout.write(
     `${JSON.stringify({
-      status: usage.claude.usage_status,
-      exhausted: usage.claude.exhausted,
-      available: usage.claude.available,
+      status: usage["claude-session"].usage_status,
+      exhausted: usage["claude-session"].exhausted,
+      available: usage["claude-session"].available,
       codexSource: usage.codex.source_reason,
     })}\n`,
   );

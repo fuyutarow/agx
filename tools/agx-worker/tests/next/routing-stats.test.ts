@@ -50,7 +50,7 @@ const fixture = () => {
     join(root, "policy.toml"),
     readFileSync(policyPath, "utf8").replace(
       'allow = ["codex"]',
-      'allow = ["codex", "claude"]',
+      'allow = ["codex", "claude-session"]',
     ),
   );
   const env = {
@@ -144,7 +144,11 @@ const Report = jsonOf(
       codex_share: z.number().nullable(),
     }),
     fallback_count: z.number(),
-    routes: z.object({ codex: Route, claude: Route }),
+    routes: z.object({
+      codex: Route,
+      "claude-session": Route,
+      "claude-api": Route,
+    }),
     coverage: z.object({
       status: z.literal("partial"),
       history_complete: z.literal(false),
@@ -230,7 +234,7 @@ test("public CLI filters window and host, with Jev denominator excluding fallbac
     join(root, "state/routing.jsonl"),
     [
       event(1),
-      event(2, "claude"),
+      event(2, "claude-session"),
       event(25),
       event(-1),
       event(1, "codex", "other-host"),

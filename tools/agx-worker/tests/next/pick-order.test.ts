@@ -23,7 +23,7 @@ test("real roster picks are deterministic, credit-aware and cheapest within a cr
       [true, withCredit],
     ] as const) {
       const covered = (row: (typeof rows)[number]) =>
-        credit && row.route === "claude";
+        credit && row.route === "claude-session";
       const ordered = orderCandidates(rows, requirement, covered);
       expect(ordered[0]?.id).toBe(expected);
       expect(
@@ -51,11 +51,12 @@ test("expensive credit rows cannot overtake cheaper qualifying rows, including e
     const ordered = orderCandidates(
       loaded.catalogRows,
       requirement,
-      (row) => row.route === "claude",
+      (row) => row.route === "claude-session",
     );
-    const firstClaude = ordered.find((row) => row.route === "claude");
+    const firstClaude = ordered.find((row) => row.route === "claude-session");
     const costlyClaudeRows = ordered.filter(
-      (item) => /^(opus|fable)-/u.test(item.id) && item.route === "claude",
+      (item) =>
+        /^(opus|fable)-/u.test(item.id) && item.route === "claude-session",
     );
     const firstPrice =
       (firstClaude?.price_in ?? Infinity) +
@@ -75,7 +76,7 @@ test("expensive credit rows cannot overtake cheaper qualifying rows, including e
       orderCandidates(
         loaded.catalogRows.toReversed(),
         requirement,
-        (row) => row.route === "claude",
+        (row) => row.route === "claude-session",
       ).map((row) => row.id),
     ).toEqual(ordered.map((row) => row.id));
   }

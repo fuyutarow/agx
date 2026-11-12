@@ -9,7 +9,6 @@ import {
 } from "../../../shared/src/agx-config.ts";
 import { attempt, errorMessage } from "../../../shared/src/attempt.ts";
 import { loadRoster, type RosterLoad } from "../roster/index.ts";
-import { POLICY_KEYS } from "../roster/policy-defaults.ts";
 import { workerEnvironment } from "../workers/environment.ts";
 import {
   claudeCredentialDetails,
@@ -72,56 +71,32 @@ function repositorySection(config: ResolvedAgxConfigWithProvenance) {
   };
 }
 
-const keySource = (loaded: Loaded, key: string): string => {
-  const origin = loaded.policy.keys[key];
-  if (origin === "file")
-    return loaded.policy.source.startsWith("file:")
-      ? `L3 ${loaded.policy.source.slice(5)}`
-      : "L3";
-  return "default";
-};
-
-/** The user policy exactly as `roster --json` computes it, each key paired with its origin. */
 function routingSection(
   loaded: Loaded,
   config: ResolvedAgxConfigWithProvenance,
 ) {
-  const { auto, claude_run } = loaded.value;
-  const allowSource =
+  const source =
     config.valueLayers["route.allow"] === "L1"
       ? layerSource("L1", config)
-      : keySource(loaded, "route.allow");
-  const valueOf: Record<(typeof POLICY_KEYS)[number], unknown> = {
-    "route.allow": auto.routes,
-    "route.on_window_exhausted.codex": auto.on_window_exhausted?.codex,
-    "route.on_window_exhausted.claude": auto.on_window_exhausted?.claude,
-    "route.exclude": loaded.provenance.excluded,
-    "route.max_task_chars": auto.max_task_chars,
-    "route.timeout_ms": auto.timeout_ms,
-    "route.pick_temperature": auto.pick_temperature,
-    "route.jev": auto.jev,
-    "claude_run.max_budget_usd": claude_run.max_budget_usd,
-    "claude_run.max_turns": claude_run.max_turns,
-    "claude_run.on_credits_unavailable": claude_run.on_credits_unavailable,
-    "claude_run.reason": claude_run.reason,
-  };
-  const values: Record<string, Entry> = {};
-  for (const key of POLICY_KEYS)
-    values[key] = {
-      value: valueOf[key],
-      source: key === "route.allow" ? allowSource : keySource(loaded, key),
-    };
+      : loaded.policy.source;
   return {
     policy: loaded.policy,
-    auto,
-    claude_run,
-    values,
+    auto: loaded.value.auto,
+    claude_run: loaded.value.claude_run,
+    values: Object.fromEntries(
+      loaded.value.auto.routes.map((route) => [
+        route,
+        { value: "allowed", source },
+      ]),
+    ),
   };
 }
 
 /** The credential a dispatch would pick; the key itself is resolved into a throwaway copy and dropped. */
-function credentialSection() {
-  const details = claudeCredentialDetails(workerEnvironment(process.env));
+function credentialSection(apiAllowed: boolean) {
+  const details = apiAllowed
+    ? claudeCredentialDetails(workerEnvironment(process.env))
+    : { credential: "subscription" as const, credential_source: undefined };
   const marker = creditsMarkerStatus();
   return {
     credential: details.credential,
@@ -255,7 +230,9 @@ export async function configView(options: {
   const view: View = {
     repository: repositorySection(config.value),
     routing: routingSection(loaded, config.value),
-    credential: credentialSection(),
+    credential: credentialSection(
+      loaded.value.auto.routes.includes("claude-api"),
+    ),
   };
   process.stdout.write(
     options.json ? `${JSON.stringify(view)}\n` : human(view),

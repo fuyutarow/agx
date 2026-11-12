@@ -6,6 +6,11 @@ import { exhaustionPolicy, loadRoster, type Choice } from "../roster/index.ts";
 import { exitWithError } from "./exit.ts";
 import { foldedRuns, stateDir } from "./store.ts";
 import { readRouteUsage } from "./usage.ts";
+import {
+  claudeCredentialDetails,
+  creditsMarkerStatus,
+} from "../workers/claude-credential.ts";
+import { workerEnvironment } from "../workers/environment.ts";
 import { fitsPublishedTimeBox, route } from "./route.ts";
 import { parseNextTicket } from "./ticket.ts";
 import { resolveRunId } from "./run-id.ts";
@@ -94,7 +99,16 @@ export async function pinContinuation(
   }
   const loaded = await loadRoster();
   if (!loaded.ok) return refuse(`cannot read dispatch roster: ${loaded.error}`);
-  const row = loaded.value.choice.find((entry) => entry.id === previous.row);
+  const row = loaded.value.choice.find(
+    (entry) =>
+      entry.id === previous.row &&
+      entry.route === previous.route &&
+      loaded.value.auto.routes.includes(entry.route) &&
+      (entry.route !== "claude-api" ||
+        (!creditsMarkerStatus().fresh &&
+          claudeCredentialDetails(workerEnvironment(process.env)).credential ===
+            "api_key")),
+  );
   if (previous.outcome === "capacity") {
     // Inspection validates the reference without selecting or launching a worker.
     if (routing === undefined) return null;

@@ -101,6 +101,7 @@ function runConfig(root: string, claudeBin: string, extra = {}) {
     safeMode: false,
     bare: false,
     claudeBin,
+    route: "claude-api" as const,
     ...extra,
   };
 }
@@ -115,6 +116,8 @@ test("the worker CLI defaults to stop: a credits failure ends as capacity on the
       process.execPath,
       cliPath,
       "--internal-claude",
+      "--route",
+      "claude-api",
       "--target",
       root,
       "--prompt-file",
@@ -148,7 +151,7 @@ test("policy stop: a credits failure ends as capacity on the first attempt, writ
   isolatedWorkerEnvironment(root);
   const claude = fakeClaude(root);
   const run = await runClaude(
-    runConfig(root, claude.bin, { onCreditsUnavailable: "stop" }),
+    runConfig(root, claude.bin, { route: "claude-api" }),
   );
   expect(claude.calls()).toEqual([{ key: true, token: false }]);
   const relay = toRelay(run);
@@ -161,26 +164,6 @@ test("policy stop: a credits failure ends as capacity on the first attempt, writ
   ).toContain("credits unavailable");
 });
 
-test('on_credits_unavailable "subscription" retries on the subscription as before', async () => {
-  const root = tempRoot();
-  isolatedWorkerEnvironment(root);
-  const claude = fakeClaude(root);
-  const run = await runClaude(
-    runConfig(root, claude.bin, { onCreditsUnavailable: "subscription" }),
-  );
-  expect(claude.calls()).toEqual([
-    { key: true, token: false },
-    { key: false, token: false },
-  ]);
-  expect(run.credential).toBe("subscription");
-  expect(run.exitCode).toBe(0);
-  expect(toRelay(run).outcome).toBeUndefined();
-  expect(existsSync(join(root, "state", "claude-credits-unavailable"))).toBe(
-    true,
-  );
-});
-
-/** A Jev stand-in that always classifies the ticket as mechanical. */
 function mechanicalJev(): void {
   const server = Bun.serve({
     port: 0,
@@ -208,7 +191,11 @@ async function policyKeeping(
     .filter((row) => !keep.includes(row.id))
     .map((row) => row.id);
   let text = readFileSync(examplePolicy, "utf8")
-    .replace(/^allow = .*\n/mu, "")
+    .replace(/^allow = .*$/mu, 'allow = ["codex", "claude-api"]')
+    .replace(
+      '"claude-session" = "stop"',
+      '"claude-session" = "stop", "claude-api" = "continue"',
+    )
     .replace("exclude = []", `exclude = ${JSON.stringify(excluded)}`)
     .replace(/^on_credits_unavailable = .*\n/mu, "");
   if (onCredits !== undefined)
@@ -254,7 +241,7 @@ test("a fresh marker removes claude rows from routing under the default policy a
   const choice = await route("credits routing fixture");
   expect(choice.route).toBe("codex");
   const filter = lastFilters().find(
-    (entry) => entry.reason === "claude credits unavailable",
+    (entry) => entry.reason === "claude-api credits unavailable",
   );
   expect(filter?.before).toContain("haiku-medium");
   expect(filter?.after).toEqual(["astra-medium"]);
@@ -272,25 +259,7 @@ test("without a marker claude rows stay in routing and the filter removes nothin
   mechanicalJev();
   await route("credits routing fixture, no marker");
   const filter = lastFilters().find(
-    (entry) => entry.reason === "claude credits unavailable",
-  );
-  expect(filter?.removed).toEqual([]);
-  expect(filter?.after).toContain("haiku-medium");
-});
-
-test('with on_credits_unavailable = "subscription" a fresh marker keeps claude rows', async () => {
-  const root = tempRoot();
-  isolatedWorkerEnvironment(root);
-  process.env.AGX_CONFIG = await policyKeeping(
-    root,
-    ["haiku-medium", "astra-medium"],
-    "subscription",
-  );
-  mechanicalJev();
-  writeFreshMarker(root);
-  await route("credits routing fixture, subscription");
-  const filter = lastFilters().find(
-    (entry) => entry.reason === "claude credits unavailable",
+    (entry) => entry.reason === "claude-api credits unavailable",
   );
   expect(filter?.removed).toEqual([]);
   expect(filter?.after).toContain("haiku-medium");
@@ -315,7 +284,7 @@ test("a stale marker no longer removes claude rows", async () => {
   );
   await route("credits routing fixture, stale marker");
   const filter = lastFilters().find(
-    (entry) => entry.reason === "claude credits unavailable",
+    (entry) => entry.reason === "claude-api credits unavailable",
   );
   expect(filter?.removed).toEqual([]);
 });
@@ -423,49 +392,6 @@ if (internalClaude) {
   const receipt = decodedJson(Receipt, stdout.trim().split("\n").at(-1) ?? "");
   expect(receipt.rows).toEqual(["haiku-medium", "astra-medium"]);
   expect(receipt.row).toBe("astra-medium");
-});
-
-test("roster --json reports claude_run.on_credits_unavailable with its source", async () => {
-  const root = tempRoot();
-  const run = async (policy: string | undefined) => {
-    const config = join(root, "agx.toml");
-    if (policy !== undefined) writeFileSync(config, policy);
-    else rmSync(config, { force: true });
-    const child = Bun.spawn([process.execPath, cliPath, "roster", "--json"], {
-      env: {
-        ...subprocessEnvironment(),
-        AGX_CONFIG: config,
-        HOME: root,
-        XDG_CONFIG_HOME: join(root, "config"),
-        AGX_STATE_DIR: join(root, "state"),
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [exit, stdout, stderr] = await Promise.all([
-      child.exited,
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-    ]);
-    expect(exit, stderr).toBe(0);
-    return decodedJson(
-      z.looseObject({
-        claude_run: z.looseObject({ on_credits_unavailable: z.string() }),
-        policy: z.looseObject({ keys: z.record(z.string(), z.string()) }),
-      }),
-      stdout,
-    );
-  };
-  const shipped = await run("schema = 1\n");
-  expect(shipped.claude_run.on_credits_unavailable).toBe("stop");
-  expect(shipped.policy.keys["claude_run.on_credits_unavailable"]).toBe(
-    "default",
-  );
-  const chosen = await run(
-    'schema = 1\n[claude_run]\non_credits_unavailable = "subscription"\n',
-  );
-  expect(chosen.claude_run.on_credits_unavailable).toBe("subscription");
-  expect(chosen.policy.keys["claude_run.on_credits_unavailable"]).toBe("file");
 });
 
 test("an unknown on_credits_unavailable value is rejected by the policy loader", async () => {

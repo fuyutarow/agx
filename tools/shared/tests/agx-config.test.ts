@@ -523,16 +523,18 @@ test.each([
   }
 });
 test("repository [route] parses allow", async () => {
-  const f = await fixture('schema = 1\n[route]\nallow = ["claude"]\n');
+  const f = await fixture('schema = 1\n[route]\nallow = ["claude-session"]\n');
   const result = await resolveAgxConfigWithProvenance(f.root);
   expect(result.ok).toBe(true);
-  if (result.ok) expect(result.value.repoRoute).toEqual({ allow: ["claude"] });
+  if (result.ok)
+    expect(result.value.repoRoute).toEqual({ allow: ["claude-session"] });
 });
 test("repository [route] accepts an omitted default", async () => {
-  const f = await fixture('schema = 1\n[route]\nallow = ["claude"]\n');
+  const f = await fixture('schema = 1\n[route]\nallow = ["claude-session"]\n');
   const result = await resolveAgxConfigWithProvenance(f.root);
   expect(result.ok).toBe(true);
-  if (result.ok) expect(result.value.repoRoute).toEqual({ allow: ["claude"] });
+  if (result.ok)
+    expect(result.value.repoRoute).toEqual({ allow: ["claude-session"] });
 });
 test("an absent repository [route] leaves repoRoute undefined", async () => {
   const f = await fixture("schema = 1\n");
@@ -562,7 +564,7 @@ test.each([
   ["schema = 1\nunknown = true\n", "repo.toml"],
   ["schema = 1\n[ws]\nunknown = true\n", "unknown"],
   ['schema = 1\n[ws]\nkeep = [""]\n', "keep"],
-  ['schema = 1\n[route]\nallow = ["claude"]\n', "route"],
+  ['schema = 1\n[route]\nallow = ["claude-session"]\n', "route"],
 ])("rejects invalid L2: %s", async (local, message) => {
   const f = await fixture();
   await f.writeLocal(local);
