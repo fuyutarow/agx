@@ -43,7 +43,9 @@ agx ws gc  [--apply | --dry-run] [--include-unrecorded] [--abandoned] [--json] [
   readiness command in order inside the new directory, in the foreground. Child stdin is ignored;
   output is streamed, with readiness stdout redirected to stderr for JSON mode. A failing readiness
   command preserves its exit code and attempts to forget and bury the new workspace; a failed rollback
-  is reported with the path. A whole-command deadline can interrupt rollback. `--reuse` returns an
+  is reported with the path. If `jj workspace add` fails after registering or creating a partial
+  checkout, add forgets and buries it before returning the jj error; dispatch stops before starting
+  a worker. A whole-command deadline can interrupt rollback. `--reuse` returns an
   existing registered workspace unchanged; it does not rerun readiness or widen sparse patterns.
 - **refresh** — checks the named registered workspace with `jj status` and runs
   `jj workspace update-stale` only when jj reports `working copy is stale`. Other failures are
@@ -54,7 +56,10 @@ agx ws gc  [--apply | --dry-run] [--include-unrecorded] [--abandoned] [--json] [
 - **rm** — judges the workspace, then `jj workspace forget ws_<slug>` and `rip <dir>`. It refuses if
   any change reachable from the workspace's `@` is not reachable from trunk and is non-empty.
   The working copy is snapshotted first, so an uncommitted edit counts. Land or abandon the change
-  first; there is no force flag.
+  first; there is no force flag. `--discard-broken` can remove an incomplete checkout with missing
+  tracked files after checking the remaining files and untracked content. It saves a patch under
+  `$AGX_STATE_DIR/ws-rm/`, or a note with the jj error if the missing objects prevent a complete
+  diff. It refuses unsaved real edits it cannot preserve.
 - **gc** — one line per registered candidate: `path <TAB> kind <TAB> verdict <TAB> change id <TAB> age <TAB> reason`.
   `--dry-run` removes no workspace and checks the same initial preconditions as a real run. Inventory and initial
   classification use saved jj snapshots without locking, snapshotting or repairing stale

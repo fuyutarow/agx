@@ -479,6 +479,40 @@ export async function forgetAndBury(
   return mise.ok ? good(immutable) : bad(`mise cleanup ${dir}: ${msg(mise)}`);
 }
 
+async function rollbackFailedAdd(
+  repo: Repo,
+  graveyard: Graveyard,
+  name: string,
+  dir: string,
+  failure: string,
+): Promise<Attempt<void>> {
+  // The name and path were absent under this lock before jj started. jj can
+  // register the workspace before checkout fails, so inspect both effects.
+  const after = await workspaceNames(repo);
+  if (!after.ok) return bad(`${failure}; rollback: ${msg(after)}`);
+  if (after.value.includes(name)) {
+    const forgot = await exec(
+      ["jj", "--no-pager", "--color=never", "workspace", "forget", name],
+      repo.backing,
+    );
+    if (!forgot.ok || forgot.value.code !== 0)
+      return bad(
+        `${failure}; rollback forget failed: ${forgot.ok ? forgot.value.err.trim() : msg(forgot)}`,
+      );
+  }
+  if (existsSync(dir)) {
+    const buried = await exec(["rip", dir], repo.wsRoot, {
+      GRAVEYARD: graveyard.path,
+      RIP_GRAVEYARD: graveyard.path,
+    });
+    if (!buried.ok || buried.value.code !== 0)
+      return bad(
+        `${failure}; rollback rip failed: ${buried.ok ? buried.value.err.trim() : msg(buried)}`,
+      );
+  }
+  return good(undefined);
+}
+
 /** Forget and atomically detach the checkout while the store lock is held. */
 export async function add(options: AddOptions): Promise<Attempt<AddResult>> {
   enterStep("validate workspace and read configuration");
@@ -582,7 +616,16 @@ export async function add(options: AddOptions): Promise<Attempt<AddResult>> {
         repo.value.backing,
         false,
       );
-      if (!made.ok) return made;
+      if (!made.ok) {
+        const rollback = await rollbackFailedAdd(
+          repo.value,
+          graveyard.value,
+          name,
+          dir,
+          msg(made),
+        );
+        return rollback.ok ? made : rollback;
+      }
       // Record immediately: failed readiness may retain the new workspace.
       const recorded = await recordWorkspace(repo.value.backing, dir);
       if (!recorded.ok) return recorded;

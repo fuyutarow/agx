@@ -772,6 +772,42 @@ export async function remove(options: {
         return bad(
           `${dir}: nothing found unlanded; untracked-content check did not finish (${decision.reason}); retry ws rm`,
         );
+      if (
+        !decision.collect &&
+        options.discardBroken === true &&
+        /sparse or missing tracked file|failed to (?:read|check out).*object|error when reading object|entry too large to fit in memory/iu.test(
+          decision.reason,
+        )
+      ) {
+        const work = await unlanded(
+          repo.value,
+          cfg.value,
+          dir,
+          name.value,
+          [],
+          true,
+        );
+        const same = work.ok
+          ? good(undefined)
+          : await unreadableTreeMatchesTrunk(
+              repo.value,
+              cfg.value,
+              name.value,
+              work,
+            );
+        if (!same.ok) return same;
+        if (work.ok && work.value.length > 0)
+          return bad(`${dir} has unlanded changes: ${work.value.join(", ")}`);
+        const removed = await removeIncompleteCheckout(
+          repo.value,
+          cfg.value,
+          graveyard.value,
+          name.value,
+          dir,
+          decision.reason,
+        );
+        return removed.ok ? good(dir) : removed;
+      }
       if (!decision.collect)
         return bad(`${dir}: unlanded or protected content: ${decision.reason}`);
       const done = await forgetAndTombstone(repo.value, name.value, dir);
@@ -789,6 +825,135 @@ export async function remove(options: {
       `ws: workspace removed; tombstone cleanup failed: ${msg(tombstoned)}\n`,
     );
   return good(dir);
+}
+
+async function unreadableTreeMatchesTrunk(
+  repo: Repo,
+  cfg: Config,
+  name: string,
+  failure: { error: unknown },
+): Promise<Attempt<void>> {
+  if (
+    !/error when reading object|entry too large to fit in memory/iu.test(
+      msg(failure),
+    )
+  )
+    return bad(msg(failure));
+  const trunk = await trunkCommit(repo, cfg);
+  if (!trunk.ok) return trunk;
+  if (trunk.value === null) return bad(msg(failure));
+  const tree = (revision: string) =>
+    jjOut(
+      [
+        "file",
+        "list",
+        "-r",
+        revision,
+        "-T",
+        'json(path) ++ "\\t" ++ file_type ++ "\\t" ++ normal_value ++ "\\n"',
+      ],
+      repo.backing,
+      true,
+    );
+  const [saved, baseline] = await Promise.all([
+    tree(`${name}@`),
+    tree(trunk.value),
+  ]);
+  if (!saved.ok || !baseline.ok || saved.value !== baseline.value)
+    return bad(msg(failure));
+  return good(undefined);
+}
+
+/** Only missing files may be discarded without a complete, readable patch. */
+async function removeIncompleteCheckout(
+  repo: Repo,
+  cfg: Config,
+  graveyard: Graveyard,
+  name: string,
+  dir: string,
+  reason: string,
+): Promise<Attempt<void>> {
+  const trunk = await trunkCommit(repo, cfg);
+  if (!trunk.ok) return trunk;
+  if (trunk.value === null)
+    return bad("cannot compare incomplete checkout without trunk");
+  const files = await jjOut(
+    [
+      "file",
+      "list",
+      "-r",
+      trunk.value,
+      "-T",
+      'json(path) ++ "\\t" ++ file_type ++ "\\t" ++ normal_value ++ "\\n"',
+    ],
+    repo.backing,
+    true,
+  );
+  if (!files.ok) return files;
+  const tracked = new Set<string>();
+  let missing = 0;
+  for (const line of files.value.split("\n").filter(Boolean)) {
+    const [encoded, type, id] = line.split("\t");
+    const path = jsonOf(z.string().min(1)).safeParse(encoded);
+    if (
+      !path.success ||
+      id === undefined ||
+      !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(id)
+    )
+      return bad(`cannot compare tracked entry: ${line}`);
+    tracked.add(path.data);
+    const disk = await readDiskFile(join(dir, path.data));
+    if (!disk.ok) return disk;
+    if (disk.value === undefined) {
+      missing++;
+      continue;
+    }
+    const info = await lstat(join(dir, path.data));
+    const hash = createHash(id.length === 40 ? "sha1" : "sha256")
+      .update(`blob ${disk.value.content.length}\0`)
+      .update(disk.value.content)
+      .digest("hex");
+    if (
+      hash !== id ||
+      disk.value.symlink !== (type === "symlink") ||
+      (type === "executable") !==
+        (!disk.value.symlink && (info.mode & 0o111) !== 0)
+    )
+      return bad(`unsaved real edit: ${path.data}`);
+  }
+  if (missing === 0 && !/object|entry too large/iu.test(reason))
+    return bad(`cannot establish incomplete checkout: ${reason}`);
+  const inventory = await untrackedContent(dir, [], 60_000, [], tracked);
+  if (!inventory.ok) return inventory;
+  if (inventory.value.count > 0)
+    return bad(
+      `unsaved untracked content: ${inventory.value.paths.join(", ")}`,
+    );
+  const guard = await removalGuard(repo, dir);
+  if (!guard.ok) return guard;
+  const saved = await saveBrokenPatch(repo, cfg, name, dir);
+  if (saved.ok) process.stderr.write(`ws: saved patch ${saved.value}\n`);
+  else {
+    const destination = join(stateDir(gcEnvironment.getStore()), "ws-rm");
+    const note = await attempt(async () => {
+      await mkdir(destination, { recursive: true });
+      const path = join(
+        destination,
+        `${name}-${Temporal.Now.instant().toString().replaceAll(":", "-")}-${crypto.randomUUID()}.patch`,
+      );
+      await writeFile(
+        path,
+        `No complete diff could be computed. ${reason}\n${msg(saved)}\n`,
+        { flag: "wx" },
+      );
+      return path;
+    });
+    if (!note.ok) return note;
+    process.stderr.write(`ws: saved patch note ${note.value}\n`);
+  }
+  const done = await forgetAndTombstone(repo, name, dir);
+  if (!done.ok) return done;
+  return deleteTombstone(graveyard, done.value.tombstone);
 }
 
 /** A broken checkout is removable only when every trunk-tracked path still matches on disk. */
