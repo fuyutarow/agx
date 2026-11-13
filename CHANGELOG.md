@@ -1,5 +1,9 @@
 # Changelog
 
+## 11.0.1 — 2026-11-13
+
+- Clean up failed checkouts and safely remove incomplete workspaces.
+
 ## 11.0.0 — 2026-11-13
 
 - Require explicit routing policy and split Claude API and session routes.
