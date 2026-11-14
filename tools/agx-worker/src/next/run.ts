@@ -435,7 +435,7 @@ export async function check(flags: Flags): Promise<number> {
     return 0;
   }
   const routing = await route(
-    `Proposition ${ticket.proposition.id}: ${ticket.proposition.claim}\n${inspected.prose}`,
+    routingBrief(ticket, inspected.prose),
     ticket.capabilities,
     ticket.timeout_s ?? 600,
     await earlyQuitRows(ticket.name ?? basename(path, ".md"), cwd),

@@ -11,7 +11,7 @@ import {
   creditsMarkerStatus,
 } from "../workers/claude-credential.ts";
 import { workerEnvironment } from "../workers/environment.ts";
-import { fitsPublishedTimeBox, route } from "./route.ts";
+import { fitsPublishedTimeBox, route, routingBrief } from "./route.ts";
 import { parseNextTicket } from "./ticket.ts";
 import { resolveRunId } from "./run-id.ts";
 
@@ -216,7 +216,9 @@ export async function pinContinuation(
     const inspected = parsedTicket?.success === true ? parsedTicket : undefined;
     const brief =
       routing?.brief ??
-      `Proposition ${inspected?.ticket.proposition.id}: ${inspected?.ticket.proposition.claim}\n${inspected?.prose}`;
+      (inspected === undefined
+        ? ""
+        : routingBrief(inspected.ticket, inspected.prose));
     const result = await route(
       brief,
       routing?.capabilities ?? inspected?.ticket.capabilities ?? [],

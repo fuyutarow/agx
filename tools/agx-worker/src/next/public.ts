@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { attempt, errorMessage } from "../../../shared/src/attempt.ts";
 import { readFile } from "node:fs/promises";
 import { parseNextTicket } from "./ticket.ts";
-import { route } from "./route.ts";
+import { route, routingBrief } from "./route.ts";
 import { loadRoster, ROUTING_OBJECTIVE } from "../roster/index.ts";
 import { printPreflightFailures, recordRefusal } from "./preflight.ts";
 import { resolveTicketReference } from "./ticket-home.ts";
@@ -37,7 +37,7 @@ export async function roster(ticketPath?: string): Promise<number> {
       return 2;
     }
     const row = await route(
-      source.value.toString("utf8"),
+      routingBrief(parsed.ticket, parsed.prose),
       parsed.ticket.capabilities,
       parsed.ticket.timeout_s ?? 600,
       [],

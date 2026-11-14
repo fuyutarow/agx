@@ -255,20 +255,27 @@ const CLASS_CRITERIA: Readonly<Record<RequirementClass, string>> = {
     "Choose cross_module only when an invariant, a public API, or behavior spanning modules must change.",
 };
 
-/** The task text Jev reads: the proposition and prose, then the ticket's writes and verify commands. */
+/**
+ * The only builder of the task text Jev reads, for every route call (check, dispatch,
+ * continuation, capacity reroute, public roster). Proposition and prose come first, then the
+ * ticket's outcome, writes, verify and proposition refuted_by under plain labels.
+ */
 export function routingBrief(
   ticket: Readonly<{
-    proposition: Readonly<{ id: string; claim: string }>;
+    outcome: string;
     writes: readonly string[];
     verify: readonly string[];
+    proposition: Readonly<{ id: string; claim: string; refuted_by: string }>;
   }>,
   prose: string,
 ): string {
   return [
     `Proposition ${ticket.proposition.id}: ${ticket.proposition.claim}`,
     prose.trimEnd(),
+    `outcome: ${ticket.outcome}`,
     `writes: ${JSON.stringify(ticket.writes)}`,
     `verify: ${JSON.stringify(ticket.verify)}`,
+    `refuted_by: ${ticket.proposition.refuted_by}`,
   ].join("\n");
 }
 
@@ -620,7 +627,7 @@ export async function route(
         pick_audit: pickAudit("jev-return", probabilities),
       });
     return refuseReply(
-      `agx: ticket returned: ${reason.data}: ${returns[reason.data].criterion} ${returns[reason.data].fix} Probability: ${probabilities?.[reason.data] ?? "unavailable"}; ticket fields sent: task${capabilities.length === 0 ? "" : ", required_capabilities"}; no row is substituted\n`,
+      `agx: ticket returned: ${reason.data}: ${returns[reason.data].criterion} ${returns[reason.data].fix} Probability: ${probabilities?.[reason.data] ?? "unavailable"}; ticket fields sent: task (proposition id and claim, prose, outcome, writes, verify, refuted_by)${capabilities.length === 0 ? "" : ", required_capabilities"}; no row is substituted\n`,
       "jev-return",
       probabilities,
     );

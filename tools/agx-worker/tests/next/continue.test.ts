@@ -98,6 +98,9 @@ const fixture = async (ticketName = "pin") => {
       cwd: root,
       workspace: root,
       row,
+      // The continuation's row lookup matches both row and route, so the seed records the route
+      // its catalog row publishes (opus-medium is claude-session; the other seeded rows are codex).
+      route: row.startsWith("opus") ? "claude-session" : "codex",
       dispatcher_session: null,
       vendor_session: null,
       pid: 0,
@@ -703,6 +706,39 @@ describe("agx worker run --continue pins the prior row", () => {
     expect(ended?.vendor_session).not.toBe("next-claude-session-1");
   }, 30000);
 
+  test("a continuation that routes sends the ticket verify line and refuted_by to Jev", async () => {
+    const f = await fixture();
+    f.writeOriginal("claude-run");
+    const Body = z.looseObject({
+      state: z.looseObject({ task: z.string() }),
+    });
+    const tasks: string[] = [];
+    const recorder = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const body = jsonOf(Body).safeParse(await request.text());
+        if (body.success) tasks.push(body.data.state.task);
+        return Response.json({
+          answers: { worker: { choice: "mechanical", confidence: 0.9 } },
+        });
+      },
+    });
+    try {
+      const result = await f.resume("claude-run", {
+        JEV_URL: `http://127.0.0.1:${recorder.port}/choice`,
+      });
+      expect(result.exitCode, result.stderr.toString()).toBe(0);
+      expect(tasks.length).toBeGreaterThan(0);
+      for (const task of tasks) {
+        expect(task).toContain('verify: ["true"]');
+        expect(task).toContain("refuted_by: continue routes");
+      }
+    } finally {
+      recorder.stop(true);
+    }
+  }, 30000);
+
   test("a run without a vendor session exits 2 before any worker starts", async () => {
     const f = await fixture();
     const before = f.events().length;
@@ -734,7 +770,7 @@ describe("agx worker run --continue pins the prior row", () => {
     const policy = join(f.root, "policy.toml");
     writeFileSync(
       policy,
-      `schema = 1\n[route]\nallow = ["codex"]\nexclude = []\nmax_task_chars = 6000\ntimeout_ms = 20000\npick_temperature = 0.5\n[route.jev]\napi = "typesafe"\nurl = "http://127.0.0.1:1/choice"\nmodel = "test"\n[claude_run]\nmax_budget_usd = 2\nmax_turns = 60\nreason = "A fixed test policy for a bounded worker run."\n`,
+      `schema = 1\n[route]\nallow = ["codex"]\non_window_exhausted = { codex = "continue" }\nexclude = []\nmax_task_chars = 6000\ntimeout_ms = 20000\npick_temperature = 0.5\n[route.jev]\napi = "typesafe"\nurl = "http://127.0.0.1:1/choice"\nmodel = "test"\n[claude_run]\nmax_budget_usd = 2\nmax_turns = 60\nreason = "A fixed test policy for a bounded worker run."\n`,
     );
     const rosterModule = new URL("../../src/roster/index.ts", import.meta.url)
       .pathname;
@@ -883,7 +919,7 @@ describe("agx worker run --continue pins the prior row", () => {
       continues: "codex-run",
       supersedes: null,
     });
-  });
+  }, 30000);
 
   test("continue contract: a run whose workspace is gone is still refused", async () => {
     const f = await fixture();
@@ -1120,4 +1156,5 @@ if (process.argv[2] === "--internal-codex") {
       "dispatcher xmsg",
     );
   },
+  30000,
 );
