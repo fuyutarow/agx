@@ -18,7 +18,7 @@ Mainline invariants whose cost is near zero stay regardless of incident count: n
 
 agx protects only lands that go through agx; a direct push is not prevented.
 
-agx operates and observes local agent sessions and runs. A suite member owns one state or is stateless; members compose through CLI commands and `--json` output, importing only their own package and `packages/core`. General filters that also accept non-agent input, and tools for machine-wide resources, display, or search, are outside the suite. The planned colocated non-member `jex` shares the Jev client in core. Consumer-facing specifications live in [contract/](contract/).
+agx operates worker runs, tickets, workspaces, suite status, and doctor. A suite member owns one state or is stateless; members compose through CLI commands and `--json` output, importing only their own package and `packages/core`. General filters that also accept non-agent input, and tools for machine-wide resources, display, or search, are outside the suite. The planned colocated non-member `jex` shares the Jev client in core. Consumer-facing specifications live in [contract/](contract/).
 
 For a standalone checkout, run `mise run setup` to install locked dependencies;
 `mise run up` updates them. Command installation and distribution are described in
@@ -76,8 +76,7 @@ bunx skills add fuyutarow/agx --skill driving-agx -a claude-code
 ```
 
 [driving-agx](skills/driving-agx/SKILL.md) covers workers, tickets, workspaces,
-messaging and health. It supersedes the separate driving-xmsg skill; use the
-skill from the same release tag as your installed suite.
+suite status and doctor. Message other sessions through Reason Network.
 
 ### Code composition
 
