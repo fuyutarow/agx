@@ -33,6 +33,7 @@ parts, agx-worker consumes a tree through `--cd`, and `agx ws gc` reads `agx wor
 ```text
 agx ws add <slug> [--rev R] [--repo P] [--reuse] [--json]
 agx ws refresh <slug> [--repo P]
+agx ws landed <slug> <commit> [--repo P]
 agx ws rm  <slug> [--repo P]
 agx ws gc  [--apply | --dry-run] [--include-unrecorded] [--abandoned] [--json] [--repo P | --all]
 ```
@@ -97,6 +98,16 @@ Missing or foreign workspace directories are kept. Ordinary collection requires:
    or explicitly rejected before collection. `rm` instead uses
    nonempty ancestry outside configured trunk. Collection refreshes stale workspaces and
    snapshots/rechecks under the lock immediately before removal.
+
+For a copy-land, run `agx ws landed <slug> <commit> --repo P` after integration. The
+command verifies that the single resolved commit is reachable from trunk and records the workspace
+path, full change ID, workspace commit, landed commit and time under `$AGX_STATE_DIR/ws-landed`
+(the normal agx state directory). It records the operator's assertion; reachability does not prove
+the copied content is equivalent. Removal and GC honor it only while the workspace change and
+commit still match and the landed commit remains reachable from trunk. A subsequent edit invalidates
+it; unsnapshotted changes, untracked content, live processes and all other safeguards still apply.
+GC reports the record in its reason and still requires `--include-unrecorded` for a workspace with
+no run record. The command can be repeated after a new landing.
 
 A standard workspace with no agx record is **unrecorded**: otherwise collectable rows carry an
 unrecorded reason and need `--include-unrecorded`.

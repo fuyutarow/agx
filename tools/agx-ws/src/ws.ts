@@ -7,7 +7,7 @@ import { StepFailure } from "./subprocess.ts";
 import { enterStep, runAddCommand } from "./deadline.ts";
 import { errorMessage } from "../../shared/src/attempt.ts";
 import packageJson from "../package.json" with { type: "json" };
-import { gc, gcAll, remove } from "./workspace.ts";
+import { gc, gcAll, remove, recordLanded } from "./workspace.ts";
 import { add, refresh } from "./create.ts";
 import { LegacyWorkspaceConfigError } from "./config.ts";
 import { doctor as doctorWorkspaces, doctorSummaries } from "./doctor.ts";
@@ -132,6 +132,32 @@ const addCommand = command(
     }),
 );
 
+const landedCommand = command(
+  {
+    name: "landed",
+    parameters: ["<slug>", "<commit>"],
+    strictFlags: true,
+    ignoreArgv: rejectPrototypeFlag,
+    help: {
+      description:
+        "Record that ws_<slug> landed as a commit reachable from trunk.",
+    },
+    flags: { repo: repoFlag },
+  },
+  async (argv) => {
+    const done = await recordLanded({
+      slug: argv._.slug,
+      commit: argv._.commit,
+      repo: argv.flags.repo ?? process.cwd(),
+    });
+    if (!done.ok) {
+      fail(done.error);
+      return;
+    }
+    process.stdout.write(`landed\t${done.value}\n`);
+  },
+);
+
 const rmCommand = command(
   {
     name: "rm",
@@ -140,7 +166,7 @@ const rmCommand = command(
     ignoreArgv: rejectPrototypeFlag,
     help: {
       description:
-        "Forget and rip ws_<slug>. A change is landed if reachable from trunk or a remote bookmark, or if its content already landed on trunk; its commit need not be a trunk ancestor.",
+        "Forget and rip ws_<slug>. A change is landed if reachable from trunk or a remote bookmark, or if its content already landed on trunk, or a verified landed record still matches.",
     },
     flags: {
       repo: repoFlag,
@@ -198,7 +224,7 @@ const gcCommand = command(
     ignoreArgv: rejectPrototypeFlag,
     help: {
       description:
-        'default: report; --apply removes. Shared reclaim grammar: tools/agx-worker/contract.md. Enumerate jj workspaces. Print TSV: path, kind, verdict, change id, age, reason. Exit 1 for failed collection or broken workspaces; refused repositories exit 2. Keep a workspace by setting `keep = ["ws_<name>"]` under `[ws]` in the main checkout root `agx.toml` (example: `keep = ["ws_reference"]`). Machine-local keep entries live under `[ws]` in `$XDG_CONFIG_HOME/agx/repos/<name>.toml`. agx ws add is the only creator.',
+        'default: report; --apply removes. A matching verified landed record also establishes landing. Shared reclaim grammar: tools/agx-worker/contract.md. Enumerate jj workspaces. Print TSV: path, kind, verdict, change id, age, reason. Exit 1 for failed collection or broken workspaces; refused repositories exit 2. Keep a workspace by setting `keep = ["ws_<name>"]` under `[ws]` in the main checkout root `agx.toml` (example: `keep = ["ws_reference"]`). Machine-local keep entries live under `[ws]` in `$XDG_CONFIG_HOME/agx/repos/<name>.toml`. agx ws add is the only creator.',
     },
     flags: {
       dryRun: { type: Boolean, description: "report only; remove nothing" },
@@ -478,5 +504,12 @@ void cli({
   help: { description: "Create, inspect and collect repository workspaces." },
   strictFlags: true,
   ignoreArgv: rejectPrototypeFlag,
-  commands: [addCommand, refreshCommand, rmCommand, gcCommand, doctorCommand],
+  commands: [
+    addCommand,
+    refreshCommand,
+    landedCommand,
+    rmCommand,
+    gcCommand,
+    doctorCommand,
+  ],
 });

@@ -594,6 +594,151 @@ async function collectWorkspace(
   return result.ok ? result.value : bad(msg(result));
 }
 
+const LandRecord = z.object({
+  workspace: z.string(),
+  change: z.string(),
+  workspaceCommit: z.string(),
+  landedCommit: z.string(),
+  time: z.string(),
+});
+
+function landRecordPath(repo: Repo, dir: string): string {
+  const key = createHash("sha256")
+    .update(repo.backing + "\0" + dir)
+    .digest("hex");
+  return join(stateDir(gcEnvironment.getStore()), "ws-landed", key + ".json");
+}
+
+async function reachableFromTrunk(
+  repo: Repo,
+  commit: string,
+  trunk: string,
+): Promise<Attempt<boolean>> {
+  const found = await jjOut(
+    [
+      "log",
+      "--no-graph",
+      "-r",
+      `${commit} & ::(${trunk})`,
+      "-T",
+      'commit_id ++ "\\n"',
+    ],
+    repo.backing,
+    true,
+  );
+  return found.ok ? good(found.value.trim() === commit) : found;
+}
+
+export async function recordLanded(options: {
+  slug: string;
+  commit: string;
+  repo: string;
+}): Promise<Attempt<string>> {
+  const name = legacyWorkspaceName(options.slug);
+  if (!name.ok) return name;
+  const repo = resolveRepo(options.repo);
+  if (!repo.ok) return repo;
+  const cfg = await readConfig(repo.value);
+  if (!cfg.ok) return cfg;
+  return withLock(repo.value, `agx ws landed ${options.slug}`, async () => {
+    const dir = join(repo.value.wsRoot, name.value);
+    const listed = await workspaces(repo.value);
+    if (!listed.ok) return listed;
+    const ws = listed.value.find(
+      (row) =>
+        row.name === name.value &&
+        row.rootMissing !== true &&
+        realOr(row.dir) === realOr(dir),
+    );
+    if (ws === undefined || !existsSync(dir))
+      return bad(`cannot verify workspace ${name.value}`);
+    const owner = jjWorkspace(dir);
+    if (
+      !owner.ok ||
+      owner.value.root !== realOr(dir) ||
+      owner.value.backingRoot !== repo.value.backing
+    )
+      return bad(`workspace unavailable or foreign: ${dir}`);
+    const trunk = await landingTrunk(repo.value, cfg.value);
+    if (!trunk.ok) return trunk;
+    if (trunk.value.commit === null)
+      return bad("cannot record landing without trunk");
+    const resolved = await jjOut(
+      ["log", "--no-graph", "-r", options.commit, "-T", 'commit_id ++ "\\n"'],
+      repo.value.backing,
+      true,
+    );
+    if (!resolved.ok) return resolved;
+    const ids = resolved.value.trim().split("\n").filter(Boolean);
+    if (ids.length !== 1 || !/^[0-9a-f]+$/u.test(ids[0] ?? ""))
+      return bad("landing revision must resolve to one commit");
+    const landedCommit = ids[0] ?? "";
+    const reachable = await reachableFromTrunk(
+      repo.value,
+      landedCommit,
+      trunk.value.commit,
+    );
+    if (!reachable.ok) return reachable;
+    if (!reachable.value)
+      return bad(`commit ${landedCommit} is not reachable from trunk`);
+    const change = await jjOut(
+      ["log", "--no-graph", "-r", ws.target, "-T", "change_id"],
+      repo.value.backing,
+      true,
+    );
+    if (!change.ok) return change;
+    const path = landRecordPath(repo.value, dir);
+    const saved = await attempt(async () => {
+      await mkdir(dirname(path), { recursive: true });
+      const temp = path + "." + randomUUID() + ".tmp";
+      await writeFile(
+        temp,
+        JSON.stringify({
+          workspace: realOr(dir),
+          change: change.value.trim(),
+          workspaceCommit: ws.target,
+          landedCommit,
+          time: Temporal.Now.instant().toString(),
+        }),
+        { mode: 0o600 },
+      );
+      await rename(temp, path);
+    });
+    return saved.ok ? good(path) : saved;
+  });
+}
+
+async function matchingLandRecord(
+  repo: Repo,
+  ws: Workspace,
+  trunk: string,
+): Promise<string | undefined> {
+  const path = landRecordPath(repo, ws.dir);
+  const raw = await readFile(path, "utf8").catch(() => "");
+  const parsed = jsonOf(LandRecord).safeParse(raw);
+  if (
+    !parsed.success ||
+    parsed.data.workspace !== realOr(ws.dir) ||
+    parsed.data.workspaceCommit !== ws.target
+  )
+    return undefined;
+  const change = await jjOut(
+    ["log", "--no-graph", "-r", ws.target, "-T", "change_id"],
+    repo.backing,
+    true,
+  );
+  if (!change.ok || change.value.trim() !== parsed.data.change)
+    return undefined;
+  const reachable = await reachableFromTrunk(
+    repo,
+    parsed.data.landedCommit,
+    trunk,
+  );
+  return reachable.ok && reachable.value
+    ? `${path} (commit ${parsed.data.landedCommit})`
+    : undefined;
+}
+
 export async function remove(options: {
   slug: string;
   repo: string;
@@ -2611,8 +2756,10 @@ async function classifyGc(
       "broken",
       `workspace target ${ws.target} is absent from aggregate revset`,
     );
+  const landedRecord = await matchingLandRecord(repo, ws, trunk);
   let landedByContent = false;
   if (
+    landedRecord === undefined &&
     pendingChange.change !== undefined &&
     !(options.abandoned === true && endedWithoutAcceptanceFor24h)
   ) {
@@ -2721,16 +2868,19 @@ async function classifyGc(
       ? ""
       : `; remote bookmark(s): ${pendingChange.remoteBookmarks.join(", ")}`;
   const refSuffix = trunkRef === undefined ? "" : ` (${trunkRef})`;
-  const landingReason = landedByContent
-    ? `landed by content on ${trunk}${refSuffix}`
-    : `nothing unlanded on ${trunkRef ?? trunk}`;
+  let landingReason = `nothing unlanded on ${trunkRef ?? trunk}`;
+  if (landedByContent)
+    landingReason = `landed by content on ${trunk}${refSuffix}`;
+  if (landedRecord !== undefined)
+    landingReason = `landed by record ${landedRecord}`;
   let removableReason = `${landingReason}${remoteReason}; no untracked content`;
   if (allRejected)
     removableReason = `${landingReason}${remoteReason}; all runs judged reject; results preserved (${lineage.map((record) => record.id).join(", ")}); no age wait`;
   else if (endedWithoutAcceptanceFor24h)
-    removableReason = landedByContent
-      ? `${landingReason}${remoteReason}; ${abandonedReason}`
-      : abandonedReason + remoteReason;
+    removableReason =
+      landedByContent || landedRecord !== undefined
+        ? `${landingReason}${remoteReason}; ${abandonedReason}`
+        : abandonedReason + remoteReason;
   return {
     ...verdict("removable", removableReason, true),
     abandon: allRejected || endedWithoutAcceptanceFor24h,
