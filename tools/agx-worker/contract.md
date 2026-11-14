@@ -1049,6 +1049,12 @@ and log paths. If the worker's result artifact cannot be established, the report
 says `unknown`. The interrupted command's exit records the stop signal, not a
 measured command exit. Stopping kills the active verification process group.
 
+`agx worker stop` also reaps the run directory after observing any ended event,
+including an end recorded by the run process. It merges newly reaped processes
+and survivors with existing reap results in `report.json`; it never changes the
+recorded outcome. Stop writes one stderr line naming PID and argv0 only when a
+reap finds processes reaped or still surviving.
+
 The shared reclaim grammar for `agx ws gc`, `agx ticket gc`, and
 `agx worker reclaim-runs` accepts `--apply`, `--dry-run`, and `--json`.
 All three commands report only by default.

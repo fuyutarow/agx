@@ -7,7 +7,7 @@ import { userInfo } from "node:os";
 import { fromThrowable } from "neverthrow";
 import { leaseFor } from "./lease.ts";
 import { measureRunDir, type ListedRun } from "./run-state.ts";
-import { reapRun } from "./reap.ts";
+import { ReapResult, reapRun } from "./reap.ts";
 import { scheduleEndNotice } from "./end-notice.ts";
 import { resolveRunId } from "./run-id.ts";
 import {
@@ -23,6 +23,12 @@ const refuse = (message: string, exit = 2) => {
   process.stderr.write(`agx worker stop: ${message}\n`);
   return exit;
 };
+
+function mergeProcesses<T extends { pid: number }>(left: T[], right: T[]): T[] {
+  return [
+    ...new Map([...left, ...right].map((item) => [item.pid, item])).values(),
+  ];
+}
 
 /** Only a recorded live lease authorizes an effect on a process or unit. */
 export async function stopRun(selector: string): Promise<number> {
@@ -40,11 +46,13 @@ async function stopOwnedRun(run: ListedRun): Promise<number> {
   const recordedEnd = events().findLast(
     (event) => event.id === run.id && event.kind === "ended",
   );
-  if (recordedEnd?.kind === "ended")
+  if (recordedEnd?.kind === "ended") {
+    await reapEndedRun(run, recordedEnd);
     return reportAlreadyEnded(run.id, recordedEnd.outcome, recordedEnd.at);
+  }
   if (run.state !== "running") {
     if (run.ended_at !== null)
-      return reportAlreadyEnded(run.id, run.outcome, run.ended_at);
+      return reapThenAlreadyEnded(run, run.outcome, run.ended_at);
     return refuse(
       `run ${run.id} has inferred outcome ${run.outcome} without a recorded end time; no signal sent`,
       1,
@@ -154,18 +162,19 @@ async function stopOwnedRun(run: ListedRun): Promise<number> {
       (event) => event.id === run.id && event.kind === "ended",
     );
     if (currentEnd?.kind === "ended")
-      return reportEndState(run, actor, currentEnd);
+      return reportEndStateAfterReap(run, actor, currentEnd);
     const observed = await leaseFor(lease.pid, lease.unit);
     if (observed.start === lease.start) {
       await Bun.sleep(50);
       continue;
     }
-    return reportEndState(run, actor, await recordStopped(run, actor));
+    return reportEndStateAfterReap(run, actor, await recordStopped(run, actor));
   }
   const finalEnd = events().findLast(
     (event) => event.id === run.id && event.kind === "ended",
   );
-  if (finalEnd?.kind === "ended") return reportEndState(run, actor, finalEnd);
+  if (finalEnd?.kind === "ended")
+    return reportEndStateAfterReap(run, actor, finalEnd);
   if (systemctlFailure !== undefined)
     return refuse(
       `cannot stop ${lease.unit}: ${systemctlFailure}; inspect with agx worker ls ${run.id}`,
@@ -174,6 +183,64 @@ async function stopOwnedRun(run: ListedRun): Promise<number> {
   return refuse(
     `run ${run.id} did not stop within 5s; inspect with agx worker ls ${run.id}`,
   );
+}
+
+async function reapThenAlreadyEnded(
+  run: ListedRun,
+  outcome: string | null | undefined,
+  endedAt: string | null | undefined,
+): Promise<number> {
+  await reapEndedRun(run);
+  return reportAlreadyEnded(run.id, outcome, endedAt);
+}
+
+async function reportEndStateAfterReap(
+  run: ListedRun,
+  actor: string,
+  ended: Parameters<typeof reportEndState>[2],
+): Promise<number> {
+  await reapEndedRun(run, ended);
+  return reportEndState(run, actor, ended);
+}
+
+async function reapEndedRun(
+  run: ListedRun,
+  ended?: Parameters<typeof reportEndState>[2],
+): Promise<void> {
+  const runDir = join(stateDir(), "runs", run.id);
+  mkdirSync(runDir, { recursive: true });
+  const reportPath = join(runDir, "report.json");
+  const parsed = existsSync(reportPath)
+    ? jsonOf(z.record(z.string(), z.unknown())).safeParse(
+        readFileSync(reportPath, "utf8"),
+      )
+    : undefined;
+  const prior = parsed?.success === true ? parsed.data : {};
+  const priorReap = ReapResult.safeParse(prior);
+  const endedReap = ReapResult.safeParse(ended);
+  const existingReap = priorReap.success ? priorReap : endedReap;
+  const fresh = await reapRun(runDir);
+  const priorReaped = existingReap.success
+    ? existingReap.data.reaped.processes
+    : [];
+  const processes = mergeProcesses(priorReaped, fresh.reaped.processes);
+  const survivors = mergeProcesses(
+    existingReap.success ? existingReap.data.survivors : [],
+    fresh.survivors,
+  );
+  const reap = {
+    reaped: { count: processes.length, processes },
+    survivors,
+    reap_status:
+      existingReap.success &&
+      existingReap.data.reap_status !== "complete" &&
+      fresh.reap_status === "complete"
+        ? existingReap.data.reap_status
+        : fresh.reap_status,
+  };
+  const report = { ...prior, ...reap };
+  writeFileSync(reportPath, `${JSON.stringify(report)}\n`);
+  reportReap(fresh);
 }
 
 async function stopSystemdUnit(
@@ -282,6 +349,7 @@ async function recordStopped(run: ListedRun, actor: string) {
     reportPath,
     `${JSON.stringify({ ...reapResult, outcome: "stopped", result: existsSync(resultFile) ? resultFile : "unknown", verify, ...(parsed !== undefined && !parsed.success ? { verify_state: "unknown" } : {}) })}\n`,
   );
+  reportReap(reapResult);
   const endedAt = now();
   const runDirSize = measureRunDir(runDir);
   const endNotice = scheduleEndNotice({
@@ -314,4 +382,12 @@ async function recordStopped(run: ListedRun, actor: string) {
   } satisfies Parameters<typeof append>[0];
   append(stopped);
   return stopped;
+}
+
+function reportReap(reap: Awaited<ReturnType<typeof reapRun>>): void {
+  const processes = [...reap.reaped.processes, ...reap.survivors];
+  if (processes.length > 0)
+    process.stderr.write(
+      `agx worker stop: reaped/surviving processes: ${[...new Map(processes.map((item) => [item.pid, item])).values()].map(({ pid, argv0 }) => `${pid} ${argv0}`).join(", ")}\n`,
+    );
 }
