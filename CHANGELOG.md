@@ -1,5 +1,9 @@
 # Changelog
 
+## 11.2.0 — 2026-11-14
+
+- Reap marked processes when a run ends and report survivors.
+
 ## 11.1.2 — 2026-11-14
 
 - Honor valid landed records when guarding accepted workspace removal
