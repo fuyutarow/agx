@@ -1,5 +1,9 @@
 # Changelog
 
+## 11.2.1 — 2026-11-15
+
+- Reap marked processes whenever agx worker stop observes an ended run
+
 ## 11.2.0 — 2026-11-14
 
 - Reap marked processes when a run ends and report survivors.
