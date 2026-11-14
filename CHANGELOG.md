@@ -1,5 +1,9 @@
 # Changelog
 
+## 11.1.0 — 2026-11-14
+
+- Record verified copy-landed workspaces for safe removal and garbage collection.
+
 ## 11.0.1 — 2026-11-13
 
 - Clean up failed checkouts and safely remove incomplete workspaces.
