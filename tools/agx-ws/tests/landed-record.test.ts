@@ -234,6 +234,82 @@ test("record permits rm after copied landing and later trunk change", async () =
   });
 });
 
+test("accepted removal guard compares a valid land record to its landed commit", async () => {
+  await withFixture(async (f) => {
+    const { path, landed } = await prepare(f, "accepted-landed");
+    await Bun.write(
+      f.records,
+      JSON.stringify([
+        {
+          id: "accepted-run",
+          state: "ended",
+          workspace: path,
+          cwd: path,
+          judgment: { decision: "accept" },
+        },
+      ]),
+    );
+    expectSuccess(
+      await wsCommand(f, "landed", "accepted-landed", landed),
+      "record",
+    );
+    const result = await wsCommand(f, "rm", "accepted-landed");
+    expectSuccess(result, "rm accepted landed workspace");
+    expect(existsSync(path)).toBe(false);
+  });
+});
+
+test("accepted removal still refuses workspace paths beyond the recorded commit", async () => {
+  await withFixture(async (f) => {
+    const { path, landed } = await prepare(f, "accepted-edited");
+    await Bun.write(join(path, "tracked.txt"), "different accepted work\n");
+    expectSuccess(await jj(f, ["status"], path), "snapshot divergent tip");
+    await Bun.write(
+      f.records,
+      JSON.stringify([
+        {
+          id: "accepted-edit-run",
+          state: "ended",
+          workspace: path,
+          cwd: path,
+          judgment: { decision: "accept" },
+        },
+      ]),
+    );
+    expectSuccess(
+      await wsCommand(f, "landed", "accepted-edited", landed),
+      "record",
+    );
+    const result = await wsCommand(f, "rm", "accepted-edited");
+    expect(result.code).not.toBe(0);
+    expect(result.err).toContain(`recorded landed commit ${landed}`);
+    expect(existsSync(path)).toBe(true);
+  });
+});
+
+test("unrecorded accepted paths still compare against current trunk", async () => {
+  await withFixture(async (f) => {
+    const { path } = await prepare(f, "accepted-no-record");
+    await Bun.write(
+      f.records,
+      JSON.stringify([
+        {
+          id: "accepted-unrecorded-run",
+          state: "ended",
+          workspace: path,
+          cwd: path,
+          judgment: { decision: "accept" },
+        },
+      ]),
+    );
+    const result = await wsCommand(f, "rm", "accepted-no-record");
+    expect(result.code).not.toBe(0);
+    expect(result.err).toContain("accepted work has unlanded paths");
+    expect(result.err).toContain("land or reject it first");
+    expect(existsSync(path)).toBe(true);
+  });
+});
+
 test("edits after recording are protected, including after snapshot", async () => {
   await withFixture(async (f) => {
     const { path, landed } = await prepare(f, "edited");

@@ -712,7 +712,7 @@ async function matchingLandRecord(
   repo: Repo,
   ws: Workspace,
   trunk: string,
-): Promise<string | undefined> {
+): Promise<{ path: string; commit: string } | undefined> {
   const path = landRecordPath(repo, ws.dir);
   const raw = await readFile(path, "utf8").catch(() => "");
   const parsed = jsonOf(LandRecord).safeParse(raw);
@@ -735,7 +735,7 @@ async function matchingLandRecord(
     trunk,
   );
   return reachable.ok && reachable.value
-    ? `${path} (commit ${parsed.data.landedCommit})`
+    ? { path, commit: parsed.data.landedCommit }
     : undefined;
 }
 
@@ -883,6 +883,8 @@ export async function remove(options: {
         return bad(`cannot verify workspace registration: ${name.value}`);
       const records = await agxRecords(repo.value.backing);
       if (!records.ok) return records;
+      const removalCheck = await removalGuard(repo.value, dir, current.target);
+      if (!removalCheck.ok) return removalCheck;
       const trunk = await landingTrunk(repo.value, cfg.value);
       if (!trunk.ok) return trunk;
       const graph = await gcCommitGraph(repo.value, trunk.value.commit);
@@ -1464,17 +1466,23 @@ export async function removalGuard(
         true,
       );
   if (!resolvedTip.ok) return resolvedTip;
-  const work = await outstanding(
-    repo,
-    resolvedTip.value.trim(),
-    trunk.value.commit,
-  );
+  const tipCommit = resolvedTip.value.trim();
+  const listed = await workspaces(repo);
+  if (!listed.ok) return listed;
+  const workspace = listed.value.find((row) => realOr(row.dir) === realOr(dir));
+  const landedRecord =
+    workspace === undefined
+      ? undefined
+      : await matchingLandRecord(repo, workspace, trunk.value.commit);
+  const baseline = landedRecord?.commit ?? trunk.value.commit;
+  const work = await outstanding(repo, tipCommit, baseline);
   if (!work.ok) return work;
-  return work.value.differing.length === 0
-    ? good(undefined)
-    : bad(
-        `accepted work has unlanded paths: ${work.value.differing.join(", ")}; land or reject it first`,
-      );
+  if (work.value.differing.length === 0) return good(undefined);
+  const pathReason =
+    landedRecord === undefined
+      ? `accepted work has unlanded paths: ${work.value.differing.join(", ")}; land or reject it first`
+      : `accepted work has unlanded paths: ${work.value.differing.join(", ")}; recorded landed commit ${baseline}`;
+  return bad(pathReason);
 }
 
 export async function agxRecords(cwd: string): Promise<Attempt<RunRecord[]>> {
@@ -2872,7 +2880,7 @@ async function classifyGc(
   if (landedByContent)
     landingReason = `landed by content on ${trunk}${refSuffix}`;
   if (landedRecord !== undefined)
-    landingReason = `landed by record ${landedRecord}`;
+    landingReason = `landed by record ${landedRecord.path} (commit ${landedRecord.commit})`;
   let removableReason = `${landingReason}${remoteReason}; no untracked content`;
   if (allRejected)
     removableReason = `${landingReason}${remoteReason}; all runs judged reject; results preserved (${lineage.map((record) => record.id).join(", ")}); no age wait`;
