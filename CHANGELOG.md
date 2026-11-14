@@ -1,5 +1,9 @@
 # Changelog
 
+## 11.1.1 — 2026-11-14
+
+- Send every Jev classification request through one routing brief with the ticket's outcome, writes, verify and refuted_by, so agx worker check no longer hides a ticket's verify command
+
 ## 11.1.0 — 2026-11-14
 
 - Record verified copy-landed workspaces for safe removal and garbage collection.
