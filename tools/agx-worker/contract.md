@@ -1066,3 +1066,11 @@ exit 1 reports the stopped run, completed moves and unattempted runs. Rerun the
 same command to rescan and continue; already moved entries are absent. Exit 0
 means the scan completed, including any reported skips; exit 2 indicates invalid
 arguments or pins. An interrupted apply can also be rerun after inspection.
+
+At run end Linux scans same-UID processes for the exact inherited
+`AGX_RUN_DIR` entry after stopping the worker group. It sends TERM, waits up to
+five seconds, sends KILL to remaining matches, and scans again. The report and
+ended event include `reaped` (count and PID/argv0 pairs), `survivors`, and
+`reap_status`; a failure does not change the run outcome. The notice names
+reaped processes by count and survivors by PID. Unreadable proc
+entries are skipped. On other platforms `reap_status` says not performed.

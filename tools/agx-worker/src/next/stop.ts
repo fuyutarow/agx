@@ -7,6 +7,7 @@ import { userInfo } from "node:os";
 import { fromThrowable } from "neverthrow";
 import { leaseFor } from "./lease.ts";
 import { measureRunDir, type ListedRun } from "./run-state.ts";
+import { reapRun } from "./reap.ts";
 import { scheduleEndNotice } from "./end-notice.ts";
 import { resolveRunId } from "./run-id.ts";
 import {
@@ -159,7 +160,7 @@ async function stopOwnedRun(run: ListedRun): Promise<number> {
       await Bun.sleep(50);
       continue;
     }
-    return reportEndState(run, actor, recordStopped(run, actor));
+    return reportEndState(run, actor, await recordStopped(run, actor));
   }
   const finalEnd = events().findLast(
     (event) => event.id === run.id && event.kind === "ended",
@@ -251,7 +252,7 @@ function reportEndState(
   );
 }
 
-function recordStopped(run: ListedRun, actor: string) {
+async function recordStopped(run: ListedRun, actor: string) {
   const end = events().findLast((e) => e.id === run.id && e.kind === "ended");
   if (end?.kind === "ended") return end;
   const runDir = join(stateDir(), "runs", run.id);
@@ -274,15 +275,17 @@ function recordStopped(run: ListedRun, actor: string) {
       ? []
       : [{ ...progress.active, exit: 143, kind: "interrupted" as const }]),
   ];
+  const reapResult = await reapRun(runDir);
   const reportPath = join(runDir, "report.json");
   const resultFile = join(runDir, "result.md");
   writeFileSync(
     reportPath,
-    `${JSON.stringify({ outcome: "stopped", result: existsSync(resultFile) ? resultFile : "unknown", verify, ...(parsed !== undefined && !parsed.success ? { verify_state: "unknown" } : {}) })}\n`,
+    `${JSON.stringify({ ...reapResult, outcome: "stopped", result: existsSync(resultFile) ? resultFile : "unknown", verify, ...(parsed !== undefined && !parsed.success ? { verify_state: "unknown" } : {}) })}\n`,
   );
   const endedAt = now();
   const runDirSize = measureRunDir(runDir);
   const endNotice = scheduleEndNotice({
+    ...reapResult,
     id: run.id,
     ticket: run.ticket,
     dispatcher: run.dispatcher_session,
@@ -296,6 +299,7 @@ function recordStopped(run: ListedRun, actor: string) {
   });
   const stopped = {
     kind: "ended",
+    ...reapResult,
     id: run.id,
     at: endedAt,
     run_dir_bytes: runDirSize.bytes,

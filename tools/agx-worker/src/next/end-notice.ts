@@ -7,6 +7,7 @@ import { fromThrowable } from "neverthrow";
 import { stableSelfCommand } from "../self-command.ts";
 import { append, flushRunPublications, now } from "./store.ts";
 import { EndNoticeResult } from "./run-state.ts";
+import { ReapResult } from "./reap.ts";
 import { VerifyRound, verifyText } from "./verify.ts";
 
 export type EndNotice = z.output<typeof EndNoticeResult>;
@@ -22,6 +23,9 @@ export const EndNoticeRequest = z.object({
         .optional(),
     })
     .optional(),
+  reaped: ReapResult.shape.reaped.optional(),
+  survivors: ReapResult.shape.survivors.optional(),
+  reap_status: z.string().optional(),
   id: z.string(),
   ticket: z.string(),
   dispatcher: z.string().nullable(),
@@ -222,6 +226,12 @@ async function sendEndNotice(
     `agx run ${input.id} ${input.ticket} ended ${input.outcome} ` +
     `exit ${input.exit ?? "none"} after ${(elapsedMs / 60_000).toFixed(1)} min; result: ${input.resultPath ?? "none"}; ` +
     `verify: ${input.verifyDetails ?? verifyText(input.verifyExits, input.verifyRound)}; ` +
+    (input.reaped?.count !== undefined && input.reaped.count !== 0
+      ? `reaped ${input.reaped.count} processes that left the worker process group; `
+      : "") +
+    (input.survivors?.length !== undefined && input.survivors.length > 0
+      ? `could not stop pids ${input.survivors.map((p) => p.pid).join(", ")}; `
+      : "") +
     sizeNotice(input.runDirSize) +
     "\nNo reply needed; read: agx worker ls --json";
   const executable =

@@ -97,6 +97,7 @@ import {
 } from "./verify.ts";
 import { measureRunDir } from "./run-state.ts";
 import { scheduleEndNotice } from "./end-notice.ts";
+import { reapRun, type ReapResult } from "./reap.ts";
 import { completionFor } from "./completion.ts";
 import {
   lookupAddress,
@@ -652,13 +653,15 @@ async function runUnguarded(flags: Flags): Promise<number> {
     const runDir = resolve(stateDir(), "runs", id);
     const reportPath = join(runDir, "report.json");
     mkdirSync(runDir, { recursive: true });
+    const reapResult = await reapRun(runDir);
     writeFileSync(
       reportPath,
-      `${JSON.stringify({ outcome: "route-refused", summary: selectedRoute.message, changes: [], checks: [], for_coordinator: [], open: [selectedRoute.message] })}\n`,
+      `${JSON.stringify({ ...reapResult, outcome: "route-refused", summary: selectedRoute.message, changes: [], checks: [], for_coordinator: [], open: [selectedRoute.message] })}\n`,
     );
     if (binding !== undefined)
       append({
         kind: "ended",
+        ...reapResult,
         id: binding.id,
         at: now(),
         exit: selectedRoute.exitCode,
@@ -714,6 +717,24 @@ async function runUnguarded(flags: Flags): Promise<number> {
   let ended = false;
   let dispatcherIdentity: string | null = null;
   let stopTask: Promise<never> | undefined;
+  const reapResults: ReapResult[] = [];
+  const reap = async () => {
+    const result = await reapRun(runDir);
+    reapResults.push(result);
+    return result;
+  };
+  const combinedReap = (): ReapResult => {
+    const processes = reapResults.flatMap((r) => r.reaped.processes);
+    const status = reapResults
+      .map((r) => r.reap_status)
+      .filter((s) => s !== "complete")
+      .join("; ");
+    return {
+      reaped: { count: processes.length, processes },
+      survivors: reapResults.at(-1)?.survivors ?? [],
+      reap_status: status !== "" ? status : "complete",
+    };
+  };
   let killWorker: (() => void) | undefined;
   let verifyProgress: {
     cmd: string;
@@ -771,11 +792,13 @@ async function runUnguarded(flags: Flags): Promise<number> {
       ended = true;
       const endedAt = now();
       stopTask = (async () => {
+        await reap();
+        const reapResult = combinedReap();
         const stoppedReportPath = join(runDir, "report.json");
         const resultFile = join(runDir, "result.md");
         writeFileSync(
           stoppedReportPath,
-          `${JSON.stringify({ outcome: "stopped", result: existsSync(resultFile) ? resultFile : "unknown", verify: verifyProgress, verify_round: stoppedRound === 0 ? undefined : stoppedRound })}\n`,
+          `${JSON.stringify({ ...reapResult, outcome: "stopped", result: existsSync(resultFile) ? resultFile : "unknown", verify: verifyProgress, verify_round: stoppedRound === 0 ? undefined : stoppedRound })}\n`,
         );
         const parts = verifyProgress.map((v) => {
           const label =
@@ -788,6 +811,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
         const runDirSize = measureRunDir(runDir);
         const endNotice = scheduleEndNotice({
           runDirSize,
+          ...reapResult,
           id,
           ticket: ticketName,
           dispatcher: dispatcherIdentity,
@@ -805,6 +829,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
         append(
           {
             kind: "ended",
+            ...reapResult,
             id,
             run_dir_bytes: runDirSize.bytes,
             at: endedAt,
@@ -1322,7 +1347,9 @@ async function runUnguarded(flags: Flags): Promise<number> {
         : new Response(child.stdout).text();
     exit = await child.exited;
     timedOut = deadline.aborted;
+    killWorker();
     activeChild = undefined;
+    await reap();
     output = await outputPromise;
     if (stopTask !== undefined) await stopTask;
     receiptLine = output.trim().split("\n").at(-1) ?? "";
@@ -1566,6 +1593,13 @@ async function runUnguarded(flags: Flags): Promise<number> {
           },
         }),
   };
+  if (stopTask !== undefined) await stopTask;
+  await reap();
+  const reapResult = combinedReap();
+  report = {
+    ...(typeof report === "object" && report !== null ? report : {}),
+    ...reapResult,
+  };
   writeFileSync(reportPath, `${JSON.stringify(report)}\n`);
   const vendorSession = latestVendorSession;
   if (existsSync(interimPath)) {
@@ -1596,6 +1630,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
   const runDirSize = measureRunDir(runDir);
   const endNotice = scheduleEndNotice({
     runDirSize,
+    ...reapResult,
     id,
     ticket: ticketName,
     dispatcher: dispatcherIdentity,
@@ -1612,6 +1647,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
   append(
     {
       kind: "ended",
+      ...reapResult,
       id,
       run_dir_bytes: runDirSize.bytes,
       at: endedAt,
