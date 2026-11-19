@@ -1,6 +1,6 @@
 import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve, win32 } from "node:path";
+import { isAbsolute, join, relative, resolve, sep, win32 } from "node:path";
 import { attempt, errorMessage, type Attempt } from "./attempt.ts";
 import { JJ_READ_ARGS } from "./jj-read.ts";
 import { readonlyCommand } from "./readonly-command.ts";
@@ -491,6 +491,59 @@ export async function listAgxRepos(): Promise<
     });
   }
   return good(repos);
+}
+
+export type TicketRepoLookup =
+  | { kind: "registered"; name: string; path: string; root: string }
+  | {
+      kind: "unregistered";
+      examined: Array<{ path: string; tickets: string | undefined }>;
+    };
+
+const physicalOrResolved = async (path: string) => {
+  const physical = await attempt(() => realpath(path));
+  return physical.ok ? physical.value : resolve(path);
+};
+
+/**
+ * The registered repository whose configured `tickets` directory contains `ticketPath`
+ * (both compared by realpath). Two matching registrations refuse, naming their files;
+ * no match reports every registration examined so the caller can name them.
+ */
+export async function registeredRepoForTicket(
+  ticketPath: string,
+): Promise<Attempt<TicketRepoLookup>> {
+  const repos = await listAgxRepos();
+  if (!repos.ok) return repos;
+  const ticket = await physicalOrResolved(ticketPath);
+  const examined: Array<{ path: string; tickets: string | undefined }> = [];
+  const matches: Array<{ name: string; path: string; root: string }> = [];
+  for (const repo of repos.value) {
+    const declared = repo.config.tickets;
+    examined.push({ path: repo.path, tickets: declared });
+    if (declared === undefined) continue;
+    const directory = await physicalOrResolved(
+      resolve(
+        repo.root,
+        declared.startsWith("~/")
+          ? join(homedir(), declared.slice(2))
+          : declared,
+      ),
+    );
+    const rel = relative(directory, ticket);
+    if (
+      rel === "" ||
+      (!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`))
+    )
+      matches.push({ name: repo.name, path: repo.path, root: repo.root });
+  }
+  const [only, ...others] = matches;
+  if (only === undefined) return good({ kind: "unregistered", examined });
+  if (others.length > 0)
+    return failure(
+      `ticket ${ticketPath} is inside the tickets directory of more than one registered repository: ${matches.map((match) => match.path).join(", ")}; keep one registration per tickets directory`,
+    );
+  return good({ kind: "registered", ...only });
 }
 
 async function localConfig(

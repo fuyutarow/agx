@@ -142,6 +142,16 @@ binding). Run receipts, saved native receipts, reports, started events and JSON
 listings expose `sandbox` and `sandbox_source`. Source values are `flag`, `ticket`,
 `continued run`, and `built-in default`. Historical events may omit these fields.
 
+Dispatch resolves the ticket's repository first from the registered repositories
+(`$XDG_CONFIG_HOME/agx/repos/<name>.toml`): the entry whose `tickets` directory contains the
+ticket (both compared by realpath) supplies `root`, and the default workspace is resolved from
+that root. A ticket kept in a registered external tickets directory therefore dispatches against
+its repository. When no registered `tickets` directory contains the ticket, dispatch walks up
+from the ticket's directory to a `.jj` or `.git`. Two entries containing the same ticket refuse,
+naming both files. When neither resolves, the refusal names the ticket path, each examined
+`repos/*.toml` with its `tickets` value, and the missing item (no registered repository has
+`tickets = <directory containing the ticket>`); exit 1.
+
 `dispatch --continue RUN_ID` uses that run's recorded `workspace` path, falling back to
 `cwd` when `workspace` is absent or empty. Both preflight and the durable worker receive
 that path and the unchanged continuation ID, preserving the ordinary vendor-session resume.

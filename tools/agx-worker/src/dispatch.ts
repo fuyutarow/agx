@@ -28,7 +28,10 @@ import {
 } from "../../shared/src/agx-dispatch-binding.ts";
 import { JJ_READ_ARGS } from "../../shared/src/jj-read.ts";
 import { readonlyCommand } from "../../shared/src/readonly-command.ts";
-import { InspectionTimeout } from "../../shared/src/agx-config.ts";
+import {
+  InspectionTimeout,
+  registeredRepoForTicket,
+} from "../../shared/src/agx-config.ts";
 import { resolveSuiteTool } from "../../shared/src/path-dispatch.ts";
 import { stateDir as resolveStateDir } from "../../shared/src/state-dir.ts";
 
@@ -273,6 +276,39 @@ async function defaultRepositoryRoot(
       };
     probe = parent;
   }
+}
+
+const ticketsValue = (value: string | undefined) =>
+  value === undefined ? "unset" : JSON.stringify(value);
+
+/**
+ * A ticket in a registered repository's tickets directory belongs to that repository
+ * (`root` of its repos/<name>.toml); otherwise the repository is found by walking up from
+ * the ticket's directory. Two registrations claiming the ticket refuse.
+ */
+async function ticketRepositoryRoot(
+  ticketPath: string,
+  env: NodeJS.ProcessEnv,
+): Promise<{ root?: string; error?: string; code?: number }> {
+  const lookup = await registeredRepoForTicket(ticketPath);
+  if (!lookup.ok) return { error: errorMessage(lookup.error) };
+  if (lookup.value.kind === "registered")
+    return defaultRepositoryRoot(lookup.value.root, env);
+  const walked = await defaultRepositoryRoot(dirname(ticketPath), env);
+  if (walked.root !== undefined) return walked;
+  const examined =
+    lookup.value.examined.length === 0
+      ? "no registered repos/*.toml files"
+      : lookup.value.examined
+          .map(
+            (entry) =>
+              `${entry.path} (tickets = ${ticketsValue(entry.tickets)})`,
+          )
+          .join(", ");
+  return {
+    ...walked,
+    error: `${walked.error ?? "cannot resolve repository"}; ticket ${ticketPath} is not inside a .jj or .git tree and no registered repository has tickets = <directory containing it>; examined: ${examined}`,
+  };
 }
 
 async function listedRuns(
@@ -560,7 +596,7 @@ export async function dispatch(options: {
       env.CODEX_SESSION_ID,
     ].find((session) => session !== undefined && session !== "") ?? null;
   const wsSlug = options.ws ?? slug;
-  const ticketRepo = await defaultRepositoryRoot(dirname(ticketPath), env);
+  const ticketRepo = await ticketRepositoryRoot(ticketPath, env);
   if (ticketRepo.root === undefined) {
     process.stderr.write(
       `agx worker dispatch: cannot resolve ticket repository: ${ticketRepo.error}\n`,
