@@ -1,5 +1,9 @@
 # Changelog
 
+## 11.2.2 — 2026-11-19
+
+- agx worker dispatch resolves a ticket kept in a registered repository's external tickets directory to that repository; two matching registrations, or none, are refused naming the examined repos/*.toml files
+
 ## 11.2.1 — 2026-11-15
 
 - Reap marked processes whenever agx worker stop observes an ended run
