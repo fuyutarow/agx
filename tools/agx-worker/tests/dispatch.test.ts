@@ -1376,26 +1376,28 @@ test("dispatch check deadline is an operational timeout with exit 75", async () 
     `import { dispatchMain } from ${JSON.stringify(fileURLToPath(new URL("../src/dispatch.ts", import.meta.url)))};
 if (Bun.argv[2] === "dispatch") await dispatchMain(Bun.argv.slice(3));
 else if (Bun.argv[2] === "check") {
-  await Bun.sleep(65_000);
+  await Bun.sleep(8_000);
   console.error("late check verdict");
   process.exit(2);
 }
 else process.exit(1);
 `,
   );
+  // Long enough for the inspections before check, far shorter than the slow check.
+  f.env.DISPATCH_COMMAND_TIMEOUT_MS = "3000";
   const child = Bun.spawn([process.execPath, f.entry, "dispatch", f.ticket], {
     cwd: f.repo,
     env: f.env,
     stdout: "pipe",
     stderr: "pipe",
-    timeout: 70_000,
+    timeout: 20_000,
   });
   const [code, err] = await Promise.all([
     child.exited,
     new Response(child.stderr).text(),
   ]);
   expect(code, err).toBe(75);
-  expect(err).toContain("DISPATCH_CHECK_TIMEOUT_MS=60000ms");
+  expect(err).toContain("DISPATCH_COMMAND_TIMEOUT_MS=3000ms");
   expect(err).toContain(
     JSON.stringify([process.execPath, f.entry, "check"]).slice(0, -1),
   );
@@ -1404,25 +1406,26 @@ else process.exit(1);
   expect(err).not.toContain("late check verdict");
   expect(err.trim().split("\n")).toHaveLength(1);
   expect(await Bun.file(f.unitArgs).exists()).toBe(false);
-}, 75_000);
+}, 25_000);
 
 test("dispatch inspection helpers distinguish expiry from a completed failure", async () => {
   const { invoke: inspect, invokeReadonly } =
     await import("../src/dispatch.ts");
   const f = fixture();
   const slow = [process.execPath, "-e", "await Bun.sleep(5000)"];
-  const expiredList = await inspect(
-    slow,
-    f.repo,
-    f.env,
-    20,
-    "DISPATCH_LIST_TIMEOUT_MS",
-  );
+  const brief = { ...f.env, DISPATCH_COMMAND_TIMEOUT_MS: "20" };
+  const expiredList = await inspect(slow, f.repo, brief);
   expect(expiredList.code).toBe(75);
-  expect(expiredList.err).toContain("DISPATCH_LIST_TIMEOUT_MS=20ms");
-  const expiredTree = await invokeReadonly(slow, f.repo, f.env, 20);
+  expect(expiredList.err).toContain("DISPATCH_COMMAND_TIMEOUT_MS=20ms");
+  const expiredTree = await invokeReadonly(slow, f.repo, brief);
   expect(expiredTree.code).toBe(75);
-  expect(expiredTree.err).toContain("DISPATCH_TREE_READ_TIMEOUT_MS=20ms");
+  expect(expiredTree.err).toContain("DISPATCH_COMMAND_TIMEOUT_MS=20ms");
+  const invalid = await invokeReadonly(slow, f.repo, {
+    ...f.env,
+    DISPATCH_COMMAND_TIMEOUT_MS: "soon",
+  });
+  expect(invalid.code).toBe(127);
+  expect(invalid.err).toContain("must be a positive integer");
   const completed = await inspect(
     [
       process.execPath,
@@ -1431,8 +1434,6 @@ test("dispatch inspection helpers distinguish expiry from a completed failure", 
     ],
     f.repo,
     f.env,
-    2000,
-    "DISPATCH_CHECK_TIMEOUT_MS",
   );
   expect(completed.code).toBe(2);
   expect(completed.err).toContain("completed refusal");
@@ -1445,8 +1446,9 @@ test("dispatch contract: agx ws add runs under its own deadline, not the inspect
   // (default 900 s) and names its step on expiry. The 60 s bound once SIGKILLed it mid-checkout on
   // a repository with a large working copy, leaving the workspace state unknown.
   const overridden = fixture();
-  overridden.env.DISPATCH_COMMAND_TIMEOUT_MS = "1000";
-  overridden.env.FAKE_WS_SLEEP_SECONDS = "2";
+  // The bound still covers check and ls in this dispatch, so it leaves them room.
+  overridden.env.DISPATCH_COMMAND_TIMEOUT_MS = "3000";
+  overridden.env.FAKE_WS_SLEEP_SECONDS = "4";
   const slow = await invoke(overridden);
   expect(slow.exitCode, slow.stderr).toBe(0);
   expect(slow.stderr).not.toContain("inspection timeout");

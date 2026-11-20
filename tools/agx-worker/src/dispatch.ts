@@ -47,10 +47,10 @@ import { stateDir } from "./state.ts";
 import { resolveTicketReference } from "./next/ticket-home.ts";
 import { ADD_TIMEOUT_MS, addTimeoutMs } from "../../agx-ws/src/deadline.ts";
 
-export const DISPATCH_CHECK_TIMEOUT_MS = 60_000;
-export const DISPATCH_LIST_TIMEOUT_MS = 60_000;
+// The one bound on every inspection command dispatch runs (check, ls, repository reads); the
+// environment variable of the same name overrides it. A command that owns a longer deadline of
+// its own passes that deadline instead, as agx ws add does below.
 export const DISPATCH_COMMAND_TIMEOUT_MS = 60_000;
-export const DISPATCH_TREE_READ_TIMEOUT_MS = 60_000;
 // agx ws add owns its whole-command deadline (WS_ADD_TIMEOUT_MS, default 900 s) and on expiry names
 // the step it stopped in. Dispatch waits that long plus this grace, so ws add, not a SIGKILL from
 // the 60 s inspection bound, ends a slow checkout and reports where it was.
@@ -188,8 +188,10 @@ export async function invokeReadonly(
   args: string[],
   cwd: string,
   env: NodeJS.ProcessEnv,
-  timeoutMs = DISPATCH_TREE_READ_TIMEOUT_MS,
 ): Promise<{ code: number; out: string; err: string }> {
+  const bound = dispatchCommandTimeoutMs(env);
+  if (!bound.ok) return { code: 127, out: "", err: bound.error };
+  const timeoutMs = bound.milliseconds;
   const command = readonlyCommand(args, cwd, env);
   const started = performance.now();
   const child = Bun.spawn(command.cmd, {
@@ -214,7 +216,7 @@ export async function invokeReadonly(
       code: 75,
       out: "",
       err: new InspectionTimeout(
-        "DISPATCH_TREE_READ_TIMEOUT_MS",
+        "DISPATCH_COMMAND_TIMEOUT_MS",
         timeoutMs,
         args,
         cwd,
@@ -319,14 +321,11 @@ async function ticketRepositoryRoot(
 async function listedRuns(
   cwd: string,
   env: NodeJS.ProcessEnv,
-  timeoutMs = DISPATCH_LIST_TIMEOUT_MS,
 ): Promise<{ rows?: RunRow[]; error?: string; code?: number }> {
   const result = await invoke(
     [...stableSelfCommand(), "ls", "--json", "--all"],
     cwd,
     env,
-    timeoutMs,
-    "DISPATCH_LIST_TIMEOUT_MS",
   );
   if (result.code !== 0)
     return {
@@ -905,8 +904,6 @@ export async function dispatch(options: {
     ],
     cwd,
     env,
-    DISPATCH_CHECK_TIMEOUT_MS,
-    "DISPATCH_CHECK_TIMEOUT_MS",
   );
   if (checked.code === 75) {
     process.stderr.write(`${checked.err}\n`);

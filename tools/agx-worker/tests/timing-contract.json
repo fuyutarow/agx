@@ -142,7 +142,7 @@
   {
     "file": "tools/agx-worker/tests/dispatch.test.ts",
     "name": "dispatch check deadline is an operational timeout with exit 75",
-    "timeout": 75000
+    "timeout": 25000
   },
   {
     "file": "tools/agx-worker/tests/dispatch.test.ts",

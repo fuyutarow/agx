@@ -164,8 +164,9 @@ with one diagnostic line naming the recorded path, reason and repair: restore/re
 that path with `agx ws add`, or start a fresh run. Registry inspection timeouts retain
 temporary-unavailability exit 75.
 
-Inspection commands that dispatch runs are bounded by `DISPATCH_COMMAND_TIMEOUT_MS`
-(default 60000). The `agx ws add` that creates a fresh run's workspace is not an inspection:
+Inspection commands that dispatch runs (check, the run listing and repository reads) are all
+bounded by `DISPATCH_COMMAND_TIMEOUT_MS` (default 60000; the environment variable of that name
+overrides it, and an invalid value refuses dispatch). Expiry exits 75 and names that bound. The `agx ws add` that creates a fresh run's workspace is not an inspection:
 dispatch waits for ws add's own whole-command deadline (`WS_ADD_TIMEOUT_MS`, default 900000)
 plus 30000 ms, so a slow checkout ends with ws add's own report of the step it stopped in
 rather than a kill that leaves the workspace state unknown.
