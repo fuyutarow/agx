@@ -232,6 +232,9 @@ test.each(["codex", "stderr", "stubborn", "wait", "claude", "claude-stderr"])(
           f.prompt,
           "--claude-bin",
           f.bin,
+          // The wrapper refuses to start without a route; capacity detection is the same on both.
+          "--route",
+          "claude-session",
         ]
       : [
           "tools/agx-worker/src/workers/codex.ts",

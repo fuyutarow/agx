@@ -6,8 +6,7 @@ import { standardCli } from "../../../shared/src/cli.ts";
 import cliPackage from "../../package.json" with { type: "json" };
 import { err, ok, type Result } from "neverthrow";
 import { jsonOf, jsonText, z } from "../../../shared/src/zod.ts";
-import { interimReturnWriter, parseReturn } from "../report.ts";
-import { activityWriter } from "../lifecycle.ts";
+import { interimReturnWriter } from "../report.ts";
 import { claudeSandboxTempProblem, workerEnvironment } from "./environment.ts";
 import {
   claudeCredentialDetails,
@@ -294,7 +293,6 @@ async function runClaudeAttempt(
       ),
     }),
   });
-  let returnedText = "";
   const recordInterim = interimReturnWriter(
     process.env.AGX_INTERIM_REPORTS_FILE,
   );
@@ -303,20 +301,16 @@ async function runClaudeAttempt(
     observeCapacity(line);
     if (modelAnswered(line, "claude")) clearTimeout(modelWaitTimer);
     progress?.feed(line);
-    const messageFile = process.env.AGX_LAST_MESSAGE_FILE;
-    if (messageFile === undefined) return;
     const event = jsonOf(AssistantText).safeParse(line);
     if (!event.success) return;
-    returnedText += event.data.message.content
-      .filter((block) => block.type === "text")
-      .map((block) => block.text ?? "")
-      .join("\n");
-    if (parseReturn(returnedText).kind !== "valid") return;
-    mkdirSync(dirname(messageFile), { recursive: true });
-    writeFileSync(messageFile, returnedText);
-    await recordInterim(returnedText);
+    // The writer keeps only a valid interim RETURN, as the Codex wrapper's does.
+    await recordInterim(
+      event.data.message.content
+        .filter((block) => block.type === "text")
+        .map((block) => block.text ?? "")
+        .join("\n"),
+    );
   };
-  const recordActivity = activityWriter();
   const secrets = [
     environment.ANTHROPIC_API_KEY,
     environment.ANTHROPIC_AUTH_TOKEN,
@@ -332,7 +326,7 @@ async function runClaudeAttempt(
     );
   const [stdout, stderr, exitCode] = await Promise.all([
     graced(
-      readLines(child.stdout, feed, recordActivity, (line) => {
+      readLines(child.stdout, feed, (line) => {
         observeCapacity(redact(line));
       }),
     ),
@@ -342,7 +336,6 @@ async function runClaudeAttempt(
         (line) => {
           observeCapacity(redact(line));
         },
-        recordActivity,
         (line) => {
           observeCapacity(redact(line));
         },
@@ -407,7 +400,6 @@ async function runClaudeAttempt(
 async function readLines(
   stream: ReadableStream<Uint8Array> | null,
   onLine: (line: string) => void | Promise<void>,
-  recordActivity: (bytes: number) => void,
   onPartial: (line: string) => void,
 ): Promise<string> {
   if (stream === null) return "";
@@ -415,7 +407,6 @@ async function readLines(
   let text = "";
   let pending = "";
   for await (const chunk of stream) {
-    recordActivity(chunk.byteLength);
     const piece = decoder.decode(chunk, { stream: true });
     text += piece;
     const lines = (pending + piece).split("\n");

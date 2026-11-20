@@ -316,3 +316,65 @@ test("a Claude result event saying the credit balance is too low ends the attemp
     readFileSync(join(root, "state", "claude-credits-unavailable"), "utf8"),
   ).toContain("credits unavailable");
 });
+
+const fenced = (record: object): string =>
+  `\`\`\`agx-return\n${JSON.stringify({ findings: [], evidence: [], impact_on_brief: "none", proposed_next: "continue", artifacts: [], ...record })}\n\`\`\``;
+const assistant = (text: string): string =>
+  JSON.stringify({
+    type: "assistant",
+    message: { content: [{ type: "text", text }] },
+  });
+
+test("an interim RETURN in a Claude assistant message reaches the run's interim journal", async () => {
+  const root = mkdtempSync(join(tmpdir(), "agx-claude-interim-"));
+  // In-process snapshot for restoring process.env below; no subprocess inherits it.
+  const old = Object.assign({}, process.env);
+  using cleanup = new DisposableStack();
+  cleanup.defer(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+  cleanup.defer(() => {
+    for (const key of Object.keys(process.env))
+      if (!Object.hasOwn(old, key)) delete process.env[key];
+    Object.assign(process.env, old);
+  });
+  process.env.HOME = root;
+  process.env.AGX_STATE_DIR = join(root, "state");
+  process.env.ANTHROPIC_API_KEY = "inline-test-secret";
+  delete process.env.ANTHROPIC_AUTH_TOKEN;
+  const journal = join(root, "run", "interim.jsonl");
+  process.env.AGX_INTERIM_REPORTS_FILE = journal;
+  const interim = fenced({ interim: true });
+  const events = join(root, "events.jsonl");
+  writeFileSync(
+    events,
+    [
+      assistant("working"),
+      assistant(interim),
+      // A final RETURN ends the run through the report; it is not a checkpoint.
+      assistant(fenced({})),
+      JSON.stringify({ type: "result", subtype: "success", result: "OK" }),
+    ]
+      .map((line) => `${line}\n`)
+      .join(""),
+  );
+  const bin = join(root, "claude");
+  writeFileSync(bin, `#!/bin/sh\ncat ${JSON.stringify(events)}\n`);
+  chmodSync(bin, 0o755);
+  const run = await runClaude({
+    target: root,
+    prompt: "hello",
+    model: "test",
+    permissionMode: "plan",
+    maxTurns: 1,
+    timeoutMs: 10_000,
+    safeMode: false,
+    bare: false,
+    claudeBin: bin,
+    route: "claude-api",
+  });
+  expect(run.exitCode).toBe(0);
+  expect(readFileSync(journal, "utf8")).toBe(
+    `${JSON.stringify({ last_message: interim })}\n`,
+  );
+});

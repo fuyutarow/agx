@@ -125,20 +125,13 @@ export const dispatcherIdentityFor = (
   if (session.startsWith("claude:")) return session;
   if (session.startsWith("codex:"))
     return `codex:${env.CODEX_THREAD_ID ?? session.slice(6)}`;
-  const declaredVendor =
-    env.AGX_DISPATCHER_VENDOR === "codex" ||
-    env.AGX_DISPATCHER_VENDOR === "claude"
-      ? env.AGX_DISPATCHER_VENDOR
-      : undefined;
   const matchingVendors = [
     ...(env.CLAUDE_CODE_SESSION_ID === session ? ["claude"] : []),
     ...(env.CODEX_SESSION_ID === session || env.CODEX_THREAD_ID === session
       ? ["codex"]
       : []),
   ];
-  const vendor =
-    declaredVendor ??
-    (matchingVendors.length === 1 ? matchingVendors[0] : undefined);
+  const vendor = matchingVendors.length === 1 ? matchingVendors[0] : undefined;
   const target =
     vendor === "codex" ? (env.CODEX_THREAD_ID ?? session) : session;
   return vendor === undefined ? null : `${vendor}:${target}`;

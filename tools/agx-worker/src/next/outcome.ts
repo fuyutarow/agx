@@ -42,13 +42,6 @@ export const workspaceSnapshot = (cwd: string) =>
       .filter(
         (path) => path !== workspaceRoot && isWithin(workspaceRoot, path),
       );
-    const capacityLog = process.env.AGX_CAPACITY_LOG;
-    const internalFiles =
-      capacityLog === undefined
-        ? []
-        : [resolve(cwd, capacityLog)].filter(
-            (path) => path !== workspaceRoot && isWithin(workspaceRoot, path),
-          );
     const files = new Map<string, string>();
     const paths = new Bun.Glob("**").scanSync({
       cwd,
@@ -65,10 +58,7 @@ export const workspaceSnapshot = (cwd: string) =>
         continue;
       const absolute = resolve(workspaceRoot, path);
       if (
-        internalDirectories.some((directory) =>
-          isWithin(directory, absolute),
-        ) ||
-        internalFiles.includes(absolute)
+        internalDirectories.some((directory) => isWithin(directory, absolute))
       )
         continue;
       const stat = lstatSync(absolute);

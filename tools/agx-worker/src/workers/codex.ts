@@ -66,7 +66,6 @@ import {
 } from "./codex-host.ts";
 import { resourceBriefFallback } from "./codex-resource-probe.ts";
 import { costUsd } from "../../../shared/src/dispatch-pricing.ts";
-import { activityWriter } from "../lifecycle.ts";
 import { interimReturnWriter, parseReturn } from "../report.ts";
 import { progressIntervalMs, progressThrottle } from "../progress.ts";
 import {
@@ -584,7 +583,6 @@ const progress =
     ? undefined
     : progressWriter(progressPath, undefined, tokenPrices);
 let streamed = "";
-const recordActivity = activityWriter();
 const AgentMessage = z.looseObject({
   item: z.looseObject({ type: z.literal("agent_message"), text: z.string() }),
 });
@@ -622,7 +620,6 @@ function readEvents(): Promise<string> {
   let pending = "";
   const sink = new WritableStream<Uint8Array>({
     async write(chunk) {
-      recordActivity(chunk.byteLength);
       const text = decoder.decode(chunk, { stream: true });
       streamed += text;
       const lines = `${pending}${text}`.split("\n");
@@ -654,7 +651,6 @@ async function readErrors(): Promise<string> {
   let pending = "";
   const decoder = new TextDecoder();
   for await (const chunk of proc.stderr) {
-    recordActivity(chunk.byteLength);
     const decoded = decoder.decode(chunk, { stream: true });
     text += decoded;
     const lines = `${pending}${decoded}`.split("\n");

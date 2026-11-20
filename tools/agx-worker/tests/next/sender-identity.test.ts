@@ -47,7 +47,16 @@ for (const backend of ["claude", "codex"] as const) {
       const wrapper = backend === "claude" ? "run-claude.ts" : "codex.ts";
       const args =
         backend === "claude"
-          ? ["--target", root, "--model", "fixture", "--claude-bin", fixture]
+          ? [
+              "--target",
+              root,
+              "--model",
+              "fixture",
+              "--claude-bin",
+              fixture,
+              "--route",
+              "claude-session",
+            ]
           : [
               "--choice",
               "luna-medium",
