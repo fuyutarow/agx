@@ -27,6 +27,7 @@ import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { createTempTracker } from "../temp.ts";
 import {
   agxTempRoot,
+  runTempDir,
   createRunTemp,
   freeRunTemp,
   recordedLifetime,
@@ -34,6 +35,7 @@ import {
 import { append } from "../../src/next/store.ts";
 import {
   workerWritableRoots,
+  claudeSandboxTempProblem,
   claudeWorkspaceWriteSettings,
 } from "../../src/workers/environment.ts";
 import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
@@ -71,7 +73,7 @@ const CLI = "tools/agx-worker/src/next/cli.ts";
 async function fixture(workerBody: string, verify: string | string[]) {
   const root = scratch("run-temp-");
   await prepareTicketRepo(root);
-  const tempRoot = join(root, "xdg-state", "agx", "runs");
+  const tempRoot = join(root, "xdg-state", "agx", "tmp");
   const ticket = join(root, "ticket.md");
   const worker = join(root, "fake-worker.ts");
   const jev = Bun.serve({
@@ -352,11 +354,7 @@ describe("agx worker run owns its temp space", () => {
     expect(readdirSync(f.tempRoot).length).toBeGreaterThan(0);
     child.kill("SIGTERM");
     await child.exited;
-    expect(
-      readdirSync(f.tempRoot).every(
-        (id) => !existsSync(join(f.tempRoot, id, "tmp")),
-      ),
-    ).toBe(true);
+    expect(readdirSync(f.tempRoot)).toEqual([]);
   });
 
   test("a read-only worker subtree is removed after the ended record is written", async () => {
@@ -369,11 +367,7 @@ describe("agx worker run owns its temp space", () => {
       { cwd: process.cwd(), env: f.env, timeout: 10_000, stdout: "pipe" },
     );
     expect(await result.exited).toBe(0);
-    expect(
-      readdirSync(f.tempRoot).every(
-        (id) => !existsSync(join(f.tempRoot, id, "tmp")),
-      ),
-    ).toBe(true);
+    expect(readdirSync(f.tempRoot)).toEqual([]);
     const state = readFileSync(
       join(f.env.AGX_STATE_DIR, "records.jsonl"),
       "utf8",
@@ -455,7 +449,7 @@ describe("createRunTemp", () => {
     const runDir = join(root, "agx", "runs", "run-1");
     const temp = join(runDir, "tmp");
     expect(agxTempRoot({ XDG_STATE_HOME: root })).toBe(
-      join(root, "agx", "runs"),
+      join(root, "agx", "tmp"),
     );
     expect(
       workerWritableRoots({ runDir, source: { TMPDIR: temp, HOME: root } }),
@@ -467,5 +461,27 @@ describe("createRunTemp", () => {
         source: { HOME: root },
       }).sandbox.filesystem.allowWrite,
     ).toContain(temp);
+  });
+});
+
+describe("run temp path length", () => {
+  test("an ordinary home keeps Claude's sandbox socket under the unix limit; the former layout did not", () => {
+    const id = "b46ebea5-3697-496f-8303-4fbe044b477c";
+    const state = "/home/fuyutarow/.local/state";
+    const dir = runTempDir(id, agxTempRoot({ XDG_STATE_HOME: state }));
+    expect(dir).toBe("/home/fuyutarow/.local/state/agx/tmp/b46ebea53697496f");
+    expect(claudeSandboxTempProblem(dir)).toBeUndefined();
+    // runs/<id>/tmp was 78 bytes: the socket path reached 113 bytes and socat truncated it.
+    expect(
+      claudeSandboxTempProblem(join(state, "agx", "runs", id, "tmp")),
+    ).toContain("113 bytes, over the 107-byte unix socket limit");
+  });
+
+  test("two runs whose ids share the directory prefix do not share a temp directory", () => {
+    const root = scratch("prefix-");
+    expect(createRunTemp("aaaaaaaaaaaaaaaa-1", root).isOk()).toBe(true);
+    expect(
+      createRunTemp("aaaaaaaaaaaaaaaa-2", root)._unsafeUnwrapErr(),
+    ).toContain("cannot create run temp directory");
   });
 });

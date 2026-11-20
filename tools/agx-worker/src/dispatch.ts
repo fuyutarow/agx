@@ -45,11 +45,16 @@ import { timeBoxUnchangedRefusal } from "./next/continue.ts";
 import { timeboxLineageRefusal } from "./next/timebox-lineage.ts";
 import { stateDir } from "./state.ts";
 import { resolveTicketReference } from "./next/ticket-home.ts";
+import { ADD_TIMEOUT_MS, addTimeoutMs } from "../../agx-ws/src/deadline.ts";
 
 export const DISPATCH_CHECK_TIMEOUT_MS = 60_000;
 export const DISPATCH_LIST_TIMEOUT_MS = 60_000;
 export const DISPATCH_COMMAND_TIMEOUT_MS = 60_000;
 export const DISPATCH_TREE_READ_TIMEOUT_MS = 60_000;
+// agx ws add owns its whole-command deadline (WS_ADD_TIMEOUT_MS, default 900 s) and on expiry names
+// the step it stopped in. Dispatch waits that long plus this grace, so ws add, not a SIGKILL from
+// the 60 s inspection bound, ends a slow checkout and reports where it was.
+export const DISPATCH_WS_ADD_GRACE_MS = 30_000;
 const DispatchCommandTimeoutMs = z.coerce
   .number()
   .int()
@@ -747,6 +752,8 @@ export async function dispatch(options: {
       ],
       cwd,
       env,
+      (addTimeoutMs(env) ?? ADD_TIMEOUT_MS) + DISPATCH_WS_ADD_GRACE_MS,
+      "WS_ADD_TIMEOUT_MS (plus dispatch grace)",
     );
     if (ws.kind === "timeout-error") return reportDispatchTimeoutError(ws.err);
     if (ws.code !== 0) {

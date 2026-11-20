@@ -226,7 +226,10 @@ margins, TB4 luna exclusions, refusals and pre-start failures. Counts describe
 routing selections rather than worker success or rejection. There is no fallback:
 when Jev cannot route, the dispatch is refused before any effect with one
 `route refused: <failed step>` first line, and the refusal is recorded with that
-reason. A policy that sets `route.default` is rejected as removed.
+reason. When the failed step is a missing `TYPESAFE_API_KEY`, the line says which
+fnox miss it was (not installed, no config file, config without the key, or fnox's
+own error) and ends with `recover: <command>`, the command that stores the key; it
+never contains the value. A policy that sets `route.default` is rejected as removed.
 See [the routing audit contract](contract.md#routing-audit-journal) for retained
 request, filtering, replay and missing-evidence semantics.
 

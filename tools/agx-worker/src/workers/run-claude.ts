@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { cli as cleyeCli } from "cleye";
 import { standardCli } from "../../../shared/src/cli.ts";
@@ -7,7 +8,7 @@ import { err, ok, type Result } from "neverthrow";
 import { jsonOf, jsonText, z } from "../../../shared/src/zod.ts";
 import { interimReturnWriter, parseReturn } from "../report.ts";
 import { activityWriter } from "../lifecycle.ts";
-import { workerEnvironment } from "./environment.ts";
+import { claudeSandboxTempProblem, workerEnvironment } from "./environment.ts";
 import {
   claudeCredentialDetails,
   recordAttemptCredential,
@@ -643,6 +644,17 @@ async function configFromCli(): Promise<Result<RunConfig, Error>> {
   const claudeBin = values.claudeBin ?? "claude";
   if (Bun.which(claudeBin) === null)
     return err(new Error(`claude binary is not runnable: ${claudeBin}`));
+  // Refuse before spawning rather than let every sandboxed Bash call fail inside the session.
+  const sandboxed =
+    values.settings !== undefined &&
+    jsonOf(
+      z.looseObject({ sandbox: z.looseObject({ enabled: z.literal(true) }) }),
+    ).safeParse(values.settings).success;
+  const tempProblem =
+    sandboxed && process.platform === "linux"
+      ? claudeSandboxTempProblem(tmpdir())
+      : undefined;
+  if (tempProblem !== undefined) return err(new Error(tempProblem));
   const bare = values.bare ?? false;
   const safeMode = values.safeMode ?? false;
   if (bare && safeMode)

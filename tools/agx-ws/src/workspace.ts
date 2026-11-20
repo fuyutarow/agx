@@ -171,6 +171,19 @@ export async function updateStale(
   return updated.ok ? good(undefined) : updated;
 }
 
+/**
+ * Whether `path` is a workspace `agx ws add` made for the checkout at `backing`:
+ * `<parent of backing>/<basename of backing>.ws/ws_<slug>`, the layout resolveRepo and add create.
+ */
+export function isAgxWorkspaceOf(backing: string, path: string): boolean {
+  const root = resolve(backing);
+  const candidate = resolve(path);
+  return (
+    basename(candidate).startsWith("ws_") &&
+    dirname(candidate) === join(dirname(root), `${basename(root)}.ws`)
+  );
+}
+
 export function resolveRepo(path: string): Attempt<Repo> {
   const found = jjWorkspace(path);
   if (!found.ok) return bad(msg(found));

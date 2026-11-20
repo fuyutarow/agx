@@ -10,6 +10,14 @@ const context = new AsyncLocalStorage<{
 const Timeout = z.coerce.number().int().positive().max(2_147_483_647);
 export const ADD_TIMEOUT_MS = 900_000;
 
+/** agx ws add's whole-command deadline under `env`, or undefined when WS_ADD_TIMEOUT_MS is invalid. */
+export function addTimeoutMs(
+  env: NodeJS.ProcessEnv = process.env,
+): number | undefined {
+  const timeout = Timeout.safeParse(env.WS_ADD_TIMEOUT_MS ?? ADD_TIMEOUT_MS);
+  return timeout.success ? timeout.data : undefined;
+}
+
 /** Logical phases persist; a nested subprocess restores its enclosing phase on return. */
 export function enterStep(step: string): () => void {
   const state = context.getStore();
@@ -33,10 +41,8 @@ export function watchChild(kill: () => void): () => void {
 export async function runAddCommand(
   action: () => Promise<void>,
 ): Promise<never> {
-  const timeout = Timeout.safeParse(
-    process.env.WS_ADD_TIMEOUT_MS ?? ADD_TIMEOUT_MS,
-  );
-  if (!timeout.success) {
+  const timeoutMs = addTimeoutMs();
+  if (timeoutMs === undefined) {
     process.stderr.write(
       "ws: WS_ADD_TIMEOUT_MS must be a positive integer of at most 2147483647 milliseconds\n",
     );
@@ -50,10 +56,10 @@ export async function runAddCommand(
   setTimeout(() => {
     for (const kill of state.children) kill();
     process.stderr.write(
-      `ws: whole-command deadline exceeded after ${timeout.data}ms in step: ${state.step}\n`,
+      `ws: whole-command deadline exceeded after ${timeoutMs}ms in step: ${state.step}\n`,
     );
     process.exit(124);
-  }, timeout.data);
+  }, timeoutMs);
   return context.run(state, async () => {
     const result = await attempt(action);
     if (!result.ok) {

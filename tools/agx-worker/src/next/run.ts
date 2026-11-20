@@ -69,7 +69,7 @@ import {
   recordRefusal,
 } from "./preflight.ts";
 import {
-  agxTempRoot,
+  runTempDir,
   createRunTemp,
   freeRunTemp,
   recordedLifetime,
@@ -84,6 +84,7 @@ import { guardPreLaunch } from "./launch-guard.ts";
 import {
   Outcome,
   changedPaths,
+  promisedPaths,
   deriveOutcome,
   workspaceSnapshot,
 } from "./outcome.ts";
@@ -692,7 +693,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
       .map((record) => record.id),
   );
   for (const endedId of endedIds) {
-    if (!existsSync(join(agxTempRoot(), endedId, "tmp"))) continue;
+    if (!existsSync(runTempDir(endedId))) continue;
     const lifetime = recordedLifetime(endedId);
     if (lifetime.state === "ended")
       freeRunTemp(lifetime).mapErr((error) =>
@@ -1469,11 +1470,33 @@ async function runUnguarded(flags: Flags): Promise<number> {
     ? removeClaudeSandboxStubs(cwd, beforeSnapshot)
     : [];
   const after = workspaceSnapshot(cwd);
-  const changedPathsMeasured =
+  const changedAll =
     before.isOk() && after.isOk()
       ? changedPaths(before.value, after.value)
       : undefined;
+  // contract.md: only changes within `writes` count; verification output such as a lint cache
+  // lands in the workspace too and must not turn a run that changed nothing into `ok`.
+  const changedPathsMeasured =
+    changedAll === undefined
+      ? undefined
+      : promisedPaths(changedAll, ticket.writes, cwd);
+  const outsideWrites =
+    changedAll === undefined || changedPathsMeasured === undefined
+      ? []
+      : changedAll.filter(
+          (changedPath) => !changedPathsMeasured.includes(changedPath),
+        );
   const changed = changedPathsMeasured?.length;
+  const outsideWritesField =
+    outsideWrites.length === 0 ? {} : { outside_writes: outsideWrites };
+  const workspaceChanges =
+    changedPathsMeasured === undefined
+      ? undefined
+      : {
+          changed_files: changedPathsMeasured.length,
+          changed_paths: changedPathsMeasured,
+          ...outsideWritesField,
+        };
   const reportInput = receiptReportInput(workerReceipt, receiptLine);
   const parsedReport = parseReport(reportInput.structured, reportInput.message);
   for (const warning of parsedReport.ok ? (parsedReport.warnings ?? []) : [])
@@ -1584,14 +1607,9 @@ async function runUnguarded(flags: Flags): Promise<number> {
     ...(sandboxStubsRemoved.length === 0
       ? {}
       : { sandbox_stubs_removed: sandboxStubsRemoved }),
-    ...(changedPathsMeasured === undefined
+    ...(workspaceChanges === undefined
       ? {}
-      : {
-          workspace_changes: {
-            changed_files: changedPathsMeasured.length,
-            changed_paths: changedPathsMeasured,
-          },
-        }),
+      : { workspace_changes: workspaceChanges }),
   };
   if (stopTask !== undefined) await stopTask;
   await reap();

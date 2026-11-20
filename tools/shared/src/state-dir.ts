@@ -30,6 +30,7 @@ export const stateRootNames = [
   "routing-refusals.jsonl",
   "runs",
   "runs.jsonl",
+  "tmp",
   "workspace-index.jsonl",
   "workspace-verdicts.json",
   "workspace-verdicts.json.lock",

@@ -30,7 +30,17 @@ export function recordedLifetime(id: string, recordRoot?: string): RunLifetime {
 }
 
 export function agxTempRoot(env: NodeJS.ProcessEnv = process.env): string {
-  return resolve(xdgStateHome(env), "agx", "runs");
+  return resolve(xdgStateHome(env), "agx", "tmp");
+}
+
+/**
+ * A run's temp directory: the run id's first 16 letters and digits under the temp root. Claude's
+ * Linux sandbox puts its bridge sockets directly in TMPDIR; the former `runs/<id>/tmp` path was 78
+ * bytes on an ordinary home and pushed them past the unix socket limit, so no sandboxed Bash
+ * command could start (see claudeSandboxTempProblem).
+ */
+export function runTempDir(id: string, root = agxTempRoot()): string {
+  return join(root, id.replaceAll(/[^0-9A-Za-z]/gu, "").slice(0, 16));
 }
 
 const makeDirectoriesWritable = (path: string): void => {
@@ -65,7 +75,7 @@ export function freeRunTemp(
     run.id === ".."
   )
     return err("agx: invalid run id");
-  const dir = join(root, run.id, "tmp");
+  const dir = runTempDir(run.id, root);
   return fromThrowable(
     () => {
       makeDirectoriesWritable(dir);
@@ -79,7 +89,13 @@ export function createRunTemp(
   id: string,
   root = agxTempRoot(),
 ): Result<RunTemp, string> {
-  if (id === "" || /[/\\]/u.test(id) || id === "." || id === "..")
+  if (
+    id === "" ||
+    /[/\\]/u.test(id) ||
+    id === "." ||
+    id === ".." ||
+    !/[0-9A-Za-z]/u.test(id)
+  )
     return err(`agx: invalid run id for temp directory: ${id}`);
   const real = fromThrowable(() => realpathSync(root))().unwrapOr(
     resolve(root),
@@ -91,8 +107,10 @@ export function createRunTemp(
     return err(`agx: refusing to start a worker with temp root ${systemTmp}`);
   return fromThrowable(
     () => {
-      const dir = join(root, id, "tmp");
-      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      const dir = runTempDir(id, root);
+      mkdirSync(root, { recursive: true, mode: 0o700 });
+      // Not recursive: a directory already there belongs to another run with the same prefix.
+      mkdirSync(dir, { mode: 0o700 });
       return { dir, env: { TMPDIR: dir, TMP: dir, TEMP: dir } };
     },
     (error) => `agx: cannot create run temp directory: ${String(error)}`,

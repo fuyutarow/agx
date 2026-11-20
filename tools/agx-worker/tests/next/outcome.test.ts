@@ -15,6 +15,7 @@ import {
   changedFiles,
   changedPaths,
   deriveOutcome,
+  promisedPaths,
   workspaceSnapshot,
 } from "../../src/next/outcome.ts";
 import { parseReport, WorkerReport } from "../../src/report.ts";
@@ -490,3 +491,35 @@ test("outcome contract: a capacity reroute that finds a row continues on that ro
   expect(receipt.data.rows).toHaveLength(2);
   expect(receipt.data.outcome).toBe("ok");
 }, 180_000);
+
+test("outcome contract: only changes within writes count, so verification caches cannot make a run ok", () => {
+  const cwd = scratch();
+  const changed = [
+    ".rumdl_cache/0.2.78/a.json",
+    "scripts/a.ts",
+    "scripts/deep/b.ts",
+    "tools/other.ts",
+    "wsl/drive-mount.ts",
+  ];
+  const writes = ["scripts/**", "wsl/drive-mount.ts", "$AGX_RUN_DIR/**"];
+  expect(promisedPaths(changed, writes, cwd)).toEqual([
+    "scripts/a.ts",
+    "scripts/deep/b.ts",
+    "wsl/drive-mount.ts",
+  ]);
+  // An absolute glob inside the workspace counts; one outside it matches nothing there.
+  expect(
+    promisedPaths(changed, [join(cwd, "tools/*.ts"), "/elsewhere/**"], cwd),
+  ).toEqual(["tools/other.ts"]);
+  // The reported failure: verification wrote only a lint cache, so the run changed nothing promised.
+  const promised = promisedPaths([".rumdl_cache/0.2.78/a.json"], writes, cwd);
+  expect(
+    deriveOutcome({
+      timedOut: false,
+      refused: false,
+      verify: [],
+      reportValid: true,
+      changed: promised.length,
+    }),
+  ).toBe("no-change");
+});

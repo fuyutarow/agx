@@ -74,10 +74,10 @@ test("a retired agx-next directory in the XDG state home no longer refuses start
 test("XDG state home is shared by the independent run-temp and GPU paths", () => {
   const env = { HOME: home, XDG_STATE_HOME: "relative-xdg" };
   expect(xdgStateHome(env)).toBe(join(home, ".local/state"));
-  expect(agxTempRoot(env)).toBe(join(home, ".local/state/agx/runs"));
+  expect(agxTempRoot(env)).toBe(join(home, ".local/state/agx/tmp"));
   expect(xdgStateHome({ ...env, XDG_STATE_HOME: xdg })).toBe(xdg);
   expect(agxTempRoot({ ...env, XDG_STATE_HOME: xdg })).toBe(
-    join(xdg, "agx/runs"),
+    join(xdg, "agx/tmp"),
   );
   expect(xdgStateHome({ HOME: "", XDG_STATE_HOME: "" })).toBe(
     join(homedir(), ".local/state"),

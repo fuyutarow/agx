@@ -583,8 +583,11 @@ export async function route(
     const bounded = reply === null ? "unavailable" : reply.slice(0, 8192);
     const replyTruncated =
       reply !== null && reply.length > 8192 ? " [truncated]" : "";
+    // A missing credential ends the one-line refusal with the command that stores it.
+    const recover =
+      post.ok || post.recover === undefined ? "" : `; recover: ${post.recover}`;
     return refuse(
-      `${message.trimEnd()}; Jev reply: ${JSON.stringify(bounded)}${replyTruncated}\n`,
+      `${message.trimEnd()}; Jev reply: ${JSON.stringify(bounded)}${replyTruncated}${recover}\n`,
       2,
       source,
     );

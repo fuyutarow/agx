@@ -20,8 +20,9 @@
 import { $ } from "bun";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { cli } from "cleye";
+import { isAgxWorkspaceOf } from "./agx-ws/src/workspace.ts";
 import {
   filesets,
   jjChanged,
@@ -108,7 +109,6 @@ function isAgxWorkspace(workspaceRoot: string): boolean {
       1,
     );
   const current = resolve(workspaceRoot);
-  const currentName = basename(current);
   for (const line of workspaceList.stdout.toString().split("\n")) {
     if (line.trim() === "") continue;
     const separator = line.indexOf(":");
@@ -123,14 +123,10 @@ function isAgxWorkspace(workspaceRoot: string): boolean {
         `cannot inspect jj workspace ${name}: ${otherRoot.stderr.toString().trim()}`,
         1,
       );
-    if (
-      resolve(otherRoot.stdout.toString().trim()) !== current &&
-      currentName.startsWith(
-        `${basename(resolve(otherRoot.stdout.toString().trim()))}-arm-`,
-      )
-    ) {
+    // The layout agx ws add creates. The former `<repo>-arm-*` test matched no current workspace,
+    // so a worker's commit in `<repo>.ws/ws_<slug>` could move trunk.
+    if (isAgxWorkspaceOf(otherRoot.stdout.toString().trim(), current))
       return true;
-    }
   }
   return false;
 }

@@ -441,7 +441,9 @@ test("workspace ownership lasts through verification after the worker exits", as
   expect(
     f.records().some((row) => row.id === holder?.id && row.kind === "ended"),
   ).toBe(true);
-  expect(await waited).toContain('"outcome":"ok"');
+  // The worker changed nothing promised (writes = []); the verify marker and gate files it and this
+  // test leave in the workspace are outside writes, so the ended run is no-change, not ok.
+  expect(await waited).toContain('"outcome":"no-change"');
 });
 
 test("SIGKILL releases ownership despite a surviving worker and folds the old run as ended lost", async () => {

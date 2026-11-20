@@ -43,7 +43,7 @@ export type JevPost =
       model?: string;
       trace: JevTrace;
     }
-  | { ok: false; reason: string; trace: JevTrace };
+  | { ok: false; reason: string; recover?: string; trace: JevTrace };
 
 function errorDetail(error: unknown, depth = 0): string {
   if (depth > 3) return "";
@@ -91,7 +91,12 @@ export async function postJev(
   const trace: JevTrace = { endpoint: url, request, latency_ms: 0 };
   const key = typesafeKey();
   if (!key.ok)
-    return { ok: false, reason: `jev unavailable: ${key.reason}`, trace };
+    return {
+      ok: false,
+      reason: `jev unavailable: ${key.reason}`,
+      ...(key.recover === undefined ? {} : { recover: key.recover }),
+      trace,
+    };
   trace.key_source = key.source;
   const started = performance.now();
   const res = await attempt(() =>

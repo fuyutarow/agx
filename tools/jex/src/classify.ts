@@ -159,6 +159,7 @@ export async function classify(
   const post = await postJev(endpoint.value, built.value, 30_000);
   if (!post.ok) {
     diagnostic(post.reason);
+    if (post.recover !== undefined) diagnostic(`recover: ${post.recover}`);
     return 3;
   }
   const model = post.model ?? {

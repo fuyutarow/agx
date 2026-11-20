@@ -192,6 +192,19 @@ export function claudeWorkspaceWriteAllowedTools(): string {
  */
 export const CLAUDE_READ_ALLOW: readonly string[] = ["Read(//**)"];
 
+// Claude Code's Linux sandbox binds `$TMPDIR/claude-socks-<16 hex>.sock` with socat, which
+// truncates a longer address, so the socket never appears where Claude waits for it.
+const CLAUDE_SOCKET_NAME_BYTES = "/claude-socks-".length + 16 + ".sock".length;
+const UNIX_SOCKET_PATH_BYTES = 107;
+
+/** Why Claude's Linux sandbox cannot start with TMPDIR `dir`, or undefined when its socket path fits. */
+export function claudeSandboxTempProblem(dir: string): string | undefined {
+  const bytes = Buffer.byteLength(dir) + CLAUDE_SOCKET_NAME_BYTES;
+  return bytes <= UNIX_SOCKET_PATH_BYTES
+    ? undefined
+    : `TMPDIR ${dir} makes Claude's sandbox socket path ${bytes} bytes, over the ${UNIX_SOCKET_PATH_BYTES}-byte unix socket limit, so no sandboxed command could start; repair: set a shorter XDG_STATE_HOME, or dispatch with --sandbox none`;
+}
+
 /**
  * Claude settings for a workspace-write worker. allowWrite is the run's temp directory, the system
  * temp directory, then the shared writable roots (the codex list), which already holds the run dir.

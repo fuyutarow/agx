@@ -1360,6 +1360,30 @@ test("Jev transport failure is refused naming the failed request, with no defaul
   );
 });
 
+test("a missing Jev key is refused on one line that ends with the command storing it", async () => {
+  const { root } = await isolateState();
+  delete process.env.TYPESAFE_API_KEY;
+  const priorPath = process.env.PATH;
+  const bin = join(root, "bin");
+  await mkdir(bin, { recursive: true });
+  // Replays fnox 1.50.0: `get` on a machine whose global config has no such secret; one provider.
+  await writeFile(
+    join(bin, "fnox"),
+    "#!/bin/sh\nif [ \"$1\" = provider ]; then echo age; exit 0; fi\necho \"Error: fnox::secret::not_found (https://fnox.jdx.dev)\n\n  × Secret 'TYPESAFE_API_KEY' not found in profile 'default'\" >&2\nexit 1\n",
+    { mode: 0o755 },
+  );
+  process.env.PATH = `${bin}:${priorPath ?? ""}`;
+  const refused = await expectRefusal("missing key fixture").finally(() => {
+    process.env.PATH = priorPath;
+  });
+  expect(refused.message).toContain("fnox config has no TYPESAFE_API_KEY; ");
+  expect(refused.message).toContain("no row is substituted");
+  expect(refused.message).toEndWith(
+    "; recover: fnox set -g TYPESAFE_API_KEY --provider age\n",
+  );
+  expect(refused.event?.source).toBe("refused-request-failed");
+});
+
 test("a valid Jev pick is selected and recorded as before", async () => {
   await isolateState();
   startServer("localized", { localized: 0.8, mechanical: 0.2 });

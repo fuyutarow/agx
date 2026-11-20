@@ -1438,25 +1438,19 @@ test("dispatch inspection helpers distinguish expiry from a completed failure", 
   expect(completed.err).toContain("completed refusal");
 });
 
-test("dispatch contract: the inspection bound honours DISPATCH_COMMAND_TIMEOUT_MS", async () => {
+test("dispatch contract: agx ws add runs under its own deadline, not the inspection bound", async () => {
   expect(DISPATCH_COMMAND_TIMEOUT_MS).toBe(60_000);
 
+  // A checkout slower than DISPATCH_COMMAND_TIMEOUT_MS completes: ws add owns WS_ADD_TIMEOUT_MS
+  // (default 900 s) and names its step on expiry. The 60 s bound once SIGKILLed it mid-checkout on
+  // a repository with a large working copy, leaving the workspace state unknown.
   const overridden = fixture();
   overridden.env.DISPATCH_COMMAND_TIMEOUT_MS = "1000";
-  const slowWorkspaceAdd = join(overridden.root, "bin", "agx-ws");
-  writeFileSync(
-    slowWorkspaceAdd,
-    '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$FAKE_WS_ARGS"\nexec sleep 2\n',
-  );
-  chmodSync(slowWorkspaceAdd, 0o755);
-  const expired = await invoke(overridden);
-  expect(expired.exitCode, expired.stderr).toBe(75);
-  expect(expired.stderr).toContain(
-    "inspection timeout DISPATCH_COMMAND_TIMEOUT_MS=1000ms",
-  );
-  expect(expired.stderr).toContain('"add"');
-  expect(expired.stderr).toContain("--repo");
-  expect(await Bun.file(overridden.unitArgs).exists()).toBe(false);
+  overridden.env.FAKE_WS_SLEEP_SECONDS = "2";
+  const slow = await invoke(overridden);
+  expect(slow.exitCode, slow.stderr).toBe(0);
+  expect(slow.stderr).not.toContain("inspection timeout");
+  expect(await Bun.file(overridden.unitArgs).exists()).toBe(true);
 
   const unset = fixture();
   delete unset.env.DISPATCH_COMMAND_TIMEOUT_MS;

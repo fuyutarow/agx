@@ -100,6 +100,24 @@ export function changedPaths(
     .toSorted();
 }
 
+/**
+ * The changed paths the ticket promised: those a `writes` glob matches, globs resolved against
+ * `cwd`. A glob outside the workspace (such as `$AGX_RUN_DIR/**`) matches no workspace path, so
+ * files that verification or tools write elsewhere in the workspace never count as promised work.
+ */
+export function promisedPaths(
+  paths: readonly string[],
+  writes: readonly string[],
+  cwd: string,
+): string[] {
+  const root = resolve(cwd);
+  const matchers = writes
+    .map((glob) => relative(root, resolve(root, glob)))
+    .filter((glob) => glob !== "" && isWithin(root, resolve(root, glob)))
+    .map((glob) => new Bun.Glob(glob));
+  return paths.filter((path) => matchers.some((glob) => glob.match(path)));
+}
+
 export function deriveOutcome(input: {
   capacity?: boolean;
   timedOut: boolean;
