@@ -96,7 +96,8 @@ if (rootRun.exitCode !== 0)
   );
 const root = rootRun.stdout.toString().trim();
 process.chdir(root);
-function isAgxWorkspace(workspaceRoot: string): boolean {
+/** The main checkout an agx workspace belongs to, or undefined when `workspaceRoot` is not one. */
+function agxWorkspaceBacking(workspaceRoot: string): string | undefined {
   const workspaceList = Bun.spawnSync(["jj", "workspace", "list"], {
     cwd: workspaceRoot,
     stdout: "pipe",
@@ -125,16 +126,20 @@ function isAgxWorkspace(workspaceRoot: string): boolean {
       );
     // The layout agx ws add creates. The former `<repo>-arm-*` test matched no current workspace,
     // so a worker's commit in `<repo>.ws/ws_<slug>` could move trunk.
-    if (isAgxWorkspaceOf(otherRoot.stdout.toString().trim(), current))
-      return true;
+    const otherWorkspace = otherRoot.stdout.toString().trim();
+    if (isAgxWorkspaceOf(otherWorkspace, current))
+      return resolve(otherWorkspace);
   }
-  return false;
+  return undefined;
 }
-const agxWorkspace = isAgxWorkspace(root);
+const backing = agxWorkspaceBacking(root);
+const agxWorkspace = backing !== undefined;
+// This repository has no land task: trunk moves in the main checkout, never from a workspace.
+const trunkRoute = `commit to a work bookmark here, then in the main checkout ${backing ?? "(none)"} run \`jj bookmark set <trunk> -r <work-bookmark>\` and \`mise run push\``;
 const explicitBookmark = parsed.flags.bookmark !== "";
 if (agxWorkspace && !explicitBookmark)
   die(
-    "agx workspace commit needs an explicit target: pass `--bookmark <name>` or set `BOOKMARK`; trunk targets must go through `mise run land`",
+    `agx workspace commit needs an explicit target: pass \`--bookmark <work-bookmark>\` or set \`BOOKMARK\`; ${trunkRoute}`,
     1,
   );
 const bookmark = parsed.flags.bookmark !== "" ? parsed.flags.bookmark : "alpha";
@@ -158,7 +163,7 @@ if (agxWorkspace) {
   );
   if (isTrunk)
     die(
-      `cannot move trunk bookmark '${bookmark}' from an agx workspace; use mise run land`,
+      `cannot move trunk bookmark '${bookmark}' from an agx workspace; ${trunkRoute}`,
       1,
     );
 }

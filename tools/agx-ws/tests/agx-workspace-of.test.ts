@@ -63,4 +63,24 @@ test("jj-commit in an agx workspace refuses to pick trunk without an explicit bo
     "agx workspace commit needs an explicit target",
   );
   expect(commit.code).toBe(1);
+  // Naming trunk explicitly is refused too, and both refusals name a route this repository has:
+  // it defines no land task, so trunk moves in the main checkout.
+  const trunk = await run(
+    [
+      process.execPath,
+      join(import.meta.dir, "../../jj-commit.ts"),
+      "--bookmark",
+      "alpha",
+    ],
+    workspace,
+  );
+  expect(trunk.stderr).toContain(
+    "cannot move trunk bookmark 'alpha' from an agx workspace",
+  );
+  expect(trunk.code).toBe(1);
+  for (const refusal of [commit.stderr, trunk.stderr]) {
+    expect(refusal).toContain(`in the main checkout ${repo} run`);
+    expect(refusal).toContain("mise run push");
+    expect(refusal).not.toContain("mise run land");
+  }
 });
