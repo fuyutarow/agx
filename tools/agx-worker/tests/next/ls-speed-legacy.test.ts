@@ -57,7 +57,6 @@ test("public ls hides malformed imports, counts them and normalizes moved report
     );
     const timings: number[] = [];
     const invoke = (...flags: string[]) => {
-      const at = performance.now();
       const result = Bun.spawnSync(
         [process.execPath, "tools/agx-worker/src/next/cli.ts", "ls", ...flags],
         {
@@ -70,7 +69,11 @@ test("public ls hides malformed imports, counts them and normalizes moved report
         },
       );
       expect(result.exitCode, result.stderr.toString()).toBe(0);
-      timings.push(performance.now() - at);
+      // CPU time, not wall time: the listing's own work is what the contract bounds, and wall
+      // time also counts waiting for a core while other test files run (measured 2026-11-20:
+      // 240-530 ms wall alone, 1070 ms in the parallel suite; 370-560 ms CPU either way).
+      // Bun 1.4.3 returns microseconds as a bigint where its types say number; accept both.
+      timings.push(Number(BigInt(result.resourceUsage.cpuTime.total)) / 1000);
       return result;
     };
     const plain = invoke();
@@ -103,7 +106,7 @@ test("public ls hides malformed imports, counts them and normalizes moved report
     expect(
       invoke("--ticket", "ticket-0", "--latest", "--json").stdout.toString(),
     ).toContain(report);
-    console.info("ls fixture wall milliseconds:", timings);
+    console.info("ls fixture CPU milliseconds:", timings);
     // The latency contract covers default plain and JSON listing. The remaining
     // calls above exercise selection and visibility rather than add timing samples.
     expect(Math.max(...timings.slice(0, 2))).toBeLessThan(1000);

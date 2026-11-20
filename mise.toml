@@ -78,7 +78,13 @@ run = "bun tools/mise-contract.ts --tools --require-pinned --require-npm-lock"
 
 [tasks.test]
 alias = "t"
-run = "bun test"
+# Test files run in worker processes, half the cores: the tests spawn many subprocesses, and one
+# worker per core starves them past the 5 s default timeout (measured 2026-11-20 on 12 cores:
+# serial 1205 s; 6 workers 319 s, all passing; 12 workers 298 s with 11 timeouts).
+run = "bun test --parallel={{ (num_cpus() | int + 1) // 2 }}"
+# Under `check`, start after the linters finish: type-aware lint takes every core for its ~20 s,
+# and tests that share them time out.
+wait_for = ["fmt:check", "lint", "lint:knip"]
 
 [tasks.check]
 alias = "c"
