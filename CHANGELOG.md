@@ -1,5 +1,12 @@
 # Changelog
 
+## 11.2.3 — 2026-11-20
+
+- A missing TYPESAFE_API_KEY names which fnox miss it was (not installed, no config file, config without the key, or fnox's own error) and the routing refusal ends with the command that stores the key, never its value
+- Dispatch waits for agx ws add's own whole-command deadline (WS_ADD_TIMEOUT_MS, default 900 s, plus 30 s) instead of killing it at the 60 s inspection bound, which left a slow checkout on a large working copy half-made and unreported
+- Only workspace changes within the ticket's writes count toward ok, as the contract states; changes elsewhere, such as a lint cache written by verification, are listed in workspace_changes.outside_writes and no longer turn a run that changed nothing into ok
+- Run temp directories move to XDG_STATE_HOME/agx/tmp/<first 16 letters and digits of the run id>: the former runs/<id>/tmp path pushed Claude's Linux sandbox bridge socket past the unix socket limit, so every sandboxed Bash command failed; a sandboxed Claude worker whose TMPDIR is still too long is refused before it starts
+
 ## 11.2.2 — 2026-11-19
 
 - agx worker dispatch resolves a ticket kept in a registered repository's external tickets directory to that repository; two matching registrations, or none, are refused naming the examined repos/*.toml files
