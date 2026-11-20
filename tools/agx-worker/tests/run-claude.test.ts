@@ -382,8 +382,9 @@ describe("tools/agx dispatchner: session persistence and --resume", () => {
       expect(childEnv.LANG).toBe(process.env.LANG);
     if (process.env.TZ !== undefined) expect(childEnv.TZ).toBe(process.env.TZ);
     expect(childEnv.AGX_DISPATCHER_SESSION).toBe("dispatcher-session-fixture");
-    expect(childEnv.ANTHROPIC_API_KEY).toBe("anthropic-auth-fixture");
-    expect(childEnv.ANTHROPIC_AUTH_TOKEN).toBe("anthropic-token-fixture");
+    // claude-session: no Anthropic key or token reaches the child.
+    expect(childEnv.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(childEnv.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(childEnv.CLAUDE_CODE_OAUTH_TOKEN).toBe("claude-oauth-fixture");
     expect(childEnv.OPENAI_API_KEY).toBe("openai-auth-fixture");
     expect(childEnv.CODEX_API_KEY).toBe("codex-auth-fixture");

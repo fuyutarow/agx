@@ -127,7 +127,7 @@ test("the worker CLI defaults to stop: a credits failure ends as capacity on the
       "--claude-bin",
       claude.bin,
     ],
-    { env: { ...process.env }, stdout: "pipe", stderr: "pipe" },
+    { env: subprocessEnvironment(), stdout: "pipe", stderr: "pipe" },
   );
   const [exit, stdout] = await Promise.all([
     child.exited,

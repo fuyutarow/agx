@@ -17,6 +17,7 @@ tokei = "15.0" # Line counts for the code size report.
 "host_command:git" = "Temporary test repository initialization and commits"
 "host_command:rip" = "Recoverable workspace removal and its integration fixtures"
 "host_command:sleep" = "Shell fixture processes held alive for lock and lifecycle tests"
+"host_command:setsid" = "Linux-only reap tests start a process that leaves the worker's session"
 "host_command:/usr/bin/sandbox-exec" = "macOS kernel sandbox for read-only execution"
 "host_command:lsof" = "Host open-file inspection before reference cleanup"
 "host_command:fnox" = "Optional host secret-store lookup"

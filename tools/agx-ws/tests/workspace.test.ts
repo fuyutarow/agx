@@ -214,7 +214,7 @@ test("ws contract: rm help names the discard-broken patch path and the landed ru
   expect(help.out).toContain("~/.local/state/agx");
   expect(help.out).toContain("reachable from trunk or a remote bookmark");
   expect(help.out).toContain("content already landed on trunk");
-  expect(help.out).toContain("commit need not be a trunk ancestor");
+  expect(help.out).toContain("a verified landed record still matches");
   const removed = await ws(
     ["rm", "--discard-broken", "help-patch"],
     fixture.path,

@@ -79,54 +79,52 @@ test("agx worker check sends the ticket verify line to Jev in the task text", as
     port: 0,
     fetch: async (request) => {
       const body = jsonOf(Request).safeParse(await request.text());
-      if (!body.success) return new Response("invalid request", { status: 400 });
+      if (!body.success)
+        return new Response("invalid request", { status: 400 });
       task = body.data.state.task;
       const choice = Object.keys(body.data.questions.worker.criteria)[0];
       return Response.json({ answers: { worker: { choice } } });
     },
   });
-  try {
-    const path = join(root, "agx-smoke.md");
-    await writeFile(path, TICKET);
-    const child = Bun.spawn(
-      [
-        process.execPath,
-        resolve("tools/agx-worker/src/next/cli.ts"),
-        "check",
-        path,
-        "--cd",
-        root,
-        "--json",
-      ],
-      {
-        cwd: root,
-        env: {
-          ...subprocessEnvironment(),
-          PATH: `${bin}:${process.env.PATH ?? ""}`,
-          AGX_NEXT_STATE_DIR: undefined,
-          AGX_STATE_DIR: join(root, "state"),
-          XDG_STATE_HOME: join(root, "xdg-state"),
-          XDG_CONFIG_HOME: join(root, "config"),
-          JEV_URL: `http://127.0.0.1:${server.port}/choice`,
-          TYPESAFE_API_KEY: "fixture",
-          AGX_CONFIG: resolve(
-            "tools/agx-worker/src/roster/policy.example.toml",
-          ),
-        },
-        stdout: "pipe",
-        stderr: "pipe",
-        timeout: 15000,
+  await using _stop = {
+    [Symbol.asyncDispose]: () => server.stop(true),
+  };
+  const path = join(root, "agx-smoke.md");
+  await writeFile(path, TICKET);
+  const child = Bun.spawn(
+    [
+      process.execPath,
+      resolve("tools/agx-worker/src/next/cli.ts"),
+      "check",
+      path,
+      "--cd",
+      root,
+      "--json",
+    ],
+    {
+      cwd: root,
+      env: {
+        ...subprocessEnvironment(),
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+        AGX_NEXT_STATE_DIR: undefined,
+        AGX_STATE_DIR: join(root, "state"),
+        XDG_STATE_HOME: join(root, "xdg-state"),
+        XDG_CONFIG_HOME: join(root, "config"),
+        JEV_URL: `http://127.0.0.1:${server.port}/choice`,
+        TYPESAFE_API_KEY: "fixture",
+        AGX_CONFIG: resolve("tools/agx-worker/src/roster/policy.example.toml"),
       },
-    );
-    const exit = await child.exited;
-    const stderr = await new Response(child.stderr).text();
-    expect(exit, stderr).toBe(0);
-    expect(task).toBeDefined();
-    expect(task).toContain('verify: ["test -s agx-smoke.result.txt"]');
-    expect(task).toContain('writes: ["agx-smoke.result.txt"]');
-    expect(task).toContain("outcome: Produce the smoke result");
-    expect(task).toContain("refuted_by: the result file is empty or missing");
-  } finally {
-    await server.stop(true);
-  }
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 15000,
+    },
+  );
+  const exit = await child.exited;
+  const stderr = await new Response(child.stderr).text();
+  expect(exit, stderr).toBe(0);
+  expect(task).toBeDefined();
+  expect(task).toContain('verify: ["test -s agx-smoke.result.txt"]');
+  expect(task).toContain('writes: ["agx-smoke.result.txt"]');
+  expect(task).toContain("outcome: Produce the smoke result");
+  expect(task).toContain("refuted_by: the result file is empty or missing");
 }, 60000);

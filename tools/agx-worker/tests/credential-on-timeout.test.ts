@@ -172,7 +172,8 @@ test("runClaude records the credential in the start record before spawning, neve
     safeMode: false,
     bare: false,
     claudeBin: claude,
-    route: "claude-session" as const,
+    // claude-session never resolves a key; only claude-api has a key credential to record.
+    route: "claude-api" as const,
   });
   expect(result.timedOut).toBe(true);
   const text = readFileSync(file, "utf8");

@@ -154,8 +154,11 @@ console.log(JSON.stringify({ report: { summary: "done", changes: [], checks: [],
     hostname: "127.0.0.1",
     port: 0,
     fetch: async () => {
+      // Only the first request waits: the run that continues "prior" may route too, and it must
+      // get through while the first dispatch is still held in routing.
+      const held = delayRoute && !routing;
       routing = true;
-      if (delayRoute) while (!existsSync(routeGate)) await Bun.sleep(10);
+      if (held) while (!existsSync(routeGate)) await Bun.sleep(10);
       return Response.json({
         answers: { worker: { choice: "mechanical", confidence: 0.9 } },
       });

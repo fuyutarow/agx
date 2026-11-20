@@ -724,18 +724,17 @@ describe("agx worker run --continue pins the prior row", () => {
         });
       },
     });
-    try {
-      const result = await f.resume("claude-run", {
-        JEV_URL: `http://127.0.0.1:${recorder.port}/choice`,
-      });
-      expect(result.exitCode, result.stderr.toString()).toBe(0);
-      expect(tasks.length).toBeGreaterThan(0);
-      for (const task of tasks) {
-        expect(task).toContain('verify: ["true"]');
-        expect(task).toContain("refuted_by: continue routes");
-      }
-    } finally {
-      recorder.stop(true);
+    await using _stop = {
+      [Symbol.asyncDispose]: () => recorder.stop(true),
+    };
+    const result = await f.resume("claude-run", {
+      JEV_URL: `http://127.0.0.1:${recorder.port}/choice`,
+    });
+    expect(result.exitCode, result.stderr.toString()).toBe(0);
+    expect(tasks.length).toBeGreaterThan(0);
+    for (const task of tasks) {
+      expect(task).toContain('verify: ["true"]');
+      expect(task).toContain("refuted_by: continue routes");
     }
   }, 30000);
 

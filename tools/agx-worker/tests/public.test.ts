@@ -52,6 +52,7 @@ test("agx worker roster --json prints the validated roster value", async () => {
     expect(parsed.data).toEqual({
       ...loaded.value,
       objective: ROUTING_OBJECTIVE,
+      policy: loaded.policy,
     });
     expect(parsed.data.objective).toBe(ROUTING_OBJECTIVE);
     expect(parsed.data).toMatchObject(loaded.value);

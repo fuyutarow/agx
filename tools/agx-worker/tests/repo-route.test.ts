@@ -31,7 +31,7 @@ async function repoWith(repoToml: string | undefined): Promise<string> {
   return directory;
 }
 
-/** The user policy: the shipped example (codex-only routes). */
+/** The user policy: the shipped example. */
 async function userPolicy(): Promise<string> {
   const example = await readFile(examplePath, "utf8");
   const directory = await mkdtemp(join(tmpdir(), "agx-user-policy-"));
@@ -81,9 +81,11 @@ describe("repository [route] override", () => {
     const policyPath = await userPolicy();
     const repoRoot = await repoWith("schema = 1\n");
     const loaded = await loadRoster({ catalogPath, policyPath, repoRoot });
-    expect(loaded.ok).toBe(true);
-    if (!loaded.ok) return;
-    expect(loaded.value.auto.routes).toEqual(["codex"]);
+    const user = await loadRoster({ catalogPath, policyPath });
+    expect(loaded.ok && user.ok).toBe(true);
+    if (!loaded.ok || !user.ok) return;
+    expect(user.value.auto.routes).not.toEqual(["claude-session"]);
+    expect(loaded.value.auto.routes).toEqual(user.value.auto.routes);
     expect(Object.hasOwn(loaded.value, "default")).toBe(false);
   });
 
@@ -95,8 +97,12 @@ describe("repository [route] override", () => {
     const repoB = await repoWith("schema = 1\n");
     const a = await loadRoster({ catalogPath, policyPath, repoRoot: repoA });
     const b = await loadRoster({ catalogPath, policyPath, repoRoot: repoB });
+    const user = await loadRoster({ catalogPath, policyPath });
     expect(a.ok && a.value.auto.routes).toEqual(["claude-session"]);
-    expect(b.ok && b.value.auto.routes).toEqual(["codex"]);
+    expect(user.ok && user.value.auto.routes).not.toEqual(["claude-session"]);
+    expect(b.ok && b.value.auto.routes).toEqual(
+      user.ok && user.value.auto.routes,
+    );
   });
 
   test.each([`"${CLAUDE_ROW}"`, '""'])(

@@ -100,6 +100,26 @@
     "timeout": 210000
   },
   {
+    "file": "tools/agx-worker/tests/dispatch-ticket-repo.test.ts",
+    "name": "a ticket in a registered external tickets directory dispatches against that repository",
+    "timeout": 60000
+  },
+  {
+    "file": "tools/agx-worker/tests/dispatch-ticket-repo.test.ts",
+    "name": "a ticket inside the repository still resolves by walking up",
+    "timeout": 60000
+  },
+  {
+    "file": "tools/agx-worker/tests/dispatch-ticket-repo.test.ts",
+    "name": "an unregistered external ticket is refused naming the examined configs",
+    "timeout": 60000
+  },
+  {
+    "file": "tools/agx-worker/tests/dispatch-ticket-repo.test.ts",
+    "name": "two registrations claiming the same tickets directory are refused",
+    "timeout": 60000
+  },
+  {
     "file": "tools/agx-worker/tests/dispatch.test.ts",
     "name": "compiled dispatcher outside manager PATH pins its own executable",
     "timeout": 40000
@@ -126,7 +146,7 @@
   },
   {
     "file": "tools/agx-worker/tests/dispatch.test.ts",
-    "name": "dispatch contract: the inspection bound honours DISPATCH_COMMAND_TIMEOUT_MS",
+    "name": "dispatch contract: agx ws add runs under its own deadline, not the inspection bound",
     "timeout": 15000
   },
   {
@@ -216,6 +236,11 @@
   },
   {
     "file": "tools/agx-worker/tests/next/continue.test.ts",
+    "name": "a continuation that routes sends the ticket verify line and refuted_by to Jev",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/continue.test.ts",
     "name": "a missing original ticket does not prevent continuation",
     "timeout": 30000
   },
@@ -231,12 +256,22 @@
   },
   {
     "file": "tools/agx-worker/tests/next/continue.test.ts",
+    "name": "continue contract: a run whose row was retired",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/continue.test.ts",
     "name": "dispatch contract: rule 2 (ticket amended=%s)",
     "timeout": 30000
   },
   {
     "file": "tools/agx-worker/tests/next/continue.test.ts",
     "name": "dispatch immediately after a ticket edit agrees on both attempts",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/continue.test.ts",
+    "name": "dispatched run (compiled=%s) re-enters itself and verification finds xmsg on dispatcher PATH",
     "timeout": 30000
   },
   {
@@ -263,6 +298,11 @@
     "file": "tools/agx-worker/tests/next/continue.test.ts",
     "name": "the ticket file is re-read on continue",
     "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/credits-unavailable.test.ts",
+    "name": "file default",
+    "timeout": 60000
   },
   {
     "file": "tools/agx-worker/tests/next/incremental-fold.test.ts",
@@ -395,6 +435,11 @@
     "timeout": 20000
   },
   {
+    "file": "tools/agx-worker/tests/next/routing-brief.test.ts",
+    "name": "agx worker check sends the ticket verify line to Jev in the task text",
+    "timeout": 60000
+  },
+  {
     "file": "tools/agx-worker/tests/next/routing-stats.test.ts",
     "name": "real roster CLI selections are persisted before any worker starts",
     "timeout": 15000
@@ -426,17 +471,17 @@
   },
   {
     "file": "tools/agx-worker/tests/next/run.test.ts",
+    "name": "dispatch contract: a Jev split reply is recorded as refused with its reason",
+    "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/run.test.ts",
     "name": "dispatch contract: fake vendor adopts the reserved id without a second run id",
     "timeout": 60000
   },
   {
     "file": "tools/agx-worker/tests/next/run.test.ts",
     "name": "real run orders and records verify.always: %s",
-    "timeout": 30000
-  },
-  {
-    "file": "tools/agx-worker/tests/next/run.test.ts",
-    "name": "dispatch contract: a Jev split reply is recorded as refused with its reason",
     "timeout": 30000
   },
   {
@@ -458,6 +503,21 @@
     "file": "tools/agx-worker/tests/next/session-persist.test.ts",
     "name": "a lost run with no reported session starts fresh and says so",
     "timeout": 30000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/stats-corrupt-line.test.ts",
+    "name": "a dated legacy file outside the window with a NUL-prefixed line is not read",
+    "timeout": 15000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/stats-corrupt-line.test.ts",
+    "name": "an in-window legacy file with one NUL-prefixed line totals the good lines and warns once",
+    "timeout": 15000
+  },
+  {
+    "file": "tools/agx-worker/tests/next/stats-corrupt-line.test.ts",
+    "name": "an undated legacy file last written before the window is not read",
+    "timeout": 15000
   },
   {
     "file": "tools/agx-worker/tests/next/stop.test.ts",
@@ -600,9 +660,24 @@
     "timeout": 60000
   },
   {
+    "file": "tools/agx-ws/tests/add-failed-checkout.test.ts",
+    "name": "discard-broken removes missing checkout files but retains unsaved edits",
+    "timeout": 60000
+  },
+  {
+    "file": "tools/agx-ws/tests/add-failed-checkout.test.ts",
+    "name": "failed checkout is forgotten and buried before readiness",
+    "timeout": 60000
+  },
+  {
     "file": "tools/agx-ws/tests/add-hang.test.ts",
     "name": "WS-ADD-HANG-2: three piped adds have a fixed jj budget as history and workspace counts grow",
     "timeout": 90000
+  },
+  {
+    "file": "tools/agx-ws/tests/agx-workspace-of.test.ts",
+    "name": "file default",
+    "timeout": 60000
   },
   {
     "file": "tools/agx-ws/tests/deadline.test.ts",
@@ -641,6 +716,11 @@
   },
   {
     "file": "tools/agx-ws/tests/gc-usecases.test.ts",
+    "name": "file default",
+    "timeout": 90000
+  },
+  {
+    "file": "tools/agx-ws/tests/landed-record.test.ts",
     "name": "file default",
     "timeout": 90000
   },
@@ -718,6 +798,11 @@
     "file": "tools/agx/tests/doctor.test.ts",
     "name": "default deadlines allow real-inventory durations and exit 1 findings",
     "timeout": 45000
+  },
+  {
+    "file": "tools/code-size.test.ts",
+    "name": "live report reconciles and classifies every path",
+    "timeout": 70000
   },
   {
     "file": "tools/release/release.test.ts",
