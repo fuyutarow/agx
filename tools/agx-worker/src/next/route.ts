@@ -45,6 +45,24 @@ const compareNumber = (a: number, b: number): number => {
   return a < b ? -1 : 1;
 };
 
+/**
+ * Below this gap between the two most probable answers, routing says the class was a close call.
+ * One measurement set it: docs/class-criteria-rejudge-2026-11.md.
+ */
+const CLOSE_CLASS_MARGIN = 0.15;
+
+/** The two most probable answers and the gap between them, when Jev returned at least two. */
+function classMargin(
+  probabilities: Record<string, number> | undefined,
+): { first: string; second: string; margin: number } | undefined {
+  const [first, second] = Object.entries(probabilities ?? {}).toSorted(
+    (a, b) => b[1] - a[1],
+  );
+  return first === undefined || second === undefined
+    ? undefined
+    : { first: first[0], second: second[0], margin: first[1] - second[1] };
+}
+
 /** A row without a published TB4 score passes only the zero bar. */
 const meetsBar = (row: Choice, bar: number): boolean =>
   (row.tb4 ?? (bar === 0 ? 0 : Number.NEGATIVE_INFINITY)) >= bar;
@@ -670,6 +688,17 @@ export async function route(
   audit.jev_requirement_class = jevClass;
   audit.min_class = minClass ?? null;
   audit.requirement_class = requirementClass;
+  const close = classMargin(probabilities);
+  audit.class_margin = close?.margin ?? null;
+  // A close call changes no row: the writer is told how to declare a floor, and decides.
+  if (
+    minClass === undefined &&
+    close !== undefined &&
+    close.margin < CLOSE_CLASS_MARGIN
+  )
+    process.stderr.write(
+      `agx: requirement class is a close call: ${close.first} over ${close.second} by ${close.margin.toFixed(2)} (below ${CLOSE_CLASS_MARGIN}); if the work needs a floor, set min_class in the ticket (${REQUIREMENT_CLASSES.join(" | ")})\n`,
+    );
   const bar = REQUIREMENT_BARS[requirementClass];
   audit.tb4_bar = bar;
   const qualifying = candidates.filter((row) => meetsBar(row, bar));

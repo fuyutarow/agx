@@ -3,7 +3,14 @@ import {
   recordRoutingRefusal,
   routingEvents,
 } from "../../src/next/routing-events.ts";
-import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
+import {
+  afterEach,
+  describe,
+  expect,
+  setDefaultTimeout,
+  spyOn,
+  test,
+} from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -1677,4 +1684,42 @@ test("an unmet ticket min_class refuses instead of falling back to a lower row, 
   expect(unknown).toMatchObject({ kind: "refused", exitCode: 2 });
   expect(JSON.stringify(unknown)).toContain("min_class must be one of");
   expect(server.calls()).toBe(1);
+});
+
+test("a close class call prints one min_class hint without changing the row, and a declared floor silences it", async () => {
+  const stderrOf = async (
+    probabilities: Record<string, number>,
+    ticket: { path: string; sha256: string; min_class?: string } | null,
+  ) => {
+    await isolateState();
+    startServer("mechanical", probabilities);
+    const written = spyOn(process.stderr, "write").mockImplementation(
+      () => true,
+    );
+    const row = await route("close call", [], 600, [], {}, ticket);
+    const text = written.mock.calls.map((call) => String(call[0])).join("");
+    written.mockRestore();
+    return {
+      row: row.id,
+      text,
+      margin: routingEvents().events.at(-1)?.audit?.class_margin,
+    };
+  };
+  const plain = { path: "/t.md", sha256: "" };
+  const close = await stderrOf({ mechanical: 0.5, localized: 0.36 }, plain);
+  const clear = await stderrOf({ mechanical: 0.6, localized: 0.3 }, plain);
+  const floored = await stderrOf(
+    { mechanical: 0.5, localized: 0.36 },
+    { ...plain, min_class: "mechanical" },
+  );
+  expect(close.text).toContain(
+    "requirement class is a close call: mechanical over localized by 0.14 (below 0.15)",
+  );
+  expect(close.text).toContain("set min_class in the ticket");
+  expect(close.margin).toBeCloseTo(0.14);
+  expect(clear.text).not.toContain("close call");
+  expect(clear.margin).toBeCloseTo(0.3);
+  expect(floored.text).not.toContain("close call");
+  expect(close.row).toBe(clear.row);
+  expect(close.row).toBe(floored.row);
 });
