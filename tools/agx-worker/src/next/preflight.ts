@@ -17,8 +17,10 @@ import { parseNextTicket, writeGlob } from "./ticket.ts";
 import {
   ticketContext,
   ticketPlacement,
+  treeRead,
   type TicketReferenceResolution,
 } from "./ticket-home.ts";
+import { JJ_READ_ARGS } from "../../../shared/src/jj-read.ts";
 import {
   append,
   now,
@@ -46,6 +48,41 @@ import {
 } from "../../../shared/src/agx-config.ts";
 
 export const PREFLIGHT_PREMISE_BUDGET_MS = 60_000;
+
+/**
+ * Writes parents that exist in `cwd` but hold no tracked file at `trunk`. agx worker dispatch
+ * starts a fresh workspace from trunk, where such a directory does not exist, so the ticket that
+ * passes here is refused there. An unreadable trunk yields no warning: this predicts, it does not judge.
+ */
+async function parentsAbsentAtTrunk(
+  writes: readonly string[],
+  cwd: string,
+  trunk: string,
+): Promise<string[]> {
+  const warnings: string[] = [];
+  const seen = new Set<string>();
+  for (const [index, glob] of writes.entries()) {
+    const parent = dirname(glob.split(/[*?[\]{}()!]/u, 1)[0] ?? "");
+    if (
+      !writeGlob.safeParse(glob).success ||
+      parent === "." ||
+      seen.has(parent)
+    )
+      continue;
+    seen.add(parent);
+    const here = await stat(resolve(cwd, parent)).catch(() => null);
+    if (here?.isDirectory() !== true) continue;
+    const tracked = await treeRead(
+      ["jj", ...JJ_READ_ARGS, "file", "list", "-r", trunk, "--", parent],
+      cwd,
+    );
+    if (tracked.exit === 0 && tracked.out.trim() === "")
+      warnings.push(
+        `ticket writes.${index}: ${glob} parent directory ${parent} exists in ${cwd} but has no tracked file at ${trunk}; agx worker dispatch starts its workspace from ${trunk} and will refuse this ticket. Land a file under ${parent}, or write the glob from a directory tracked at ${trunk}`,
+      );
+  }
+  return warnings;
+}
 
 export type PreflightFlags = Readonly<
   Record<string, string | boolean | undefined>
@@ -396,6 +433,14 @@ export async function preflight(
       ).forEach((failure) => {
         add(failure, "correct the ticket or repository check and retry");
       });
+    // Without --cd the caller is asking about a ticket, not about one prepared tree.
+    const absentAtTrunk =
+      config.ok && worker.vcs === "jj" && value(flags, "cd") === undefined
+        ? await parentsAbsentAtTrunk(ticket.writes, cwd, config.value.trunk)
+        : [];
+    process.stderr.write(
+      absentAtTrunk.map((warning) => `WARN ${warning}\n`).join(""),
+    );
   }
   const premise_commits: { premise: string; commit: string }[] = [];
   if (ticket !== undefined && ctx !== undefined) {

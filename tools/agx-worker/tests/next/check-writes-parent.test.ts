@@ -102,3 +102,96 @@ test("check requires the literal prefix parent in the --cd tree", async () => {
     }
   }
 }, 30000);
+
+const jj = async (root: string, ...args: string[]) => {
+  const child = Bun.spawn(["jj", ...args], {
+    cwd: root,
+    env: {
+      ...subprocessEnvironment(),
+      JJ_USER: "Fixture",
+      JJ_EMAIL: "fixture@example.invalid",
+      // The repository-scoped trunk() alias lives under the config home check reads.
+      XDG_CONFIG_HOME: join(root, "config"),
+    },
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [exit, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stderr).text(),
+  ]);
+  expect(exit, stderr).toBe(0);
+};
+
+test("check without --cd warns when a writes parent is absent from the trunk a dispatch starts from", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agx-writes-trunk-"));
+  roots.push(root);
+  await writeFile(join(root, "agx.toml"), 'schema = 1\ntickets = "."\n');
+  await mkdir(join(root, "landed"));
+  await writeFile(join(root, "landed", "file.ts"), "");
+  await jj(root, "git", "init");
+  await jj(root, "commit", "-m", "base");
+  await jj(root, "bookmark", "create", "main", "-r", "@-");
+  await jj(root, "config", "set", "--repo", 'revset-aliases."trunk()"', "main");
+  // Present in this working copy only: a workspace created from main does not have it.
+  await mkdir(join(root, "pending"));
+  await writeFile(join(root, "pending", "file.ts"), "");
+  const bin = join(root, "bin");
+  await mkdir(bin);
+  await writeFile(
+    join(bin, "mise"),
+    '#!/usr/bin/env bun\nconsole.log("{}");\n',
+    { mode: 0o755 },
+  );
+  await mkdir(join(root, ".agents", "tickets"), { recursive: true });
+  const ticket = join(root, ".agents", "tickets", "ticket.md");
+  await writeFile(
+    ticket,
+    `+++\nschema = 2\nname = "writes-trunk"\noutcome = "fixture"\nwrites = ["landed/new.ts", "pending/new.ts"]\nverify = ["true"]\n[proposition]\nid = "TRUNK"\nclaim = "check predicts dispatch"\nrefuted_by = "a working-copy-only parent passes silently"\n+++\n`,
+  );
+  const check = async (...flags: string[]) => {
+    const child = Bun.spawn(
+      [
+        process.execPath,
+        resolve("tools/agx-worker/src/next/cli.ts"),
+        "check",
+        ticket,
+        "--skip-routing",
+        ...flags,
+      ],
+      {
+        cwd: root,
+        env: {
+          ...subprocessEnvironment(),
+          PATH: `${bin}:${process.env.PATH}`,
+          AGX_STATE_DIR: join(root, "state"),
+          XDG_CONFIG_HOME: join(root, "config"),
+          MISE_GLOBAL_CONFIG_FILE: join(root, "mise.toml"),
+          AGX_CONFIG: resolve(
+            "tools/agx-worker/src/roster/policy.example.toml",
+          ),
+        },
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 15000,
+      },
+    );
+    const [exit, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stderr).text(),
+    ]);
+    return { exit, stderr };
+  };
+  const asked = await check();
+  expect(asked.exit, asked.stderr).toBe(0);
+  expect(asked.stderr).toContain(
+    "WARN ticket writes.1: pending/new.ts parent directory pending exists in",
+  );
+  expect(asked.stderr).toContain("has no tracked file at trunk()");
+  expect(asked.stderr).not.toContain("writes.0");
+  // With --cd the caller names the prepared tree, as dispatch does; that tree is what counts.
+  const prepared = await check("--cd", root);
+  expect(prepared.exit, prepared.stderr).toBe(0);
+  expect(prepared.stderr).not.toContain("WARN ticket writes");
+}, 30000);

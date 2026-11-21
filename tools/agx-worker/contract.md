@@ -30,7 +30,11 @@ anchored glob (`bundles/**` for `bundles/x/**` when only the root exists), or
 keeping the entry by first committing a file in the missing directory to the base
 revision. Dispatch evaluates the new workspace at the base revision, while
 `check` without `--cd` evaluates the current tree, so a directory present only as
-uncommitted work passes check and is refused by dispatch.
+uncommitted work passes check and is refused by dispatch. In a jj repository, `check`
+without `--cd` names that difference: for each writes parent that exists in the current
+tree and holds no tracked file at the configured trunk, it prints one `WARN ticket writes`
+line saying dispatch will refuse, and still exits by the current tree. A trunk that cannot
+be read yields no line.
 
 ## Sandbox capability preflight
 
