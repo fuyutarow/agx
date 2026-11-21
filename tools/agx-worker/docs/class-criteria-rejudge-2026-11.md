@@ -46,6 +46,13 @@ soks の一次資料サーベイの ticket（icd-* 7 本）が、すべて mecha
 
 contradiction のときに両立しない 2 つの要求を書くことは、確信のある返却の実例が出てから扱う。今の問いは選択 1 つで、理由を返さない。
 
+## 時計が戻る機械での性質（2026-11-22）
+
+この記録を取った機械では、壁時計が約 31.4 秒ごとに約 1.06 秒戻っていた（1 つの process の中で Date.now() と performance.now() の差を 10 ms ごとに見た。dmesg には `systemd-journald: Time jumped backwards, rotating.` が同じ間隔で並ぶ。負荷が無いときは未測定）。routing に関わる性質は二つある。
+
+- 計測の時刻が今より後の usage の snapshot は、stale として中立に扱う。時計が戻った直後は、上限を超えた route の除外が効かないことがある。許容幅の定数は足していない。
+- `agx worker stats --usage jev` は、今より後の時刻を持つ capture を合計に入れず、`ahead_of_clock` の欄で出す。
+
 ## 案 1: 能力の語彙で書き直す（検査の有無を含む）。不合格
 
 - instructions: Purpose: classify this ticket by the capability its worker needs, whatever the kind of work (code, research, documents, checks). Use mechanical when the ticket states both what to produce and a check a machine can decide, localized when the worker must work out how inside one bounded area and the ticket states how success is told, and cross_module when the worker must reconcile several independent parts or sources or must design the check itself. Return the ticket only when it cannot be done as written. Do not choose a worker.

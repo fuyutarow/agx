@@ -736,6 +736,20 @@ describe("capability constrained routing", () => {
     appendStarted(selected.id);
   });
 
+  test("a snapshot measured later than now is stale, so a capped route is not excluded", async () => {
+    // The wall clock of a machine can move back. A snapshot written just before then carries a
+    // time later than the routing call that reads it; the same input as the capped-route test
+    // above then excludes nothing.
+    const { home } = await isolateState();
+    const nowMs = Temporal.Now.instant().epochMilliseconds;
+    installUsage(home, nowMs + 60_000, 101, 0.94, 45, 0.28, false);
+    startServer("localized", { localized: 1 });
+
+    const selected = await route("snapshot ahead of the clock");
+    expect(selected.route).toBe("claude-session");
+    appendStarted(selected.id);
+  });
+
   test("stale usage is neutral and does not exclude either route", async () => {
     const { home } = await isolateState();
     const nowMs = Temporal.Now.instant().epochMilliseconds;
