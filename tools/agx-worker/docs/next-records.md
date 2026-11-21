@@ -45,7 +45,15 @@ first_return_s = 120 # positive integer, no greater than timeout_s (default 600)
 network = "none" # none | allowed
 sandbox = "workspace-write" # none | read-only | workspace-write
 resources = { cpu = 2, ram_gb = 4, gpu = 0, vram_gb = 0 }
+capabilities = [{ need = "read and reconcile primary sources", lower_effort_lacks = "skims abstracts only" }]
+min_effort = "high" # low | medium | high | xhigh | max
 ```
+
+`capabilities` reach routing only as Jev input (`required_capabilities`); they can move the
+work class Jev picks, and so the class TB4 bar, but they guarantee no row. `min_effort` drops
+rows whose effort is below it before Jev is asked. It is a floor on effort, not on model: with
+`min_effort = "high"`, `haiku-high` and above still qualify. `xhigh` and `max` require at
+least one structured capability. No ticket, L1 or L2 field pins a row or sets a model floor.
 
 Resource `cpu` is positive; `ram_gb` and optional `vram_gb` are nonnegative numbers; optional
 `gpu` is a nonnegative integer. If `resources` is supplied, `cpu` and `ram_gb` are required.
