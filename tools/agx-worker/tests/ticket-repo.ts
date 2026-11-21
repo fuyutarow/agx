@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { expect } from "bun:test";
 import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
@@ -32,6 +32,11 @@ export async function prepareTicketRepo(root: string, tickets = ".") {
       "user.email=fixture@example.invalid",
       "-c",
       "commit.gpgsign=false",
+      // A detached maintenance run would create and remove its lock while a test compares the tree.
+      "-c",
+      "maintenance.auto=false",
+      "-c",
+      "gc.auto=0",
       "commit",
       "--quiet",
       "-m",
@@ -60,4 +65,9 @@ export async function prepareTicketRepo(root: string, tickets = ".") {
     ]);
     expect(exit, `fixture git ${args[0]}: ${err}`).toBe(0);
   }
+  // Git commands that agx runs in the fixture later must not start background maintenance either.
+  await appendFile(
+    join(root, ".git/config"),
+    "[maintenance]\n\tauto = false\n[gc]\n\tauto = 0\n",
+  );
 }

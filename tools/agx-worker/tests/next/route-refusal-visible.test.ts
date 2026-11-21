@@ -139,23 +139,26 @@ describe("agx-worker run", () => {
       expect(result.stderr.toString()).not.toContain("reason_code");
       expect(result.stdout.toString()).toContain("route-refused");
       expect(result.stdout.toString()).toContain('"recorded":true');
+      // The three follow-up commands only read what the refusal left, so they run together.
+      const cli = async (args: string[]) => {
+        const child = Bun.spawn(
+          [process.execPath, "tools/agx-worker/src/next/cli.ts", ...args],
+          { cwd: process.cwd(), env, stdout: "pipe", stderr: "pipe" },
+        );
+        const [exitCode, stdout, stderr] = await Promise.all([
+          child.exited,
+          new Response(child.stdout).text(),
+          new Response(child.stderr).text(),
+        ]);
+        return { exitCode, stdout, stderr };
+      };
       // Without a dispatch binding the id names only a report directory, and says so.
-      // One reason is enough: the output does not depend on which return refused.
-      const unbound =
-        reason === "contradiction"
-          ? Bun.spawnSync(
-              [
-                process.execPath,
-                "tools/agx-worker/src/next/cli.ts",
-                "run",
-                ticket,
-                "--cd",
-                root,
-              ],
-              { cwd: process.cwd(), env, timeout: 10_000 },
-            ).stdout.toString()
-          : '"recorded":false';
-      expect(unbound).toContain('"recorded":false');
+      const [unbound, waited, checked] = await Promise.all([
+        cli(["run", ticket, "--cd", root]),
+        cli(["ls", "--wait", binding.id]),
+        cli(["check", ticket, "--cd", root]),
+      ]);
+      expect(unbound.stdout).toContain('"recorded":false');
       const report = jsonOf(
         z.looseObject({ outcome: z.string(), summary: z.string() }),
       ).safeParse(
@@ -166,32 +169,11 @@ describe("agx-worker run", () => {
         expect(report.data.outcome).toBe("route-refused");
         expect(report.data.summary).toContain(meaning);
       }
-      const waited = Bun.spawnSync(
-        [
-          process.execPath,
-          "tools/agx-worker/src/next/cli.ts",
-          "ls",
-          "--wait",
-          binding.id,
-        ],
-        { cwd: process.cwd(), env, timeout: 10000 },
-      );
       expect(waited.exitCode).toBe(0);
-      expect(waited.stdout.toString()).toContain(meaning);
-      const checked = Bun.spawnSync(
-        [
-          process.execPath,
-          "tools/agx-worker/src/next/cli.ts",
-          "check",
-          ticket,
-          "--cd",
-          root,
-        ],
-        { cwd: process.cwd(), env, timeout: 10000 },
-      );
+      expect(waited.stdout).toContain(meaning);
       expect(checked.exitCode).toBe(2);
-      expect(checked.stderr.toString()).toContain(meaning);
-      expect(checked.stderr.toString()).not.toContain("reason_code");
+      expect(checked.stderr).toContain(meaning);
+      expect(checked.stderr).not.toContain("reason_code");
       const parsedRecords = jsonOf(
         z.array(z.record(z.string(), z.unknown())),
       ).safeParse(
@@ -227,9 +209,6 @@ describe("agx-worker run", () => {
       ).toBe(true);
       expect(records.some((record) => record.kind === "started")).toBe(false);
     },
-    // Up to three CLI processes run per case (bound run, unbound run, ls --wait); each takes 1-2 s,
-    // so the 5 s default expired under a parallel suite.
-    30_000,
   );
 });
 

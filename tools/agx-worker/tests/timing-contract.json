@@ -1,10 +1,5 @@
 [
   {
-    "file": "tools/agx-worker/tests/next/route-refusal-visible.test.ts",
-    "name": "route refusal is visible for %s",
-    "timeout": 30000
-  },
-  {
     "file": "tools/agx-status/tests/published-equality.test.ts",
     "name": "published facts answer the same JSON as the full-replay oracle",
     "timeout": 120000
