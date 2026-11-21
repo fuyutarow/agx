@@ -187,7 +187,11 @@ export async function earlyQuitRows(
     await Promise.all(
       (await foldedRuns())
         .filter(
-          (priorRun) => priorRun.ticket === ticket && priorRun.cwd === cwd,
+          (priorRun) =>
+            priorRun.ticket === ticket &&
+            priorRun.cwd === cwd &&
+            // Read-only work changes no files when it succeeds; see failed_early_quit.
+            priorRun.writes.length > 0,
         )
         .map(async (priorRun) => {
           if (priorRun.failed_early_quit) return [priorRun.row];

@@ -1015,8 +1015,11 @@ test("a time box no candidate fits is refused before Jev is asked", async () => 
   const server = startServer("localized");
   const { message, event } = await expectRefusal("tiny time box fixture", 1);
   expect(message).toStartWith(
-    "route refused: no candidate in the 1 s time box among allowed routes [codex, claude-session]; rows without a published duration: ",
+    "route refused: no candidate in the 1 s time box (ticket timeout_s, default 600) among allowed routes [codex, claude-session]; rows without a published duration: ",
   );
+  // The reader must be able to pick the next step from the message alone.
+  expect(message).toContain("; rows removed before the time box: none. Fix: ");
+  expect(message).toContain("raise timeout_s in the ticket");
   expect(event?.source).toBe("refused-no-row-in-time-box");
   expect(server.calls()).toBe(0);
 });

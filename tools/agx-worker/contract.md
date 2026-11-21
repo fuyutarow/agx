@@ -963,6 +963,8 @@ Invalid, missing, or unknown answers refuse without selecting a row.
 ### Pick stages
 
 1. Code filters the roster by policy, effort, route availability and published duration.
+   It also removes a row that quit the same ticket (same name and working directory) early: the run exited 0 in under 120 seconds with no changed file and no return. This applies only to a ticket that declares writes; read-only work changes no file when it succeeds, so its rows stay.
+   A row passes the published-duration filter when its duration is at most 60% of the ticket's `timeout_s` (default 600). The refusal for an empty result names `timeout_s`, the rows without a published duration, the rows that are too slow, the rows removed at each earlier stage, and the fix.
 2. Jev classifies the ticket as mechanical, localized or cross_module, or returns it. Its input contains no route availability, usage windows, row data or run outcomes.
    A return refused by `run` prints one JSON line with `id`, `report_path` and `recorded`. `recorded` is false when no dispatch reserved the run: the id then names only the report directory, `ls` does not list it, and `judge` says so instead of reporting an unknown id.
 3. A ticket `min_class` (`mechanical`, `localized` or `cross_module`) raises Jev's class to at least that class and never lowers it. The audit records Jev's class (`jev_requirement_class`), the declared floor (`min_class`) and the adopted class (`requirement_class`), and routing prints the three on one stderr line. If no candidate row meets the declared floor's TB4 bar, routing refuses and substitutes no row; an unknown value is refused by check and by routing.

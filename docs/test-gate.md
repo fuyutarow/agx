@@ -15,8 +15,9 @@ and 600 seconds. Their reasons are not yet written down one by one.
 
 Each test file runs as its own process. The runner records the CPU time of that process and of
 every child it waited for, and fails the gate when a file uses more than twice the time recorded
-for it in `tools/test-cpu-budget.json`. Files under 5 seconds of CPU are not judged: there,
-process start-up dominates. `mise run test:budget` records new budgets after an intended change.
+for it in `tools/test-cpu-budget.json`. A file is not judged below 10 seconds of CPU, where the
+measurement is noisy. The whole suite is also judged: it may use 1.3 times the sum of the
+recorded times. `mise run test:budget` records new budgets after an intended change.
 
 A file that has no budget, or a budget that names a missing file, also fails the gate.
 
@@ -54,6 +55,13 @@ dropped a record stamped after the clock moved back. Both were fixed in the next
 fixture turns maintenance off, and `agx worker stats --routing` counts such records under
 `ahead_of_clock_events`. The failure after it took 10.6 seconds; its output was not kept, so its
 cause is not known. No CPU budget was exceeded in the five runs.
+
+Five more runs after those two fixes had no failing test (268 to 322 s). One of them failed the
+gate on CPU alone, while the load average rose from 10 to 19: two files recorded near 3.2 s
+used 7.3 and 9.5 s, and the suite used 1262 s against about 1100 s in the other runs. CPU time
+therefore does depend on load, by about 15% for the suite and by up to 3 times for a small
+file. The limits above (10 s per file, 1.3 times for the suite) were set from this; they have
+not yet been run five times themselves.
 
 ## Claims that still use wall time
 

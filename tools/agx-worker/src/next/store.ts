@@ -1452,7 +1452,10 @@ async function liveRuns(
           )();
     const elapsed =
       elapsedResult?.isOk() === true ? elapsedResult.value : Infinity;
+    // A ticket that declares no writes ends with zero changed files when it succeeds, so a
+    // short zero-change run says nothing about giving up there.
     run.failed_early_quit =
+      run.writes.length > 0 &&
       run.state === "ended" &&
       run.exit === 0 &&
       elapsed < 120 &&

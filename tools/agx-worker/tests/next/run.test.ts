@@ -419,7 +419,7 @@ describe("agx-worker run", () => {
         id: "early",
         at: started,
         ticket: "th_purge",
-        writes: [],
+        writes: ["src/**"],
         cwd: root,
         workspace: root,
         row: "sol-low",
@@ -444,6 +444,15 @@ describe("agx-worker run", () => {
       `${records.map((event) => JSON.stringify(event)).join("\n")}\n`,
     );
     expect((await foldedRuns())[0]?.failed_early_quit).toBe(true);
+    expect(await earlyQuitRows("th_purge", root)).toEqual(["sol-low"]);
+    // The same run of a ticket that declares no writes is a normal success: read-only work
+    // changes no files, so its row stays available.
+    writeFileSync(
+      join(state, "records.jsonl"),
+      `${records.map((event) => JSON.stringify(event.kind === "started" ? { ...event, writes: [] } : event)).join("\n")}\n`,
+    );
+    expect((await foldedRuns())[0]?.failed_early_quit).toBe(false);
+    expect(await earlyQuitRows("th_purge", root)).toEqual([]);
   });
 
   test("legacy early quits are read only for the matching ticket lineage", async () => {
@@ -462,7 +471,7 @@ describe("agx-worker run", () => {
         id: "legacy-early",
         at: "2026-10-14T01:00:00.000Z",
         ticket: "th_purge",
-        writes: [],
+        writes: ["src/**"],
         cwd: root,
         workspace: root,
         row: "luna-medium",

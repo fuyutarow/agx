@@ -17,8 +17,13 @@ const root = join(import.meta.dir, "..");
 const budgetPath = join(import.meta.dir, "test-cpu-budget.json");
 /** A file may use this many times its recorded CPU before the gate calls it a regression. */
 const BUDGET_FACTOR = 2;
-/** Below this, process start-up dominates and the ratio is noise (two runs differed by up to 1.75 x). */
-const BUDGET_FLOOR_MS = 5_000;
+/**
+ * A file is not judged below this much CPU. Small files are noisy: in 10 runs on a loaded
+ * machine, a file recorded at 3.2 s once used 9.5 s while the whole suite used 15% more.
+ */
+const BUDGET_FLOOR_MS = 10_000;
+/** The whole suite may use this many times its recorded CPU (10 runs spanned 1056 to 1262 s). */
+const TOTAL_FACTOR = 1.3;
 
 const Budget = z.record(z.string(), z.number().int().positive());
 
@@ -141,6 +146,18 @@ for (const outcome of over)
   process.stdout.write(
     `${outcome.file} used ${outcome.cpuMs} ms of CPU; its budget is ${allowance(budget[outcome.file] ?? 0)} ms (${BUDGET_FACTOR} x the recorded ${budget[outcome.file]} ms)\n`,
   );
+const usedMs = outcomes.reduce((sum, outcome) => sum + outcome.cpuMs, 0);
+const totalAllowanceMs = Math.round(
+  Object.values(budget).reduce((sum, ms) => sum + ms, 0) * TOTAL_FACTOR,
+);
+const totalOver = usedMs > totalAllowanceMs;
+if (totalOver)
+  process.stdout.write(
+    `the suite used ${usedMs} ms of CPU; its budget is ${totalAllowanceMs} ms (${TOTAL_FACTOR} x the recorded total)\n`,
+  );
 process.exit(
-  failed.length + unregistered.length + stale.length + over.length > 0 ? 1 : 0,
+  failed.length + unregistered.length + stale.length + over.length > 0 ||
+    totalOver
+    ? 1
+    : 0,
 );

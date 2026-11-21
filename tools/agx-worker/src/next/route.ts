@@ -510,8 +510,17 @@ export async function route(
         ? []
         : [`${row.id} (${row.aa_time_per_task_s} s)`],
     );
+    // Every stage that removed a row is named, so the reader can tell which key to change.
+    const earlier = filters.flatMap((stage) => {
+      const gone = stage.before.filter((id) => !stage.after.includes(id));
+      return gone.length === 0 ||
+        stage.reason === "route not allowed" ||
+        stage.reason === "published duration exceeds time box"
+        ? []
+        : [`${stage.reason}: ${gone.join(", ")}`];
+    });
     return refuse(
-      `route refused: no candidate in the ${timeoutS} s time box among allowed routes [${allowed.join(", ")}]; rows without a published duration: ${listOrNone(unpublished)}; rows whose published duration exceeds ${PUBLISHED_TASK_DURATION_BUDGET_RATIO * 100}% of the box: ${listOrNone(tooSlow)}\n`,
+      `route refused: no candidate in the ${timeoutS} s time box (ticket timeout_s, default 600) among allowed routes [${allowed.join(", ")}]; rows without a published duration: ${listOrNone(unpublished)}; rows whose published duration exceeds ${PUBLISHED_TASK_DURATION_BUDGET_RATIO * 100}% of the box: ${listOrNone(tooSlow)}; rows removed before the time box: ${earlier.length === 0 ? "none" : earlier.join("; ")}. Fix: raise timeout_s in the ticket so that a listed duration is within ${PUBLISHED_TASK_DURATION_BUDGET_RATIO * 100}% of it; a row under "masked" quit this ticket in under 120 s with no change and returns under another ticket name\n`,
       2,
       "refused-no-row-in-time-box",
     );
