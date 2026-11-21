@@ -85,6 +85,12 @@ const Report = jsonOf(
     }),
     known_tokens_at_effective_price_usd: z.number().nullable(),
     completeness: z.literal("partial"),
+    ahead_of_clock: z.object({
+      captured_calls: z.number(),
+      unknown_usage_calls: z.number(),
+      known_input_tokens: z.number(),
+      known_output_tokens: z.number(),
+    }),
     unknown: z.object({
       usage: z.number(),
       historical_runs: z.number(),
@@ -103,9 +109,19 @@ const Report = jsonOf(
     }),
   }),
 );
-function report(result: ReturnType<typeof stats>) {
+const AHEAD_NOTICE =
+  /^agx worker stats: \d+ usage capture\(s\) carry a time later than now/u;
+/** `ahead`: whether the ahead-of-clock notice must be absent, present, or may be either. */
+function report(
+  result: ReturnType<typeof stats>,
+  ahead: "absent" | "present" | "either" = "absent",
+) {
   expect(result.exitCode, result.stderr.toString()).toBe(0);
-  expect(result.stderr.toString()).toBe("");
+  const stderr = result.stderr.toString();
+  if (ahead === "absent") expect(stderr).toBe("");
+  if (ahead === "present") expect(stderr).toMatch(AHEAD_NOTICE);
+  if (ahead === "either") expect(stderr.replace(/^.*\n$/u, "")).toBe("");
+  if (stderr !== "") expect(stderr).toMatch(AHEAD_NOTICE);
   const parsed = Report.safeParse(result.stdout.toString());
   expect(parsed.success, result.stdout.toString()).toBe(true);
   if (!parsed.success) return process.exit(1);
@@ -161,9 +177,16 @@ test("real CLI sums only in-window evidence, and missing historical usage is nev
     { kind: "run", run_id: "old-outside", started_at: at(200) },
   ]);
   const before = readFileSync(join(root, "state/jev-usage.jsonl"), "utf8");
-  const data = report(stats(env));
+  const data = report(stats(env), "present");
   expect(data.known_input_tokens).toBe(150);
   expect(data.known_output_tokens).toBe(30);
+  // The capture one hour ahead is in no total; it is reported apart.
+  expect(data.ahead_of_clock).toEqual({
+    captured_calls: 1,
+    unknown_usage_calls: 0,
+    known_input_tokens: 8000,
+    known_output_tokens: 8000,
+  });
   expect(data.input_tokens).toBeNull();
   expect(data.output_tokens).toBeNull();
   expect(data.unknown).toEqual({
@@ -287,19 +310,38 @@ test("real routing CLI captures response usage even for fallback, missing usage 
     ]);
     expect(exit, err).toBe(0);
     expect(out).toContain("luna-low");
-    await new Promise<void>((done) => {
-      setTimeout(() => {
-        done();
-      }, 100);
-    });
   }
+  // The wall clock of this machine can move back between a capture and the next command, which
+  // puts that capture ahead of the window. So each claim is about the window and the
+  // ahead-of-clock report together: a capture is in exactly one of them, and never lost.
+  const total = () => {
+    const data = report(stats(env), "either");
+    return {
+      input:
+        (data.known_input_tokens ?? 0) + data.ahead_of_clock.known_input_tokens,
+      output:
+        (data.known_output_tokens ?? 0) +
+        data.ahead_of_clock.known_output_tokens,
+      calls: data.coverage.captured_calls + data.ahead_of_clock.captured_calls,
+      unknownCalls:
+        data.unknown.captured_calls + data.ahead_of_clock.unknown_usage_calls,
+      complete: data.ahead_of_clock.captured_calls === 0 ? data : undefined,
+    };
+  };
   await pick();
-  let data = report(stats(env));
-  expect(data.input_tokens).toBe(123);
-  expect(data.output_tokens).toBe(7);
-  expect(data.known_input_tokens).toBe(123);
-  expect(data.known_output_tokens).toBe(7);
-  expect(data.unknown.usage).toBe(0);
+  const first = total();
+  expect(first).toMatchObject({
+    input: 123,
+    output: 7,
+    calls: 1,
+    unknownCalls: 0,
+  });
+  // With nothing ahead of the clock, the complete totals are the same numbers.
+  if (first.complete !== undefined) {
+    expect(first.complete.input_tokens).toBe(123);
+    expect(first.complete.output_tokens).toBe(7);
+    expect(first.complete.unknown.usage).toBe(0);
+  }
   server.reload({
     fetch: () =>
       Response.json({
@@ -308,16 +350,24 @@ test("real routing CLI captures response usage even for fallback, missing usage 
       }),
   });
   await pick();
-  data = report(stats(env));
-  expect(data.known_input_tokens).toBe(133);
-  expect(data.known_output_tokens).toBe(9);
+  expect(total()).toMatchObject({
+    input: 133,
+    output: 9,
+    calls: 2,
+    unknownCalls: 0,
+  });
   server.reload({
     fetch: () =>
       Response.json({ answers: { worker: { choice: "mechanical" } } }),
   });
   await pick();
-  data = report(stats(env));
-  expect(data.known_input_tokens).toBe(133);
-  expect(data.unknown.captured_calls).toBe(1);
-  expect(data.input_tokens).toBeNull();
+  const last = total();
+  expect(last).toMatchObject({
+    input: 133,
+    output: 9,
+    calls: 3,
+    unknownCalls: 1,
+  });
+  if (last.complete !== undefined)
+    expect(last.complete.input_tokens).toBeNull();
 }, 15000);

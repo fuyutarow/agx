@@ -756,7 +756,7 @@ arguments. No stdin is consumed.
 The read-only command emits one JSON object and newline on stdout, with `schema: 1`,
 `usage: "jev"`, `window`, `from`, `to`, `captured_at`, and `interval: "[from,to)"`.
 `from` and `to` bound the trailing window at collection start; `captured_at` is the
-completion time. There is no network request or worker launch. It reads owner state
+completion time, counted from `to` on the monotonic clock so that it is never earlier. There is no network request or worker launch. It reads owner state
 through the ordinary `AGX_STATE_DIR`/XDG resolver; callers must not discover or parse
 the private journals themselves. Repeating the command observes a new window.
 
@@ -786,6 +786,14 @@ the private journals themselves. Repeating the command observes a new window.
   partial-tail status and an explicit reason. `first_capture_at` is not proof that
   the window before it was idle. Freshness is evaluated from `to`/`captured_at`;
   there is no cached-result TTL.
+- `ahead_of_clock` reports captured calls whose time is at or after `to`: a call
+  recorded before the machine's wall clock moved back. They are outside `[from,to)`
+  and in no total or `unknown` counter. It gives `captured_calls`,
+  `unknown_usage_calls`, `known_input_tokens` and `known_output_tokens` (numeric
+  zero when there are none). When `captured_calls` is not zero, `input_tokens`,
+  `output_tokens` and `estimated_cost_usd` are `null`,
+  `coverage.observed_records_complete` is `false`, and one stderr line gives the
+  count. No tolerance widens the window.
 - `unknown.usage` counts missing captured-call usage plus historical runs lacking
   usage evidence; `historical_runs` and `captured_calls` split that count.
   `unknown.time` counts run records whose timestamps cannot establish window

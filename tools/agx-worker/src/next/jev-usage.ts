@@ -205,6 +205,9 @@ const Legacy = z.object({
 
 export async function jevUsageStats(window: string): Promise<number> {
   const endMs = Temporal.Now.instant().epochMilliseconds;
+  // Completion is measured from here on the monotonic clock: a wall clock that steps back
+  // during collection must not report a completion earlier than the window end.
+  const collectionStarted = performance.now();
   const bounds = statsWindow(window, endMs);
   if (bounds === null) {
     process.stderr.write(
@@ -242,6 +245,15 @@ export async function jevUsageStats(window: string): Promise<number> {
         return parsed.data;
       });
       const selected = all.filter((row) => inWindow(row.at));
+      // A capture stamped later than now was written before the wall clock moved back. It
+      // happened, so it is reported, but apart: its time cannot place it in the window.
+      const ahead = all.filter(
+        (row) =>
+          Temporal.Instant.from(row.at).epochMilliseconds >= bounds.endMs,
+      );
+      const aheadTokens = ahead.flatMap((row) =>
+        row.tokens === null ? [] : [row.tokens],
+      );
       const ids = new Set(all.map((row) => row.id));
       const legacy = new Map<string, z.output<typeof Legacy>>();
       let unknownTime = 0;
@@ -307,6 +319,7 @@ export async function jevUsageStats(window: string): Promise<number> {
       );
       // A skipped line has no readable timestamp, so it may hide in-window usage.
       const observedComplete =
+        ahead.length === 0 &&
         unknown === 0 &&
         unknownTime === 0 &&
         !partialTail &&
@@ -316,13 +329,19 @@ export async function jevUsageStats(window: string): Promise<number> {
           process.stderr.write(
             `agx worker stats: skipped ${source.count} unparseable line(s) in usage source ${source.path}\n`,
           );
+      if (ahead.length > 0)
+        process.stderr.write(
+          `agx worker stats: ${ahead.length} usage capture(s) carry a time later than now and are reported under ahead_of_clock, not in the totals; the machine clock may have moved back\n`,
+        );
       return {
         schema: 1,
         usage: "jev",
         window,
         from: Temporal.Instant.fromEpochMilliseconds(bounds.startMs).toString(),
         to: Temporal.Instant.fromEpochMilliseconds(bounds.endMs).toString(),
-        captured_at: Temporal.Now.instant().toString(),
+        captured_at: Temporal.Instant.fromEpochMilliseconds(
+          endMs + Math.round(performance.now() - collectionStarted),
+        ).toString(),
         interval: "[from,to)",
         input_tokens: observedComplete && tokens.length > 0 ? input : null,
         output_tokens: observedComplete && tokens.length > 0 ? output : null,
@@ -341,6 +360,18 @@ export async function jevUsageStats(window: string): Promise<number> {
           captured_calls: missing,
           time: unknownTime,
           historical_pricing: legacyKnown,
+        },
+        ahead_of_clock: {
+          captured_calls: ahead.length,
+          unknown_usage_calls: ahead.length - aheadTokens.length,
+          known_input_tokens: aheadTokens.reduce(
+            (sum, row) => sum + row.input_tokens,
+            0,
+          ),
+          known_output_tokens: aheadTokens.reduce(
+            (sum, row) => sum + row.output_tokens,
+            0,
+          ),
         },
         coverage: {
           history_complete: false,

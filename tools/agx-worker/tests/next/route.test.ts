@@ -92,6 +92,9 @@ async function isolateState() {
   return { root, home };
 }
 
+// A statusline snapshot is always older than the routing call that reads it. A snapshot stamped
+// at the very instant of the call would count as stale whenever the wall clock moves back.
+const SNAPSHOT_AGE_MS = 60_000;
 function installUsage(
   home: string,
   measuredAtMs: number,
@@ -481,7 +484,7 @@ describe("capability constrained routing", () => {
     const { home } = await isolateState();
     const nowMs = Temporal.Now.instant().epochMilliseconds;
     // Claude 5h = .12 - .84 = -.72; Claude 7d = .20 - .12 = +.08.
-    installUsage(home, nowMs, 20, 0.12, 34, 0.11);
+    installUsage(home, nowMs - SNAPSHOT_AGE_MS, 20, 0.12, 34, 0.11);
     expect(
       writeUsageSnapshot(
         {
@@ -605,7 +608,7 @@ describe("capability constrained routing", () => {
       join(dir, "rollout-empty.jsonl"),
       '{"type":"session_meta"}\n',
     );
-    installUsage(home, nowMs, 20, 0.12, 34, 0.11);
+    installUsage(home, nowMs - SNAPSHOT_AGE_MS, 20, 0.12, 34, 0.11);
     expect((await readRouteUsage(nowMs + 1000)).codex.usage_status).toBe(
       "fresh",
     );
@@ -694,7 +697,7 @@ describe("capability constrained routing", () => {
   test("subscription pace is excluded from ticket classification", async () => {
     const { home } = await isolateState();
     const nowMs = Temporal.Now.instant().epochMilliseconds;
-    installUsage(home, nowMs, 3, 0.94, 45, 0.28);
+    installUsage(home, nowMs - SNAPSHOT_AGE_MS, 3, 0.94, 45, 0.28);
     const server = startServer("localized", { localized: 1 });
 
     const selected = await route("comparable routing replay");
@@ -718,7 +721,7 @@ describe("capability constrained routing", () => {
   test("a route above its weekly limit is unavailable and its rows are excluded", async () => {
     const { home } = await isolateState();
     const nowMs = Temporal.Now.instant().epochMilliseconds;
-    installUsage(home, nowMs, 101, 0.94, 45, 0.28, false);
+    installUsage(home, nowMs - SNAPSHOT_AGE_MS, 101, 0.94, 45, 0.28, false);
     const server = startServer("localized", { localized: 1 });
 
     const selected = await route("exclude a capped route");
