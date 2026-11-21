@@ -1,4 +1,4 @@
-import { expect, setDefaultTimeout, test } from "bun:test";
+import { expect, test } from "bun:test";
 import {
   mkdtempSync,
   mkdirSync,
@@ -13,8 +13,6 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { subprocessEnvironment } from "../../../shared/src/subprocess-env.ts";
-
-setDefaultTimeout(30_000);
 const removeRoot = (root: string) => {
   rmSync(root, { recursive: true, force: true });
 };

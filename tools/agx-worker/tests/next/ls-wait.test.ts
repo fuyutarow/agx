@@ -109,7 +109,7 @@ test("--wait on a running run returns its row after an ended record is appended"
   expect(rows.success && rows.data).toEqual([
     { id: "run-live", state: "ended" },
   ]);
-}, 30_000);
+});
 
 test("--wait on an already-ended run returns at once, in ls format", async () => {
   const root = fixture([started("run-done", "done", 0), ended("run-done")]);
@@ -118,7 +118,7 @@ test("--wait on an already-ended run returns at once, in ls format", async () =>
   expect(await new Response(child.stdout).text()).toContain(
     "run-done ended tkt_done row=luna-high exit=0",
   );
-}, 30_000);
+});
 
 test("--wait on a ticket ignores old ended runs and waits for its running run", async () => {
   const root = fixture([
@@ -138,7 +138,7 @@ test("--wait on a ticket ignores old ended runs and waits for its running run", 
   expect(rows.success && rows.data).toEqual([
     { id: "run-live", state: "ended" },
   ]);
-}, 30_000);
+});
 
 test("--wait on a ticket with only old ended runs waits for a new run to end", async () => {
   const root = fixture([started("run-old", "ticket", 0), ended("run-old")]);
@@ -153,7 +153,7 @@ test("--wait on a ticket with only old ended runs waits for a new run to end", a
   expect(rows.success && rows.data).toEqual([
     { id: "run-new", state: "ended" },
   ]);
-}, 30_000);
+});
 
 test("--wait returns a run whose process died without an ended record as ended lost", async () => {
   const root = fixture([started("run-gone", "gone", deadPid())]);
@@ -163,7 +163,7 @@ test("--wait returns a run whose process died without an ended record as ended l
   expect(rows.success && rows.data).toEqual([
     { id: "run-gone", state: "ended" },
   ]);
-}, 30_000);
+});
 
 test("--wait on an unknown, ambiguous or missing selector fails at once", async () => {
   const root = fixture([
@@ -175,7 +175,7 @@ test("--wait on an unknown, ambiguous or missing selector fails at once", async 
     expect(await child.exited).toBe(2);
     expect(await new Response(child.stderr).text()).toContain("agx:");
   }
-}, 30_000);
+});
 
 test("--wait writes no file", async () => {
   const root = fixture([started("run-done", "done", 0), ended("run-done")]);
@@ -187,4 +187,4 @@ test("--wait writes no file", async () => {
   expect(readFileSync(join(root, "state", "records.jsonl"), "utf8")).toBe(
     before,
   );
-}, 30_000);
+});

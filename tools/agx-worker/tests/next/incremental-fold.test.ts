@@ -238,7 +238,7 @@ test("seeded random append batches equal a full fold after every batch", async (
     }
     expect(await foldedRuns()).toEqual(await fullFoldedRuns());
   }
-}, 15_000);
+});
 
 test("fold contract: the incremental fold equals a full fold while publication runs", async () => {
   const root = fixture();

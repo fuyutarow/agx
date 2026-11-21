@@ -174,7 +174,7 @@ test("check and dispatch refuse read-only verify entries before launch", async (
     expect(result.stderr).toContain("repair:");
   }
   expect(await Bun.file(f.launchTranscript).exists()).toBe(false);
-}, 30000);
+});
 
 test("workspace-write with run directory and read-only with other verify pass check", async () => {
   const f = await fixture({ verify: ["test -s $AGX_RUN_DIR/result.md"] });
@@ -187,7 +187,7 @@ test("workspace-write with run directory and read-only with other verify pass ch
   );
   const readonly = await invoke(f, "check", "read-only");
   expect(readonly.exit, readonly.stderr).toBe(0);
-}, 30000);
+});
 
 test("read-only briefs send results to the final response on both routes", async () => {
   const { renderPromise } = await import("../../src/next/run.ts");

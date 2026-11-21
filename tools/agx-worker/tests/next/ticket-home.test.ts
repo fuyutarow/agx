@@ -71,7 +71,7 @@ test("new dispatch refuses nonconforming names with agx ticket new repair, witho
   expect(
     await Bun.file(join(f.env.AGX_STATE_DIR, "records.jsonl")).exists(),
   ).toBe(true);
-}, 30000);
+});
 
 test.each([
   {
@@ -104,176 +104,170 @@ test.each([
     home: "stray",
     accepted: false,
   },
-])(
-  "jj dispatch: $name",
-  async ({ secondary, home, accepted }) => {
-    const parent = await mkdtemp(join(tmpdir(), "agx-ticket-workspace-"));
-    roots.push(parent);
-    const root = join(parent, "repo");
-    const workspace = join(parent, "repo.ws", "ws_dispatch");
-    const absoluteHome = join(parent, "tickets");
-    await mkdir(root, { recursive: true });
-    const bin = join(parent, "bin");
-    await mkdir(bin);
-    await symlink(CLI, join(bin, "agx-worker"));
-    const env = {
-      ...inheritedEnv(),
-      PATH: `${bin}:${process.env.PATH ?? ""}`,
-      JJ_CONFIG: "",
-      JJ_USER: "Fixture",
-      JJ_EMAIL: "fixture@example.invalid",
-      AGX_STATE_DIR: join(parent, "state"),
-      AGX_WORKER_BIN: join(parent, "worker.ts"),
-      XDG_STATE_HOME: join(parent, "tmp"),
-      JEV_URL: jev.url,
-      TYPESAFE_API_KEY: "test-key",
-      AGX_CONFIG: new URL(
-        "../../src/roster/policy.example.toml",
-        import.meta.url,
-      ).pathname,
-    };
-    const command = async (args: string[], cwd = root) => {
-      const child = Bun.spawn(args, {
-        cwd,
-        env,
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-        timeout: 15000,
-      });
-      const [exit, out, err] = await Promise.all([
-        child.exited,
-        new Response(child.stdout).text(),
-        new Response(child.stderr).text(),
-      ]);
-      return { exit, out, err };
-    };
-    const jj = async (args: string[]) => {
-      const result = await command(["jj", ...args]);
-      expect(result.exit, result.err).toBe(0);
-      return result.out.trim();
-    };
-    await jj(["git", "init", "."]);
-    await jj([
-      "config",
-      "set",
-      "--repo",
-      'revset-aliases."trunk()"',
-      "bookmarks(alpha)",
+])("jj dispatch: $name", async ({ secondary, home, accepted }) => {
+  const parent = await mkdtemp(join(tmpdir(), "agx-ticket-workspace-"));
+  roots.push(parent);
+  const root = join(parent, "repo");
+  const workspace = join(parent, "repo.ws", "ws_dispatch");
+  const absoluteHome = join(parent, "tickets");
+  await mkdir(root, { recursive: true });
+  const bin = join(parent, "bin");
+  await mkdir(bin);
+  await symlink(CLI, join(bin, "agx-worker"));
+  const env = {
+    ...inheritedEnv(),
+    PATH: `${bin}:${process.env.PATH ?? ""}`,
+    JJ_CONFIG: "",
+    JJ_USER: "Fixture",
+    JJ_EMAIL: "fixture@example.invalid",
+    AGX_STATE_DIR: join(parent, "state"),
+    AGX_WORKER_BIN: join(parent, "worker.ts"),
+    XDG_STATE_HOME: join(parent, "tmp"),
+    JEV_URL: jev.url,
+    TYPESAFE_API_KEY: "test-key",
+    AGX_CONFIG: new URL("../../src/roster/policy.example.toml", import.meta.url)
+      .pathname,
+  };
+  const command = async (args: string[], cwd = root) => {
+    const child = Bun.spawn(args, {
+      cwd,
+      env,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 15000,
+    });
+    const [exit, out, err] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
     ]);
-    await writeFile(join(root, ".agx.toml"), "legacy workspace policy\n");
-    await jj(["commit", "-m", "Legacy workspace base"]);
-    const oldBase = await jj([
+    return { exit, out, err };
+  };
+  const jj = async (args: string[]) => {
+    const result = await command(["jj", ...args]);
+    expect(result.exit, result.err).toBe(0);
+    return result.out.trim();
+  };
+  await jj(["git", "init", "."]);
+  await jj([
+    "config",
+    "set",
+    "--repo",
+    'revset-aliases."trunk()"',
+    "bookmarks(alpha)",
+  ]);
+  await writeFile(join(root, ".agx.toml"), "legacy workspace policy\n");
+  await jj(["commit", "-m", "Legacy workspace base"]);
+  const oldBase = await jj([
+    "log",
+    "--no-graph",
+    "-r",
+    "@-",
+    "-T",
+    "commit_id",
+  ]);
+  await unlink(join(root, ".agx.toml"));
+  const declared = home === "absolute" ? absoluteHome : "declared";
+  if (home === "absolute") await writeLocalTicketConfig(root, declared);
+  else
+    await writeFile(
+      join(root, "agx.toml"),
+      `schema = 1\ntickets = ${JSON.stringify(declared)}\n`,
+    );
+  await jj(["commit", "-m", "Declare ticket home"]);
+  await jj(["bookmark", "create", "alpha", "-r", "@-"]);
+  if (secondary) {
+    await mkdir(join(parent, "repo.ws"));
+    await jj([
+      "workspace",
+      "add",
+      "--name",
+      "dispatch",
+      "-r",
+      oldBase,
+      workspace,
+    ]);
+  }
+  const cwd = secondary ? workspace : root;
+  // Neither checkout's dirty declaration is authority; only trunk is.
+  await writeFile(join(root, "agx.toml"), 'schema = 1\ntickets = "."\n');
+  await writeFile(join(cwd, "agx.toml"), 'schema = 1\ntickets = "."\n');
+  const directory = new Map([
+    ["default", join(root, ".agents/tickets")],
+    ["absolute", absoluteHome],
+    ["relative", join(root, "declared")],
+    ["stray", join(parent, "undeclared")],
+  ]).get(home);
+  expect(directory).toBeDefined();
+  if (directory === undefined) return;
+  await mkdir(directory, { recursive: true });
+  const ticket = join(directory, "dispatch.md");
+  const revision = await command(
+    [
+      "jj",
+      "--ignore-working-copy",
+      "--at-operation=@",
       "log",
       "--no-graph",
       "-r",
-      "@-",
+      "@",
       "-T",
       "commit_id",
-    ]);
-    await unlink(join(root, ".agx.toml"));
-    const declared = home === "absolute" ? absoluteHome : "declared";
-    if (home === "absolute") await writeLocalTicketConfig(root, declared);
-    else
-      await writeFile(
-        join(root, "agx.toml"),
-        `schema = 1\ntickets = ${JSON.stringify(declared)}\n`,
-      );
-    await jj(["commit", "-m", "Declare ticket home"]);
-    await jj(["bookmark", "create", "alpha", "-r", "@-"]);
-    if (secondary) {
-      await mkdir(join(parent, "repo.ws"));
-      await jj([
-        "workspace",
-        "add",
-        "--name",
-        "dispatch",
-        "-r",
-        oldBase,
-        workspace,
-      ]);
-    }
-    const cwd = secondary ? workspace : root;
-    // Neither checkout's dirty declaration is authority; only trunk is.
-    await writeFile(join(root, "agx.toml"), 'schema = 1\ntickets = "."\n');
-    await writeFile(join(cwd, "agx.toml"), 'schema = 1\ntickets = "."\n');
-    const directory = new Map([
-      ["default", join(root, ".agents/tickets")],
-      ["absolute", absoluteHome],
-      ["relative", join(root, "declared")],
-      ["stray", join(parent, "undeclared")],
-    ]).get(home);
-    expect(directory).toBeDefined();
-    if (directory === undefined) return;
-    await mkdir(directory, { recursive: true });
-    const ticket = join(directory, "dispatch.md");
-    const revision = await command(
-      [
-        "jj",
-        "--ignore-working-copy",
-        "--at-operation=@",
-        "log",
-        "--no-graph",
-        "-r",
-        "@",
-        "-T",
-        "commit_id",
-      ],
-      cwd,
+    ],
+    cwd,
+  );
+  expect(revision.exit, revision.err).toBe(0);
+  await writeFile(ticket, text(`base_rev = "${revision.out.trim()}"`));
+  const before = await readdir(join(root, ".jj/repo/op_heads"));
+  const result = await command([
+    process.execPath,
+    resolve("tools/agx/src/agx.ts"),
+    "worker",
+    "check",
+    ticket,
+    "--cd",
+    cwd,
+  ]);
+  expect(result.exit, `${result.out}\n${result.err}`).toBe(accepted ? 0 : 2);
+  if (!accepted) expect(result.err).toContain("agx: refused ticket path");
+  expect(await readdir(join(root, ".jj/repo/op_heads"))).toEqual(before);
+  expect(
+    await Bun.file(join(env.AGX_STATE_DIR, "records.jsonl")).exists(),
+  ).toBe(!accepted);
+  if (secondary && home === "absolute") {
+    await writeFile(
+      env.AGX_WORKER_BIN,
+      'console.log(JSON.stringify({exit:0, vendor_session:"fixture-session", report:{summary:"done",changes:[],checks:[],for_coordinator:[],open:[]}}));\n',
     );
-    expect(revision.exit, revision.err).toBe(0);
-    await writeFile(ticket, text(`base_rev = "${revision.out.trim()}"`));
-    const before = await readdir(join(root, ".jj/repo/op_heads"));
-    const result = await command([
-      process.execPath,
-      resolve("tools/agx/src/agx.ts"),
-      "worker",
-      "check",
-      ticket,
-      "--cd",
-      cwd,
-    ]);
-    expect(result.exit, `${result.out}\n${result.err}`).toBe(accepted ? 0 : 2);
-    if (!accepted) expect(result.err).toContain("agx: refused ticket path");
-    expect(await readdir(join(root, ".jj/repo/op_heads"))).toEqual(before);
-    expect(
-      await Bun.file(join(env.AGX_STATE_DIR, "records.jsonl")).exists(),
-    ).toBe(!accepted);
-    if (secondary && home === "absolute") {
-      await writeFile(
-        env.AGX_WORKER_BIN,
-        'console.log(JSON.stringify({exit:0, vendor_session:"fixture-session", report:{summary:"done",changes:[],checks:[],for_coordinator:[],open:[]}}));\n',
-      );
-      const invokeWorker = (args: string[]) =>
-        command([process.execPath, CLI, ...args, ticket, "--cd", cwd]);
-      const fresh = await invokeWorker(["run"]);
-      expect(fresh.exit, `${fresh.out}\n${fresh.err}`).toBe(0);
-      const started = (
-        await readFile(join(env.AGX_STATE_DIR, "records.jsonl"), "utf8")
-      )
-        .trim()
-        .split("\n")
-        .flatMap((line) => {
-          const parsed = jsonOf(
-            z.looseObject({ kind: z.literal("started"), id: z.string() }),
-          ).safeParse(line);
-          return parsed.success ? [parsed.data.id] : [];
-        });
-      expect(started).toHaveLength(1);
-      const previous = started[0];
-      if (previous === undefined) return;
-      for (const workerCommand of ["check", "run"]) {
-        const continued = await invokeWorker([
-          workerCommand,
-          "--continue",
-          previous,
-        ]);
-        expect(continued.exit, `${continued.out}\n${continued.err}`).toBe(0);
-      }
+    const invokeWorker = (args: string[]) =>
+      command([process.execPath, CLI, ...args, ticket, "--cd", cwd]);
+    const fresh = await invokeWorker(["run"]);
+    expect(fresh.exit, `${fresh.out}\n${fresh.err}`).toBe(0);
+    const started = (
+      await readFile(join(env.AGX_STATE_DIR, "records.jsonl"), "utf8")
+    )
+      .trim()
+      .split("\n")
+      .flatMap((line) => {
+        const parsed = jsonOf(
+          z.looseObject({ kind: z.literal("started"), id: z.string() }),
+        ).safeParse(line);
+        return parsed.success ? [parsed.data.id] : [];
+      });
+    expect(started).toHaveLength(1);
+    const previous = started[0];
+    if (previous === undefined) return;
+    for (const workerCommand of ["check", "run"]) {
+      const continued = await invokeWorker([
+        workerCommand,
+        "--continue",
+        previous,
+      ]);
+      expect(continued.exit, `${continued.out}\n${continued.err}`).toBe(0);
     }
-  },
-  30000,
-);
+  }
+});
 
 async function fixture(home = "tickets", retired = false) {
   const root = await mkdtemp(join(tmpdir(), "agx-ticket-home-"));
@@ -386,7 +380,7 @@ test("ticket contract: a bare name resolves from the ticket home directory and f
     expect(result.exit, `${result.out}\n${result.err}`).toBe(0);
     expect(result.out).toContain(`OK ticket=${name}`);
   }
-}, 30000);
+});
 
 test("ticket contract: an unknown bare name lists the searched paths", async () => {
   const f = await fixture(".agents/tickets");
@@ -396,7 +390,7 @@ test("ticket contract: an unknown bare name lists the searched paths", async () 
   expect(result.exit).toBe(2);
   expect(result.err).toContain(`no such ticket: ${name}`);
   expect(result.err).toContain(join(f.directory, `${name}.md`));
-}, 30000);
+});
 
 test.each(["scratch", "empty-git", "other-repository"])(
   "ticket repository wins over scratch --cd (fake parent: %s)",
@@ -447,7 +441,6 @@ test.each(["scratch", "empty-git", "other-repository"])(
       expect(refused.err).toContain(`refused ticket path ${stray}`);
     }
   },
-  30000,
 );
 
 test.each([".git", ".jj"])(
@@ -490,7 +483,7 @@ test("check refuses an undeclared /tmp ticket with refused, declared home and ag
   expect(
     await Bun.file(join(f.env.AGX_STATE_DIR, "records.jsonl")).exists(),
   ).toBe(true);
-}, 30000);
+});
 
 test("check accepts an absolute home declared on the repository trunk", async () => {
   const parent = await mkdtemp(join(tmpdir(), "agx-ticket-home-trunk-"));
@@ -556,7 +549,7 @@ test("check accepts an absolute home declared on the repository trunk", async ()
     new Response(child.stderr).text(),
   ]);
   expect(exit, `${out}\n${err}`).toBe(0);
-}, 30000);
+});
 
 test("committed relative and absolute homes and the default home are accepted, including /tmp", async () => {
   for (const home of ["tickets", ".agents/tickets"]) {
@@ -585,7 +578,7 @@ test("an uncommitted declaration and a symlink escaping the home cannot bypass p
   expect((await f.invoke(["check", join(f.directory, "alias.md")])).exit).toBe(
     2,
   );
-}, 30000);
+});
 
 test("a jj tree uses its recorded working-copy commit and committed home without taking a snapshot", async () => {
   const root = await mkdtemp(join(tmpdir(), "agx-ticket-home-jj-"));
@@ -653,7 +646,7 @@ test("a jj tree uses its recorded working-copy commit and committed home without
     ]),
   ).toBe(expected);
   expect(await readdir(join(root, ".jj/repo/op_heads"))).toEqual(before);
-}, 30000);
+});
 
 test("a repository without agx.toml accepts its default home", async () => {
   const f = await fixture(".agents/tickets");
@@ -693,7 +686,7 @@ test("a repository without agx.toml accepts its default home", async () => {
   expect(
     (await treeRead(["git", "show", "HEAD:agx.toml"], f.root)).exit,
   ).not.toBe(0);
-}, 30000);
+});
 
 test("base_rev mismatch names both ids before routing, artifacts or launch", async () => {
   const f = await fixture();
@@ -718,7 +711,7 @@ test("base_rev mismatch names both ids before routing, artifacts or launch", asy
   expect(
     await Bun.file(join(f.env.AGX_STATE_DIR, "records.jsonl")).exists(),
   ).toBe(true);
-}, 30000);
+});
 
 test("conflicting replacement declarations refuse before launch", async () => {
   const f = await fixture();
@@ -737,7 +730,7 @@ test("conflicting replacement declarations refuse before launch", async () => {
   expect(
     await Bun.file(join(f.env.AGX_STATE_DIR, "records.jsonl")).exists(),
   ).toBe(true);
-}, 30000);
+});
 
 test("run preserves exact original bytes and hash, base and premise commits, replacement and continuation", async () => {
   const f = await fixture();
@@ -875,7 +868,7 @@ test("run preserves exact original bytes and hash, base and premise commits, rep
   }
   expect(events[0]).toMatchObject({ continues: "previous", supersedes: null });
   expect(events[1]).toMatchObject({ continues: null, supersedes: "previous" });
-}, 30000);
+});
 
 test("missing proposition names the table, all keys and a one-line example", () => {
   const parsed = parseNextTicket(

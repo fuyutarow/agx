@@ -191,4 +191,4 @@ globalThis.setTimeout = (callback, delay, ...args) => {
   expect(await child.exited).toBe(0);
   expect(performance.now() - before).toBeGreaterThanOrEqual(5000);
   expect(performance.now() - before).toBeLessThan(7500);
-}, 10000);
+});

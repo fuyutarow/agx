@@ -1,14 +1,10 @@
-import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
 import { chmod, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { jsonOf, z } from "../../shared/src/zod.ts";
 import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 import { scheduleEndNotice } from "../src/next/end-notice.ts";
-
-// The suite runs on a loaded host; each case starts real processes.
-setDefaultTimeout(30_000);
-
 const roots: string[] = [];
 afterEach(async () => {
   await Promise.all(

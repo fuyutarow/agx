@@ -298,7 +298,7 @@ describe("worker contract: session persist", () => {
       );
     }
     expect(result.stderr.toString()).not.toContain("fresh session");
-  }, 30_000);
+  });
 
   test("a lost run with no reported session starts fresh and says so", async () => {
     const f = await fixture(false);
@@ -338,5 +338,5 @@ describe("worker contract: session persist", () => {
     );
     expect(freshArgs.success).toBe(true);
     if (freshArgs.success) expect(freshArgs.data).not.toContain("--resume");
-  }, 30_000);
+  });
 });

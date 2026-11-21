@@ -365,7 +365,6 @@ appendFileSync(${JSON.stringify(join(f.state, "records.jsonl"))}, JSON.stringify
       }
     }
   },
-  30_000,
 );
 
 test.each([false, true])(
@@ -605,7 +604,7 @@ appendFileSync(${JSON.stringify(join(f.state, "records.jsonl"))}, JSON.stringify
       expect(results[0]!.stderr.toString()).toBe(results[1]!.stderr.toString());
     }
   }
-}, 30000);
+});
 
 describe("agx worker run --continue pins the prior row", () => {
   test.each(["design_g5", "Design-G5"])(
@@ -631,7 +630,6 @@ describe("agx worker run --continue pins the prior row", () => {
       expect(started?.vendor_session).toBe("codex-thread-1");
       expect(started?.continues).toBe("codex-run");
     },
-    30000,
   );
 
   test("a unique run id prefix resolves to the full prior id", async () => {
@@ -649,7 +647,7 @@ describe("agx worker run --continue pins the prior row", () => {
           (event) => event.kind === "started" && event.id === receipt.data.id,
         ),
     ).toMatchObject({ continues: "codex-run" });
-  }, 30000);
+  });
 
   test("ambiguous and unknown run id prefixes refuse on one line with candidates", async () => {
     const f = await fixture();
@@ -704,7 +702,7 @@ describe("agx worker run --continue pins the prior row", () => {
       .events()
       .find((event) => event.kind === "ended" && event.id === receipt.id);
     expect(ended?.vendor_session).not.toBe("next-claude-session-1");
-  }, 30000);
+  });
 
   test("a continuation that routes sends the ticket verify line and refuted_by to Jev", async () => {
     const f = await fixture();
@@ -736,7 +734,7 @@ describe("agx worker run --continue pins the prior row", () => {
       expect(task).toContain('verify: ["true"]');
       expect(task).toContain("refuted_by: continue routes");
     }
-  }, 30000);
+  });
 
   test("a run without a vendor session exits 2 before any worker starts", async () => {
     const f = await fixture();
@@ -918,7 +916,7 @@ describe("agx worker run --continue pins the prior row", () => {
       continues: "codex-run",
       supersedes: null,
     });
-  }, 30000);
+  });
 
   test("continue contract: a run whose workspace is gone is still refused", async () => {
     const f = await fixture();
@@ -967,7 +965,7 @@ describe("agx worker run --continue pins the prior row", () => {
     expect(brief.slice(brief.indexOf("Proposition"))).toContain(
       "amended prose",
     );
-  }, 30000);
+  });
 
   test("the continuation prompt starts with the prior judgment and ticket diff", async () => {
     const f = await fixture();
@@ -999,7 +997,7 @@ describe("agx worker run --continue pins the prior row", () => {
     expect(prompt).toContain(
       "The prior judgment note and current ticket override the earlier brief.",
     );
-  }, 30000);
+  });
 
   test("the continuation prompt says when no judgment was recorded", async () => {
     const f = await fixture();
@@ -1016,7 +1014,7 @@ describe("agx worker run --continue pins the prior row", () => {
     expect(prompt.startsWith("Continuation correction:")).toBe(true);
     expect(prompt).toContain("Prior judgment: None was recorded.");
     expect(prompt).toContain("(no ticket changes)");
-  }, 30000);
+  });
 
   test("a missing original ticket does not prevent continuation", async () => {
     const f = await fixture();
@@ -1035,7 +1033,7 @@ describe("agx worker run --continue pins the prior row", () => {
     expect(prompt.slice(prompt.indexOf("Proposition"))).toContain(
       "first prose",
     );
-  }, 30000);
+  });
 });
 
 test.each([false, true])(
@@ -1155,5 +1153,4 @@ if (process.argv[2] === "--internal-codex") {
       "dispatcher xmsg",
     );
   },
-  30000,
 );

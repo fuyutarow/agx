@@ -405,7 +405,7 @@ test("route contract: capacity reroutes within one run and keeps a same-vendor s
     outcome: "no-change",
     rows: ["sol-medium", "astra-medium"],
   });
-}, 11000);
+});
 
 // measured 5023ms on alpha 1.22.5 under host load
 test("route contract: capacity exhausts eligible rows within the ticket time box", async () => {
@@ -461,4 +461,4 @@ test("route contract: capacity exhausts eligible rows within the ticket time box
       rows: ["sol-medium", "astra-medium"],
     },
   ]);
-}, 11000);
+});

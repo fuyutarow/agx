@@ -99,4 +99,4 @@ test("check validates absolute external reads, not descriptions or ticket body",
   expect(refused.exit).toBe(2);
   expect(refused.stderr).toContain(missing);
   expect(refused.stderr).toContain("repair:");
-}, 30000);
+});

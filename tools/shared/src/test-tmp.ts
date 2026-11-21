@@ -171,10 +171,15 @@ process.env.MISE_DATA_DIR ??= join(
 );
 // Preserve the caller's Bun cache before isolating HOME; explicit overrides win.
 process.env.BUN_INSTALL_CACHE_DIR ??= join(homedir(), ".bun/install/cache");
-// Keep the effective Bun test timeout aligned with bunfig.toml. Longer tests declare
-// their exceptions explicitly in the timing contract ratchet.
+/**
+ * How long one test may run before it counts as hung. It detects a stuck test and claims nothing
+ * about speed: on a shared machine a test's wall time measures the machine's load. Speed is the
+ * CPU budget that tools/test-run.ts judges. bunfig.toml carries the same number; a longer limit
+ * is listed, with its reason, in tools/agx-worker/tests/timing-contract.json.
+ */
+export const HANG_DETECTION_MS = 30_000;
 fromThrowable(() => {
-  setDefaultTimeout(5_000);
+  setDefaultTimeout(HANG_DETECTION_MS);
 })();
 
 const originalEnv = new Map<string, string | undefined>();

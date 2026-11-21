@@ -139,5 +139,5 @@ for (const duringVerify of [false, true]) {
       if (!listed.success) expect.unreachable("invalid listing");
       expect(listed.data[0]?.verify).toEqual(ended.verify);
     }
-  }, 20000);
+  });
 }

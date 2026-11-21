@@ -39,8 +39,6 @@ const roots: string[] = [];
  * Unloaded, one invocation takes 0.6-1.1 s; under load 5.1-6.3 s (measured 2026-11-03).
  */
 const INVOKE_TIMEOUT_MS = 30_000;
-/** Per-test budget for tests that run one or more `dispatch` children (bun's default is 5 s). */
-const DISPATCH_TEST_TIMEOUT_MS = 30_000;
 /**
  * Two dispatch children (each capped at INVOKE_TIMEOUT_MS) plus five real jj calls (each capped
  * at INVOKE_TIMEOUT_MS). Unloaded it takes ~3.6 s; under the 16-process CPU load it is measured below.
@@ -240,18 +238,14 @@ async function invoke(f: ReturnType<typeof fixture>, ...args: string[]) {
   return { stdout, stderr, exitCode };
 }
 
-test(
-  "dispatch does not bind an xmsg target",
-  async () => {
-    const f = fixture();
-    const result = await invoke(f);
-    expect(result.exitCode, result.stderr).toBe(0);
-    expect(readFileSync(f.unitArgs, "utf8")).not.toContain(
-      "AGX_XMSG_BOUND_CLAUDE_TARGET",
-    );
-  },
-  DISPATCH_TEST_TIMEOUT_MS,
-);
+test("dispatch does not bind an xmsg target", async () => {
+  const f = fixture();
+  const result = await invoke(f);
+  expect(result.exitCode, result.stderr).toBe(0);
+  expect(readFileSync(f.unitArgs, "utf8")).not.toContain(
+    "AGX_XMSG_BOUND_CLAUDE_TARGET",
+  );
+});
 
 test("dispatch contract: every flag the documentation names for dispatch is accepted", async () => {
   const f = fixture();
@@ -471,7 +465,6 @@ test.each(["foo-bar", "foo-bar-2", "another-ticket"])(
     );
     expect(await Bun.file(f.wsArgs).exists()).toBe(false);
   },
-  DISPATCH_TEST_TIMEOUT_MS,
 );
 
 test("continuation resolves a unique run id prefix before reading its workspace", async () => {
@@ -637,37 +630,33 @@ test("an already-running continuation is named and refused", async () => {
   expect(await Bun.file(f.unitArgs).exists()).toBe(false);
 });
 
-test(
-  "continuation refuses ambiguous and unknown prefixes with run candidates",
-  async () => {
-    const f = fixture();
-    const workspace = join(`${f.repo}.ws`, "ws_foo-bar");
-    mkdirSync(workspace, { recursive: true });
-    const records = ["aa94ee5d12345678", "aa94ee5d87654321"].map((id) => ({
-      id,
-      ticket: "foo-bar",
-      state: "ended",
-      cwd: workspace,
-      workspace,
-    }));
-    writeFileSync(f.records, JSON.stringify(records));
-    // An ambiguous prefix lists its candidates; an unknown selector reports only the recorded
-    // count, as resolveRunId does (tools/agx-worker/tests/next/run-id.test.ts pins that rule).
-    for (const [selector, expected] of [
-      ["aa94ee5d", records.map((row) => row.id)],
-      ["missing", ["unknown run id 'missing'; 2 recorded runs"]],
-    ] as const) {
-      const result = await invoke(f, "--continue", selector);
-      expect(result.exitCode).toBe(2);
-      expect(result.stdout).toBe("");
-      const lines = result.stderr.trim().split("\n");
-      expect(lines).toHaveLength(1);
-      for (const fragment of expected) expect(lines[0]).toContain(fragment);
-      expect(await Bun.file(f.unitArgs).exists()).toBe(false);
-    }
-  },
-  DISPATCH_TEST_TIMEOUT_MS,
-);
+test("continuation refuses ambiguous and unknown prefixes with run candidates", async () => {
+  const f = fixture();
+  const workspace = join(`${f.repo}.ws`, "ws_foo-bar");
+  mkdirSync(workspace, { recursive: true });
+  const records = ["aa94ee5d12345678", "aa94ee5d87654321"].map((id) => ({
+    id,
+    ticket: "foo-bar",
+    state: "ended",
+    cwd: workspace,
+    workspace,
+  }));
+  writeFileSync(f.records, JSON.stringify(records));
+  // An ambiguous prefix lists its candidates; an unknown selector reports only the recorded
+  // count, as resolveRunId does (tools/agx-worker/tests/next/run-id.test.ts pins that rule).
+  for (const [selector, expected] of [
+    ["aa94ee5d", records.map((row) => row.id)],
+    ["missing", ["unknown run id 'missing'; 2 recorded runs"]],
+  ] as const) {
+    const result = await invoke(f, "--continue", selector);
+    expect(result.exitCode).toBe(2);
+    expect(result.stdout).toBe("");
+    const lines = result.stderr.trim().split("\n");
+    expect(lines).toHaveLength(1);
+    for (const fragment of expected) expect(lines[0]).toContain(fragment);
+    expect(await Bun.file(f.unitArgs).exists()).toBe(false);
+  }
+});
 
 test.each([undefined, ""])(
   "continuation of a run --cd falls back to recorded cwd (%s)",
@@ -1406,7 +1395,7 @@ else process.exit(1);
   expect(err).not.toContain("late check verdict");
   expect(err.trim().split("\n")).toHaveLength(1);
   expect(await Bun.file(f.unitArgs).exists()).toBe(false);
-}, 25_000);
+});
 
 test("dispatch inspection helpers distinguish expiry from a completed failure", async () => {
   const { invoke: inspect, invokeReadonly } =
@@ -1460,7 +1449,7 @@ test("dispatch contract: agx ws add runs under its own deadline, not the inspect
   const completed = await invoke(unset);
   expect(completed.exitCode, completed.stderr).toBe(0);
   expect(await Bun.file(unset.unitArgs).exists()).toBe(true);
-}, 15_000);
+});
 
 test("source dispatch pins bun, absolute source entry and dispatcher PATH", async () => {
   const f = fixture();

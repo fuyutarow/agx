@@ -207,7 +207,7 @@ test("new defaults, template escaping, overwrite refusal and three input lines; 
   ).toEqual([".agents"]);
   expect(await readdir(join(f.repo, ".agents"))).toEqual(["tickets"]);
   expect(await readdir(f.home)).toEqual(f.initialHome);
-}, 12000);
+});
 
 // measured 22873ms on the census of alpha under host load
 test("declared directory, all five states, dry-run exactly eligible and GC only accepted+landed", async () => {
@@ -336,7 +336,7 @@ test("matching ticket metadata name, foreign repo exclusion, malformed agx fails
   await writeFile(f.records, "broken");
   expect((await f.tkt(["gc"])).code).toBe(1);
   expect(await readdir(join(f.repo, ".agents/tickets"))).toEqual(["file.md"]);
-}, 13000);
+});
 
 test("absolute ticket directory; batch conflict preflight; symlinks never overwritten or collected", async () => {
   const f = await fixture();
@@ -391,7 +391,7 @@ test("a workspace already removed by ws retains ticket state but cannot authoriz
   expect(row?.landed).toBeNull();
   expect((await f.tkt(["gc"])).out).toBe("");
   expect(await readdir(join(f.repo, ".agents/tickets"))).toEqual(["past.md"]);
-}, 12000);
+});
 
 // measured 5639ms on alpha 1.22.5 under host load
 test("doctor inspects only L2-registered repositories and ignores root-scan env vars", async () => {
@@ -471,7 +471,7 @@ test("doctor inspects only L2-registered repositories and ignores root-scan env 
   for (const path of registered) expect(result.out).toContain(path);
   expect(result.out).not.toContain(unregistered);
   expect(result.out).toContain("outside-home");
-}, 12000);
+});
 
 test("retired repository overrides fail with exit 2 even when empty or paired with the replacement", async () => {
   const f = await fixture();
@@ -560,7 +560,6 @@ test.each([
         );
     }
   },
-  16000,
 );
 
 test("doctor retains retired configuration and healthy repository findings together", async () => {
@@ -625,7 +624,7 @@ test("other operational failures retain exit 1", async () => {
   expect(template.code).toBe(1);
   await writeFile(f.records, "invalid");
   expect((await f.tkt(["ls"])).code).toBe(1);
-}, 12000);
+});
 
 test("secondary workspace issuance selects XDG L2 by main checkout root", async () => {
   const f = await fixture('tickets = "policy"\n');

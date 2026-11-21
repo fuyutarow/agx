@@ -162,7 +162,7 @@ describe("agx-worker run", () => {
     ).toBe(true);
     expect(records.some((record) => record.kind === "started")).toBe(false);
     // One cold start alone passed 5 s (5152 ms against the bun default); warm runs took 1.6-3 s.
-  }, 30_000);
+  });
 
   test.each(["passed", "failed", "absent", "missing-result"])(
     "real run orders and records verify.always: %s",
@@ -328,7 +328,6 @@ describe("agx-worker run", () => {
         expect.unreachable("last verification result is missing");
       expect(readFileSync(lastResult.log_path, "utf8")).toBe("ticket-log\n");
     },
-    30_000,
   );
 
   test("refuses the retired worker override before inspecting the ticket", () => {
@@ -406,7 +405,7 @@ describe("agx-worker run", () => {
     expect(readFileSync(join(state, "records.jsonl"), "utf8")).toContain(
       '"kind":"refusal"',
     );
-  }, 30_000);
+  });
 
   test("a sub-two-minute zero-change exit without RETURN fails its lineage", async () => {
     const root = await scratch("early-quit-");

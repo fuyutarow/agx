@@ -101,7 +101,7 @@ test("check requires the literal prefix parent in the --cd tree", async () => {
       expect(stderr).not.toContain("use **");
     }
   }
-}, 30000);
+});
 
 const jj = async (root: string, ...args: string[]) => {
   const child = Bun.spawn(["jj", ...args], {
@@ -194,4 +194,4 @@ test("check without --cd warns when a writes parent is absent from the trunk a d
   const prepared = await check("--cd", root);
   expect(prepared.exit, prepared.stderr).toBe(0);
   expect(prepared.stderr).not.toContain("WARN ticket writes");
-}, 30000);
+});

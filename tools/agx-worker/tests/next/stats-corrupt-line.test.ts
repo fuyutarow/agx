@@ -167,7 +167,7 @@ test("a dated legacy file outside the window with a NUL-prefixed line is not rea
   expect(after.data.known_output_tokens).toBe(before.data.known_output_tokens);
   expect(after.data.input_tokens).toBe(before.data.input_tokens);
   expect(after.data.coverage.skipped_lines).toEqual([]);
-}, 15000);
+});
 
 test("an in-window legacy file with one NUL-prefixed line totals the good lines and warns once", () => {
   const { root, env } = fixture();
@@ -192,7 +192,7 @@ test("an in-window legacy file with one NUL-prefixed line totals the good lines 
   expect(data.data.coverage.observed_records_complete).toBe(false);
   expect(data.data.input_tokens).toBeNull();
   expect(data.data.output_tokens).toBeNull();
-}, 15000);
+});
 
 test("an undated legacy file last written before the window is not read", () => {
   const { root, env } = fixture();
@@ -211,4 +211,4 @@ test("an undated legacy file last written before the window is not read", () => 
   if (!data.success) return;
   expect(data.data.coverage.skipped_lines).toEqual([]);
   expect(data.data.known_input_tokens).toBeNull();
-}, 15000);
+});

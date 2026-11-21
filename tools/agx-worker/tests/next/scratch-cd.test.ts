@@ -174,5 +174,4 @@ test.each([
     );
     expect(await Bun.file(join(repository, "work.txt")).exists()).toBe(false);
   },
-  30000,
 );

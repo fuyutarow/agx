@@ -146,7 +146,6 @@ await import(${JSON.stringify(cli)});
     expect(existsSync(first)).toBe(true);
     expect(result.err).not.toContain("Unhandled");
   },
-  30000,
 );
 
 afterAll(() => {

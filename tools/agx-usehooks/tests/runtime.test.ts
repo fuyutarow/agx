@@ -1,4 +1,4 @@
-import { expect, setDefaultTimeout, test } from "bun:test";
+import { expect, test } from "bun:test";
 import {
   mkdtempSync,
   mkdirSync,
@@ -12,10 +12,6 @@ import { decodedJson } from "../../shared/src/decode.ts";
 import { z } from "../../shared/src/zod.ts";
 
 const entry = resolve(import.meta.dir, "../src/index.ts");
-// Multiple bounded hook invocations must finish before the enclosing test deadline.
-// Per-child five-second bounds and explicit hook timing assertions remain unchanged.
-setDefaultTimeout(20_000);
-
 test.each([
   [
     '{ namespace: "example-science", slug: "review" }',
@@ -204,7 +200,7 @@ test("callback timeout terminates before late output", async () => {
   expect(Temporal.Now.instant().epochMilliseconds - startedAt).toBeLessThan(
     4_000,
   );
-}, 5_000);
+});
 
 test("stdin is included in the total timeout", async () => {
   const fixture = hook('return "bad";');
@@ -224,7 +220,7 @@ test("stdin is included in the total timeout", async () => {
   expect(exit).toBe(0);
   expect(stdout).toBe("");
   expect(stderr.trim().split("\n")).toHaveLength(1);
-}, 5_000);
+});
 
 test("context discovers ancestor repo root and preserves payload", async () => {
   const fixture = hook("return JSON.stringify(ctx);");

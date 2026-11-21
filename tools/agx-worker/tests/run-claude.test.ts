@@ -1,11 +1,4 @@
-import {
-  afterAll,
-  afterEach,
-  describe,
-  expect,
-  setDefaultTimeout,
-  test,
-} from "bun:test";
+import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -21,9 +14,6 @@ const registerTempDir = tempDirs.register;
 afterAll(tempDirs.assertRemoved);
 
 const ErrorEnvelope = z.object({ exit_code: z.number(), error: z.string() });
-// Positive fake-binary probes need startup room; the explicit 20ms timeout case stays unchanged.
-setDefaultTimeout(20_000);
-
 function parseErrorEnvelope(stdout: string): z.output<typeof ErrorEnvelope> {
   return decodedJson(ErrorEnvelope, stdout);
 }

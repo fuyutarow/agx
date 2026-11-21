@@ -776,7 +776,7 @@ describe("ws contract: shared agx.toml [ws] policy", () => {
       );
       expect(existsSync(safe)).toBe(true);
       expect(existsSync(wsDir(path, "spare"))).toBe(false);
-    }, 12_000);
+    });
   }
 
   test("rejects invalid L2 policy instead of using L1", async () => {
@@ -1234,7 +1234,7 @@ describe("agx ws add", () => {
       localReceipt.data.base.commit_id,
     );
     rmSync(root, { recursive: true, force: true });
-  }, 25000);
+  });
 
   test("uses sparse . even when the source workspace is narrowed", async () => {
     const path = await repo('ready = ["jj sparse list > sparse.out"]\n');
@@ -1294,7 +1294,7 @@ describe("agx ws add", () => {
     expect(
       await Bun.file(join(wsDir(path, "next"), "ready.out")).exists(),
     ).toBe(true);
-  }, 20000);
+  });
 
   // The mise trust integration case measured over 6 seconds.
   test("trusts mise.toml without a readiness declaration", async () => {
@@ -1313,7 +1313,7 @@ describe("agx ws add", () => {
     expect(shown.code).toBe(0);
     expect(shown.out).toContain(`${config}: trusted`);
     expect(r.err).toContain(`ws: ready: trusted ${config}`);
-  }, 13_000);
+  });
 
   test.each([
     ["all tools are installed", "0", false],
@@ -2309,7 +2309,7 @@ describe("agx ws gc", () => {
       "ws_dirty",
       "ws_live",
     ]);
-  }, 11000);
+  });
 
   test("an obsolete run-end commit does not retain a workspace with no current content", async () => {
     const path = await repo('trunk = "main"\n');
@@ -3016,7 +3016,7 @@ describe("gc integration branches", () => {
     ])
       expect(existsSync(wsDir(path, slug))).toBe(true);
     expect(await Bun.file(copied).text()).toBe("measurement");
-  }, 15000);
+  });
 
   test("filesets select literal paths without selecting neighboring files", async () => {
     const path = await repo();
@@ -3158,7 +3158,7 @@ describe("gc integration branches", () => {
       expect(collected.out).toContain(`${dir}\tws\tremovable\t`);
       expect(existsSync(dir)).toBe(false);
       setRecords([]);
-    }, 11000);
+    });
   }
 
   test("WS-GC-IMMUTABLE: collects without abandoning an immutable workspace commit", async () => {
@@ -3419,7 +3419,7 @@ describe("gc integration branches", () => {
       expect(registered).toContain(`ws_${slug}`);
     }
     expect(collected.out).toContain(`${wsDir(path, "kept")}\tws\tkeep\t`);
-  }, 18000);
+  });
 
   test("WS-GC-LANDED-CONTENT: equal bytes in a non-ancestor do not count as landing", async () => {
     const path = await repo('trunk = "main"\n');
@@ -4068,5 +4068,5 @@ describe("AGX-GC-DISCOVER-REPOS-1025", () => {
     expect(existsSync(wsDir(stateRepo, "protected"))).toBe(true);
     expect(existsSync(wsDir(missingRepo, "missing"))).toBe(true);
     setRecords([]);
-  }, 14000);
+  });
 });

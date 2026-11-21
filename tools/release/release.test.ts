@@ -362,7 +362,7 @@ test("brew update completes while a descendant holds output pipes for five minut
     if (mode === undefined) delete process.env.RELEASE_TEST_GH_MODE;
     else process.env.RELEASE_TEST_GH_MODE = mode;
   });
-}, 10_000);
+});
 
 test("publish and machine survive a three-minute fake brew update", async () => {
   const f = await suiteFixture();
@@ -895,7 +895,7 @@ for (const mode of ["success", "retry"]) {
     expect(uploads).toHaveLength(mode === "retry" ? 9 : 5);
     expect(uploads[0]).not.toContain("--clobber");
     if (mode === "retry") expect(uploads[2]).toContain("--clobber");
-  }, 18000);
+  });
 }
 
 for (const mode of ["failure", "silent"]) {
@@ -975,7 +975,7 @@ for (const mode of ["failure", "silent"]) {
         /\["release","create"/gu,
       ),
     ).toHaveLength(2);
-  }, 18000);
+  });
 }
 
 for (const mode of ["missing", "wrong-size", "starter", "malformed"]) {
@@ -1384,7 +1384,7 @@ test("release contract: dist holds only the built version", async () => {
   expect(await Bun.file(staleLibrary).exists()).toBe(false);
   expect(await Bun.file(currentMember).text()).toBe("current version archive");
   expect(await Bun.file(note).text()).toBe("keep non-archive files");
-}, 30_000);
+});
 
 test("release contract: size", async () => {
   const root = await mkdtemp(join(tmpdir(), "release-size-"));
@@ -1478,7 +1478,7 @@ test("suite archive contains all commands with member versions and only its plat
     new Bun.Glob("*.tar.gz").scan(join(f.root, "dist")),
   );
   expect(archives).toHaveLength(4);
-}, 30_000);
+});
 
 test("suite notes reject unavailable history", async () => {
   const f = await suiteFixture();

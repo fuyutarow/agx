@@ -130,7 +130,7 @@ test("gc keeps timed-out inventory unknown while reporting a broken working copy
   expect(brokenRow?.[2]).toBe("broken");
   expect(parsed.data.counts.kept.broken).toBe(1);
   expect(result.code).toBe(1);
-}, 30000);
+});
 
 test("rm allows a slow inventory, refuses untracked content, and explains timeouts", async () => {
   const root = sharedRoot;
@@ -171,7 +171,7 @@ test("rm allows a slow inventory, refuses untracked content, and explains timeou
   expect(timeout.err).toContain("retry");
   expect(timeout.err).not.toContain("unlanded or protected");
   expect(existsSync(join(root, "ws_rm-timeout"))).toBe(true);
-}, 30000);
+});
 
 afterAll(() => {
   rmSync(scratch, { recursive: true, force: true });

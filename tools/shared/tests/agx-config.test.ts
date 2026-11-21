@@ -438,7 +438,7 @@ test("XDG L2 replaces per key and is selected by main checkout root", async () =
   expect(await home(secondary)).toBe(join(f.root, "policy"));
   await f.writeLocal('schema = 1\ntickets = "relative-local"\n');
   expect(await home(secondary)).toBe(join(f.root, "relative-local"));
-}, 11000);
+});
 test("old workspace bases cannot supply policy or the retired-file refusal", async () => {
   const f = await fixture('schema = 1\ntickets = "trunk-tickets"\n');
   await writeFile(join(f.root, ".agx.toml"), "legacy\n");
@@ -627,7 +627,7 @@ process.exit(await child.exited);
     process.env.PATH = originalPath;
   });
   expect(selectedHome).toBe(join(f.root, "committed"));
-}, 20_000);
+});
 
 test("silent config command failure includes command, cwd and child exit", async () => {
   const f = await fixture();

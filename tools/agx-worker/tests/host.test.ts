@@ -122,7 +122,7 @@ test("public agx host check and exclusive declare round trip through the launch 
     (await f.invoke("declare", "--unsandboxed-reason", "replacement")).exit,
   ).toBe(2);
   expect(readFileSync(f.path, "utf8")).toBe(original);
-}, 11000);
+});
 
 for (const content of [
   'schema = 2\nunsandboxed_reason = "box"',
@@ -165,7 +165,7 @@ test("final symlinks, including dangling ones, are never followed or replaced", 
     else expect(() => lstatSync(target)).toThrow();
     rmSync(f.path);
   }
-}, 30_000);
+});
 
 // measured 5060ms on alpha 1.22.5 under host load
 test("retired path blocks creation; current valid file takes precedence without migration", async () => {
@@ -186,7 +186,7 @@ test("retired path blocks creation; current valid file takes precedence without 
   writeFileSync(f.path, 'schema = 1\nunsandboxed_reason = "current"\n');
   expect((await f.invoke("check", "--json")).exit).toBe(0);
   expect(readFileSync(legacy, "utf8")).toContain('"legacy"');
-}, 11000);
+});
 
 test("unreadable and non-file paths are invalid, override path is honored", async () => {
   using f = fixture();
@@ -238,4 +238,4 @@ test("help and usage failures do not create declarations", async () => {
     expect((await f.invoke(...args)).exit).not.toBe(0);
   }
   expect(() => lstatSync(f.path)).toThrow();
-}, 30_000);
+});

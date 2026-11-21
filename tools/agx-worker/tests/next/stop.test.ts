@@ -1,11 +1,4 @@
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  setDefaultTimeout,
-  test,
-} from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { fromThrowable } from "neverthrow";
 import { mkdtemp, rm, mkdir, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -45,9 +38,6 @@ async function cleanupRoot(root: string) {
       fromThrowable(() => process.kill(pid, "SIGKILL"))();
     }
 }
-
-setDefaultTimeout(30_000);
-
 const roots: string[] = [];
 const children: ReturnType<typeof Bun.spawn>[] = [];
 const servers: ReturnType<typeof Bun.serve>[] = [];

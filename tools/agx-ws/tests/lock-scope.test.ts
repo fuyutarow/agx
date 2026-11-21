@@ -295,7 +295,7 @@ for (const existingState of [false, true])
     })().finally(() => {
       for (const dir of protectedDirs) chmodSync(dir, 0o755);
     });
-  }, 11000);
+  });
 
 test("WS-GC-LOCK-SCOPE: dry runs neither acquire a held lock nor snapshot dirty files", async () => {
   const f = await fixture(["dirty"]);

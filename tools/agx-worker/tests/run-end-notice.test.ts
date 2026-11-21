@@ -379,4 +379,4 @@ test("a bare Claude dispatcher is qualified for a real run end notice", async ()
   expect(result, result.ok ? undefined : String(result.error)).toMatchObject({
     ok: true,
   });
-}, 30_000);
+});

@@ -89,4 +89,4 @@ test("installed jj reads neither snapshot, import/export refs nor integrate oper
   expect(await readFile(join(repo, ".git", "HEAD"))).toEqual(head);
   expect(await readFile(lock, "utf8")).toBe("ownerless fixture\n");
   expect(checkPremises(["rev:@"], repo)).toEqual({ status: "ok" });
-}, 30_000);
+});

@@ -153,7 +153,6 @@ test.each(["readiness", "lock"])(
       true,
     );
   },
-  20_000,
 );
 
 test.each(["0", "-1", "NaN", "Infinity", "2147483648"])(

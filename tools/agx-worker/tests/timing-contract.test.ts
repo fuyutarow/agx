@@ -2,6 +2,7 @@
 import { expect, test } from "bun:test";
 import { join, relative } from "node:path";
 import { z } from "../../shared/src/zod.ts";
+import { HANG_DETECTION_MS } from "../../shared/src/test-tmp.ts";
 import ratchet from "./timing-contract.json" with { type: "json" };
 
 const root = join(import.meta.dir, "../../..");
@@ -132,7 +133,7 @@ export function overrides(file: string, source: string): Entry[] {
     const arg = kind === "setDefaultTimeout" ? args[0] : args[2];
     if (arg === undefined || arg.length === 0) continue;
     const timeout = numeric(arg, ts);
-    if (timeout <= 5000) continue;
+    if (timeout <= HANG_DETECTION_MS) continue;
     const label = args[0]?.[0];
     if (
       kind !== "setDefaultTimeout" &&
@@ -165,18 +166,21 @@ export async function actualOverrides(): Promise<Entry[]> {
   );
 }
 
-test("timing contract: default and per-test timeouts match the frozen ratchet", async () => {
+test("timing contract: one hang limit, and every longer limit is listed in the ratchet", async () => {
   const config = Bun.TOML.parse(
     await Bun.file(join(root, "bunfig.toml")).text(),
   );
   expect(
-    z.object({ test: z.object({ timeout: z.literal(5000) }) }).safeParse(config)
-      .success,
+    z
+      .object({ test: z.object({ timeout: z.literal(HANG_DETECTION_MS) }) })
+      .safeParse(config).success,
   ).toBe(true);
   const preload = await Bun.file(
     join(root, "tools/shared/src/test-tmp.ts"),
   ).text();
-  expect(preload.match(/setDefaultTimeout\(5_000\)/gu)).toHaveLength(1);
+  expect(
+    preload.match(/setDefaultTimeout\(HANG_DETECTION_MS\)/gu),
+  ).toHaveLength(1);
   expect(
     overrides(
       relative(root, join(root, "tools/shared/src/test-tmp.ts")),

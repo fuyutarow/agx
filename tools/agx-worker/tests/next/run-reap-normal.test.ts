@@ -127,5 +127,4 @@ test.if(process.platform === "linux")(
     expect(notice).not.toContain("reaped ");
     expect(notice).not.toContain("could not stop pids");
   },
-  30000,
 );

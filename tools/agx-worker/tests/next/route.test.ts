@@ -1241,7 +1241,7 @@ test("local accepted and rejected history cannot change the Jev request", async 
   }
   expect(requests).toHaveLength(2);
   expect(requests[0]).toBe(requests[1]);
-}, 20_000);
+});
 test("audit retains class probabilities, the bar, qualifying rows, and deterministic selection", async () => {
   await isolateState();
   const server = startServer("localized", { localized: 1 });

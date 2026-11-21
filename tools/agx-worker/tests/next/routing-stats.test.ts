@@ -387,7 +387,7 @@ test("stats rejects invalid windows and incompatible flags", () => {
     expect(stats(env, extra).exitCode).toBe(2);
   }
   expect(stats(env, ["--help"]).stdout.toString()).toContain("--routing");
-}, 15000);
+});
 
 test("shared window parser produces exact half-open bounds", () => {
   expect(statsWindow("24h", 100_000_000)).toEqual({
@@ -455,7 +455,7 @@ test("real roster CLI selections are persisted before any worker starts", async 
     expect(after.jev.denominator).toBe(1);
     expect(after.fallback_count).toBe(0);
   }
-}, 15000);
+});
 
 test("audit statistics count rows and margins independently of refusals and launch failures", () => {
   const { root, env } = fixture();

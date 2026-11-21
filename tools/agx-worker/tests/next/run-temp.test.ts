@@ -1,13 +1,5 @@
 import { prepareTicketRepo } from "../ticket-repo.ts";
-import {
-  afterAll,
-  afterEach,
-  describe,
-  expect,
-  setDefaultTimeout,
-  test,
-} from "bun:test";
-setDefaultTimeout(15000);
+import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import {
   chmodSync,
   existsSync,
@@ -219,7 +211,7 @@ describe("agx worker run owns its temp space", () => {
     expect(
       rows.data[0]?.verify.every(({ log_path }) => existsSync(log_path)),
     ).toBe(true);
-  }, 15_000);
+  });
 
   test("worker and verify see TMPDIR under the temp root; the run removes it", async () => {
     const root0 = scratch("probe-");

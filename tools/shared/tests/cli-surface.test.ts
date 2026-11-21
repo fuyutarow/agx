@@ -202,7 +202,7 @@ for await (const packagePath of new Bun.Glob("tools/*/package.json").scan({
         expect(error.stderr).toMatch(/(?:-Z|unknown option: Z)/u);
         expect(error.stderr).not.toContain("--Z");
       }
-    }, 20_000);
+    });
   }
 }
 
@@ -224,5 +224,5 @@ for (const command of [
     expect(plain.stdout).not.toContain("\u001B");
     for (const { tty, color } of environments)
       expect(await run(entry, args, tty, color)).toEqual(plain);
-  }, 11000);
+  });
 }

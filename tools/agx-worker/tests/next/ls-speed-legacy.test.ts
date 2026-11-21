@@ -111,4 +111,4 @@ test("public ls hides malformed imports, counts them and normalizes moved report
     // calls above exercise selection and visibility rather than add timing samples.
     expect(Math.max(...timings.slice(0, 2))).toBeLessThan(1000);
   }
-}, 15000);
+});

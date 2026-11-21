@@ -327,7 +327,7 @@ describe("agx", () => {
     expect(r.code).toBe(3);
     expect(r.receipt.outcome).toBe("stdin-wait");
     expect(r.receipt.cause).toBe("Reading additional input from stdin...");
-  }, 10_000);
+  });
 
   test("run results root is writable in fresh and resumed Codex configuration", () => {
     for (const resume of [false, true]) {
@@ -987,7 +987,7 @@ describe("agx", () => {
     expect(r.stderr).toMatch(
       /agx\[codex\]: waiting for gpt-6-luna \(\d+(\.\d)? s of 3 s\)…/u,
     );
-  }, 20_000);
+  });
 
   // O2: a killed run keeps where it was and what it was waiting on. On Vast five luna runs were
   // killed at their bound with nothing recorded, so "the model could not do it" and "codex was
@@ -1007,7 +1007,7 @@ describe("agx", () => {
       files: 0,
     });
     expect(r.receipt.cause).toContain("waiting for network");
-  }, 20_000);
+  });
 
   test("five identical tool errors stop early with a resumable spin receipt naming the cause", () => {
     const { bin } = fakeCodex(scratch());
@@ -1023,7 +1023,7 @@ describe("agx", () => {
     expect(r.receipt.cause).toBe(
       "stopped: 5 identical consecutive tool errors: apply_patch verification failed: invalid patch: multiple operations target <same file>",
     );
-  }, 20_000);
+  });
 
   test("four identical tool errors followed by success do not stop the worker", () => {
     const { bin } = fakeCodex(scratch());

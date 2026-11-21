@@ -163,7 +163,7 @@ test("public check warns about user bus and shared VCS store without changing ti
     } else expect(err).not.toContain("WARN sandbox");
     expect(await readFile(ticket, "utf8")).toBe(original);
   }
-}, 30000);
+});
 
 test("schema failures include every invalid field and write glob", () => {
   const parsed = parseNextTicket(
@@ -255,7 +255,7 @@ test("check and run report writes, home, mise, live workspace and premises toget
     expect(await readFile(ticket, "utf8")).toBe(original);
     expect(await readdir(state)).not.toContain("runs");
   }
-}, 30000);
+});
 
 test("check warns only about overlapping runs whose ticket or workspace shares the ticket repository", async () => {
   const jevUrl = localRouteStub();
@@ -308,7 +308,7 @@ test("check warns only about overlapping runs whose ticket or workspace shares t
   expect(stdout).toContain("OK ticket=current");
   expect(stderr).toContain("WARN overlap run=same-repository");
   expect(stderr).not.toContain("WARN overlap run=unrelated");
-}, 30000);
+});
 
 test("inspection deadlines stay operational across VCS, mise and premise reads", async () => {
   const { treeRead } = await import("../../src/next/ticket-home.ts");
@@ -411,4 +411,4 @@ process.exit(75);
     expect(err).not.toContain("preflight failed");
     expect(await readdir(state)).not.toContain("runs");
   }
-}, 30_000);
+});

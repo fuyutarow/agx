@@ -231,7 +231,7 @@ test("first verify completes after the deadline", async () => {
   expect(calls).toHaveLength(1);
   expect(report.verify_rounds).toHaveLength(0);
   expect(ended?.verify).toMatchObject([{ exit: 0, kind: "passed" }]);
-}, 15000);
+});
 
 test("refused capacity reroute does not verify or resume", async () => {
   const { receipt, report, calls, ended, routeCalls, runFiles } =
