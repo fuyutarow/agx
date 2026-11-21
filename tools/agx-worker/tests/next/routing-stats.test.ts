@@ -132,6 +132,8 @@ const Report = jsonOf(
   z.object({
     schema: z.literal(1),
     host: z.string(),
+    ahead_of_clock_events: z.number(),
+    selection_count: z.number(),
     observation: z.object({
       start: z.string(),
       end: z.string(),
@@ -158,9 +160,14 @@ const Report = jsonOf(
     }),
   }),
 );
-const report = (result: ReturnType<typeof stats>) => {
+const AHEAD_NOTICE =
+  /^agx worker stats: \d+ routing event\(s\) carry a time later than now[^\n]*\n$/u;
+/** `ahead`: the ahead-of-clock notice may appear only where a test says the clock may move. */
+const report = (result: ReturnType<typeof stats>, ahead = false) => {
   expect(result.exitCode, result.stderr.toString()).toBe(0);
-  expect(result.stderr.toString()).toBe("");
+  const stderr = result.stderr.toString();
+  if (!ahead || stderr !== "")
+    expect(stderr).toMatch(ahead ? AHEAD_NOTICE : /^$/u);
   const parsed = Report.safeParse(result.stdout.toString());
   expect(parsed.success).toBe(true);
   if (!parsed.success) return process.exit(1);
@@ -244,7 +251,11 @@ test("public CLI filters window and host, with Jev denominator excluding fallbac
       .join("\n") + "\n",
   );
   const before = readFileSync(join(root, "state/routing.jsonl"), "utf8");
-  const data = report(stats(env));
+  // event(-1) is stamped an hour after now: it is reported apart, with one stderr line.
+  const result = stats(env);
+  expect(result.stderr.toString()).toMatch(AHEAD_NOTICE);
+  const data = report(result, true);
+  expect(data.ahead_of_clock_events).toBe(1);
   expect(data.host).toBe(hostname());
   expect(
     Temporal.Instant.from(data.observation.end).epochMilliseconds -
@@ -262,6 +273,7 @@ test("public CLI filters window and host, with Jev denominator excluding fallbac
   const remote = report(
     stats(env, ["--routing", "--host", "other-host", "--window", "24h"]),
   );
+  expect(remote.ahead_of_clock_events).toBe(0);
   expect(remote.jev.codex_share).toBe(1);
   expect(remote.jev.denominator).toBe(1);
   expect(remote.routes.codex.subscription).toBeNull();
@@ -432,9 +444,11 @@ test("real roster CLI selections are persisted before any worker starts", async 
     ]);
     expect(exit, err).toBe(0);
     expect(out).toContain("luna-low");
-    const data = report(stats(env));
-    expect(data.jev.denominator).toBe(1);
-    expect(data.jev.codex_share).toBe(1);
+    // The machine's wall clock can move back between the selection and this command. The
+    // selection is then counted ahead of the clock; it is in exactly one of the two counts.
+    const data = report(stats(env), true);
+    expect(data.jev.denominator + data.ahead_of_clock_events).toBe(1);
+    if (data.ahead_of_clock_events === 0) expect(data.jev.codex_share).toBe(1);
     // A valid HTTP response without a choice is refused, never substituted by a fallback row.
     server.reload({ fetch: () => Response.json({ answers: {} }) });
     const fallback = Bun.spawn([...args, "roster", ticket], {
@@ -451,8 +465,12 @@ test("real roster CLI selections are persisted before any worker starts", async 
     ]);
     expect(fallbackExit, fallbackErr).toBe(2);
     expect(fallbackErr.split("\n")[0]).toStartWith("route refused: ");
-    const after = report(stats(env));
-    expect(after.jev.denominator).toBe(1);
+    // The refusal is one more event; the one selection is still counted once.
+    const after = report(stats(env), true);
+    expect(after.jev.denominator).toBeLessThanOrEqual(1);
+    expect(
+      after.selection_count + after.ahead_of_clock_events,
+    ).toBeGreaterThanOrEqual(1);
     expect(after.fallback_count).toBe(0);
   }
 });

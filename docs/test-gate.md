@@ -50,8 +50,10 @@ Five runs each, one commit apart (the later commit removed a duplicate audit fie
 None of the three failures was the hang limit, so this sample does not show the change removing
 a failure. The two failures before it have known causes that the change does not address: a
 fixture Git repository that still ran background maintenance, and a statistics window that
-dropped a record stamped after the clock moved back. The failure after it took 10.6 seconds and
-its cause is not yet known. No CPU budget was exceeded in the five runs.
+dropped a record stamped after the clock moved back. Both were fixed in the next commit: the
+fixture turns maintenance off, and `agx worker stats --routing` counts such records under
+`ahead_of_clock_events`. The failure after it took 10.6 seconds; its output was not kept, so its
+cause is not known. No CPU budget was exceeded in the five runs.
 
 ## Claims that still use wall time
 

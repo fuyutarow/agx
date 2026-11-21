@@ -48,6 +48,11 @@ const git = (cwd: string, args: string[]) => {
       "user.email=fixture@example.invalid",
       "-c",
       "commit.gpgsign=false",
+      // A detached maintenance run would add and remove files while a test lists the repository.
+      "-c",
+      "maintenance.auto=false",
+      "-c",
+      "gc.auto=0",
       ...args,
     ],
     {

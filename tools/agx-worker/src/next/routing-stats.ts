@@ -48,6 +48,17 @@ export async function routingStats(
         const at = Temporal.Instant.from(event.at).epochMilliseconds;
         return event.host === host && at >= bounds.startMs && at < bounds.endMs;
       });
+      // An event stamped at or after now was recorded before the wall clock moved back. It is
+      // outside the interval, so it is counted apart instead of being dropped without a word.
+      const ahead = journal.events.filter(
+        (event) =>
+          event.host === host &&
+          Temporal.Instant.from(event.at).epochMilliseconds >= bounds.endMs,
+      ).length;
+      if (ahead > 0)
+        process.stderr.write(
+          `agx worker stats: ${ahead} routing event(s) carry a time later than now and are counted under ahead_of_clock_events, not in the interval; the machine clock may have moved back\n`,
+        );
       const selections = selected.filter((event) => event.row !== null);
       const picks = selections.filter(
         (event) =>
@@ -106,6 +117,7 @@ export async function routingStats(
           codex_pick_count: codex,
           codex_share: picks.length === 0 ? null : codex / picks.length,
         },
+        ahead_of_clock_events: ahead,
         selection_count: selections.length + refusals.length,
         selection_mode_counts: modeCounts,
         fallback_count: selections.filter((event) =>
