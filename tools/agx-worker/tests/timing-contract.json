@@ -235,6 +235,11 @@
     "timeout": 30000
   },
   {
+    "file": "tools/agx-worker/tests/next/check-writes-parent.test.ts",
+    "name": "check without --cd warns when a writes parent is absent from the trunk a dispatch starts from",
+    "timeout": 30000
+  },
+  {
     "file": "tools/agx-worker/tests/next/continue.test.ts",
     "name": "a continuation that routes sends the ticket verify line and refuted_by to Jev",
     "timeout": 30000
