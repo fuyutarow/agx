@@ -63,6 +63,18 @@ function classMargin(
     : { first: first[0], second: second[0], margin: first[1] - second[1] };
 }
 
+/** The probabilities of the three work classes only, without the returns. */
+function classProbabilities(
+  probabilities: Record<string, number> | undefined,
+): Record<string, number> {
+  return Object.fromEntries(
+    REQUIREMENT_CLASSES.flatMap((name) => {
+      const probability = probabilities?.[name];
+      return probability === undefined ? [] : [[name, probability]];
+    }),
+  );
+}
+
 /** A row without a published TB4 score passes only the zero bar. */
 const meetsBar = (row: Choice, bar: number): boolean =>
   (row.tb4 ?? (bar === 0 ? 0 : Number.NEGATIVE_INFINITY)) >= bar;
@@ -643,7 +655,26 @@ export async function route(
   const selected = answer?.choice;
   const probabilities = answer?.probabilities;
   const reason = ReturnReason.safeParse(selected);
-  if (reason.success) {
+  // A return stops the worker, so it needs a clear lead. One that leads the runner-up by less
+  // than the close-call margin is set aside, and the most probable work class is used instead.
+  const lead = classMargin(probabilities);
+  const likeliestClass = Object.entries(classProbabilities(probabilities))
+    .toSorted((a, b) => b[1] - a[1])
+    .at(0)?.[0];
+  const setAside =
+    reason.success &&
+    lead?.first === reason.data &&
+    lead.margin < CLOSE_CLASS_MARGIN &&
+    likeliestClass !== undefined
+      ? { reason: reason.data, margin: lead.margin, class: likeliestClass }
+      : undefined;
+  audit.set_aside_return = setAside?.reason ?? null;
+  audit.set_aside_margin = setAside?.margin ?? null;
+  if (setAside !== undefined)
+    process.stderr.write(
+      `agx: return ${setAside.reason} set aside: it leads by ${setAside.margin.toFixed(2)} (below ${CLOSE_CLASS_MARGIN}); routing as ${setAside.class}. Review the ticket: ${returns[setAside.reason].fix}\n`,
+    );
+  if (reason.success && setAside === undefined) {
     audit.outcome_kind = "held";
     audit.selection_mode = "return";
     audit.answer = rawAnswer;
@@ -670,7 +701,9 @@ export async function route(
       'route refused: Jev reply has no answer for question "worker"; no row is substituted\n',
       "refused-missing-answer",
     );
-  const parsedRequirementClass = RequirementClassSchema.safeParse(selected);
+  const parsedRequirementClass = RequirementClassSchema.safeParse(
+    setAside?.class ?? selected,
+  );
   if (!parsedRequirementClass.success)
     return refuseReply(
       `route refused: Jev choice ${JSON.stringify(selected)} is neither a requirement class (${RequirementClassSchema.options.join(", ")}) nor a return reason; no row is substituted\n`,
@@ -688,7 +721,10 @@ export async function route(
   audit.jev_requirement_class = jevClass;
   audit.min_class = minClass ?? null;
   audit.requirement_class = requirementClass;
-  const close = classMargin(probabilities);
+  // After a return is set aside, the close call is measured among the work classes alone.
+  const close = classMargin(
+    setAside === undefined ? probabilities : classProbabilities(probabilities),
+  );
   audit.class_margin = close?.margin ?? null;
   // A close call changes no row: the writer is told how to declare a floor, and decides.
   if (

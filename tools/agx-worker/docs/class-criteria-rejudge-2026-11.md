@@ -31,6 +31,19 @@ soks の一次資料サーベイの ticket（icd-* 7 本）が、すべて mecha
 
 今の基準で、1 位と 2 位の差が 0.15 未満だったのは 80 回のうち 30 回で、内訳はほぼ soks の調査だった。測定 1 回分の値である。`class_margin` の記録がたまったら、通知が出た ticket のうち書き手が `min_class` を足した割合を見て直す。誰も足さないなら通知を消す。
 
+## 僅差の返却を採らない規則（2026-11-23）
+
+返却（split、uncheckable、contradiction）は、次点との差が 0.15 以上のときだけ拒否にする。それ未満なら採らず、3 クラスの中で最も確率の高いものを分類にする。閾値は僅差の通知と同じ定数である。
+
+根拠は routing journal の全件である。確率つきの判定 97 件のうち、返却が 1 位になったのは 6 件で、全部が standard-skills の reader-diff211-a と -c の contradiction だった。次点との差は 0.01、0.01、0.02、0.02、0.12、0.12。本文がほぼ同じ -b は起動していた。確信のある返却の実例は 0 件なので、この規則が正しい拒否を通してしまうかは測れていない。
+
+見直しの条件は二つある。数え方は routing の audit による。
+
+- `set_aside_return` が入った決定の後に起動した run のうち、worker が「ticket が矛盾している」「検査できない」と報告して終わった数。出たら閾値を下げるか、返却の種類ごとに分ける。
+- `selection_mode` が `return` の決定（差 0.15 以上で拒否した数）。2027 年 5 月まで 0 件なら、返却という答えが働いていないので、Jev への問いから外すことを検討する。
+
+contradiction のときに両立しない 2 つの要求を書くことは、確信のある返却の実例が出てから扱う。今の問いは選択 1 つで、理由を返さない。
+
 ## 案 1: 能力の語彙で書き直す（検査の有無を含む）。不合格
 
 - instructions: Purpose: classify this ticket by the capability its worker needs, whatever the kind of work (code, research, documents, checks). Use mechanical when the ticket states both what to produce and a check a machine can decide, localized when the worker must work out how inside one bounded area and the ticket states how success is told, and cross_module when the worker must reconcile several independent parts or sources or must design the check itself. Return the ticket only when it cannot be done as written. Do not choose a worker.

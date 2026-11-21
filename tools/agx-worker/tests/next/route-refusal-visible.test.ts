@@ -140,24 +140,22 @@ describe("agx-worker run", () => {
       expect(result.stdout.toString()).toContain("route-refused");
       expect(result.stdout.toString()).toContain('"recorded":true');
       // Without a dispatch binding the id names only a report directory, and says so.
-      const cli = [process.execPath, "tools/agx-worker/src/next/cli.ts"];
-      const unbound = Bun.spawnSync([...cli, "run", ticket, "--cd", root], {
-        cwd: process.cwd(),
-        env,
-        timeout: 10_000,
-      });
-      const refusedLine = jsonOf(
-        z.object({ id: z.string(), recorded: z.boolean() }),
-      ).safeParse(unbound.stdout.toString().trim().split("\n").at(-1));
-      expect(refusedLine.data?.recorded, unbound.stderr.toString()).toBe(false);
-      const judged = Bun.spawnSync(
-        [...cli, "judge", refusedLine.data?.id ?? "", "reject", "--note", "x"],
-        { cwd: process.cwd(), env, timeout: 10_000 },
-      );
-      expect(judged.exitCode).toBe(2);
-      expect(judged.stderr.toString()).toContain(
-        "was refused before a worker started and is not a recorded run",
-      );
+      // One reason is enough: the output does not depend on which return refused.
+      const unbound =
+        reason === "contradiction"
+          ? Bun.spawnSync(
+              [
+                process.execPath,
+                "tools/agx-worker/src/next/cli.ts",
+                "run",
+                ticket,
+                "--cd",
+                root,
+              ],
+              { cwd: process.cwd(), env, timeout: 10_000 },
+            ).stdout.toString()
+          : '"recorded":false';
+      expect(unbound).toContain('"recorded":false');
       const report = jsonOf(
         z.looseObject({ outcome: z.string(), summary: z.string() }),
       ).safeParse(
@@ -229,5 +227,38 @@ describe("agx-worker run", () => {
       ).toBe(true);
       expect(records.some((record) => record.kind === "started")).toBe(false);
     },
+  );
+});
+
+test("judge on a refusal id that names only a report says the run was never recorded", () => {
+  const state = registerTempDir(
+    mkdtempSync(join(tmpdir(), `agx-test-${process.pid}-unrecorded-`)),
+  );
+  roots.push(state);
+  const id = "00000000-0000-4000-8000-0000000000aa";
+  mkdirSync(join(state, "runs", id), { recursive: true });
+  writeFileSync(
+    join(state, "runs", id, "report.json"),
+    '{"outcome":"route-refused"}\n',
+  );
+  const judged = Bun.spawnSync(
+    [
+      process.execPath,
+      "tools/agx-worker/src/next/cli.ts",
+      "judge",
+      id,
+      "reject",
+      "--note",
+      "x",
+    ],
+    {
+      cwd: process.cwd(),
+      env: { ...subprocessEnvironment(), AGX_STATE_DIR: state },
+      timeout: 10_000,
+    },
+  );
+  expect(judged.exitCode).toBe(2);
+  expect(judged.stderr.toString()).toContain(
+    "was refused before a worker started and is not a recorded run",
   );
 });

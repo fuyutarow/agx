@@ -1723,3 +1723,80 @@ test("a close class call prints one min_class hint without changing the row, and
   expect(close.row).toBe(clear.row);
   expect(close.row).toBe(floored.row);
 });
+
+test("a return with a small lead is set aside and the likeliest class routes; a clear return still refuses", async () => {
+  const routed = async (
+    choice: string,
+    probabilities: Record<string, number>,
+  ) => {
+    await isolateState();
+    startServer(choice, probabilities);
+    const written = spyOn(process.stderr, "write").mockImplementation(
+      () => true,
+    );
+    const result = await route(
+      "set-aside return",
+      [],
+      600,
+      [],
+      {},
+      { path: "/t.md", sha256: "" },
+      { capacityRetry: true, timeoutMs: 10_000 },
+    );
+    const text = written.mock.calls.map((call) => String(call[0])).join("");
+    written.mockRestore();
+    return { result, text, audit: routingEvents().events.at(-1)?.audit };
+  };
+  // The three distributions recorded for the six refused reader-diff211 decisions.
+  const recorded = [
+    {
+      mechanical: 0.24,
+      localized: 0.21,
+      cross_module: 0.08,
+      split: 0.02,
+      uncheckable: 0.09,
+      contradiction: 0.36,
+    },
+    {
+      mechanical: 0.25,
+      localized: 0.24,
+      cross_module: 0.13,
+      split: 0.03,
+      uncheckable: 0.08,
+      contradiction: 0.27,
+    },
+    {
+      mechanical: 0.22,
+      localized: 0.26,
+      cross_module: 0.13,
+      split: 0.03,
+      uncheckable: 0.09,
+      contradiction: 0.27,
+    },
+  ];
+  const likeliest = ["mechanical", "mechanical", "localized"];
+  for (const [index, probabilities] of recorded.entries()) {
+    const run = await routed("contradiction", probabilities);
+    expect(run.result).toMatchObject({ kind: "selected" });
+    expect(run.audit).toMatchObject({
+      set_aside_return: "contradiction",
+      jev_requirement_class: likeliest[index],
+    });
+    expect(run.text).toContain(`return contradiction set aside`);
+    expect(run.text).toContain(`routing as ${likeliest[index]}`);
+  }
+  // Among the classes alone the second recorded case is itself a close call: both lines print.
+  const both = await routed("contradiction", recorded[1] ?? {});
+  expect(both.text).toContain("requirement class is a close call");
+  expect(both.audit?.class_margin).toBeCloseTo(0.01);
+  for (const reason of ["split", "uncheckable", "contradiction"]) {
+    const near = await routed(reason, { mechanical: 0.4, [reason]: 0.5 });
+    expect(near.result).toMatchObject({ kind: "selected" });
+    expect(near.audit?.set_aside_return).toBe(reason);
+    expect(near.audit?.set_aside_margin).toBeCloseTo(0.1);
+    const clear = await routed(reason, { mechanical: 0.3, [reason]: 0.6 });
+    expect(clear.result).toMatchObject({ kind: "refused", exitCode: 2 });
+    expect(clear.audit?.set_aside_return).toBeNull();
+    expect(clear.audit?.selection_mode).toBe("refusal");
+  }
+});

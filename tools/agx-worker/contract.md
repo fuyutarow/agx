@@ -939,7 +939,13 @@ checks persisted/listed timeout, refusal/capacity distinction, and stats counts.
 
 Routing sends one Choice with the work classes `mechanical`, `localized`, and
 `cross_module`, followed by the returns `split`, `uncheckable`, and
-`contradiction`. A chosen return records a refusal and exits 2 before worker startup.
+`contradiction`. A chosen return records a refusal and exits 2 before worker startup
+only when it leads the next most probable answer by at least 0.15, or when the reply
+carries no second probability to compare. A return with a smaller lead is set aside:
+routing uses the most probable work class, prints one stderr line naming the return, its
+lead, the class used and the ticket remedy, and records `set_aside_return` and
+`set_aside_margin` in the audit. The rule is the same for all three returns. After a
+set-aside return, `class_margin` and the close-call line compare the work classes alone.
 The diagnostic gives the class, its criterion and remedy, its probability when supplied,
 and the ticket fields sent. Historical routing refusals still accept `missing_input`
 and `reason_detail`. The pick audit retains the answer and complete probability distribution.
