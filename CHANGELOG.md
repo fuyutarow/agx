@@ -8,6 +8,7 @@
 - Dispatch bounds every inspection command it runs (check, the run listing and repository reads) by the one DISPATCH_COMMAND_TIMEOUT_MS, as the contract states. Check, listing and repository reads each had a fixed 60 s bound of their own that the variable did not change, and their timeout messages named bounds no one could set
 - The worker contract and the implementation name the same agx variables, and a test now fails when they diverge: the contract gains the variables the code already used and drops AGX_DISPATCH_WAIT_MS and AGX_TMP_ROOT, which nothing read. Removed because nothing set, read or tested them: the stall observer with AGX_WORKER_ACTIVITY_FILE and AGX_TEST_PROCESS_TREE_CPU, and AGX_DISPATCHER_VENDOR
 - Tickets can declare min_class = "mechanical" | "localized" | "cross_module", a floor on the routed work class: the class Jev chooses is raised to it and never lowered, the routing audit and one stderr line show Jev's class, the declared floor and the adopted class, and routing refuses instead of substituting a lower row when no roster row meets the floor
+- When a ticket declares no min_class and the two most probable routing answers differ by less than 0.15, routing prints one stderr line naming both answers and the min_class field; the row and exit code are unchanged, and the routing audit records the difference as class_margin
 
 ## 11.2.3 — 2026-11-20
 
