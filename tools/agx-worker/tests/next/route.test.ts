@@ -1719,7 +1719,7 @@ test("a close class call prints one min_class hint without changing the row, and
     return {
       row: row.id,
       text,
-      margin: routingEvents().events.at(-1)?.audit?.class_margin,
+      margin: routingEvents().events.at(-1)?.audit?.top_margin,
     };
   };
   const plain = { path: "/t.md", sha256: "" };
@@ -1805,7 +1805,7 @@ test("a return with a small lead is set aside and the likeliest class routes; a 
   // Among the classes alone the second recorded case is itself a close call: both lines print.
   const both = await routed("contradiction", recorded[1] ?? {});
   expect(both.text).toContain("requirement class is a close call");
-  expect(both.audit?.class_margin).toBeCloseTo(0.01);
+  expect(both.text).toContain("mechanical over localized by 0.01");
   for (const reason of ["split", "uncheckable", "contradiction"]) {
     const near = await routed(reason, { mechanical: 0.4, [reason]: 0.5 });
     expect(near.result).toMatchObject({ kind: "selected" });

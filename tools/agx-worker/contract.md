@@ -953,7 +953,7 @@ carries no second probability to compare. A return with a smaller lead is set as
 routing uses the most probable work class, prints one stderr line naming the return, its
 lead, the class used and the ticket remedy, and records `set_aside_return` and
 `set_aside_margin` in the audit. The rule is the same for all three returns. After a
-set-aside return, `class_margin` and the close-call line compare the work classes alone.
+set-aside return, the close-call line compares the work classes alone.
 The diagnostic gives the class, its criterion and remedy, its probability when supplied,
 and the ticket fields sent. Historical routing refusals still accept `missing_input`
 and `reason_detail`. The pick audit retains the answer and complete probability distribution.
@@ -965,7 +965,7 @@ Invalid, missing, or unknown answers refuse without selecting a row.
 2. Jev classifies the ticket as mechanical, localized or cross_module, or returns it. Its input contains no route availability, usage windows, row data or run outcomes.
    A return refused by `run` prints one JSON line with `id`, `report_path` and `recorded`. `recorded` is false when no dispatch reserved the run: the id then names only the report directory, `ls` does not list it, and `judge` says so instead of reporting an unknown id.
 3. A ticket `min_class` (`mechanical`, `localized` or `cross_module`) raises Jev's class to at least that class and never lowers it. The audit records Jev's class (`jev_requirement_class`), the declared floor (`min_class`) and the adopted class (`requirement_class`), and routing prints the three on one stderr line. If no candidate row meets the declared floor's TB4 bar, routing refuses and substitutes no row; an unknown value is refused by check and by routing.
-   When the ticket declares no `min_class` and the two most probable answers differ by less than 0.15, routing prints one stderr line naming both answers, the difference and the `min_class` field. It changes neither the row nor the exit code. The audit records the difference as `class_margin` on every classified pick. The threshold comes from one measurement, recorded in `docs/class-criteria-rejudge-2026-11.md`.
+   When the ticket declares no `min_class` and the two most probable answers differ by less than 0.15, routing prints one stderr line naming both answers, the difference and the `min_class` field. It changes neither the row nor the exit code. The audit's `top_margin` is that difference on every pick with probabilities. The threshold comes from one measurement, recorded in `docs/class-criteria-rejudge-2026-11.md`.
 4. Code filters by the adopted class's TB4 bar (0, 15, 40). Missing TB4 passes only bar 0. If no row passes, rows rank by descending TB4 first. Otherwise, credit-covered rows come first, followed by ascending published input plus output price, published time and row ID. These latter keys also break ties in the fallback.
 
 A Claude row is credit-covered when the shared credential resolver would give its worker an API key: a key from the environment, fnox, or a valid key file, or an inherited Anthropic auth token, without a fresh 24-hour credits-unavailable marker. The audit records whether any ordered candidate is covered and the ordered candidate IDs. Historical pick-audit schemas retain optional measured evidence and anonymization fields for reading old records; new picks do not emit them.

@@ -725,7 +725,6 @@ export async function route(
   const close = classMargin(
     setAside === undefined ? probabilities : classProbabilities(probabilities),
   );
-  audit.class_margin = close?.margin ?? null;
   // A close call changes no row: the writer is told how to declare a floor, and decides.
   if (
     minClass === undefined &&
