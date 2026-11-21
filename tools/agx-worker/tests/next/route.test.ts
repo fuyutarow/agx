@@ -1597,3 +1597,84 @@ test("writes and verify reach Jev in the task text after the prose", async () =>
   );
   expect(task.indexOf("writes: ")).toBeLessThan(task.indexOf("verify: "));
 });
+
+test("ticket min_class raises the class Jev chose, never lowers it, and both are audited", async () => {
+  await isolateState();
+  startServer("mechanical");
+  const raised = await route(
+    "min-class raise",
+    [],
+    600,
+    [],
+    {},
+    { path: "/t.md", sha256: "", min_class: "cross_module" },
+  );
+  expect(raised.id).toBe("terra-high");
+  expect(routingEvents().events.at(-1)?.audit).toMatchObject({
+    jev_requirement_class: "mechanical",
+    min_class: "cross_module",
+    requirement_class: "cross_module",
+    tb4_bar: 40,
+    bar_unmet: false,
+  });
+  await isolateState();
+  startServer("cross_module");
+  const kept = await route(
+    "min-class keep",
+    [],
+    600,
+    [],
+    {},
+    { path: "/t.md", sha256: "", min_class: "mechanical" },
+  );
+  expect(kept.id).toBe("terra-high");
+  expect(routingEvents().events.at(-1)?.audit).toMatchObject({
+    jev_requirement_class: "cross_module",
+    min_class: "mechanical",
+    requirement_class: "cross_module",
+  });
+});
+
+test("an unmet ticket min_class refuses instead of falling back to a lower row, and an unknown value is refused", async () => {
+  const { root } = await isolateState();
+  const catalogPath = join(root, "catalog.toml");
+  await writeFile(
+    catalogPath,
+    (await readFile(catalogPath, "utf8")).replaceAll(
+      /^tb4 = .*$/gmu,
+      "tb4 = 0",
+    ),
+  );
+  const server = startServer("mechanical", { mechanical: 1 }, catalogPath);
+  const unmet = await route(
+    "min-class unmet",
+    [],
+    600,
+    [],
+    { catalogPath },
+    { path: "/t.md", sha256: "", min_class: "cross_module" },
+    { capacityRetry: true, timeoutMs: 10_000 },
+  );
+  expect(unmet).toMatchObject({ kind: "refused" });
+  expect(JSON.stringify(unmet)).toContain(
+    "no roster row meets ticket min_class cross_module (TB4 bar 40)",
+  );
+  expect(routingEvents().events.at(-1)?.audit).toMatchObject({
+    min_class: "cross_module",
+    bar_unmet: true,
+    qualifying_rows: [],
+  });
+  expect(server.calls()).toBe(1);
+  const unknown = await route(
+    "min-class unknown",
+    [],
+    600,
+    [],
+    { catalogPath },
+    { path: "/t.md", sha256: "", min_class: "hard" },
+    { capacityRetry: true, timeoutMs: 10_000 },
+  );
+  expect(unknown).toMatchObject({ kind: "refused", exitCode: 2 });
+  expect(JSON.stringify(unknown)).toContain("min_class must be one of");
+  expect(server.calls()).toBe(1);
+});

@@ -65,6 +65,7 @@ export async function pinContinuation(
     timeoutS: number;
     maskedRows: readonly string[];
     min_effort?: string | undefined;
+    min_class?: string | undefined;
   },
   onFailure?: (reason: string) => void,
 ): Promise<PinnedContinuation | null> {
@@ -131,6 +132,7 @@ export async function pinContinuation(
         path: resolve(ticketPath),
         launch: true,
         min_effort: routing.min_effort,
+        min_class: routing.min_class,
         sha256: createHash("sha256")
           .update(new Uint8Array(await Bun.file(ticketPath).arrayBuffer()))
           .digest("hex"),
@@ -229,6 +231,7 @@ export async function pinContinuation(
         path: resolve(ticketPath),
         sha256: "",
         min_effort: routing?.min_effort ?? inspected?.ticket.min_effort,
+        min_class: routing?.min_class ?? inspected?.ticket.min_class,
       },
       {
         capacityRetry: true,

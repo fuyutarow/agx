@@ -441,6 +441,7 @@ export async function check(flags: Flags): Promise<number> {
         .update(inspected.bytes ?? "")
         .digest("hex"),
       min_effort: ticket.min_effort,
+      min_class: ticket.min_class,
     },
     {
       capacityRetry: true,
@@ -594,6 +595,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
     timeoutS: ticket.timeout_s ?? 600,
     maskedRows: await earlyQuitRows(ticketName, cwd),
     min_effort: ticket.min_effort,
+    min_class: ticket.min_class,
   };
   const selectedContinuation =
     continuationId === undefined
@@ -629,6 +631,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
             path: resolve(path),
             launch: true,
             min_effort: routing.min_effort,
+            min_class: routing.min_class,
             sha256: createHash("sha256").update(bytes).digest("hex"),
           },
           { capacityRetry: true, timeoutMs },
@@ -1397,6 +1400,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
         launch: true,
         sha256: ticket_sha256,
         min_effort: routing.min_effort,
+        min_class: routing.min_class,
       },
       { capacityRetry: true, timeoutMs: remainingMs },
     );

@@ -2,6 +2,7 @@ import { fromThrowable } from "neverthrow";
 import { z } from "../../../shared/src/zod.ts";
 import { CapabilitySchema, EffortSchema, capabilityTags } from "../ticket.ts";
 import { PREMISE_KINDS } from "../premises.ts";
+import { REQUIREMENT_CLASSES } from "../roster/index.ts";
 
 export const CAPABILITIES_FORM = `capabilities = [{ need = "...", lower_effort_lacks = "..." }]`;
 
@@ -65,6 +66,7 @@ const Ticket = z
       .optional(),
     capabilities: z.array(CapabilitySchema).default([]),
     min_effort: EffortSchema.optional(),
+    min_class: z.enum(REQUIREMENT_CLASSES).optional(),
     proposition: Proposition,
   })
   .refine(
@@ -153,6 +155,7 @@ export function parseNextTicket(
     "premises",
     "capabilities",
     "min_effort",
+    "min_class",
     "proposition",
     "base_rev",
     "supersedes",

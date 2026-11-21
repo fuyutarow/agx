@@ -5,7 +5,13 @@ export type AutoPolicy = Roster["auto"];
 export type JevEndpoint = AutoPolicy["jev"];
 export type RouteName = Choice["route"];
 export type WindowExhaustion = "continue" | "stop";
-export type RequirementClass = "mechanical" | "localized" | "cross_module";
+/** The work classes, in ascending order of the TB4 bar they require. */
+export const REQUIREMENT_CLASSES = [
+  "mechanical",
+  "localized",
+  "cross_module",
+] as const;
+export type RequirementClass = (typeof REQUIREMENT_CLASSES)[number];
 export const REQUIREMENT_BARS: Readonly<Record<RequirementClass, number>> = {
   mechanical: 0,
   localized: 15,

@@ -44,6 +44,7 @@ export async function roster(ticketPath?: string): Promise<number> {
       {},
       {
         min_effort: parsed.ticket.min_effort,
+        min_class: parsed.ticket.min_class,
         path: resolve(reference.path),
         sha256: createHash("sha256").update(source.value).digest("hex"),
       },

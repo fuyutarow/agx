@@ -10,6 +10,7 @@ import {
   type LoadRosterOptions,
   type RequirementClass,
   REQUIREMENT_BARS,
+  REQUIREMENT_CLASSES,
 } from "../roster/index.ts";
 import { jsonOf, z } from "../../../shared/src/zod.ts";
 import { exitWithError } from "./exit.ts";
@@ -43,6 +44,10 @@ const compareNumber = (a: number, b: number): number => {
   if (a === b) return 0;
   return a < b ? -1 : 1;
 };
+
+/** A row without a published TB4 score passes only the zero bar. */
+const meetsBar = (row: Choice, bar: number): boolean =>
+  (row.tb4 ?? (bar === 0 ? 0 : Number.NEGATIVE_INFINITY)) >= bar;
 
 /** Stage 3: filter by requirement, then deterministically rank eligible rows. */
 export function orderCandidates(
@@ -89,11 +94,7 @@ const Reply = z.looseObject({
 });
 
 const ReturnReason = z.enum(["split", "uncheckable", "contradiction"]);
-const RequirementClassSchema = z.enum([
-  "mechanical",
-  "localized",
-  "cross_module",
-]);
+const RequirementClassSchema = z.enum(REQUIREMENT_CLASSES);
 const returns = {
   split: {
     criterion:
@@ -234,6 +235,8 @@ type RouteTicket = {
   sha256: string;
   launch?: boolean;
   min_effort?: string | undefined;
+  /** The ticket's floor on the requirement class; Jev's class is raised to it, never lowered. */
+  min_class?: string | undefined;
 } | null;
 export type CapacityRetryRouteResult =
   | { kind: "selected"; row: Choice }
@@ -326,6 +329,15 @@ export async function route(
   if (floor !== undefined && !floor.success)
     return refuse(
       "agx: min_effort must be one of low, medium, high, xhigh, max\n",
+      2,
+    );
+  const classFloor =
+    ticket?.min_class === undefined
+      ? undefined
+      : RequirementClassSchema.safeParse(ticket.min_class);
+  if (classFloor !== undefined && !classFloor.success)
+    return refuse(
+      `agx: min_class must be one of ${REQUIREMENT_CLASSES.join(", ")}\n`,
       2,
     );
   const loaded = await loadRoster(rosterOptions);
@@ -647,11 +659,37 @@ export async function route(
       "refused-invalid-class",
       probabilities,
     );
-  const requirementClass = parsedRequirementClass.data;
+  const jevClass = parsedRequirementClass.data;
+  const minClass = classFloor?.data;
+  // The declared floor only raises: a class Jev judged higher stands.
+  const requirementClass =
+    minClass !== undefined &&
+    REQUIREMENT_BARS[minClass] > REQUIREMENT_BARS[jevClass]
+      ? minClass
+      : jevClass;
+  audit.jev_requirement_class = jevClass;
+  audit.min_class = minClass ?? null;
+  audit.requirement_class = requirementClass;
   const bar = REQUIREMENT_BARS[requirementClass];
-  const qualifying = candidates.filter(
-    (row) => (row.tb4 ?? (bar === 0 ? 0 : Number.NEGATIVE_INFINITY)) >= bar,
-  );
+  audit.tb4_bar = bar;
+  const qualifying = candidates.filter((row) => meetsBar(row, bar));
+  if (minClass !== undefined) {
+    process.stderr.write(
+      `agx: requirement class jev=${jevClass} min_class=${minClass} adopted=${requirementClass}\n`,
+    );
+    // The fallback below ranks every row by TB4; under a declared floor that could start a row
+    // the ticket ruled out, so the run is refused instead.
+    const floorBar = REQUIREMENT_BARS[minClass];
+    if (!candidates.some((row) => meetsBar(row, floorBar))) {
+      audit.qualifying_rows = [];
+      audit.bar_unmet = true;
+      return refuseReply(
+        `route refused: no roster row meets ticket min_class ${minClass} (TB4 bar ${floorBar}); candidates: ${listOrNone(candidates.map((row) => `${row.id} tb4=${row.tb4 ?? "none"}`))}; no lower row is substituted\n`,
+        "refused-min-class-unmet",
+        probabilities,
+      );
+    }
+  }
 
   const ordered = orderCandidates(candidates, requirementClass, apiCovered);
   audit.credit_covered = ordered.some((row) => apiCovered(row));
@@ -662,8 +700,6 @@ export async function route(
       "route refused: no candidate remained after the requirement bar; no row is substituted\n",
       "refused-no-candidate",
     );
-  audit.requirement_class = requirementClass;
-  audit.tb4_bar = bar;
   audit.qualifying_rows = qualifying.map((row) => row.id);
   audit.bar_unmet = qualifying.length === 0;
   audit.choice_probabilities = probabilities ?? null;

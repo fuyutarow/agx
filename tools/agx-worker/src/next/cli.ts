@@ -312,7 +312,8 @@ async function main(): Promise<void> {
         name: "agx-worker check",
         help: {
           description: `${premiseHelp()}
-Ticket min_effort = "low" | "medium" | "high" | "xhigh" | "max" sets a routing floor; xhigh/max requires a structured capability justification: ${CAPABILITIES_FORM}.`,
+Ticket min_effort = "low" | "medium" | "high" | "xhigh" | "max" sets a routing floor; xhigh/max requires a structured capability justification: ${CAPABILITIES_FORM}.
+Ticket min_class = "mechanical" | "localized" | "cross_module" raises the routed work class to at least that class; routing refuses when no roster row meets it.`,
         },
         parameters: ["<ticket>"],
         flags: {
