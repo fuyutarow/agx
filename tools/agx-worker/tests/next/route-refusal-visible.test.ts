@@ -227,6 +227,9 @@ describe("agx-worker run", () => {
       ).toBe(true);
       expect(records.some((record) => record.kind === "started")).toBe(false);
     },
+    // Up to three CLI processes run per case (bound run, unbound run, ls --wait); each takes 1-2 s,
+    // so the 5 s default expired under a parallel suite.
+    30_000,
   );
 });
 
