@@ -138,6 +138,26 @@ describe("agx-worker run", () => {
       expect(result.stderr.toString()).toContain("Probability: 0.8");
       expect(result.stderr.toString()).not.toContain("reason_code");
       expect(result.stdout.toString()).toContain("route-refused");
+      expect(result.stdout.toString()).toContain('"recorded":true');
+      // Without a dispatch binding the id names only a report directory, and says so.
+      const cli = [process.execPath, "tools/agx-worker/src/next/cli.ts"];
+      const unbound = Bun.spawnSync([...cli, "run", ticket, "--cd", root], {
+        cwd: process.cwd(),
+        env,
+        timeout: 10_000,
+      });
+      const refusedLine = jsonOf(
+        z.object({ id: z.string(), recorded: z.boolean() }),
+      ).safeParse(unbound.stdout.toString().trim().split("\n").at(-1));
+      expect(refusedLine.data?.recorded, unbound.stderr.toString()).toBe(false);
+      const judged = Bun.spawnSync(
+        [...cli, "judge", refusedLine.data?.id ?? "", "reject", "--note", "x"],
+        { cwd: process.cwd(), env, timeout: 10_000 },
+      );
+      expect(judged.exitCode).toBe(2);
+      expect(judged.stderr.toString()).toContain(
+        "was refused before a worker started and is not a recorded run",
+      );
       const report = jsonOf(
         z.looseObject({ outcome: z.string(), summary: z.string() }),
       ).safeParse(

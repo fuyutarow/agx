@@ -669,7 +669,8 @@ async function runUnguarded(flags: Flags): Promise<number> {
         verify: [],
       });
     process.stdout.write(
-      `${JSON.stringify({ id, outcome: "route-refused", report_path: reportPath, refusal: selectedRoute.message })}\n`,
+      // Without a dispatch binding no run record exists: the id only names the report directory.
+      `${JSON.stringify({ id, outcome: "route-refused", recorded: binding !== undefined, report_path: reportPath, refusal: selectedRoute.message })}\n`,
     );
     return fatal(selectedRoute.message, selectedRoute.exitCode);
   }
@@ -1952,7 +1953,15 @@ export async function judgeRun(
     return fatal("judge decision must be accept or reject", 2);
   const root = runtime.root ?? stateDir();
   const resolution = resolveRunId(await recordedRuns(root), id);
-  if (resolution.kind === "error") return fatal(resolution.error, 2);
+  if (resolution.kind === "error") {
+    const refusedReport = join(root, "runs", id, "report.json");
+    return fatal(
+      existsSync(refusedReport)
+        ? `run '${id}' was refused before a worker started and is not a recorded run; there is nothing to judge. Its report: ${refusedReport}`
+        : resolution.error,
+      2,
+    );
+  }
   const overrideReason = flags.override?.trim();
   if (flags.override !== undefined && overrideReason === "")
     return fatal("judge override reason must not be empty", 2);
