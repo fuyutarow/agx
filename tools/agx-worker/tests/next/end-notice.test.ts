@@ -95,7 +95,7 @@ async function fixture(mode = "ok", missing = false) {
     const home = join(root, `home-${runId}`);
     await Bun.write(
       join(home, "fake.json"),
-      JSON.stringify({ log, mode, delayMs: extra.FAKE_DELAY_MS }),
+      JSON.stringify({ log, mode, awaitSends: extra.FAKE_AWAIT_SENDS }),
     );
     const child = Bun.spawn(
       [
@@ -216,10 +216,11 @@ test("the child environment is the allowlist: PATH, HOME and REASON_NETWORK_HOME
 test("two notices for different runs started together are both accepted", async () => {
   const run = await fixture();
   const [first, second] = await Promise.all([
-    run.invoke(id, { FAKE_DELAY_MS: "400" }),
+    // Each send answers only when both are in flight, so the notices overlap without a fixed wait.
+    run.invoke(id, { FAKE_AWAIT_SENDS: "2" }),
     run.invoke(
       otherId,
-      { FAKE_DELAY_MS: "400" },
+      { FAKE_AWAIT_SENDS: "2" },
       join(run.root, "state-other"),
     ),
   ]);

@@ -5,14 +5,14 @@ import { jsonOf, z } from "../../../shared/src/zod.ts";
 // A fake `reason-network` with the two commands the run-end notice uses: `who --json` and `send <address> <message>`.
 // `mcp` is recorded and refused: the notice must never start an MCP process.
 // `send` runs with an allowlisted environment (PATH, HOME, REASON_NETWORK_HOME), so it reads its settings from
-// `$REASON_NETWORK_HOME/fake.json` ({ log, mode, delayMs }); `who` keeps the FAKE_* variables.
+// `$REASON_NETWORK_HOME/fake.json` ({ log, mode, awaitSends }); `who` keeps the FAKE_* variables.
 const command = process.argv[2];
 const home = process.env.REASON_NETWORK_HOME;
 const settingsFile = home === undefined ? undefined : join(home, "fake.json");
 const settingsSchema = z.object({
   log: z.string().optional(),
   mode: z.string().optional(),
-  delayMs: z.string().optional(),
+  awaitSends: z.string().optional(),
 });
 const settingsResult =
   settingsFile !== undefined && existsSync(settingsFile)
@@ -21,7 +21,12 @@ const settingsResult =
 const settings = settingsResult?.success === true ? settingsResult.data : {};
 const log = process.env.FAKE_LOG ?? settings.log ?? "";
 const mode = process.env.FAKE_MODE ?? settings.mode ?? "ok";
-const delayMs = process.env.FAKE_DELAY_MS ?? settings.delayMs;
+// With awaitSends = N, a send answers only once N sends are in flight: overlap by signal, not by a sleep.
+const awaitSends = Number(settings.awaitSends ?? "0");
+const sendsInFlight = () =>
+  readFileSync(log, "utf8")
+    .split("\n")
+    .filter((line) => line.includes('"command":"send"')).length;
 const record = (data: object) => {
   appendFileSync(log, `${JSON.stringify(data)}\n`);
 };
@@ -64,7 +69,7 @@ if (command === "who" && process.argv[3] === "--json") {
     record({ helper: helper.pid });
   }
   if (mode === "hang") await new Promise(() => {});
-  if (delayMs !== undefined) await Bun.sleep(Number(delayMs));
+  while (sendsInFlight() < awaitSends) await Bun.sleep(5);
   if (mode === "unknown") {
     process.stderr.write("receipt unavailable");
     process.exitCode = 1;
