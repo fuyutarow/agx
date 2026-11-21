@@ -1,5 +1,14 @@
 # Changelog
 
+## 11.3.0 — 2026-11-22
+
+- A Claude worker's interim RETURN is recorded as a progress checkpoint, as a Codex worker's always was; the Claude wrapper recorded it only when AGX_LAST_MESSAGE_FILE was set, and nothing set it. That variable is removed
+- A writes entry refused for a missing parent directory names the exact anchored glob (bundles/** for bundles/x/** when only the root exists) or committing a file in the missing directory to keep the entry narrow; the former advice read as the root ** and widened the scope
+- agx worker check without --cd warns when a writes parent exists only in the current tree and not at trunk, where agx worker dispatch starts its workspace and refuses the ticket; the same ticket used to pass check silently and fail at dispatch
+- Dispatch bounds every inspection command it runs (check, the run listing and repository reads) by the one DISPATCH_COMMAND_TIMEOUT_MS, as the contract states. Check, listing and repository reads each had a fixed 60 s bound of their own that the variable did not change, and their timeout messages named bounds no one could set
+- The worker contract and the implementation name the same agx variables, and a test now fails when they diverge: the contract gains the variables the code already used and drops AGX_DISPATCH_WAIT_MS and AGX_TMP_ROOT, which nothing read. Removed because nothing set, read or tested them: the stall observer with AGX_WORKER_ACTIVITY_FILE and AGX_TEST_PROCESS_TREE_CPU, and AGX_DISPATCHER_VENDOR
+- Tickets can declare min_class = "mechanical" | "localized" | "cross_module", a floor on the routed work class: the class Jev chooses is raised to it and never lowered, the routing audit and one stderr line show Jev's class, the declared floor and the adopted class, and routing refuses instead of substituting a lower row when no roster row meets the floor
+
 ## 11.2.3 — 2026-11-20
 
 - A missing TYPESAFE_API_KEY names which fnox miss it was (not installed, no config file, config without the key, or fnox's own error) and the routing refusal ends with the command that stores the key, never its value
