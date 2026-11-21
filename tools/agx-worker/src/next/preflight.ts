@@ -120,6 +120,28 @@ async function repositoryChecks(
   return failures;
 }
 
+/**
+ * The repair for a writes prefix whose parent is missing: one new directory under the deepest
+ * existing one. "Write from the deepest existing directory" read as the root `**` when only the
+ * root existed, widening the scope.
+ */
+async function anchoredWrite(
+  cwd: string,
+  prefix: string,
+): Promise<{ anchored: string; missing: string }> {
+  const parts = prefix.split("/").filter((part) => part !== "");
+  let existing = 0;
+  while (existing < parts.length - 1) {
+    const entry = await stat(
+      resolve(cwd, ...parts.slice(0, existing + 1)),
+    ).catch(() => null);
+    if (entry?.isDirectory() !== true) break;
+    existing += 1;
+  }
+  const missing = parts.slice(0, existing + 1).join("/");
+  return { anchored: `${missing}/**`, missing };
+}
+
 export async function earlyQuitRows(
   ticket: string,
   cwd: string,
@@ -284,11 +306,13 @@ export async function preflight(
     const prefix = glob.split(/[*?[\]{}()!]/u, 1)[0] ?? "";
     const parent = dirname(prefix);
     const directory = await stat(resolve(cwd, parent)).catch(() => null);
-    if (directory === null || !directory.isDirectory())
+    if (directory === null || !directory.isDirectory()) {
+      const { anchored, missing } = await anchoredWrite(cwd, prefix);
       add(
         `ticket writes.${index}: ${glob} has a missing parent directory: ${parent}`,
-        "write the glob from the deepest existing directory, e.g. tools/new/** instead of tools/new/src/a.ts",
+        `a writes entry may create one new directory under an existing one: use ${anchored}, or keep ${glob} by first committing a file in ${missing}/ (for example ${missing}/.keep) to the base revision`,
       );
+    }
   }
   if (ticket !== undefined && continuationId === undefined) {
     const slug = validateSlug(

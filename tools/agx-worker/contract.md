@@ -23,9 +23,14 @@ The top-level `objective` field in `roster --json` is the routing objective text
 
 Preflight requires the parent directory of each `writes` entry's literal prefix
 (before the first glob character) to exist in the `--cd` tree. This applies to
-bare paths as well as globs. To allow a new directory, anchor the glob at an
-existing parent, for example `tools/new/**` instead of `tools/new/src/a.ts`.
-Check and dispatch refuse an entry with a missing parent and identify its repair.
+bare paths as well as globs. An entry may create one new directory under an
+existing one, for example `tools/new/**` instead of `tools/new/src/a.ts`.
+Check and dispatch refuse an entry with a missing parent and name the exact
+anchored glob (`bundles/**` for `bundles/x/**` when only the root exists), or
+keeping the entry by first committing a file in the missing directory to the base
+revision. Dispatch evaluates the new workspace at the base revision, while
+`check` without `--cd` evaluates the current tree, so a directory present only as
+uncommitted work passes check and is refused by dispatch.
 
 ## Sandbox capability preflight
 

@@ -46,12 +46,15 @@ test("check requires the literal prefix parent in the --cd tree", async () => {
     },
   });
   servers.push(server);
-  for (const [entry, expected] of [
-    ["tools/existing/file.ts", 0],
-    ["tools/existing/new.ts", 0],
-    ["tools/new/**", 0],
-    ["tools/new/src/a.ts", 2],
-    ["tools/new/src/*.ts", 2],
+  // [entry, exit, the exact repair glob named on refusal]
+  for (const [entry, expected, anchored] of [
+    ["tools/existing/file.ts", 0, ""],
+    ["tools/existing/new.ts", 0, ""],
+    ["tools/new/**", 0, ""],
+    ["tools/new/src/a.ts", 2, "tools/new/**"],
+    ["tools/new/src/*.ts", 2, "tools/new/**"],
+    // Only the root exists: the repair is one new top-level directory, never the root `**`.
+    ["bundles/icd-mechanism-20261122/**", 2, "bundles/**"],
   ] as const) {
     await writeFile(
       ticket,
@@ -93,7 +96,9 @@ test("check requires the literal prefix parent in the --cd tree", async () => {
     if (expected === 2) {
       expect(stderr).toContain(entry);
       expect(stderr).toContain("repair:");
-      expect(stderr).toContain("deepest existing directory");
+      expect(stderr).toContain(`use ${anchored}, or keep ${entry}`);
+      expect(stderr).toContain(".keep");
+      expect(stderr).not.toContain("use **");
     }
   }
 }, 30000);
