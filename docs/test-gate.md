@@ -8,17 +8,22 @@ The gate fails when a test file fails, and on nothing else.
 One test may run for 30 seconds (`HANG_DETECTION_MS` in `tools/shared/src/test-tmp.ts`, and the
 same number in `bunfig.toml`). The limit stops a stuck test. It claims nothing about speed.
 
-## Speed is not checked in the gate
+## Speed is checked by counting operations, so far for four commands
 
-No measurement of speed that is free of false alarms exists yet, so the gate has none.
+Speed is claimed as a count of operations: the same input gives the same count on any machine
+and under any load. `tools/agx-ws/tests/jj-call-count.test.ts` counts the `jj` processes that
+one `agx-ws` command starts on a fresh repository: `add` 8, `doctor` 0, `gc` 6, `rm` 11
+(five runs gave the same counts). A change of a count is a deliberate edit of that test.
+
+Nothing else is checked for speed. The `agx worker` commands and the number of CLI launches
+have no count yet, so they may get slower without the gate noticing.
+
+Time is not used, because both kinds gave false alarms:
 
 - Wall time measures the machine's load on a shared machine (see below).
 - CPU time also rose with load. In one of 12 runs, while the load average rose from 10 to 19,
   the suite used 1262 seconds against about 1100, and a file recorded at 3.2 seconds used 9.5.
   A limit of twice the recorded time per file failed that run with no change in the code.
-
-The planned measure is a count of operations (CLI launches, `jj` calls): the same input gives
-the same count. It is not built. Until it is, a test may get slower without the gate noticing.
 
 ## What a run leaves behind
 
