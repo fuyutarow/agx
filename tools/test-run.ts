@@ -1,31 +1,26 @@
 #!/usr/bin/env bun
 // The gate's test runner. Each test file runs as its own `bun test` process, a few at a time.
 //
-// It makes two separate claims:
-//   - nothing hangs: bunfig.toml's test timeout (HANG_DETECTION_MS in tools/shared/src/test-tmp.ts)
-//     stops a stuck test. That limit says nothing about speed.
-//   - nothing got more expensive: each file's CPU time (the test process and every child it
-//     waited for) stays within its budget in tools/test-cpu-budget.json. CPU time is used because
-//     wall time on a shared machine measures the machine's load, and its clock, not the test.
+// The gate fails when a test file fails, and on nothing else. A stuck test is stopped by the
+// test timeout (HANG_DETECTION_MS in tools/shared/src/test-tmp.ts), which says nothing about speed.
 //
-// `--update-budget` rewrites the budget file from this run instead of judging against it.
+// Under .agent-state/test-run/ the runner leaves, for the last run:
+//   - failed/<file>.txt: the full output of each failing file, so a failure can be examined;
+//   - cpu.json: each file's CPU time in milliseconds (the test process and every child it
+//     waited for). It is a record, not a judgement: CPU time rose with the machine's load, by
+//     about 15% for the suite and up to 3 times for a small file. The next run reads it only
+//     to start the costliest files first.
+import { mkdir, rm } from "node:fs/promises";
 import { cpus } from "node:os";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { jsonOf, z } from "./shared/src/zod.ts";
 
 const root = join(import.meta.dir, "..");
-const budgetPath = join(import.meta.dir, "test-cpu-budget.json");
-/** A file may use this many times its recorded CPU before the gate calls it a regression. */
-const BUDGET_FACTOR = 2;
-/**
- * A file is not judged below this much CPU. Small files are noisy: in 10 runs on a loaded
- * machine, a file recorded at 3.2 s once used 9.5 s while the whole suite used 15% more.
- */
-const BUDGET_FLOOR_MS = 10_000;
-/** The whole suite may use this many times its recorded CPU (10 runs spanned 1056 to 1262 s). */
-const TOTAL_FACTOR = 1.3;
+const recordDir = join(root, ".agent-state/test-run");
+const cpuPath = join(recordDir, "cpu.json");
+const failedDir = join(recordDir, "failed");
 
-const Budget = z.record(z.string(), z.number().int().positive());
+const Cpu = jsonOf(z.record(z.string(), z.number()));
 
 async function testFiles(): Promise<string[]> {
   const files: string[] = [];
@@ -70,22 +65,12 @@ async function runAll(files: string[], width: number): Promise<Outcome[]> {
   return outcomes;
 }
 
-const allowance = (recordedMs: number): number =>
-  Math.max(BUDGET_FLOOR_MS, recordedMs * BUDGET_FACTOR);
-
-const update = process.argv.includes("--update-budget");
-const budgetFile = Bun.file(budgetPath);
-const parsedBudget = jsonOf(Budget).safeParse(
-  (await budgetFile.exists()) ? await budgetFile.text() : "{}",
+const previousFile = Bun.file(cpuPath);
+const previous = Cpu.safeParse(
+  (await previousFile.exists()) ? await previousFile.text() : "{}",
 );
-if (!parsedBudget.success) {
-  process.stdout.write(
-    `${relative(root, budgetPath)} is not a map of file to CPU milliseconds: ${parsedBudget.error.message}\n`,
-  );
-  process.exit(1);
-}
-const budget = parsedBudget.data;
-const cost = (file: string): number => budget[file] ?? Number.POSITIVE_INFINITY;
+const known = previous.success ? previous.data : {};
+const cost = (file: string): number => known[file] ?? Number.POSITIVE_INFINITY;
 // Costliest first, unknown files before all: the longest file bounds the wall time, so it must
 // not start last.
 const files = (await testFiles()).toSorted((a, b) =>
@@ -97,67 +82,33 @@ const outcomes = await runAll(
   Math.max(1, Math.floor((cpus().length + 1) / 2)),
 );
 const failed = outcomes.filter((outcome) => outcome.exit !== 0);
-for (const outcome of failed)
+
+await rm(failedDir, { recursive: true, force: true });
+for (const outcome of failed) {
+  const path = join(failedDir, `${outcome.file}.txt`);
+  await mkdir(dirname(path), { recursive: true });
+  await Bun.write(path, outcome.output);
   process.stdout.write(
-    `\n--- ${outcome.file} (exit ${outcome.exit})\n${outcome.output}`,
+    `\n--- ${outcome.file} (exit ${outcome.exit}); output kept at ${relative(root, path)}\n${outcome.output}`,
   );
+}
+await mkdir(recordDir, { recursive: true });
+await Bun.write(
+  cpuPath,
+  `${JSON.stringify(
+    Object.fromEntries(
+      outcomes
+        .toSorted((a, b) => a.file.localeCompare(b.file))
+        .map((outcome) => [outcome.file, outcome.cpuMs]),
+    ),
+    null,
+    2,
+  )}\n`,
+);
 const cpuTotalS = Math.round(
   outcomes.reduce((sum, outcome) => sum + outcome.cpuMs, 0) / 1000,
 );
 process.stdout.write(
-  `\n${outcomes.length} test files, ${failed.length} failed, ${Math.round((performance.now() - started) / 1000)} s wall, ${cpuTotalS} s CPU\n`,
+  `\n${outcomes.length} test files, ${failed.length} failed, ${Math.round((performance.now() - started) / 1000)} s wall, ${cpuTotalS} s CPU (per file: ${relative(root, cpuPath)})\n`,
 );
-
-if (update) {
-  if (failed.length > 0) {
-    process.stdout.write(
-      "budget not updated: a failing file has no trustworthy CPU time\n",
-    );
-    process.exit(1);
-  }
-  const measured = Object.fromEntries(
-    outcomes
-      .toSorted((a, b) => a.file.localeCompare(b.file))
-      .map((outcome) => [outcome.file, Math.max(1, outcome.cpuMs)]),
-  );
-  await Bun.write(budgetPath, `${JSON.stringify(measured, null, 2)}\n`);
-  process.stdout.write(`wrote ${relative(root, budgetPath)}\n`);
-  process.exit(0);
-}
-
-const unregistered = outcomes.filter(
-  (outcome) => budget[outcome.file] === undefined,
-);
-const stale = Object.keys(budget).filter((file) => !files.includes(file));
-const over = outcomes.filter(
-  (outcome) =>
-    budget[outcome.file] !== undefined &&
-    outcome.cpuMs > allowance(budget[outcome.file] ?? 0),
-);
-for (const outcome of unregistered)
-  process.stdout.write(
-    `no CPU budget for ${outcome.file}: run \`mise run test:budget\`\n`,
-  );
-for (const file of stale)
-  process.stdout.write(
-    `CPU budget names a file that no longer exists: ${file}\n`,
-  );
-for (const outcome of over)
-  process.stdout.write(
-    `${outcome.file} used ${outcome.cpuMs} ms of CPU; its budget is ${allowance(budget[outcome.file] ?? 0)} ms (${BUDGET_FACTOR} x the recorded ${budget[outcome.file]} ms)\n`,
-  );
-const usedMs = outcomes.reduce((sum, outcome) => sum + outcome.cpuMs, 0);
-const totalAllowanceMs = Math.round(
-  Object.values(budget).reduce((sum, ms) => sum + ms, 0) * TOTAL_FACTOR,
-);
-const totalOver = usedMs > totalAllowanceMs;
-if (totalOver)
-  process.stdout.write(
-    `the suite used ${usedMs} ms of CPU; its budget is ${totalAllowanceMs} ms (${TOTAL_FACTOR} x the recorded total)\n`,
-  );
-process.exit(
-  failed.length + unregistered.length + stale.length + over.length > 0 ||
-    totalOver
-    ? 1
-    : 0,
-);
+process.exit(failed.length > 0 ? 1 : 0);

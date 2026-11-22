@@ -78,17 +78,12 @@ run = "bun tools/mise-contract.ts --tools --require-pinned --require-npm-lock"
 
 [tasks.test]
 alias = "t"
-# One process per test file, half the cores at a time, costliest file first. The runner fails on
-# a failing file and on a file whose CPU time exceeds twice its recorded budget
-# (tools/test-cpu-budget.json). Speed is judged on CPU time because wall time on a shared machine
-# measures its load; the 30 s test timeout only detects a hang.
+# One process per test file, half the cores at a time, costliest file first. It fails only on a
+# failing file and keeps that file's output under .agent-state/test-run/failed/. The 30 s test
+# timeout only detects a hang; the gate does not check speed (docs/test-gate.md).
 run = "bun tools/test-run.ts"
 # Under `check`, start after the linters finish: type-aware lint takes every core for its ~20 s.
 wait_for = ["fmt:check", "lint", "lint:knip"]
-
-[tasks."test:budget"]
-description = "Record each test file's CPU time as its new budget, after an intended change in cost"
-run = "bun tools/test-run.ts --update-budget"
 
 [tasks.check]
 alias = "c"

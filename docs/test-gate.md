@@ -1,70 +1,118 @@
 # What the test gate claims
 
-`mise run test` runs `tools/test-run.ts`. It makes two separate claims.
+`mise run test` runs `tools/test-run.ts`: one process per test file, half the cores at a time.
+The gate fails when a test file fails, and on nothing else.
 
 ## Nothing hangs
 
 One test may run for 30 seconds (`HANG_DETECTION_MS` in `tools/shared/src/test-tmp.ts`, and the
 same number in `bunfig.toml`). The limit stops a stuck test. It claims nothing about speed.
 
-A test with a longer limit is listed in `tools/agx-worker/tests/timing-contract.json`, and a
-test checks that the list matches the sources. On 2026-11-22 the list held 61 limits between 40
-and 600 seconds. Their reasons are not yet written down one by one.
+## Speed is not checked in the gate
 
-## Nothing got more expensive
+No measurement of speed that is free of false alarms exists yet, so the gate has none.
 
-Each test file runs as its own process. The runner records the CPU time of that process and of
-every child it waited for, and fails the gate when a file uses more than twice the time recorded
-for it in `tools/test-cpu-budget.json`. A file is not judged below 10 seconds of CPU, where the
-measurement is noisy. The whole suite is also judged: it may use 1.3 times the sum of the
-recorded times. `mise run test:budget` records new budgets after an intended change.
+- Wall time measures the machine's load on a shared machine (see below).
+- CPU time also rose with load. In one of 12 runs, while the load average rose from 10 to 19,
+  the suite used 1262 seconds against about 1100, and a file recorded at 3.2 seconds used 9.5.
+  A limit of twice the recorded time per file failed that run with no change in the code.
 
-A file that has no budget, or a budget that names a missing file, also fails the gate.
+The planned measure is a count of operations (CLI launches, `jj` calls): the same input gives
+the same count. It is not built. Until it is, a test may get slower without the gate noticing.
 
-## Why wall time is not used (decided 2026-11-22)
+## What a run leaves behind
 
-The previous gate gave every test 5 seconds of wall time and ran the files in parallel. The
-limit dated from serial runs, where it kept tests fast. On a machine shared with other sessions
-it measured the machine's load instead:
+Under `.agent-state/test-run/`, for the last run only:
 
-- One parallel run of all 1498 tests took 293 seconds. About 65 tests used more than half of
-  their 5-second limit and about 18 used more than three quarters. The counts are approximate.
-- Three gates in a row each lost one test, a different one each time.
-- The wall clock of the machine also moved back about 1.06 seconds every 31.4 seconds, which
-  shifts any duration measured across processes.
+- `failed/<test file>.txt`: the whole output of each failing file.
+- `cpu.json`: each file's CPU time in milliseconds, covering the test process and the children
+  it waited for. Read it to find the costly files, and compare two runs only when the machine's
+  load was similar. The next run uses it to start the costliest files first.
 
-CPU time was stable where wall time was not: two runs of the whole suite used 1188 and 1169
-seconds, and no file of 2 seconds or more differed by a factor of 2 (the largest was 1.75).
+## The change of 2026-11-22
 
-The 117 per-test limits of 30 seconds or less were removed, because the default now covers
-them.
+The previous gate ran `bun test --parallel=6` with 5 seconds of wall time per test. One such
+run of all 1498 tests took 293 seconds; about 65 tests used more than half of their limit and
+about 18 more than three quarters (approximate counts). Earlier gates had lost three tests to
+that limit: the route-refusal test, an end-notice test and a public `ls` test. The machine's
+wall clock also moved back about 1.06 seconds every 31.4 seconds.
 
-## Measured before and after
+The limit became 30 seconds, and the 117 per-test limits of 30 seconds or less were removed.
 
-Five runs each, one commit apart (the later commit removed a duplicate audit field), on a machine with a load average between 8 and 21.
+Measured with a load average between 6 and 21:
 
-|                                                     | Runs with a failure | Wall time    | Failing tests                                                                                                                     |
-| --------------------------------------------------- | ------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------- |
-| Before (`bun test --parallel=6`, 5 s limit)         | 2 of 5              | 281 to 301 s | `config-view`: "the command writes nothing"; `routing-stats`: "real roster CLI selections are persisted before any worker starts" |
-| After (`tools/test-run.ts`, 30 s limit, CPU budget) | 1 of 5              | 270 to 291 s | `release`: "library tarball installs offline, imports and supplies checked public declarations"                                   |
+| Gate                                        | Runs with a failing test | Wall time    |
+| ------------------------------------------- | ------------------------ | ------------ |
+| Before (`bun test --parallel=6`, 5 s limit) | 2 of 5                   | 281 to 301 s |
+| After (`tools/test-run.ts`, 30 s limit)     | 1 of 5                   | 270 to 291 s |
+| After, with the two causes below fixed      | 0 of 7                   | 268 to 322 s |
 
-None of the three failures was the hang limit, so this sample does not show the change removing
-a failure. The two failures before it have known causes that the change does not address: a
-fixture Git repository that still ran background maintenance, and a statistics window that
-dropped a record stamped after the clock moved back. Both were fixed in the next commit: the
-fixture turns maintenance off, and `agx worker stats --routing` counts such records under
-`ahead_of_clock_events`. The failure after it took 10.6 seconds; its output was not kept, so its
-cause is not known. No CPU budget was exceeded in the five runs.
+The measurements do not show the change of the limit removing a failure: none of the three
+failures was a timeout.
 
-Five more runs after those two fixes had no failing test (268 to 322 s). One of them failed the
-gate on CPU alone, while the load average rose from 10 to 19: two files recorded near 3.2 s
-used 7.3 and 9.5 s, and the suite used 1262 s against about 1100 s in the other runs. CPU time
-therefore does depend on load, by about 15% for the suite and by up to 3 times for a small
-file. The limits above (10 s per file, 1.3 times for the suite) were set from this; they have
-not yet been run five times themselves.
+- `config-view`, "the command writes nothing": the fixture's Git repository ran background
+  maintenance. Fixed in the fixture.
+- `routing-stats`, "real roster CLI selections are persisted before any worker starts": the
+  statistics dropped a record stamped after the clock moved back. `agx worker stats --routing`
+  now counts such records under `ahead_of_clock_events`.
+- `release`, "library tarball installs offline, imports and supplies checked public
+  declarations": failed once after 10.6 seconds. Its output was not kept, so the cause is
+  unknown. The runner now keeps the output of every failing file.
+
+## Limits above 30 seconds
+
+`tools/agx-worker/tests/timing-contract.json` lists every test with a longer limit, and a test
+checks the list against the sources. It holds 61 limits in 43 files. None has a written reason
+in that list; some have a comment at the test. They are, in seconds:
+
+| File                                                              | Limits              |
+| ----------------------------------------------------------------- | ------------------- |
+| `tools/agx-status/tests/published-equality.test.ts`               | 120                 |
+| `tools/agx-ticket/tests/gc-grammar.test.ts`                       | 60                  |
+| `tools/agx-ticket/tests/lifecycle.test.ts`                        | 46, 60              |
+| `tools/agx-usehooks/tests/consumers.test.ts`                      | 120, 120            |
+| `tools/agx-worker/tests/dispatch-exits.test.ts`                   | 210                 |
+| `tools/agx-worker/tests/dispatch-ticket-repo.test.ts`             | 60, 60, 60, 60      |
+| `tools/agx-worker/tests/dispatch.test.ts`                         | 40, 120, 40, 45, 60 |
+| `tools/agx-worker/tests/ls-lock-busy.test.ts`                     | 60                  |
+| `tools/agx-worker/tests/next/check-readonly-needs-verify.test.ts` | 60                  |
+| `tools/agx-worker/tests/next/check-repo-commands.test.ts`         | 60                  |
+| `tools/agx-worker/tests/next/continue.test.ts`                    | 60                  |
+| `tools/agx-worker/tests/next/credits-unavailable.test.ts`         | 60                  |
+| `tools/agx-worker/tests/next/intake-floor.test.ts`                | 60                  |
+| `tools/agx-worker/tests/next/judge-lock.test.ts`                  | 40                  |
+| `tools/agx-worker/tests/next/ls-selector.test.ts`                 | 60                  |
+| `tools/agx-worker/tests/next/no-orphan.test.ts`                   | 120                 |
+| `tools/agx-worker/tests/next/outcome.test.ts`                     | 180, 180, 180       |
+| `tools/agx-worker/tests/next/route.test.ts`                       | 60                  |
+| `tools/agx-worker/tests/next/routing-brief.test.ts`               | 60                  |
+| `tools/agx-worker/tests/next/run-dir-bytes.test.ts`               | 60                  |
+| `tools/agx-worker/tests/next/run-path-own-version.test.ts`        | 60                  |
+| `tools/agx-worker/tests/next/run.test.ts`                         | 60                  |
+| `tools/agx-worker/tests/next/ticket-home.test.ts`                 | 60                  |
+| `tools/agx-worker/tests/next/workspace-lock.test.ts`              | 60, 60              |
+| `tools/agx-worker/tests/run-exits-after-end.test.ts`              | 90                  |
+| `tools/agx-worker/tests/run-lock-hold.test.ts`                    | 60                  |
+| `tools/agx-worker/tests/timeout-report.test.ts`                   | 120, 100            |
+| `tools/agx-worker/tests/verify-feedback.test.ts`                  | 60                  |
+| `tools/agx-worker/tests/verify-round-visible.test.ts`             | 60                  |
+| `tools/agx-ws/tests/add-failed-checkout.test.ts`                  | 60, 60              |
+| `tools/agx-ws/tests/add-hang.test.ts`                             | 90                  |
+| `tools/agx-ws/tests/agx-workspace-of.test.ts`                     | 60                  |
+| `tools/agx-ws/tests/gc-contract.test.ts`                          | 120                 |
+| `tools/agx-ws/tests/gc-grammar.test.ts`                           | 120                 |
+| `tools/agx-ws/tests/gc-progress.test.ts`                          | 60                  |
+| `tools/agx-ws/tests/gc-usecases.test.ts`                          | 90                  |
+| `tools/agx-ws/tests/landed-record.test.ts`                        | 90                  |
+| `tools/agx-ws/tests/lock-scope.test.ts`                           | 60, 64              |
+| `tools/agx-ws/tests/trunk-state.test.ts`                          | 60                  |
+| `tools/agx-ws/tests/workspace.test.ts`                            | 60                  |
+| `tools/agx/tests/doctor.test.ts`                                  | 45                  |
+| `tools/code-size.test.ts`                                         | 70                  |
+| `tools/release/release.test.ts`                                   | 120, 550, 200, 600  |
 
 ## Claims that still use wall time
 
-About 20 assertions compare a measured duration with a number of milliseconds. Those read so
-far state that a command returns without waiting for a 30-second holder. They are not yet
+About 20 assertions compare a measured duration with a number of milliseconds. The eight read
+so far state that a command returns without waiting for a 30-second holder. They are not yet
 converted to a signal, such as the holder still being alive when the command returns.
