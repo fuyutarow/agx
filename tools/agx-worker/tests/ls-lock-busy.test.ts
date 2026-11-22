@@ -53,7 +53,6 @@ const fixture = () => {
 };
 
 const ls = async (state: string) => {
-  const begin = performance.now();
   const proc = Bun.spawn([process.execPath, cli, "ls", "--json"], {
     env: { ...subprocessEnvironment(), AGX_STATE_DIR: state },
     stdout: "pipe",
@@ -64,7 +63,7 @@ const ls = async (state: string) => {
     new Response(proc.stderr).text(),
     proc.exited,
   ]);
-  return { stdout, stderr, code, ms: performance.now() - begin };
+  return { stdout, stderr, code };
 };
 
 test("ls --json does not wait on a busy publish lock and keeps stdout JSON", async () => {
@@ -102,7 +101,9 @@ await lock.release();
   reader.releaseLock();
   const result = await ls(state);
   expect(result.code).toBe(0);
-  expect(result.ms).toBeLessThan(2000);
+  // ls returned while the holder still has the lock: the holder releases it only when its
+  // stdin closes, in the cleanup after this test.
+  expect(holder.exitCode).toBeNull();
   const rows = jsonOf(z.array(z.unknown())).safeParse(result.stdout);
   expect(rows.success).toBe(true);
   // ls is a pure reader: it never takes the publish lock, so nothing is skipped or reported.

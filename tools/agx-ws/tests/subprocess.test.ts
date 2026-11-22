@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { runStep, StepFailure } from "../src/subprocess.ts";
 
 test("WS-ADD-HANG: finished child returns its status while a descendant retains both pipes", async () => {
-  const started = performance.now();
   const result = await runStep(
     ["sh", "-c", "sleep 30 & echo $!; echo diagnostic >&2; exit 7"],
     tmpdir(),
@@ -13,10 +12,11 @@ test("WS-ADD-HANG: finished child returns its status while a descendant retains 
   );
   expect(result.ok).toBe(true);
   if (!result.ok) return;
+  // The step returned without waiting for the descendant: the 30-second sleeper is still
+  // alive, since signalling a process that has exited throws.
   process.kill(Number(result.value.out.toString().trim()), "SIGKILL");
   expect(result.value.code).toBe(7);
   expect(result.value.err).toContain("diagnostic");
-  expect(performance.now() - started).toBeLessThan(1_000);
 });
 
 test("WS-ADD-HANG: a live child deadline names the step and unresolved await", async () => {

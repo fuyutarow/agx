@@ -149,10 +149,10 @@ test("a run process exits within seconds of its ended record while another proce
   }
   expect(endedAt, await err).toBeDefined();
   const exit = await child.exited;
-  const afterEnd = performance.now() - (endedAt ?? 0);
   expect(exit, await err).toBe(0);
-  // The holder keeps the lock for 30 s in the report; the run must not wait for it.
-  expect(afterEnd).toBeLessThan(8_000);
+  // The run exited while the other process still holds the publication lock: the holder
+  // releases it only below, and signalling a process that has exited throws.
+  process.kill(holder.pid, 0);
   expect(
     decodedJson(
       z.looseObject({ exit: z.number() }),

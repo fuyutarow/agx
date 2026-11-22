@@ -1478,13 +1478,13 @@ describe("agx ws add", () => {
     expect((await jj(["commit", "-m", "mise fixture"], path)).code).toBe(0);
     const pidFile = join(scratch, "retained-pipe.pid");
     shim("mise", `sleep 30 & echo $! > "${pidFile}"; exit 0`);
-    const started = performance.now();
     const r = await ws(["add", "retained-pipe"], path);
+    // add returned without waiting for the descendant: the 30-second sleeper is still alive,
+    // since signalling a process that has exited throws.
     process.kill(Number(await Bun.file(pidFile).text()), "SIGKILL");
     await unlink(join(bin, "mise"));
     expect(r.code, r.err).toBe(7);
     expect(r.err).toContain("readiness command failed (exit 7): exit 7");
-    expect(performance.now() - started).toBeLessThan(5_000);
     expect(existsSync(wsDir(path, "retained-pipe"))).toBe(false);
   });
 

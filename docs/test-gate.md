@@ -118,6 +118,13 @@ in that list; some have a comment at the test. They are, in seconds:
 
 ## Claims that still use wall time
 
-About 20 assertions compare a measured duration with a number of milliseconds. The eight read
-so far state that a command returns without waiting for a 30-second holder. They are not yet
-converted to a signal, such as the holder still being alive when the command returns.
+About 15 assertions still compare a measured duration with a number of milliseconds.
+
+Five were converted on 2026-11-22. Each said that a command returns without waiting for a
+long-lived other process, and now checks that the other process is still there when the
+command has returned: `agx-ws` `subprocess` and `workspace` (a 30-second descendant is still
+alive), `ls-lock-busy`, `run-exits-after-end` and `dispatch-exits` (the lock holder still
+holds the lock).
+
+Two in `tools/agx-ws/tests/lock-scope.test.ts` (under 7 and under 13 seconds) cannot take that
+form: their holder releases the lock after a fixed time. The rest have not been read.

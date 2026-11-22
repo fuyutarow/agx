@@ -18,10 +18,6 @@ import { startFakeJev } from "./fake-jev.ts";
 // publications after dispatchMain returns. The worker is a fake that runs for 60 s.
 const ENTRY = fileURLToPath(new URL("../src/next/cli.ts", import.meta.url));
 const WORKER_SECONDS = 60;
-/** The dispatch process has no job once its receipt is written and the unit is launched. */
-const EXIT_AFTER_RECEIPT_MS = 5_000;
-/** Another process (a sibling dispatch, a judge) holds the publication lock this long. */
-const PUBLICATION_LOCK_HELD_MS = 15_000;
 // Dispatch routes the ticket through Jev; the loopback fake keeps it hermetic.
 const jev = startFakeJev();
 afterAll(() => jev.stop());
@@ -113,14 +109,14 @@ test(
   "dispatch exits within seconds of its receipt while the 60 s run still completes",
   async () => {
     const f = fixture();
-    // The publication lock is held by someone else for the first PUBLICATION_LOCK_HELD_MS.
+    // Someone else (a sibling dispatch, a judge) holds the publication lock until dispatch
+    // has exited: dispatch has no job once its receipt is written and the unit is launched.
     const held = await acquireWorkspaceLock(
       join(f.state, "current-runs.json"),
       f.state,
     );
     expect(held.ok).toBe(true);
     if (!held.ok) return;
-    setTimeout(() => void held.release(), PUBLICATION_LOCK_HELD_MS);
     const child = Bun.spawn(
       [process.execPath, ENTRY, "dispatch", f.ticket, "--json"],
       {
@@ -133,7 +129,6 @@ test(
       },
     );
     const stderr = new Response(child.stderr).text();
-    let receiptAt: number | undefined;
     let receipt = "";
     const reader = child.stdout.getReader();
     const decoder = new TextDecoder();
@@ -141,20 +136,17 @@ test(
       const chunk = await reader.read();
       if (chunk.done) break;
       receipt += decoder.decode(chunk.value);
-      if (receipt.includes("\n") && receiptAt === undefined)
-        receiptAt = performance.now();
     }
     const exitCode = await child.exited;
-    const exitedAt = performance.now();
     expect(exitCode, await stderr).toBe(0);
-    expect(receiptAt).toBeDefined();
+    // dispatch is gone and the lock was held the whole time, so it did not wait for the lock.
+    await held.release();
     expect(receipt).toContain('"id"');
     // The unit was launched before the receipt, and the run is still going when dispatch is gone.
     expect(existsSync(f.started) || (await untilExists(f.started, 5_000))).toBe(
       true,
     );
     expect(existsSync(f.marker)).toBe(false);
-    expect(exitedAt - receiptAt!).toBeLessThan(EXIT_AFTER_RECEIPT_MS);
     // The run does not depend on the dispatching process: it completes after dispatch exited.
     expect(await untilExists(f.marker, (WORKER_SECONDS + 30) * 1_000)).toBe(
       true,
