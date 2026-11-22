@@ -930,6 +930,12 @@ are lifecycle outcomes. `run` preserves its child exit status; a receipt outcome
 can therefore be non-success even with exit 0 (for example failed verification).
 Callers inspect both outcome and exit. Unknown future outcome values are non-success.
 
+A worker that ends without a final message has written no report, so its outcome is never
+`malformed`. The manager writes the report from what it observed (`source: "manager"`):
+changed paths, verification results, the last progress record. When Claude gave a reason
+for stopping, the summary and `observed.vendor_stop` carry it; at the turn limit
+(`claude_run.max_turns`) the report says so and names that setting.
+
 The changed-file count compares contents, modes and symlink targets before/after
 execution within `writes`, including additions and deletions. It excludes preexisting
 unchanged dirt and VCS/dependency metadata; the worker's claimed `changes` list

@@ -10,7 +10,10 @@ const tempDirs = createTempTracker();
 const registerTempDir = tempDirs.register;
 afterAll(tempDirs.assertRemoved);
 import {
+  EMPTY_FINAL_MESSAGE,
+  managerReport,
   parseReport,
+  receiptReportInput,
   interimReturnWriter,
   parseReturn,
   renderReport,
@@ -153,6 +156,67 @@ describe("report", () => {
     const shape = parseReport(undefined, '{"summary":1}');
     expect(!shape.ok && shape.error).toContain("wrong shape");
     expect(!shape.ok && shape.error).toContain("summary");
+  });
+
+  test("a wrapper receipt without a final message is an empty message, not a wrong shape", () => {
+    // What claude-session relayed on 2026-11-23 when Claude stopped at 60 turns mid-task.
+    const receipt = {
+      exit_code: 1,
+      timed_out: false,
+      session_id: "s",
+      subtype: "error_max_turns",
+      num_turns: 60,
+    };
+    const input = receiptReportInput(receipt, JSON.stringify(receipt));
+    expect(parseReport(input.structured, input.message)).toEqual({
+      ok: false,
+      error: EMPTY_FINAL_MESSAGE,
+    });
+    // A worker that prints its report as its last line has no wrapper receipt around it.
+    const direct = receiptReportInput({}, JSON.stringify(GOOD));
+    expect(parseReport(direct.structured, direct.message)).toEqual({
+      ok: true,
+      report: GOOD,
+    });
+  });
+
+  test("the manager's report names the vendor turn limit and what to change", () => {
+    const observed = {
+      outcome: "refused",
+      timedOut: false,
+      exit: 1,
+      changedPaths: ["a.ts"],
+      progress: undefined,
+      interim: undefined,
+      verify: [],
+    };
+    const limited = managerReport(
+      { ...observed, vendorStop: { kind: "error_max_turns", turns: 60 } },
+      EMPTY_FINAL_MESSAGE,
+    );
+    expect(limited.summary).toContain(
+      "stopped at the vendor turn limit after 60 turns without a final message",
+    );
+    expect(limited.for_coordinator.join("\n")).toContain(
+      "claude_run.max_turns",
+    );
+    expect(limited.observed.vendor_stop).toEqual({
+      kind: "error_max_turns",
+      turns: 60,
+    });
+    const other = managerReport(
+      {
+        ...observed,
+        vendorStop: { kind: "error_during_execution", turns: undefined },
+      },
+      EMPTY_FINAL_MESSAGE,
+    );
+    expect(other.summary).toContain(
+      "ended with exit 1 (vendor result error_during_execution)",
+    );
+    const plain = managerReport(observed, EMPTY_FINAL_MESSAGE);
+    expect(plain.summary).toContain("ended with exit 1 without");
+    expect(plain.for_coordinator).toHaveLength(1);
   });
 
   test("the JSON schema is strict and the instruction carries the shape", () => {

@@ -1172,6 +1172,8 @@ async function runUnguarded(flags: Flags): Promise<number> {
       cause: z.string().optional(),
       timed_out: z.boolean().optional(),
       exit_code: z.number().optional(),
+      subtype: z.string().optional(),
+      num_turns: z.number().optional(),
       credential: z.enum(["api_key", "subscription"]).optional(),
       credential_source: z.enum(["env", "fnox", "file"]).optional(),
     }),
@@ -1582,6 +1584,14 @@ async function runUnguarded(flags: Flags): Promise<number> {
           interim:
             interim?.success === true ? interim.data.last_message : undefined,
           verify,
+          vendorStop:
+            workerReceipt.subtype === undefined ||
+            workerReceipt.subtype === "success"
+              ? undefined
+              : {
+                  kind: workerReceipt.subtype,
+                  turns: workerReceipt.num_turns,
+                },
         },
         parsedReport.error,
       ),

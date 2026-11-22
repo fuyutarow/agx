@@ -216,22 +216,27 @@ const normalizeReportCheckResults = (value: unknown): unknown => {
   return { ...report.data, checks };
 };
 
-/** The report in a worker's final message (a structured value from the vendor, else its text). */
 /** The worker's final message and structured report inside a worker receipt.
  * The codex receipt carries `last_message`; the claude receipt carries the
- * worker's final message in `result`. */
+ * worker's final message in `result`. A receipt with `exit_code` and neither is a wrapper's
+ * account of a worker that wrote no final message: the receipt itself is not that message.
+ * Only a line that is no wrapper receipt is read as the message. */
 export function receiptReportInput(
   receipt: {
     report?: unknown;
     structured_output?: unknown;
     last_message?: string | undefined;
     result?: string | undefined;
+    exit_code?: number | undefined;
   },
   receiptLine: string,
 ): { structured: unknown; message: string } {
   return {
     structured: receipt.structured_output ?? receipt.report,
-    message: receipt.last_message ?? receipt.result ?? receiptLine,
+    message:
+      receipt.last_message ??
+      receipt.result ??
+      (receipt.exit_code === undefined ? receiptLine : ""),
   };
 }
 
@@ -334,6 +339,8 @@ export type ObservedRun = {
   /** the last persisted interim RETURN message, if any */
   interim: string | undefined;
   verify: { cmd: string; exit: number }[];
+  /** the vendor's own account of why it stopped (Claude's result `subtype`), when it gave one */
+  vendorStop?: { kind: string; turns: number | undefined } | undefined;
 };
 
 /**
@@ -356,9 +363,16 @@ export function managerReport(
     .filter((c) => c !== "")
     .join(", ");
   const countSuffix = countList === "" ? "" : ` (${countList})`;
-  const how = observed.timedOut
-    ? "hit the ticket time box"
-    : `ended with exit ${observed.exit}`;
+  const vendorStop = observed.vendorStop;
+  const turnLimit = vendorStop?.kind === "error_max_turns";
+  const turns =
+    vendorStop?.turns === undefined ? "" : ` after ${vendorStop.turns} turns`;
+  const vendorResult =
+    vendorStop === undefined ? "" : ` (vendor result ${vendorStop.kind})`;
+  const ended = turnLimit
+    ? `stopped at the vendor turn limit${turns}`
+    : `ended with exit ${observed.exit}${vendorResult}`;
+  const how = observed.timedOut ? "hit the ticket time box" : ended;
   const stopped =
     progress === undefined
       ? "no progress record was written"
@@ -376,6 +390,11 @@ export function managerReport(
     })),
     for_coordinator: [
       "Review the changed paths and the last progress record before continuing or re-dispatching.",
+      ...(turnLimit && !observed.timedOut
+        ? [
+            "The work needs more turns than claude_run.max_turns in the roster policy allows: split the ticket, or raise that setting.",
+          ]
+        : []),
     ],
     open: [
       "The worker left no final report; everything here is what the manager observed.",
@@ -388,6 +407,7 @@ export function managerReport(
       worker_error: workerError,
       timed_out: observed.timedOut,
       exit: observed.exit,
+      ...(vendorStop === undefined ? {} : { vendor_stop: vendorStop }),
       ...(progress === undefined ? {} : { last_progress: progress }),
       ...(observed.interim === undefined
         ? {}

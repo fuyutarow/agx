@@ -111,6 +111,9 @@ type Relay = Readonly<{
   total_cost_usd?: string | number | boolean | null | undefined;
   usage?: unknown;
   structured_output?: unknown;
+  /** Claude's result kind: `success`, or why it stopped (`error_max_turns`, ...). */
+  subtype?: string | number | boolean | null | undefined;
+  num_turns?: string | number | boolean | null | undefined;
   stdout?: string | undefined;
   stderr?: string | undefined;
   parse_error?: string | undefined;
@@ -477,6 +480,8 @@ export function toRelay(run: RunResult): Relay {
     total_cost_usd: primitive(claude.total_cost_usd),
     usage: boundedJson(claude.usage),
     structured_output: boundedJson(claude.structured_output),
+    subtype: primitive(claude.subtype),
+    num_turns: primitive(claude.num_turns),
     stderr: boundedText(run.stderr),
   };
 }
