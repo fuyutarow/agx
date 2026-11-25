@@ -67,7 +67,7 @@ failures was a timeout.
 ## Limits above 30 seconds
 
 `tools/agx-worker/tests/timing-contract.json` lists every test with a longer limit, and a test
-checks the list against the sources. It holds 61 limits in 43 files. None has a written reason
+checks the list against the sources. It holds 66 limits in 48 files. None has a written reason
 in that list; some have a comment at the test. They are, in seconds:
 
 | File                                                              | Limits              |
@@ -111,7 +111,7 @@ in that list; some have a comment at the test. They are, in seconds:
 | `tools/agx-ws/tests/landed-record.test.ts`                        | 90                  |
 | `tools/agx-ws/tests/lock-scope.test.ts`                           | 60, 64              |
 | `tools/agx-ws/tests/trunk-state.test.ts`                          | 60                  |
-| `tools/agx-ws/tests/workspace.test.ts`                            | 60                  |
+| `tools/agx-ws/tests/workspace-*.test.ts` (six files)              | 60                  |
 | `tools/agx/tests/doctor.test.ts`                                  | 45                  |
 | `tools/code-size.test.ts`                                         | 70                  |
 | `tools/release/release.test.ts`                                   | 120, 550, 200, 600  |
@@ -122,7 +122,7 @@ About 15 assertions still compare a measured duration with a number of milliseco
 
 Five were converted on 2026-11-22. Each said that a command returns without waiting for a
 long-lived other process, and now checks that the other process is still there when the
-command has returned: `agx-ws` `subprocess` and `workspace` (a 30-second descendant is still
+command has returned: `agx-ws` `subprocess` and `workspace-add` (a 30-second descendant is still
 alive), `ls-lock-busy`, `run-exits-after-end` and `dispatch-exits` (the lock holder still
 holds the lock).
 

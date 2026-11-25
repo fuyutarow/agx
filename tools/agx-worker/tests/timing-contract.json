@@ -270,7 +270,32 @@
     "timeout": 60000
   },
   {
-    "file": "tools/agx-ws/tests/workspace.test.ts",
+    "file": "tools/agx-ws/tests/workspace-add.test.ts",
+    "name": "file default",
+    "timeout": 60000
+  },
+  {
+    "file": "tools/agx-ws/tests/workspace-forget-discover.test.ts",
+    "name": "file default",
+    "timeout": 60000
+  },
+  {
+    "file": "tools/agx-ws/tests/workspace-gc.test.ts",
+    "name": "file default",
+    "timeout": 60000
+  },
+  {
+    "file": "tools/agx-ws/tests/workspace-gc-branches.test.ts",
+    "name": "file default",
+    "timeout": 60000
+  },
+  {
+    "file": "tools/agx-ws/tests/workspace-policy.test.ts",
+    "name": "file default",
+    "timeout": 60000
+  },
+  {
+    "file": "tools/agx-ws/tests/workspace-rm.test.ts",
     "name": "file default",
     "timeout": 60000
   },
