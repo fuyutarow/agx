@@ -78,6 +78,7 @@ import {
   claudeWorkspaceWriteAllowedTools,
   claudeWorkspaceWriteSettings,
   removeClaudeSandboxStubs,
+  workerGraveyard,
 } from "../workers/environment.ts";
 import { exitWithError } from "./exit.ts";
 import { guardPreLaunch } from "./launch-guard.ts";
@@ -1136,6 +1137,7 @@ async function runUnguarded(flags: Flags): Promise<number> {
     AGX_RUN_DIR: runDir,
     AGX_INTERIM_REPORTS_FILE: interimPath,
     AGX_CODEX_PROGRESS_FILE: join(runDir, "worker-progress.jsonl"),
+    ...workerGraveyard(sandbox, runDir),
   };
   const firstReturnS =
     ticket.first_return_s ?? Math.floor((ticket.timeout_s ?? 600) / 2);

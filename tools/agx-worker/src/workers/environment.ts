@@ -56,6 +56,20 @@ const WORKER_ENV_KEYS = [
   "CODEX_API_KEY",
 ] as const;
 
+/**
+ * Where `rip` buries what a workspace-write worker deletes: `graveyard/` in the run directory,
+ * which the sandbox already lets it write. The user's own graveyard is outside the sandbox, so
+ * with the inherited value every deletion failed. Other sandboxes keep the inherited location.
+ */
+export function workerGraveyard(
+  sandbox: string,
+  runDir: string,
+): { GRAVEYARD?: string; RIP_GRAVEYARD?: string } {
+  if (sandbox !== "workspace-write") return {};
+  const graveyard = join(resolve(runDir), "graveyard");
+  return { GRAVEYARD: graveyard, RIP_GRAVEYARD: graveyard };
+}
+
 /** The one shared-cache declaration: environment values and writable roots use these same paths. */
 export function workerSharedCaches(
   source: NodeJS.ProcessEnv = process.env,

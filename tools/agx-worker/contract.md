@@ -1031,6 +1031,11 @@ are small files directly under the run directory. Large outputs go in `artifacts
 which is reclaimable after judgment; caches, venvs and build trees belong in
 shared caches or the run temp directory. Workspace paths hold source changes.
 
+A workspace-write worker deletes files with `rip` as usual: `run` sets `GRAVEYARD` and
+`RIP_GRAVEYARD` to `$AGX_RUN_DIR/graveyard` for the worker and for verification, because
+the user's graveyard is outside the sandbox. The deleted files stay there with the run.
+Under `none` and `read-only` the inherited graveyard location is unchanged.
+
 At run end, the ended event records `run_dir_bytes` as apparent bytes counted once
 per device and inode without following symlinks. Above 256 MiB the end notice
 names the size and largest top-level subdirectory. `agx worker reclaim-runs

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
   claudeWorkspaceWriteSettings,
+  workerGraveyard,
   workerSharedCaches,
   workerWritableRoots,
 } from "../src/workers/environment.ts";
@@ -120,3 +121,18 @@ function expectProtectedRoots(allow: string[], protectedPaths: string[]) {
     ).toBe(true);
   }
 }
+
+test("a workspace-write worker buries deleted files inside a root its sandbox lets it write", async () => {
+  const { runDir, runTemp, source } = await fixture();
+  const graveyard = workerGraveyard("workspace-write", runDir);
+  expect(graveyard.GRAVEYARD).toBe(join(resolve(runDir), "graveyard"));
+  expect(graveyard.RIP_GRAVEYARD).toBe(graveyard.GRAVEYARD);
+  const writable = claudeWorkspaceWriteSettings({ runDir, runTemp, source })
+    .sandbox.filesystem.allowWrite;
+  expect(
+    writable.some((root) => (graveyard.GRAVEYARD ?? "").startsWith(`${root}/`)),
+  ).toBe(true);
+  // Without a sandbox the user's own graveyard is reachable, so it is left as inherited.
+  expect(workerGraveyard("none", runDir)).toEqual({});
+  expect(workerGraveyard("read-only", runDir)).toEqual({});
+});
