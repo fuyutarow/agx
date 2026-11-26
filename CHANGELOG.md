@@ -1,5 +1,16 @@
 # Changelog
 
+## 11.4.0 — 2026-11-26
+
+- A routing return (split, uncheckable or contradiction) now refuses the run only when it leads the next most probable answer by at least 0.15; a return with a smaller lead is set aside, the most probable work class routes the ticket, one stderr line names the return and the class used, and the routing audit records set_aside_return and set_aside_margin
+- A route refusal from run now prints recorded true or false beside its id and report_path, and judge on an unrecorded refusal id explains that the run was refused before a worker started instead of reporting an unknown run id
+- A workspace-write worker can delete files with `rip`. The graveyard it inherited is outside the sandbox, so every deletion failed with "Failed to bury file". `run` now points `GRAVEYARD` and `RIP_GRAVEYARD` at `$AGX_RUN_DIR/graveyard` for such a worker and its verification; the deleted files stay there with the run.
+- A Claude worker that stops at the turn limit before writing its final message is now reported as that. The report used to say "the final message is JSON of the wrong shape", because agx read its own receipt as the worker's message. The manager-written report now names the turn limit, the number of turns and the setting (`claude_run.max_turns`), and lists the changed paths and verification results.
+- agx worker stats --usage jev now reports captured calls whose time is later than now under ahead_of_clock, with their call count and known tokens, instead of dropping them silently; when there are any, the complete totals are null and one stderr line gives the count, and captured_at is counted from the window end on the monotonic clock so a wall clock that moves back cannot put it earlier
+- A ticket with writes = [] no longer loses a roster row each time a run succeeds in under two minutes: a zero-change run counts as an early quit only when the ticket declares writes. The time-box refusal now names timeout_s, the rows removed at earlier stages and the fix
+- agx worker stats --routing now counts routing events whose time is later than now under ahead_of_clock_events and prints one stderr line with the count, instead of leaving them out of the interval without a word
+- The routing audit no longer writes class_margin, which 11.3.0 added beside the existing top_margin with the same value; the close-call line is unchanged and top_margin remains the recorded difference between the two most probable answers
+
 ## 11.3.0 — 2026-11-22
 
 - A Claude worker's interim RETURN is recorded as a progress checkpoint, as a Codex worker's always was; the Claude wrapper recorded it only when AGX_LAST_MESSAGE_FILE was set, and nothing set it. That variable is removed
