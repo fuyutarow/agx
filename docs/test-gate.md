@@ -1,7 +1,20 @@
 # What the test gate claims
 
-`mise run test` runs `tools/test-run.ts`: one process per test file, half the cores at a time.
+`mise run test` runs `tools/test-run.ts`: one process per test file.
 The gate fails when a test file fails, and on nothing else.
+
+## How many files run at once
+
+The runner keeps the files it runs at half the cores, counted by the processor each file uses
+and not by the number of files. A file's share is its CPU time over its clock time in the last
+run: 1 for a file that only computes, 0.1 at least for one that waits (a file with no record
+counts as 1). Files start in order, longest by the clock first, while the shares of the running
+files sum to at most half the cores; at most as many files as there are cores run at once.
+
+On 12 cores, the same 201 files took 297 seconds with six files at a time, then 231 and 203
+seconds with shares (one run each, all passing, load average 17-33 from other sessions; the CPU
+time was 1162, 1180 and 1163 seconds). A first run on a machine without records runs six at a
+time.
 
 ## Nothing hangs
 
@@ -32,11 +45,11 @@ Under `.agent-state/test-run/`, for the last run only:
 - `failed/<test file>.txt`: the whole output of each failing file.
 - `cpu.json`: each file's CPU time in milliseconds, covering the test process and the children
   it waited for. Read it to find the costly files, and compare two runs only when the machine's
-  load was similar. The next run uses it to start the costliest files first.
+  load was similar. The next run uses it for each file's share (above).
 - `wall.json`: for each file, `start_ms` (milliseconds after the run began) and `wall_ms` (how
   long it took by the clock). A file whose `wall_ms` far exceeds its CPU time was waiting, not
-  computing. The last line of a run prints the sum of `wall_ms`; divided by the number of files
-  run at once, it is the shortest run this set of files allows at that load.
+  computing. The next run starts the longest files first. The last line of a run prints the sum
+  of `wall_ms`.
 
 ## The change of 2026-11-22
 

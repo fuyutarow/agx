@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
-// The gate's test runner. Each test file runs as its own `bun test` process, a few at a time.
+// The gate's test runner. Each test file runs as its own `bun test` process; how many run at
+// once follows the processor each used last time (see runAll).
 //
 // The gate fails when a test file fails, and on nothing else. A stuck test is stopped by the
 // test timeout (HANG_DETECTION_MS in tools/shared/src/test-tmp.ts), which says nothing about speed.
@@ -24,6 +25,7 @@ const cpuPath = join(recordDir, "cpu.json");
 const wallPath = join(recordDir, "wall.json");
 const failedDir = join(recordDir, "failed");
 
+const Cpu = jsonOf(z.record(z.string(), z.number()));
 const Wall = jsonOf(
   z.record(z.string(), z.object({ start_ms: z.number(), wall_ms: z.number() })),
 );
@@ -70,25 +72,80 @@ async function runFile(file: string, runStarted: number): Promise<Outcome> {
   };
 }
 
-async function runAll(files: string[], width: number): Promise<Outcome[]> {
+/**
+ * Runs the files in order, keeping the processors they are expected to use at `width` or fewer.
+ * `share(file)` is the fraction of one processor the file used last time (1 when unknown), so
+ * a file that mostly waits does not hold a place that a computing file needs. At most
+ * `2 * width` files run at once, whatever their shares.
+ */
+async function runAll(
+  files: string[],
+  width: number,
+  share: (file: string) => number,
+): Promise<Outcome[]> {
   const runStarted = performance.now();
   const queue = [...files];
+  const running = new Set<string>();
   const outcomes: Outcome[] = [];
-  const worker = async (): Promise<void> => {
-    for (let file = queue.shift(); file !== undefined; file = queue.shift())
-      outcomes.push(await runFile(file, runStarted));
-  };
-  await Promise.all(Array.from({ length: width }, worker));
+  const fits = (file: string): boolean =>
+    running.size === 0 ||
+    (running.size < 2 * width &&
+      [...running].reduce((sum, other) => sum + share(other), share(file)) <=
+        width);
+  await new Promise<void>((done) => {
+    const fill = (): void => {
+      for (
+        let file = queue[0];
+        file !== undefined && fits(file);
+        file = queue[0]
+      ) {
+        const started = file;
+        queue.shift();
+        running.add(started);
+        const settle = (outcome: Outcome): void => {
+          outcomes.push(outcome);
+          running.delete(started);
+          fill();
+        };
+        runFile(started, runStarted).then(settle, (error: unknown) => {
+          settle({
+            file: started,
+            exit: 1,
+            cpuMs: 0,
+            startMs: 0,
+            wallMs: 0,
+            output: `the runner could not run this file: ${String(error)}\n`,
+          });
+        });
+      }
+      if (queue.length === 0 && running.size === 0) done();
+    };
+    fill();
+  });
   return outcomes;
 }
 
-const previousFile = Bun.file(wallPath);
-const previous = Wall.safeParse(
-  (await previousFile.exists()) ? await previousFile.text() : "{}",
-);
-const known = previous.success ? previous.data : {};
+const recorded = async <T>(
+  path: string,
+  schema: { safeParse: (text: string) => { success: boolean; data?: T } },
+): Promise<T | undefined> => {
+  const file = Bun.file(path);
+  return (await file.exists())
+    ? schema.safeParse(await file.text()).data
+    : undefined;
+};
+const known = (await recorded(wallPath, Wall)) ?? {};
+const knownCpu = (await recorded(cpuPath, Cpu)) ?? {};
 const cost = (file: string): number =>
   known[file]?.wall_ms ?? Number.POSITIVE_INFINITY;
+// The file's CPU time over its clock time in the last run: 1 for a file that only computes,
+// near 0 for one that waits. Never below 0.1, so a wrong record cannot start everything at once.
+const share = (file: string): number => {
+  const wallMs = known[file]?.wall_ms;
+  const cpuMs = knownCpu[file];
+  if (wallMs === undefined || cpuMs === undefined || wallMs <= 0) return 1;
+  return Math.min(1, Math.max(0.1, cpuMs / wallMs));
+};
 // Longest by the clock first, unknown files before all: a file started at second 280 that waits
 // 60 s ends the run at 340 whatever else is done. Ordering by CPU time put exactly such files
 // last (three files that wait out a 60 s time box on 2 s of CPU ended the run of 2026-11-26).
@@ -99,6 +156,7 @@ const started = performance.now();
 const outcomes = await runAll(
   files,
   Math.max(1, Math.floor((cpus().length + 1) / 2)),
+  share,
 );
 const failed = outcomes.filter((outcome) => outcome.exit !== 0);
 
