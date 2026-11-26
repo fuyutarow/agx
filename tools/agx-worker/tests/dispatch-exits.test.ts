@@ -15,9 +15,9 @@ import { subprocessEnvironment } from "../../shared/src/subprocess-env.ts";
 import { startFakeJev } from "./fake-jev.ts";
 
 // Real entry point: `agx-worker dispatch` runs through next/cli.ts, which flushes run
-// publications after dispatchMain returns. The worker is a fake that runs for 60 s.
+// publications after dispatchMain returns. The worker is a fake that runs until the test
+// releases it, so "the run is still going" is a state the test holds, not a race with a clock.
 const ENTRY = fileURLToPath(new URL("../src/next/cli.ts", import.meta.url));
-const WORKER_SECONDS = 60;
 // Dispatch routes the ticket through Jev; the loopback fake keeps it hermetic.
 const jev = startFakeJev();
 afterAll(() => jev.stop());
@@ -52,11 +52,12 @@ function fixture() {
   );
   const marker = join(root, "worker-completed");
   const started = join(root, "worker-started");
+  const release = join(root, "worker-release");
   // The fake unit launcher: systemd-run returns at once and the "unit" outlives it, as in production.
   const worker = join(root, "fake-worker.sh");
   writeFileSync(
     worker,
-    `#!/bin/sh\ntouch "${started}"\nsleep ${WORKER_SECONDS}\ntouch "${marker}"\n`,
+    `#!/bin/sh\ntouch "${started}"\nwhile [ ! -e "${release}" ]; do sleep 0.1; done\ntouch "${marker}"\n`,
   );
   chmodSync(worker, 0o755);
   const launcher = join(root, "fake-systemd-run.ts");
@@ -95,7 +96,7 @@ function fixture() {
   Reflect.deleteProperty(env, "CLAUDE_CODE_SESSION_ID");
   Reflect.deleteProperty(env, "CODEX_SESSION_ID");
   Reflect.deleteProperty(env, "AGX_DISPATCHER_SESSION");
-  return { root, repo, ticket, state, marker, started, env };
+  return { root, repo, ticket, state, marker, started, release, env };
 }
 
 async function untilExists(path: string, timeoutMs: number) {
@@ -105,52 +106,46 @@ async function untilExists(path: string, timeoutMs: number) {
   return existsSync(path);
 }
 
-test(
-  "dispatch exits within seconds of its receipt while the 60 s run still completes",
-  async () => {
-    const f = fixture();
-    // Someone else (a sibling dispatch, a judge) holds the publication lock until dispatch
-    // has exited: dispatch has no job once its receipt is written and the unit is launched.
-    const held = await acquireWorkspaceLock(
-      join(f.state, "current-runs.json"),
-      f.state,
-    );
-    expect(held.ok).toBe(true);
-    if (!held.ok) return;
-    const child = Bun.spawn(
-      [process.execPath, ENTRY, "dispatch", f.ticket, "--json"],
-      {
-        cwd: f.repo,
-        env: f.env,
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-        timeout: 120_000,
-      },
-    );
-    const stderr = new Response(child.stderr).text();
-    let receipt = "";
-    const reader = child.stdout.getReader();
-    const decoder = new TextDecoder();
-    for (;;) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      receipt += decoder.decode(chunk.value);
-    }
-    const exitCode = await child.exited;
-    expect(exitCode, await stderr).toBe(0);
-    // dispatch is gone and the lock was held the whole time, so it did not wait for the lock.
-    await held.release();
-    expect(receipt).toContain('"id"');
-    // The unit was launched before the receipt, and the run is still going when dispatch is gone.
-    expect(existsSync(f.started) || (await untilExists(f.started, 5_000))).toBe(
-      true,
-    );
-    expect(existsSync(f.marker)).toBe(false);
-    // The run does not depend on the dispatching process: it completes after dispatch exited.
-    expect(await untilExists(f.marker, (WORKER_SECONDS + 30) * 1_000)).toBe(
-      true,
-    );
-  },
-  WORKER_SECONDS * 1_000 + 150_000,
-);
+test("dispatch exits after its receipt while the run is still going, and the run then completes", async () => {
+  const f = fixture();
+  // Someone else (a sibling dispatch, a judge) holds the publication lock until dispatch
+  // has exited: dispatch has no job once its receipt is written and the unit is launched.
+  const held = await acquireWorkspaceLock(
+    join(f.state, "current-runs.json"),
+    f.state,
+  );
+  expect(held.ok).toBe(true);
+  if (!held.ok) return;
+  const child = Bun.spawn(
+    [process.execPath, ENTRY, "dispatch", f.ticket, "--json"],
+    {
+      cwd: f.repo,
+      env: f.env,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
+  const stderr = new Response(child.stderr).text();
+  let receipt = "";
+  const reader = child.stdout.getReader();
+  const decoder = new TextDecoder();
+  for (;;) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    receipt += decoder.decode(chunk.value);
+  }
+  const exitCode = await child.exited;
+  expect(exitCode, await stderr).toBe(0);
+  // dispatch is gone and the lock was held the whole time, so it did not wait for the lock.
+  await held.release();
+  expect(receipt).toContain('"id"');
+  // The unit was launched before the receipt, and the run is still going when dispatch is gone.
+  expect(existsSync(f.started) || (await untilExists(f.started, 5_000))).toBe(
+    true,
+  );
+  expect(existsSync(f.marker)).toBe(false);
+  // The run does not depend on the dispatching process: it completes after dispatch exited.
+  writeFileSync(f.release, "");
+  expect(await untilExists(f.marker, 10_000)).toBe(true);
+});

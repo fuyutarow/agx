@@ -30,11 +30,6 @@
     "timeout": 120000
   },
   {
-    "file": "tools/agx-worker/tests/dispatch-exits.test.ts",
-    "name": "dispatch exits within seconds of its receipt while the 60 s run still completes",
-    "timeout": 210000
-  },
-  {
     "file": "tools/agx-worker/tests/dispatch-ticket-repo.test.ts",
     "name": "a ticket in a registered external tickets directory dispatches against that repository",
     "timeout": 60000

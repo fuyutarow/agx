@@ -33,6 +33,10 @@ Under `.agent-state/test-run/`, for the last run only:
 - `cpu.json`: each file's CPU time in milliseconds, covering the test process and the children
   it waited for. Read it to find the costly files, and compare two runs only when the machine's
   load was similar. The next run uses it to start the costliest files first.
+- `wall.json`: for each file, `start_ms` (milliseconds after the run began) and `wall_ms` (how
+  long it took by the clock). A file whose `wall_ms` far exceeds its CPU time was waiting, not
+  computing. The last line of a run prints the sum of `wall_ms`; divided by the number of files
+  run at once, it is the shortest run this set of files allows at that load.
 
 ## The change of 2026-11-22
 
@@ -67,7 +71,7 @@ failures was a timeout.
 ## Limits above 30 seconds
 
 `tools/agx-worker/tests/timing-contract.json` lists every test with a longer limit, and a test
-checks the list against the sources. It holds 66 limits in 48 files. None has a written reason
+checks the list against the sources. It holds 65 limits in 47 files. None has a written reason
 in that list; some have a comment at the test. They are, in seconds:
 
 | File                                                              | Limits              |
@@ -76,7 +80,6 @@ in that list; some have a comment at the test. They are, in seconds:
 | `tools/agx-ticket/tests/gc-grammar.test.ts`                       | 60                  |
 | `tools/agx-ticket/tests/lifecycle.test.ts`                        | 46, 60              |
 | `tools/agx-usehooks/tests/consumers.test.ts`                      | 120, 120            |
-| `tools/agx-worker/tests/dispatch-exits.test.ts`                   | 210                 |
 | `tools/agx-worker/tests/dispatch-ticket-repo.test.ts`             | 60, 60, 60, 60      |
 | `tools/agx-worker/tests/dispatch.test.ts`                         | 40, 120, 40, 45, 60 |
 | `tools/agx-worker/tests/ls-lock-busy.test.ts`                     | 60                  |
@@ -125,6 +128,14 @@ long-lived other process, and now checks that the other process is still there w
 command has returned: `agx-ws` `subprocess` and `workspace-add` (a 30-second descendant is still
 alive), `ls-lock-busy`, `run-exits-after-end` and `dispatch-exits` (the lock holder still
 holds the lock).
+
+`dispatch-exits` also waited 60 seconds for its fake run to end by itself. Since 2026-11-26 the
+fake run ends when the test writes a file, so the test holds "the run is still going" as a
+state and takes about 2 seconds.
+
+Three tests still wait out a real 60-second time box, because 60 is the smallest `timeout_s` a
+ticket accepts: `timeout-report` (the hanging worker), `next/run-reap` and the timeout case of
+`next/outcome`. Each uses a few seconds of CPU and about 60 seconds of the clock.
 
 Two in `tools/agx-ws/tests/lock-scope.test.ts` (under 7 and under 13 seconds) cannot take that
 form: their holder releases the lock after a fixed time. The rest have not been read.
