@@ -1,5 +1,9 @@
 # Changelog
 
+## 11.5.0 — 2026-11-26
+
+- A repository can set the default sandbox of its worker runs: `[worker] sandbox = "none"` (or `read-only`, `workspace-write`) in the committed `agx.toml`. The order is `--sandbox`, then the ticket, then the continued run, then `agx.toml`, then `workspace-write`; a ticket that names a sandbox keeps it. Dispatch and run output show the value with the source `agx.toml`, and `agx worker config` lists `worker.sandbox`. The machine-local `repos/<name>.toml` rejects the key.
+
 ## 11.4.0 — 2026-11-26
 
 - A routing return (split, uncheckable or contradiction) now refuses the run only when it leads the next most probable answer by at least 0.15; a return with a smaller lead is set aside, the most probable work class routes the ticket, one stderr line names the return and the class used, and the routing audit records set_aside_return and set_aside_margin
