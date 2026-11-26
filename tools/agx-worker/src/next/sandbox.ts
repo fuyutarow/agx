@@ -9,6 +9,7 @@ export const SandboxSource = z.enum([
   "flag",
   "ticket",
   "continued run",
+  "agx.toml",
   "built-in default",
 ]);
 
@@ -45,10 +46,15 @@ export async function recordedSandbox(
   return { ok: true, value: parsed.data.sandbox };
 }
 
+/**
+ * The nearer statement wins: this run's flag, this ticket, the run being continued, then the
+ * repository's agx.toml ([worker] sandbox, trunk revision), then workspace-write.
+ */
 export function resolveSandbox(
   flag: string | undefined,
   ticket: string | undefined,
   continued: string | undefined,
+  repository: string | undefined,
 ) {
   if (flag !== undefined)
     return { sandbox: flag, sandbox_source: SandboxSource.enum.flag };
@@ -58,6 +64,11 @@ export function resolveSandbox(
     return {
       sandbox: continued,
       sandbox_source: SandboxSource.enum["continued run"],
+    };
+  if (repository !== undefined)
+    return {
+      sandbox: repository,
+      sandbox_source: SandboxSource.enum["agx.toml"],
     };
   return {
     sandbox: "workspace-write",

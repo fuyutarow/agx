@@ -137,19 +137,36 @@ tree and sandbox mode. A continuation uses the previous run ID and resumes its v
 except for the capacity recovery described below.
 
 Sandbox resolution is `--sandbox` > ticket `sandbox` > continued run's recorded
-sandbox > built-in `workspace-write`. An explicit flag overrides the ticket even
+sandbox > the repository's `agx.toml` `[worker] sandbox` > built-in
+`workspace-write`. An explicit flag overrides the ticket even
 on continuation. Without a flag or ticket declaration, `--continue` inherits the
 requested mode (for example `none`), rather than a vendor's effective fallback
 (for example `danger-full-access`). Older runs are read from their saved native
 receipt when their started event omits sandbox; if neither records it, the built-in
 default applies. Invalid recorded sandbox data refuses resolution unless a flag
-or ticket supplies the value. Repository L1/L2 and routing L3 do not configure sandbox.
+or ticket supplies the value.
+
+A repository sets its default in the committed `agx.toml` (L1):
+
+```toml
+[worker]
+sandbox = "none" # or "read-only" or "workspace-write"
+```
+
+It applies only when no flag, ticket or continued run names a sandbox, so a ticket that says
+`sandbox = "workspace-write"` keeps its sandbox in a repository whose default is `none`. The
+value is read from the trunk revision of `agx.toml`, like every L1 value: a worker that edits
+`agx.toml` in its workspace does not change the sandbox of its own or a later run. `dispatch`
+reads the ticket's repository and `run` reads the repository of `--cd`; dispatch refuses when
+the two differ. The machine-local L2 file rejects `[worker]`, and the routing policy (L3) has
+no sandbox key: what a repository's workers may touch is decided in the repository, in a
+reviewed commit. `agx worker config` prints `worker.sandbox` with its source.
 
 Dispatch uses the same resolution and passes the selected value to the unit with
 its provenance (`--sandbox-source`, an internal run argument requiring a dispatch
 binding). Run receipts, saved native receipts, reports, started events and JSON
 listings expose `sandbox` and `sandbox_source`. Source values are `flag`, `ticket`,
-`continued run`, and `built-in default`. Historical events may omit these fields.
+`continued run`, `agx.toml`, and `built-in default`. Historical events may omit these fields.
 
 Dispatch resolves the ticket's repository first from the registered repositories
 (`$XDG_CONFIG_HOME/agx/repos/<name>.toml`): the entry whose `tickets` directory contains the

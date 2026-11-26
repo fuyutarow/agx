@@ -87,6 +87,13 @@ const RepoRouteConfig = z.strictObject({
     .optional(),
 });
 export type RepoRouteOverride = z.output<typeof RepoRouteConfig>;
+/** The sandbox a worker run uses when no flag, ticket or continued run names one. */
+const WorkerConfig = z.strictObject({
+  sandbox: z.enum(["none", "read-only", "workspace-write"]).optional(),
+});
+export type RepositoryWorkerSandbox = NonNullable<
+  z.output<typeof WorkerConfig>["sandbox"]
+>;
 const Config = z.strictObject({
   schema: z.literal(1),
   tickets: z.string().trim().min(1).optional(),
@@ -94,6 +101,7 @@ const Config = z.strictObject({
   verify: VerifyConfig.optional(),
   check: CheckConfig.optional(),
   route: RepoRouteConfig.optional(),
+  worker: WorkerConfig.optional(),
 });
 const ConfigEnvelope = z.record(z.string(), z.unknown());
 const TomlDate = z.date();
@@ -217,6 +225,8 @@ type ResolvedAgxConfig = {
   verifyAlways: string[];
   checkCommands: string[];
   checkTimeoutMs: number | undefined;
+  /** L1 only: a machine-local file cannot widen what a repository's workers may touch. */
+  workerSandbox: RepositoryWorkerSandbox | undefined;
 };
 /** The layer that supplied a repository value: shipped default, L1 trunk agx.toml, or machine-local L2. */
 export type ConfigLayer = "default" | "L1" | "L2";
@@ -229,7 +239,8 @@ export type RepositoryValueKey =
   | "verify.always"
   | "check.commands"
   | "check.timeout_ms"
-  | "route.allow";
+  | "route.allow"
+  | "worker.sandbox";
 export type ResolvedAgxConfigWithProvenance = ResolvedAgxConfig & {
   policyRevision: string | undefined;
   workingCopyPolicyDiffers: boolean | undefined;
@@ -624,6 +635,7 @@ async function resolveConfig(
   let checkCommands: string[] = [];
   let checkTimeoutMs: number | undefined;
   let repoRoute: RepoRouteOverride | undefined;
+  let workerSandbox: RepositoryWorkerSandbox | undefined;
   const l1Declared = new Set<RepositoryValueKey>();
   let l1Keep: string[] = [];
   if (policy !== undefined) {
@@ -668,6 +680,7 @@ async function resolveConfig(
     checkCommands = parsed.data.check?.commands ?? checkCommands;
     checkTimeoutMs = parsed.data.check?.timeout_ms;
     repoRoute = parsed.data.route;
+    workerSandbox = parsed.data.worker?.sandbox;
     l1Keep = parsed.data.ws?.keep ?? [];
     const declaredByL1: Array<[RepositoryValueKey, boolean]> = [
       ["tickets", declared !== undefined],
@@ -682,6 +695,7 @@ async function resolveConfig(
       ["check.commands", parsed.data.check?.commands !== undefined],
       ["check.timeout_ms", parsed.data.check?.timeout_ms !== undefined],
       ["route.allow", parsed.data.route?.allow !== undefined],
+      ["worker.sandbox", parsed.data.worker?.sandbox !== undefined],
     ];
     for (const [key] of declaredByL1.filter(([, isDeclared]) => isDeclared))
       l1Declared.add(key);
@@ -703,6 +717,7 @@ async function resolveConfig(
     "check.commands": layerOf("check.commands", false),
     "check.timeout_ms": layerOf("check.timeout_ms", false),
     "route.allow": layerOf("route.allow", false),
+    "worker.sandbox": layerOf("worker.sandbox", false),
   };
   tickets = l2?.tickets ?? tickets;
   ready = l2?.ws?.ready ?? ready;
@@ -732,6 +747,7 @@ async function resolveConfig(
     verifyAlways,
     checkCommands,
     checkTimeoutMs,
+    workerSandbox,
     policyRevision: committed.value.revision,
     workingCopyPolicyDiffers,
     repoRoute,
@@ -763,6 +779,7 @@ export async function resolveAgxConfig(
     verifyAlways: config.verifyAlways,
     checkCommands: config.checkCommands,
     checkTimeoutMs: config.checkTimeoutMs,
+    workerSandbox: config.workerSandbox,
   });
 }
 

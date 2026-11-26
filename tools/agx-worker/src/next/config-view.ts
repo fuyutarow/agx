@@ -53,6 +53,9 @@ function repositorySection(config: ResolvedAgxConfigWithProvenance) {
     ),
     // null: no repository override, so the user policy (L3) decides the routes.
     "route.allow": entry("route.allow", config.repoRoute?.allow ?? null),
+    // null: the repository names no default, so a run without a flag, a ticket value or a
+    // continued run uses workspace-write.
+    "worker.sandbox": entry("worker.sandbox", config.workerSandbox ?? null),
   };
   const keep: KeepEntry[] = config.keepEntries.map((item) => ({
     value: item.value,

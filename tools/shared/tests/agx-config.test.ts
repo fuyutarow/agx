@@ -536,6 +536,31 @@ test("repository [route] accepts an omitted default", async () => {
   if (result.ok)
     expect(result.value.repoRoute).toEqual({ allow: ["claude-session"] });
 });
+test("repository [worker] sandbox is read from L1; absent means no repository default", async () => {
+  const declared = await fixture('schema = 1\n[worker]\nsandbox = "none"\n');
+  const result = await resolveAgxConfigWithProvenance(declared.root);
+  expect(result.ok).toBe(true);
+  if (result.ok) {
+    expect(result.value.workerSandbox).toBe("none");
+    expect(result.value.valueLayers["worker.sandbox"]).toBe("L1");
+  }
+  const absent = await fixture("schema = 1\n");
+  const bare = await resolveAgxConfigWithProvenance(absent.root);
+  expect(bare.ok).toBe(true);
+  if (bare.ok) {
+    expect(bare.value.workerSandbox).toBeUndefined();
+    expect(bare.value.valueLayers["worker.sandbox"]).toBe("default");
+  }
+});
+test.each([
+  ['[worker]\nsandbox = "off"\n', "worker.sandbox"],
+  ['[worker]\nmode = "none"\n', "worker.mode: unknown key"],
+])("rejects invalid repository [worker]: %s", async (worker, message) => {
+  const f = await fixture(`schema = 1\n${worker}`);
+  const result = await resolveAgxConfigWithProvenance(f.root);
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(String(result.error)).toContain(message);
+});
 test("an absent repository [route] leaves repoRoute undefined", async () => {
   const f = await fixture("schema = 1\n");
   const result = await resolveAgxConfigWithProvenance(f.root);
@@ -565,6 +590,8 @@ test.each([
   ["schema = 1\n[ws]\nunknown = true\n", "unknown"],
   ['schema = 1\n[ws]\nkeep = [""]\n', "keep"],
   ['schema = 1\n[route]\nallow = ["claude-session"]\n', "route"],
+  // A machine-local file cannot change what a repository's workers may touch.
+  ['schema = 1\n[worker]\nsandbox = "none"\n', "worker"],
 ])("rejects invalid L2: %s", async (local, message) => {
   const f = await fixture();
   await f.writeLocal(local);

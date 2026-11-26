@@ -210,6 +210,7 @@ export async function ticketContext(cwd: string) {
     revision,
     vcs,
     verifyAlways: config.value.verifyAlways,
+    workerSandbox: config.value.workerSandbox,
   } as const;
 }
 

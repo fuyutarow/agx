@@ -30,7 +30,9 @@ import { JJ_READ_ARGS } from "../../shared/src/jj-read.ts";
 import { readonlyCommand } from "../../shared/src/readonly-command.ts";
 import {
   InspectionTimeout,
+  InspectionUnavailable,
   registeredRepoForTicket,
+  resolveAgxConfig,
 } from "../../shared/src/agx-config.ts";
 import { resolveSuiteTool } from "../../shared/src/path-dispatch.ts";
 import { stateDir as resolveStateDir } from "../../shared/src/state-dir.ts";
@@ -876,10 +878,24 @@ export async function dispatch(options: {
     );
     return 2;
   }
+  // The repository's default is read only when nothing nearer names a sandbox.
+  const repositoryConfig =
+    options.sandbox === undefined &&
+    parsedTicket.ticket.sandbox === undefined &&
+    recordedMode.value === undefined
+      ? await resolveAgxConfig(ticketRepo.root)
+      : undefined;
+  if (repositoryConfig?.ok === false) {
+    process.stderr.write(
+      `agx worker dispatch: ${errorMessage(repositoryConfig.error)}; repair: correct agx.toml or specify --sandbox\n`,
+    );
+    return repositoryConfig.error instanceof InspectionUnavailable ? 75 : 2;
+  }
   const resolvedSandbox = resolveSandbox(
     options.sandbox,
     parsedTicket.ticket.sandbox,
     recordedMode.value,
+    repositoryConfig?.value.workerSandbox,
   );
   const parsedSandbox = Sandbox.safeParse(resolvedSandbox.sandbox);
   if (!parsedSandbox.success) {

@@ -41,7 +41,7 @@ commands = ['test -s "$AGX_TICKET_PATH"']
 timeout_ms = 10000
 ```
 
-L1 accepts `schema`, `tickets`, `[ws]`, `[verify]`, `[check]` and `[route]`. Its `[ws]` table
+L1 accepts `schema`, `tickets`, `[ws]`, `[verify]`, `[check]`, `[worker]` and `[route]`. Its `[ws]` table
 accepts `ready`, `trunk`, `keep`, `regenerable` and `unjudged_warn_hours`; `[ws].keep` is
 accepted at L1. Schema must equal 1.
 `[route]` accepts only `allow`, with the same meaning as the user policy key of the same
@@ -50,6 +50,9 @@ user policy's `route.allow` for runs whose repository is this one; every other r
 user-global. `default` was removed (routing never substitutes a row when Jev cannot route); a
 `[route]` that sets it is rejected with a message saying the key was removed, as is any other
 invalid `[route]`, before any effect. L2 rejects `[route]`.
+`[worker]` accepts only `sandbox` (`none`, `read-only` or `workspace-write`): the default
+sandbox of this repository's worker runs, below `--sandbox`, the ticket and a continued run
+(see the worker contract). L2 rejects `[worker]`.
 Declarations use TOML 1.0 syntax. Unknown keys, malformed TOML, duplicate TOML keys and unsupported or missing schema fail.
 Ticket paths must be nonempty relative strings; absolute POSIX and Windows paths and `~/`
 are rejected at L1. Relative ticket paths resolve from the main checkout. Paths are UTF-8

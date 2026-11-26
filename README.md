@@ -47,7 +47,7 @@ through `PATH` in the home directory and each requested consumer.
 ## agx.toml
 
 A repository's committed `agx.toml` (`schema = 1`) may declare `tickets`, `[ws]`,
-`[verify]`, and a `[route]` table. Any other key is rejected before any effect,
+`[verify]`, `[check]`, `[worker]`, and a `[route]` table. Any other key is rejected before any effect,
 and the error names the file.
 
 `[route]` accepts only `allow` (a nonempty array of `codex` or `claude`). For
@@ -60,6 +60,11 @@ box) the dispatch is refused before any effect with the failed step on the first
 stderr line. `agx worker check` and `agx worker roster` run inside the
 repository show the effective routes. `~/.config/agx/repos/<name>.toml` rejects
 `[route]`. The full contract is in [contract/config.md](contract/config.md).
+
+`[worker]` accepts only `sandbox` (`none`, `read-only` or `workspace-write`): the sandbox
+of a worker run in this repository when neither `--sandbox`, the ticket nor a continued run
+names one. Without it the default is `workspace-write`. Every dispatch and run prints the
+sandbox and where it came from. `~/.config/agx/repos/<name>.toml` rejects `[worker]`.
 
 ## Agent skill
 

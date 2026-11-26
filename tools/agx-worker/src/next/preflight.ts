@@ -569,6 +569,7 @@ export async function preflight(
     value(flags, "sandbox"),
     ticket?.sandbox,
     continuedSandbox,
+    worker.ok ? worker.workerSandbox : undefined,
   );
   const { sandbox } = resolvedSandbox;
   let sandbox_source = resolvedSandbox.sandbox_source;

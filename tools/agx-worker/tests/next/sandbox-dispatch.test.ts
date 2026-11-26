@@ -20,7 +20,13 @@ afterEach(async () => {
   );
 });
 
-async function fixture(input: { verify: string[]; always?: string[] }) {
+async function fixture(input: {
+  verify: string[];
+  always?: string[];
+  /** agx.toml [worker] sandbox */
+  repositorySandbox?: string;
+  ticketSandbox?: string;
+}) {
   const parent = await mkdtemp(join(tmpdir(), "agx-sandbox-dispatch-"));
   roots.push(parent);
   const repo = join(parent, "repo");
@@ -48,6 +54,13 @@ async function fixture(input: { verify: string[]; always?: string[] }) {
     ...(input.always === undefined
       ? []
       : ["", "[verify]", `always = ${JSON.stringify(input.always)}`]),
+    ...(input.repositorySandbox === undefined
+      ? []
+      : [
+          "",
+          "[worker]",
+          `sandbox = ${JSON.stringify(input.repositorySandbox)}`,
+        ]),
     "",
   ].join("\n");
   await writeFile(join(repo, "agx.toml"), repositoryConfig);
@@ -59,6 +72,9 @@ async function fixture(input: { verify: string[]; always?: string[] }) {
       'name = "sandbox-contract"',
       'writes = ["src/**"]',
       `verify = ${JSON.stringify(input.verify)}`,
+      ...(input.ticketSandbox === undefined
+        ? []
+        : [`sandbox = ${JSON.stringify(input.ticketSandbox)}`]),
       'outcome = "dispatch contract"',
       "[proposition]",
       'id = "SANDBOX-STORE"',
@@ -200,4 +216,36 @@ test("sandbox contract: an edit-only ticket still dispatches with the store warn
   expect(basename(f.workspace)).toBe("ws_sandbox-contract");
   const records = await readFile(join(f.state, "records.jsonl"), "utf8");
   expect(records).toContain('"kind":"dispatching"');
+});
+
+test("agx.toml [worker] sandbox is the default, and the output names agx.toml as its source", async () => {
+  const f = await fixture({ verify: [], repositorySandbox: "none" });
+  const result = await invoke(f);
+
+  expect(result.exit, `${result.stdout}\n${result.stderr}`).toBe(0);
+  const transcript = await readFile(f.launchTranscript, "utf8");
+  expect(transcript).toContain("--sandbox none --sandbox-source agx.toml");
+  expect(result.stdout + result.stderr).toContain(
+    'sandbox=none sandbox_source="agx.toml"',
+  );
+  // none restricts nothing, so no restricted-sandbox warning is due.
+  expect(result.stderr).not.toContain("WARN sandbox");
+  const records = await readFile(join(f.state, "records.jsonl"), "utf8");
+  expect(records).toContain('"sandbox":"none"');
+  expect(records).toContain('"sandbox_source":"agx.toml"');
+});
+
+test("a ticket's sandbox is stronger than agx.toml [worker] sandbox", async () => {
+  const f = await fixture({
+    verify: [],
+    repositorySandbox: "none",
+    ticketSandbox: "workspace-write",
+  });
+  const result = await invoke(f);
+
+  expect(result.exit, `${result.stdout}\n${result.stderr}`).toBe(0);
+  const transcript = await readFile(f.launchTranscript, "utf8");
+  expect(transcript).toContain(
+    "--sandbox workspace-write --sandbox-source ticket",
+  );
 });

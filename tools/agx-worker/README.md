@@ -34,7 +34,7 @@ repository source files.
 
 `agx worker config [--repo <path>] [--json]` prints every effective configuration value a dispatch
 from that repository (default: the working directory) would use, each with its source: the
-repository policy (`tickets`, `ws.*`, `verify.always`, `check.*`, `route.allow`; `default`, `L1`
+repository policy (`tickets`, `ws.*`, `verify.always`, `check.*`, `route.allow`, `worker.sandbox`; `default`, `L1`
 trunk `agx.toml` or `L2` machine-local file, with each `ws.keep` entry labelled by the layer that
 declares it), the user routing policy exactly as `roster --json` computes it (`policy` and `auto`),
 and the Claude credential a dispatch would choose (`credential`, `credential_source`, never the
